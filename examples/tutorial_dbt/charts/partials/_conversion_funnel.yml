@@ -1,0 +1,43 @@
+# Partial: Conversion funnel analysis board
+variables:
+  stage:
+    options:
+      static: [All, Awareness, Consideration, Decision]
+    default: All
+
+style:
+  background: "#F0F9FF"
+
+queries:
+  funnel:
+    metrics: [funnel_count]
+    dimensions: [stage]
+    filters:
+      stage: "{{ stage if stage != 'All' else '*' }}"
+
+  conversion:
+    metrics: [conversion_rate]
+    dimensions: [stage]
+
+rows:
+  - title: "Funnel Analysis"
+    text: |
+      **Funnel Performance**
+      Analyzing conversion rates for stage: {{ stage }}
+    style:
+      background: "#DBEAFE"
+
+  - cols:
+      - title: "Funnel Chart"
+        type: bar
+        query: queries.funnel
+        x: stage
+        y: funnel_count
+        style:
+          background: "#BFDBFE"
+
+      - title: "Conversion Table"
+        type: table
+        query: queries.conversion
+        style:
+          background: "#93C5FD"

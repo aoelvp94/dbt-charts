@@ -1,0 +1,56 @@
+name: Restrict pull requests
+
+# This repository does not accept pull requests (see CONTRIBUTING.md).
+# Forking is disabled org-wide default permission grants write access to
+# every dbt-labs org member, so PRs can't be blocked at the repo level —
+# this closes anything opened by someone without admin/maintain access,
+# except automated dependency-bump PRs from dependabot.
+
+on:
+  pull_request:
+    types: [opened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  restrict:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check author permission
+        id: check
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8.0.0
+        with:
+          script: |
+            const actor = context.payload.pull_request.user.login;
+            if (actor === "dependabot[bot]") {
+              core.setOutput("allowed", "true");
+              return;
+            }
+            const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: actor,
+            });
+            const allowed = data.permission === "admin" || data.permission === "maintain";
+            core.setOutput("allowed", String(allowed));
+
+      - name: Close unauthorized PR
+        if: steps.check.outputs.allowed != 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8.0.0
+        with:
+          script: |
+            const pull_number = context.payload.pull_request.number;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pull_number,
+              body: "Pull requests are not accepted on this repository — see [CONTRIBUTING.md](https://github.com/dbt-labs/dbt-charts/blob/main/CONTRIBUTING.md). Closing automatically. Please [open an issue](https://github.com/dbt-labs/dbt-charts/issues/new/choose) instead.",
+            });
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number,
+              state: "closed",
+            });

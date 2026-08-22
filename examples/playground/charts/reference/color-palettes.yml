@@ -1,0 +1,2045 @@
+# Color Palettes — Every dbt charts palette in one place.
+#
+# Compact index up top (name + swatch strip per palette, grouped by family),
+# then family explanations and demos below. Most-used data palettes
+# (categorical → sequential → diverging) come first; UI scaffolds and
+# semantic role palettes follow, leading into the semantic demo at the end.
+#
+# Source-of-truth palette files: dbt-charts/src/dbt_charts/core/defaults/palettes/
+
+title: "Color Palettes"
+description: "Every dbt charts color palette: categorical, sequential, diverging, scaffold, and tone."
+
+text: |
+  Every dbt charts color palette in one place. The index below shows all palettes
+  as compact swatch strips, grouped by family. Family explanations and demos
+  follow underneath.
+
+  Palette source files live in `dbt-charts/src/dbt_charts/core/defaults/palettes/`. Reference
+  a palette in YAML with `color("palette-name.slot-or-stop")`.
+
+# ============================================================================
+# COMPACT INDEX
+# ============================================================================
+# Each palette is one row: fixed-width name column + a strip of square swatches.
+# Name column is 180px across every family so first swatches align vertically.
+# Each swatch is 28×28px with a 4px gap, so an 11-stop palette is visibly
+# longer than a 6-stop palette.
+
+rows:
+  # ── Categorical ───────────────────────────────────────────────────────
+  - text: "## Categorical"
+  - text: |
+      Discrete hues for unordered categories. `vivid-10` is the chroma-pushed
+      default the stark theme cycles through; `vivid-10-dark`,
+      `vivid-10-light`, `vivid-10-ghost`, and `vivid-10-ink` are its
+      slot-paired companions. `editorial-10` is the muted, cycling-discipline
+      counterpart that ships as the default for the `default` and `cream`
+      themes, with matching dark, light, ghost, and ink companions. Tonal
+      variants stay within a single hue family for editorial restraint.
+
+  - cols:
+      - width: "180px"
+        text: "**vivid-10**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10.10"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**vivid-10-dark**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-dark.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-dark.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-dark.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-dark.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-dark.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-dark.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-dark.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-dark.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-dark.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-dark.10"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**vivid-10-light**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-light.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-light.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-light.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-light.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-light.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-light.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-light.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-light.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-light.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-light.10"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**vivid-10-ghost**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ghost.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ghost.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ghost.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ghost.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ghost.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ghost.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ghost.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ghost.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ghost.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ghost.10"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**vivid-10-ink**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ink.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ink.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ink.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ink.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ink.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ink.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ink.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ink.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ink.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "vivid-10-ink.10"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**editorial-10**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10.10"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**editorial-10-dark**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-dark.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-dark.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-dark.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-dark.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-dark.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-dark.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-dark.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-dark.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-dark.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-dark.10"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**editorial-10-light**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-light.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-light.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-light.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-light.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-light.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-light.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-light.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-light.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-light.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-light.10"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**editorial-10-ghost**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ghost.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ghost.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ghost.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ghost.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ghost.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ghost.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ghost.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ghost.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ghost.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ghost.10"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**editorial-10-ink**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ink.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ink.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ink.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ink.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ink.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ink.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ink.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ink.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ink.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "editorial-10-ink.10"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**hero-6**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "hero-6.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "hero-6.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "hero-6.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "hero-6.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "hero-6.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "hero-6.6"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**tableau**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "tableau.10"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**category-6-tonal-blue**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-blue.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-blue.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-blue.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-blue.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-blue.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-blue.6"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**category-6-tonal-green**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-green.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-green.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-green.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-green.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-green.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-green.6"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**category-6-tonal-orange**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-orange.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-orange.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-orange.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-orange.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-orange.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-orange.6"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**category-6-tonal-purple**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-purple.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-purple.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-purple.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-purple.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-purple.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-purple.6"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**category-6-tonal-brown**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-brown.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-brown.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-brown.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-brown.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-brown.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "category-6-tonal-brown.6"}
+        style: {gap: "4px"}
+    height: "28px"
+
+
+  # ── Sequential ────────────────────────────────────────────────────────
+  - text: |
+      ## Sequential
+
+      Single-hue ramps for ordered magnitude. Light → dark, 11 hand-authored
+      stops each (the "spine"). A 120-stop interpolated LUT lives alongside
+      each spine for smooth encoding.
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-seq-blue**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-seq-teal**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-seq-green**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-seq-amber**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-seq-rust**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-seq-purple**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-seq-brown**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-seq-gray**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-seq-amber-dark**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber-dark.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber-dark.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber-dark.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber-dark.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber-dark.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber-dark.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber-dark.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber-dark.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber-dark.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber-dark.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-amber-dark.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-seq-blue-dark**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue-dark.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue-dark.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue-dark.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue-dark.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue-dark.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue-dark.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue-dark.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue-dark.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue-dark.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue-dark.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-blue-dark.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-seq-brown-dark**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown-dark.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown-dark.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown-dark.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown-dark.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown-dark.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown-dark.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown-dark.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown-dark.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown-dark.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown-dark.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-brown-dark.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-seq-gray-dark**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray-dark.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray-dark.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray-dark.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray-dark.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray-dark.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray-dark.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray-dark.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray-dark.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray-dark.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray-dark.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-gray-dark.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-seq-green-dark**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green-dark.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green-dark.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green-dark.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green-dark.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green-dark.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green-dark.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green-dark.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green-dark.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green-dark.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green-dark.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-green-dark.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-seq-purple-dark**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple-dark.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple-dark.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple-dark.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple-dark.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple-dark.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple-dark.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple-dark.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple-dark.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple-dark.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple-dark.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-purple-dark.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-seq-rust-dark**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust-dark.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust-dark.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust-dark.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust-dark.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust-dark.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust-dark.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust-dark.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust-dark.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust-dark.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust-dark.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-rust-dark.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-seq-teal-dark**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal-dark.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal-dark.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal-dark.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal-dark.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal-dark.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal-dark.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal-dark.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal-dark.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal-dark.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal-dark.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-seq-teal-dark.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+
+  # ── Diverging ─────────────────────────────────────────────────────────
+  - text: |
+      ## Diverging
+
+      Two-arm ramps for signed magnitude around a midpoint. 11 stops
+      with a neutral light center (step 6).
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-div-blue-red**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-div-coolwarm**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-div-orange-teal**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-div-crimson-green**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-div-sunset**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-div-blue-red-dark**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red-dark.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red-dark.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red-dark.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red-dark.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red-dark.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red-dark.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red-dark.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red-dark.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red-dark.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red-dark.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-blue-red-dark.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-div-coolwarm-dark**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm-dark.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm-dark.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm-dark.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm-dark.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm-dark.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm-dark.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm-dark.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm-dark.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm-dark.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm-dark.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-coolwarm-dark.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-div-crimson-green-dark**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green-dark.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green-dark.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green-dark.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green-dark.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green-dark.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green-dark.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green-dark.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green-dark.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green-dark.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green-dark.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-crimson-green-dark.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-div-orange-teal-dark**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal-dark.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal-dark.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal-dark.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal-dark.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal-dark.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal-dark.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal-dark.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal-dark.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal-dark.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal-dark.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-orange-teal-dark.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-div-sunset-dark**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset-dark.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset-dark.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset-dark.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset-dark.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset-dark.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset-dark.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset-dark.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset-dark.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset-dark.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset-dark.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-div-sunset-dark.11"}
+        style: {gap: "4px"}
+    height: "28px"
+
+
+  # ── Scaffold ──────────────────────────────────────────────────────────
+  - text: |
+      ## Scaffold
+
+      UI structural framing — canvas, borders, dividers, axis labels,
+      table stripes, secondary text. Not data encoding. Twelve named
+      steps from `canvas` (near-white) to `void` (near-black).
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-grays**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-grays.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-grays.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-grays.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-grays.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-grays.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-grays.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-grays.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-grays.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-grays.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-grays.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-grays.11"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-grays.12"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**dbt-creams**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-creams.1"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-creams.2"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-creams.3"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-creams.4"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-creams.5"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-creams.6"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-creams.7"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-creams.8"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-creams.9"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-creams.10"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-creams.11"}
+          - text: " "
+            width: "28px"
+            style: {background: "dbt-creams.12"}
+        style: {gap: "4px"}
+    height: "28px"
+
+
+  # ── Tone ──────────────────────────────────────────────────────────────
+  - text: |
+      ## Tone
+
+      Six-slot UI role palettes for status surfaces (notices, badges,
+      buttons). Slots run left to right: `bg`, `subtle`, `border`, `solid`,
+      `solid-hover`, `text` — each strip below reads in that order.
+
+  - cols:
+      - width: "180px"
+        text: "**negative**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "negative.bg"}
+          - text: " "
+            width: "28px"
+            style: {background: "negative.subtle"}
+          - text: " "
+            width: "28px"
+            style: {background: "negative.border"}
+          - text: " "
+            width: "28px"
+            style: {background: "negative.solid"}
+          - text: " "
+            width: "28px"
+            style: {background: "negative.solid-hover"}
+          - text: " "
+            width: "28px"
+            style: {background: "negative.text"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**positive**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "positive.bg"}
+          - text: " "
+            width: "28px"
+            style: {background: "positive.subtle"}
+          - text: " "
+            width: "28px"
+            style: {background: "positive.border"}
+          - text: " "
+            width: "28px"
+            style: {background: "positive.solid"}
+          - text: " "
+            width: "28px"
+            style: {background: "positive.solid-hover"}
+          - text: " "
+            width: "28px"
+            style: {background: "positive.text"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**warning**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "warning.bg"}
+          - text: " "
+            width: "28px"
+            style: {background: "warning.subtle"}
+          - text: " "
+            width: "28px"
+            style: {background: "warning.border"}
+          - text: " "
+            width: "28px"
+            style: {background: "warning.solid"}
+          - text: " "
+            width: "28px"
+            style: {background: "warning.solid-hover"}
+          - text: " "
+            width: "28px"
+            style: {background: "warning.text"}
+        style: {gap: "4px"}
+    height: "28px"
+
+  - cols:
+      - width: "180px"
+        text: "**info**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "info.bg"}
+          - text: " "
+            width: "28px"
+            style: {background: "info.subtle"}
+          - text: " "
+            width: "28px"
+            style: {background: "info.border"}
+          - text: " "
+            width: "28px"
+            style: {background: "info.solid"}
+          - text: " "
+            width: "28px"
+            style: {background: "info.solid-hover"}
+          - text: " "
+            width: "28px"
+            style: {background: "info.text"}
+        style: {gap: "4px"}
+    height: "28px"
+
+
+  # ============================================================================
+  # FAMILY EXPLANATIONS + DEMOS
+  # ============================================================================
+
+  - text: |
+      ---
+
+      # Family notes
+
+      ## Categorical
+
+      Discrete, unordered hues. Used when a chart needs to distinguish
+      categories that have no inherent ranking. `vivid-10` is the
+      chroma-pushed default the stark theme cycles through: blue-first, calm
+      posture, earth-and-neutral expansion past slot 5. It's a retune of the
+      former `category-10` arrangement — each slot holds its hue while the
+      muted blue/cyan/green/gold/moss are lifted toward the sRGB gamut ceiling.
+      Single-series charts (one mark, no color encoding) don't read from this
+      palette at all — they paint with the active theme's
+      `single_series_palette[0]` ink.
+
+      `vivid-10-dark`, `vivid-10-light`, `vivid-10-ghost`, and `vivid-10-ink`
+      are positional companions to `vivid-10`. The dark companion inks direct
+      text labels (e.g. right-pane endpoint labels on multi-series lines,
+      segment names on stacked bars). The light companion is a moderate
+      positive lightness shift. The ghost companion is the pale
+      dim-the-chorus de-emphasis band. The ink companion is its symmetric
+      opposite — every stop dropped into a tight dark band (L 0.30–0.36),
+      the theme-level default ink for single-encoding marks (the vivid-family
+      themes inline subsets of it into `single_series_palette`). The pairing
+      is positional: slot N in each companion pairs with slot N in `vivid-10`.
+
+      These companions are exposed as typed palettes here, but driving
+      label or de-emphasis color from a single `color:` field (so a chart's
+      marks and companion states share one author intent but resolve through
+      different transforms) is still an open typed-surface question.
+
+      `editorial-10` is the quieter 10-color cycling palette that ships as
+      the default categorical for the `default` and `cream` themes.
+      Modelled on Apache ECharts' cycling discipline rather than The
+      Economist's picking toolbox: every stop is muted, chroma is held low
+      across the board, and slots 3–4 are paired neutrals (warm tan + cool
+      gray) so 3- or 4-series charts read as blue + temperature break before
+      any second hue enters. `editorial-10-dark`, `editorial-10-light`,
+      `editorial-10-ghost`, and `editorial-10-ink` are its slot-paired
+      companions for direct labels, moderate light states, ghosted
+      de-emphasis states, and dark single-encoding ink (editorial and cream
+      inline `editorial-10-ink` subsets into `single_series_palette`). At
+      N=10 weighted Leonardo CVD scoring this palette outperforms `vivid-10`,
+      The Economist, and Apache ECharts.
+
+      **Named hue roles.** Beyond positional access (`category[3]`), the two
+      default categorical palettes and their companions name each slot by hue:
+      `category.blue`, `category.green`, `category.gold`, `category.purple`,
+      `category.orange`, `category.gray`, `category.charcoal`, plus
+      `category.sky` and `category.sage` for the two lighter cool slots. A hue
+      sits at a different slot in each palette — green is slot 3 in `vivid-10`
+      (the stark default) but slot 6 in `editorial-10` (the default/cream
+      default) — so a named token stays swap-invariant: `category.green`
+      resolves to the green of whichever palette the active theme binds to the
+      `category` role, and switching themes keeps green green without touching
+      the board. The `-dark`/`-light`/`-ghost`/`-ink` companions carry the same
+      names against their own slots. The names are a slot bijection: most hold
+      their hue across the swap, but `sage` is the loose one (moss in `vivid-10`,
+      teal in `editorial-10`) — reach for it as a slot role, not an exact hue.
+      Tonal palettes (`category-6-tonal-*`) define no hue names — a hue token
+      against them errors rather than guessing.
+
+      The five `category-6-tonal-*` palettes hold a single hue across
+      6 stops — useful for editorial dashboards that want one hue throughout.
+      Slots 0–3 are CVD-strict-safe; slots 4–5 are extended and require
+      redundant form encoding (dash, marker, or pattern).
+
+      `tableau` and `hero-6` are kept for users who want the familiar
+      Tableau hues or a marketing/cover-page blue lead.
+
+      ## Sequential
+
+      Single-hue, monotonic L\* ramp from light to dark. Each palette has
+      11 hand-authored stops (the **spine**). Reviewers edit the spine;
+      renderers consume the spine directly.
+
+      Eight palettes, tuned to harmonize with both `vivid-10` (the
+      saturated default) and `editorial-10` (the muted editorial default) —
+      hue identity is anchored on vivid-10, chroma is pulled to sit closer
+      to editorial-10's quieter envelope. Each palette name describes the
+      midtone identity: `dbt-seq-amber` (honey/amber, not pure gold),
+      `dbt-seq-rust` (terracotta, not vivid orange), `dbt-seq-teal` (turquoise),
+      `dbt-seq-brown` (warm low-chroma, pairs with cream),
+      `dbt-seq-gray` (pure achromatic — magnitude without hue meaning).
+
+      ## Diverging
+
+      Symmetric two-arm ramps about a neutral light midpoint (step 6).
+      `dbt-div-blue-red` is the default — RdBu-family editorial posture,
+      CVD-safe under deut/prot/trit at common subset counts.
+      `dbt-div-orange-teal` is the politically-neutral alternative.
+      `dbt-div-crimson-green` is the asymmetric red-green for finance
+      (loss/gain) — engineered to pass CVD where symmetric red-green fails;
+      always pair with icon + label.
+      `dbt-div-coolwarm` is Moreland 2009 (canonical scientific viz);
+      `dbt-div-sunset` is Paul Tol's SRON-published multi-hue diverging.
+
+      ## Scaffold
+
+      `dbt-grays` (cool) and `dbt-creams` (warm) are the structural framing
+      palettes. They're not data — they're chrome. Reference slots by
+      named step: `color("dbt-grays.ink")`, `color("dbt-creams.canvas")`.
+      Scaffolds pair with their matching theme: gray theme → dbt-grays;
+      cream/cream theme → dbt-creams.
+
+      ## Tone
+
+      Status palettes. Each one (`negative`, `positive`, `warning`, `info`)
+      ships six named role slots — `bg`, `subtle`, `border`, `solid`,
+      `solid-hover`, `text` — designed to compose into notice cards, badges,
+      and buttons that pass WCAG AA without per-component tuning. The strips
+      in the index above run those six slots left to right.
+
+      Reference slots directly: `color("negative.solid")`,
+      `color("warning.bg")`, `color("positive.text")`, `color("info.solid")`.
+
+  - text: |
+      ---
+
+      # Named hue roles — live demo
+
+      Every strip above references a palette directly, by its own literal
+      name (`color("<name>.<n>")` by stop position for categorical/sequential/
+      diverging/scaffold, `color("<name>.<slot>")` by alias for tone) — none of
+      them change when the active theme changes. The swatches in **this** row are
+      different: they're authored with named-*role* tokens — `category.blue`,
+      `category.green`, `category.gold`, … — as their `background`. Each token
+      resolves through whichever categorical palette the active theme binds to
+      the `category` role, so the same board repaints on a theme swap.
+
+      This page carries no `theme:` key, so it renders under the **default**
+      theme (which cycles `editorial-10`) — the strip below should therefore
+      match the `editorial-10` strip in the index, hue for hue. Under the
+      **stark** theme the identical tokens resolve against `vivid-10`.
+
+      Expected, left → right (blue · sky · green · brown · gold · purple ·
+      orange · sage · gray · charcoal):
+
+      - **default / editorial** (`editorial-10`): `#3164a3` · `#779bc9` ·
+        `#5c7b5c` · `#ad9c7f` · `#d49656` · `#8a576f` · `#ae6349` · `#609f9e` ·
+        `#7a8895` · `#232f3a`
+      - **stark** (`vivid-10`): `#0073c2` · `#00c8ee` · `#00ad75` · `#7a5531` ·
+        `#e1a500` · `#a46fb2` · `#da5a23` · `#6a9228` · `#949daa` · `#505b6b`
+
+  - cols:
+      - width: "180px"
+        text: "**category.hue (tokens)**"
+      - cols:
+          - text: " "
+            width: "28px"
+            style: {background: "category.blue"}
+          - text: " "
+            width: "28px"
+            style: {background: "category.sky"}
+          - text: " "
+            width: "28px"
+            style: {background: "category.green"}
+          - text: " "
+            width: "28px"
+            style: {background: "category.brown"}
+          - text: " "
+            width: "28px"
+            style: {background: "category.gold"}
+          - text: " "
+            width: "28px"
+            style: {background: "category.purple"}
+          - text: " "
+            width: "28px"
+            style: {background: "category.orange"}
+          - text: " "
+            width: "28px"
+            style: {background: "category.sage"}
+          - text: " "
+            width: "28px"
+            style: {background: "category.gray"}
+          - text: " "
+            width: "28px"
+            style: {background: "category.charcoal"}
+        style: {gap: "4px"}
+    height: "28px"

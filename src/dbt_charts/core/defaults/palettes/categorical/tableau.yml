@@ -1,0 +1,20 @@
+# Categorical palette — tableau
+#
+# Migrated from dbt_charts/core/defaults/chart_defaults.yml > palettes > tableau
+
+name: tableau
+description: |
+  Tableau-style 10-color categorical palette. Retained for users who want the
+  familiar Tableau hues instead of the DFT vivid-10 default.
+
+colors:
+  - "#4e79a7"
+  - "#f28e2c"
+  - "#e15759"
+  - "#76b7b2"
+  - "#59a14f"
+  - "#edc949"
+  - "#af7aa1"
+  - "#ff9da7"
+  - "#9c755f"
+  - "#bab0ab"

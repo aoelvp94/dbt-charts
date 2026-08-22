@@ -1,0 +1,24 @@
+# Diverging palette — Moreland 2009 coolwarm
+#
+
+name: dbt-div-coolwarm
+family: diverging
+description: Moreland 2009 coolwarm. Deep blue through light gray to deep red — canonical scientific diverging.
+design_notes: |
+  Referenced from Kenneth Moreland's 2009 paper "Diverging Color Maps for
+  Scientific Visualization". The canonical scientific visualization diverging
+  ramp, widely used in ParaView and VTK. Included for scientific data contexts.
+  Session 3 of M2 palette design.
+
+colors:
+  - "#3b4cc0"
+  - "#5977e3"
+  - "#7b9ef0"
+  - "#a2c3f7"
+  - "#cedcf4"
+  - "#dddddd"
+  - "#f2cbb7"
+  - "#f09482"
+  - "#db6555"
+  - "#b40426"
+  - "#8b0000"

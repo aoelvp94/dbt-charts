@@ -1,0 +1,246 @@
+# Unified theme: neon  [PLACEHOLDER — render model PARKED, see the parking note under sans-theme-refs]
+# Vivid's dark-chrome sibling: super-saturated marks glowing against dark chrome.
+# Neutral near-black canvas (dbt-grays.void #161616 — neutral, NOT navy) is the
+# backdrop that lets the marks glow; the color lives entirely in the vivid-10 marks.
+# FOUR coarse chrome tiers (+1 grid split), all from dbt-grays (no opacity, no inline hex).
+# "Values pop": numeric readouts get the max-contrast tier, above titles — opposite
+# editorial's soft mid-anchored ramp.
+#   VALUE dbt-grays.canvas   (#FAFAFA) — quant-axis numbers, data labels, values, zero-baseline (max)
+#   HIGH  dbt-grays.grid     (#EDEFF2) — titles, legend, table headers
+#   MID   dbt-grays.subtitle (#8A8C8F) — category labels, axis titles, support text
+#   FAINT dbt-grays.heading  (#313233) — category/time gridlines + their ticks, domain, borders
+#   +     dbt-grays.inactive (#494A4C) — measure gridlines + their ticks, one step brighter
+# The fifth stop exists because gridlines are not one job: at hairline width the
+# only way to sit the category grid behind the measure grid is contrast. On this
+# dark canvas the measure grid moves UP (away from the background) rather than the
+# category grid moving down — the rung below FAINT is the panel tier below, where a
+# gridline would vanish on any panel surface.
+# Backgrounds: canvas dbt-grays.void (#161616) + one panel tier dbt-grays.ink (#222222).
+# The light/dark companion roles name a CONTRAST DIRECTION, not a pigment, so both
+# invert on this canvas: category_dark (the higher-contrast companion) takes the LIGHT
+# twin so marks read bright on black, and category_light (the recessive one) takes the
+# DARK twin. Rebinding only one collapses the pair onto a single palette.
+# All color from vivid-10 marks only. Confident marks, flat fills.
+extends: stark
+style:
+  background: &void dbt-grays.void
+  page:
+    background: *void
+  accent: &high dbt-grays.grid
+  muted: &mid dbt-grays.subtitle
+  font:
+    color: *high
+  palettes:
+    sequence: dbt-seq-blue-dark
+    category_dark: vivid-10-light
+    category_light: vivid-10-dark
+  border:
+    color: &faint dbt-grays.heading
+  title:
+    font:
+      color: *high
+      weight: 600
+    subtitle:
+      font:
+        color: *mid
+  text:
+    font:
+      color: *high
+    code:
+      theme: monokai
+      font:
+        color: *high
+      background: &panel dbt-grays.ink
+      border:
+        color: *faint
+        width: 1
+        radius: 4
+    blockquote:
+      font:
+        color: *mid
+        style: italic
+      background: *panel
+      border:
+        color: *high
+        width: 3
+        radius: 0
+  charts:
+    color:
+      categorical:
+        single_series_palette: ['vivid-10.1']   # brand-blue single series (data color, not chrome)
+    # Bar tracks on the FAINT tier — stark pins these to the light-canvas
+    # fill gray, which would glare on the near-black canvas. (Table twin
+    # sits in the table block below.)
+    spark_bar:
+      bar:
+        background: *faint
+    axis:
+      line:
+        color: *faint
+      grid:
+        # Hairline gridlines, so contrast carries the axis hierarchy width
+        # cannot. On this dark canvas the measure grid is raised instead of the
+        # category/time grid being dimmed: the rung below *faint is the panel
+        # tier (dbt-grays.ink), where a gridline would vanish on any panel
+        # surface. Same rule as the light themes, opposite direction, because
+        # the background sits on the other side.
+        color: *faint
+        width: 1
+      ticks:
+        color: *faint
+      labels:
+        font:
+          color: *mid
+      title:
+        font:
+          color: *mid
+    axis_y:
+      grid:
+        color: &measure_grid dbt-grays.inactive  # measure grid reads above the vertical one
+        zero:
+          color: &value dbt-grays.canvas  # baseline anchors at max contrast
+      ticks:
+        # A tick and its gridline mark the same value; they read as one mark
+        # crossing the axis line. Without this the measure tick wore the
+        # category tier while sitting on the measure axis.
+        color: *measure_grid
+        width: 1                   # the hairline this theme's grid is drawn at
+    axis_quantitative:
+      grid:
+        color: *measure_grid       # a quantitative x (scatter) is a measure too
+      labels:
+        font:
+          color: *value            # numeric readouts POP
+      ticks:
+        color: *measure_grid       # tracks the quantitative grid above
+        width: 1                   # the hairline this theme's grid is drawn at
+        count: 6                   # sparse, like editorial
+    legend:
+      visible: false               # direct-labeling by default (editorial posture)
+      label:
+        font:
+          color: *high
+      title:
+        font:
+          color: *high
+    line:
+      endpoint_labels:
+        visible: true
+    area:
+      endpoint_labels:
+        visible: true
+    bar:
+      legend:
+        # A bar that direct-labels has this suppressed again by resolve. It is
+        # load-bearing for the bars that cannot — grouped, or stacked but
+        # disqualified by `multiples:`, a negative measure, or a series absent
+        # from the last column — which would otherwise carry no series key at
+        # all, since the theme hides legends globally.
+        visible: true
+      axis_x:                      # inward-align horizontal-bar row labels (resolve scopes to left/right edge)
+        labels:
+          align: inward
+    scatter:
+      legend:
+        visible: true              # scatter encodes color/size → needs legend
+      # Quant×quant keeps even grid weight. `_base` states that as its own 1.5
+      # measure width, which stops tracking once a theme goes hairline — restate
+      # it against this theme's width so both axes stay matched.
+      axis_x:
+        grid:
+          width: 1
+    marks:
+      bar:
+        border:
+          radius: 2
+      text:
+        font:
+          color: *value            # direct data labels = values = max
+      rule:
+        stroke:
+          color: *high
+      geoshape:
+        fill: *faint                 # unjoined regions = dark neutral, recede on near-black
+    # Choropleth + heatmap default continuous color. _base uses `blues`
+    # (light→dark: low values bright), which inverts emphasis on a dark canvas.
+    # dbt-seq-blue-dark keeps neon's blue brand identity (viridis's rainbow
+    # scheme was unrelated to it) and is luminance-monotonic dark-first
+    # (low=dark recede, high=bright pop) like every -dark palette fork —
+    # structural to the fork, not a bug.
+    geoshape:
+      color:
+        gradient:
+          palette: sequence
+    heatmap:
+      color:
+        gradient:
+          palette: sequence
+      axis_y:                      # inward-align heatmap row labels (y is always nominal)
+        labels:
+          align: inward
+    table:
+      border:
+        color: *faint
+      header:
+        background: *panel
+        font:
+          color: *high
+      row:
+        stripe:
+          color: *panel
+      spark:
+        bar:
+          background: *faint
+    data_table:
+      font:
+        color: *value
+      label:
+        font:
+          color: *mid
+      divider:
+        color: *faint
+    # Resets border.width / shadow.visible / swatch.radius / active_marker --
+    # stark (the structural root) sets 1.5 / false / 0 / triangle for its own
+    # utilitarian look; those values would otherwise leak into neon, which
+    # extends stark directly and keeps its own soft dark tooltip look unchanged.
+    tooltip:
+      background: *panel
+      label:
+        font:
+          color: *mid
+      value:
+        font:
+          color: *value
+      border:
+        color: *faint
+        # Borderless like the other shadowed themes (see editorial.yaml).
+        width: 0.0
+        radius: 4.0
+      shadow:
+        visible: true
+      swatch:
+        radius: 3.0
+      active_marker: fill
+    pie:
+      total:
+        value:
+          font:
+            color: *value
+        label:
+          font:
+            color: *mid
+    kpi:
+      # Lighter tone stops for the dark canvas — the default positive/negative
+      # `.solid` greens/reds are tuned for light bg and read too dark here.
+      tones:
+        positive: positive.border
+        negative: negative.border
+  variables:
+    font:
+      color: *mid
+    border:
+      color: *faint
+    input:
+      background: *panel
+      border:
+        color: *faint

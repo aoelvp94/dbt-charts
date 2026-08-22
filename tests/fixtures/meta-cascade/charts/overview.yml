@@ -1,0 +1,10 @@
+title: Overview
+
+charts:
+  kpi1:
+    query: shared_kpi
+    type: kpi
+    value: n
+
+rows:
+  - kpi1

@@ -1,0 +1,8 @@
+# Unified theme: diagnostics-title-offset-extreme
+
+extends: stark
+style:
+  title:
+    position:
+      anchor: start
+      offset: 40

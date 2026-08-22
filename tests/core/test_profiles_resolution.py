@@ -1,0 +1,373 @@
+"""Tests for centralized profiles.yml resolution helper (resolve_profiles_path).
+
+Covers:
+- profiles_dir field on DbtProfileSourceConfig (explicit subdir)
+- DBT_PROFILES_DIR env var fallback
+- {project_dir}/profiles.yml fallback
+- ~/.dbt/profiles.yml fallback
+- Clear error when none has profiles.yml
+- infer_dialect_from_dbt uses the centralized helper via DBT_PROFILES_DIR
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+import yaml
+
+# ---------------------------------------------------------------------------
+# resolve_profiles_path — centralized helper
+# ---------------------------------------------------------------------------
+
+
+class TestResolveProfilesPath:
+    """resolve_profiles_path honors the documented resolution order:
+    profiles_dir → DBT_PROFILES_DIR → project_dir → ~/.dbt
+    """
+
+    def test_profiles_dir_wins_when_set(self, tmp_path: Path) -> None:
+        """Explicit profiles_dir is checked first, even if project_dir also has profiles.yml."""
+        from dbt_charts.core.project_roots import resolve_profiles_path
+
+        subdir = tmp_path / "services" / "dbt"
+        subdir.mkdir(parents=True)
+        (subdir / "profiles.yml").write_text("annote: {}\n")
+
+        # Also put one in project_dir to verify subdir wins
+        (tmp_path / "profiles.yml").write_text("other: {}\n")
+
+        result = resolve_profiles_path(project_dir=tmp_path, profiles_dir=subdir)
+        assert result == subdir / "profiles.yml"
+
+    def test_profiles_dir_missing_profiles_raises(self, tmp_path: Path) -> None:
+        """profiles_dir set but no profiles.yml in it → clear error, no fallback."""
+        from dbt_charts.core.project_roots import resolve_profiles_path
+
+        subdir = tmp_path / "services" / "dbt"
+        subdir.mkdir(parents=True)
+        # No profiles.yml in subdir — should raise, not silently fall back.
+
+        with pytest.raises(FileNotFoundError, match="profiles.yml"):
+            resolve_profiles_path(project_dir=tmp_path, profiles_dir=subdir)
+
+    def test_dbt_profiles_dir_env_used_when_profiles_dir_unset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """DBT_PROFILES_DIR env var is honored when profiles_dir field is not set."""
+        from dbt_charts.core.project_roots import resolve_profiles_path
+
+        env_dir = tmp_path / "env_dbt"
+        env_dir.mkdir()
+        (env_dir / "profiles.yml").write_text("myprofile: {}\n")
+        monkeypatch.setenv("DBT_PROFILES_DIR", str(env_dir))
+
+        result = resolve_profiles_path(project_dir=tmp_path, profiles_dir=None)
+        assert result == env_dir / "profiles.yml"
+
+    def test_dbt_profiles_dir_env_missing_profiles_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """DBT_PROFILES_DIR points at a dir without profiles.yml → error, no fallback."""
+        from dbt_charts.core.project_roots import resolve_profiles_path
+
+        env_dir = tmp_path / "empty_env"
+        env_dir.mkdir()
+        monkeypatch.setenv("DBT_PROFILES_DIR", str(env_dir))
+
+        with pytest.raises(FileNotFoundError, match="profiles.yml"):
+            resolve_profiles_path(project_dir=tmp_path, profiles_dir=None)
+
+    def test_project_dir_fallback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Falls back to {project_dir}/profiles.yml when profiles_dir and env unset."""
+        from dbt_charts.core.project_roots import resolve_profiles_path
+
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        (tmp_path / "profiles.yml").write_text("myprofile: {}\n")
+
+        result = resolve_profiles_path(project_dir=tmp_path, profiles_dir=None)
+        assert result == tmp_path / "profiles.yml"
+
+    def test_home_dbt_fallback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Falls back to ~/.dbt/profiles.yml as last resort."""
+        from dbt_charts.core.project_roots import resolve_profiles_path
+
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        # No profiles.yml in project_dir
+        fake_home = tmp_path / "fakehome"
+        (fake_home / ".dbt").mkdir(parents=True)
+        (fake_home / ".dbt" / "profiles.yml").write_text("myprofile: {}\n")
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+
+        result = resolve_profiles_path(project_dir=tmp_path, profiles_dir=None)
+        assert result == fake_home / ".dbt" / "profiles.yml"
+
+    def test_raises_when_none_found(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Raises FileNotFoundError with a clear message when no profiles.yml exists."""
+        from dbt_charts.core.project_roots import resolve_profiles_path
+
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        fake_home = tmp_path / "emptyhome"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+
+        with pytest.raises(FileNotFoundError, match="profiles.yml"):
+            resolve_profiles_path(project_dir=tmp_path, profiles_dir=None)
+
+
+# ---------------------------------------------------------------------------
+# DbtProfileSourceConfig.profiles_dir field
+# ---------------------------------------------------------------------------
+
+
+class TestDbtProfileSourceConfigProfilesDir:
+    """profiles_dir is a new optional field on DbtProfileSourceConfig."""
+
+    def test_profiles_dir_accepted(self) -> None:
+        """DbtProfileSourceConfig accepts profiles_dir as a string."""
+        from dbt_charts.core.compile.models.source import DbtProfileSourceConfig
+
+        cfg = DbtProfileSourceConfig(
+            type="dbt_profile",
+            profile="annote",
+            profiles_dir="services/dbt",
+        )
+        assert cfg.profiles_dir == "services/dbt"
+
+    def test_profiles_dir_defaults_none(self) -> None:
+        """profiles_dir defaults to None when not provided."""
+        from dbt_charts.core.compile.models.source import DbtProfileSourceConfig
+
+        cfg = DbtProfileSourceConfig(type="dbt_profile", profile="annote")
+        assert cfg.profiles_dir is None
+
+    def test_extra_field_still_rejected(self) -> None:
+        """Unknown fields are still rejected (extra=forbid)."""
+        from pydantic import ValidationError
+
+        from dbt_charts.core.compile.models.source import DbtProfileSourceConfig
+
+        with pytest.raises(ValidationError):
+            DbtProfileSourceConfig(
+                type="dbt_profile", profile="annote", not_a_field="oops"
+            )
+
+
+# ---------------------------------------------------------------------------
+# infer_dialect_from_dbt uses centralized resolution
+# ---------------------------------------------------------------------------
+
+
+class TestInferDialectFromDbtSubdir:
+    """infer_dialect_from_dbt can find profiles.yml in a subdir via DBT_PROFILES_DIR."""
+
+    def test_dbt_profiles_dir_env_in_infer_dialect(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """DBT_PROFILES_DIR env is honored by infer_dialect_from_dbt."""
+        from dbt_charts.core.project_roots import infer_dialect_from_dbt
+
+        # dbt project in project root, profiles.yml in subdir
+        (tmp_path / "dbt_project.yml").write_text(
+            yaml.dump({"name": "annote", "profile": "annote"})
+        )
+        subdir = tmp_path / "services" / "dbt"
+        subdir.mkdir(parents=True)
+        (subdir / "profiles.yml").write_text(
+            yaml.dump(
+                {
+                    "annote": {
+                        "target": "dev",
+                        "outputs": {"dev": {"type": "snowflake"}},
+                    }
+                }
+            )
+        )
+        monkeypatch.setenv("DBT_PROFILES_DIR", str(subdir))
+
+        assert infer_dialect_from_dbt(tmp_path) == "snowflake"
+
+
+# ---------------------------------------------------------------------------
+# DefaultSourceResolver._expand_dbt_profile — relative profiles_dir wired end-to-end
+# ---------------------------------------------------------------------------
+
+
+class TestExpandDbtProfileSource:
+    """DefaultSourceResolver._expand_dbt_profile resolves profiles_dir against dbt_project_path."""
+
+    def _make_source_config(
+        self,
+        profile: str,
+        profiles_dir: str | None = None,
+        target: str | None = None,
+    ):  # type: ignore[return]
+        from dbt_charts.core.compile.models.source import DbtProfileSourceConfig
+
+        return DbtProfileSourceConfig(
+            type="dbt_profile",
+            profile=profile,
+            target=target,
+            profiles_dir=profiles_dir,
+        )
+
+    def _make_dbt_context(self, dbt_project_path: Path):  # type: ignore[return]
+        from dbt_charts.core.execute.source_resolver import DbtContext
+
+        return DbtContext(dbt_project_path=dbt_project_path)
+
+    def _resolver(self):  # type: ignore[return]
+        from dbt_charts.core.execute.source_resolver import DefaultSourceResolver
+
+        return DefaultSourceResolver()
+
+    def test_relative_profiles_dir_resolved_against_dbt_project_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """profiles_dir='services/dbt' relative to dbt_project_path finds profiles.yml."""
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        subdir = tmp_path / "services" / "dbt"
+        subdir.mkdir(parents=True)
+        (subdir / "profiles.yml").write_text(
+            yaml.dump(
+                {
+                    "annote": {
+                        "target": "dev",
+                        "outputs": {"dev": {"type": "duckdb", "path": ":memory:"}},
+                    }
+                }
+            )
+        )
+
+        cfg = self._make_source_config("annote", profiles_dir="services/dbt")
+        result = self._resolver()._expand_dbt_profile(
+            cfg, self._make_dbt_context(tmp_path)
+        )
+
+        assert result.type == "duckdb"
+        assert str(result.path) == ":memory:"  # type: ignore[union-attr]
+
+    def test_missing_profile_raises_execution_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Unknown profile name → ExecutionError (caught by registry as QueryResult.error)."""
+        from dbt_charts.core.diagnostics.execution import ExecutionError
+
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        (tmp_path / "profiles.yml").write_text(
+            yaml.dump(
+                {
+                    "other_profile": {
+                        "target": "dev",
+                        "outputs": {"dev": {"type": "duckdb", "path": ":memory:"}},
+                    }
+                }
+            )
+        )
+        cfg = self._make_source_config("missing_profile")
+        with pytest.raises(ExecutionError, match="missing_profile"):
+            self._resolver()._expand_dbt_profile(cfg, self._make_dbt_context(tmp_path))
+
+    def test_profiles_dir_missing_profiles_yml_raises_execution_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """profiles_dir points at dir without profiles.yml → ExecutionError."""
+        from dbt_charts.core.diagnostics.execution import ExecutionError
+
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        empty_subdir = tmp_path / "empty"
+        empty_subdir.mkdir()
+        cfg = self._make_source_config("annote", profiles_dir="empty")
+        with pytest.raises(ExecutionError, match="profiles.yml"):
+            self._resolver()._expand_dbt_profile(cfg, self._make_dbt_context(tmp_path))
+
+    def test_duckdb_relative_path_resolved_against_dbt_project_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Relative DuckDB path: resolved against dbt_project_path (the dbt project dir).
+
+        dbt resolves a relative path: against the directory it is invoked from —
+        the dbt project root (where dbt_project.yml lives), NOT the directory that
+        contains profiles.yml. When profiles_dir points at a subdir (services/dbt/),
+        a relative path: ./warehouse.duckdb must resolve to dbt_project_path/warehouse.duckdb
+        so Dataface opens the same file a real `dbt run` would have written.
+        """
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        subdir = tmp_path / "services" / "dbt"
+        subdir.mkdir(parents=True)
+        (subdir / "profiles.yml").write_text(
+            yaml.dump(
+                {
+                    "myproj": {
+                        "target": "dev",
+                        "outputs": {
+                            "dev": {"type": "duckdb", "path": "./warehouse.duckdb"}
+                        },
+                    }
+                }
+            )
+        )
+        # profiles_dir points at services/dbt/; but relative DuckDB path is resolved
+        # against dbt_project_path (where dbt_project.yml lives), matching dbt behavior.
+        cfg = self._make_source_config("myproj", profiles_dir="services/dbt")
+        result = self._resolver()._expand_dbt_profile(
+            cfg, self._make_dbt_context(tmp_path)
+        )
+
+        # Path resolved against dbt_project_path, NOT profiles_path.parent (services/dbt/)
+        assert result.type == "duckdb"
+        assert result.path == str((tmp_path / "warehouse.duckdb").resolve())  # type: ignore[union-attr]
+
+    def test_profile_declared_default_target_honored(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When source target field is unset, the profile's declared default target is used.
+
+        A profile with target: prod and no dev output must resolve prod, not dev.
+        This matches the documented field contract ("defaults to the profile's default
+        target") and infer_dialect_from_dbt's own resolution logic.
+        """
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        (tmp_path / "profiles.yml").write_text(
+            yaml.dump(
+                {
+                    "myproj": {
+                        "target": "prod",
+                        "outputs": {
+                            "prod": {
+                                "type": "snowflake",
+                                "account": "xy12345",
+                                "user": "u",
+                                "database": "db",
+                                "schema": "public",
+                                "warehouse": "wh",
+                            }
+                        },
+                    }
+                }
+            )
+        )
+        # No explicit target in source config — profile declares "target: prod"
+        cfg = self._make_source_config("myproj")
+        result = self._resolver()._expand_dbt_profile(
+            cfg, self._make_dbt_context(tmp_path)
+        )
+
+        assert result.type == "snowflake"
+        assert result.account == "xy12345"  # type: ignore[union-attr]

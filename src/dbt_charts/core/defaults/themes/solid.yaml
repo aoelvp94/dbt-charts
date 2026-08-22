@@ -1,0 +1,258 @@
+# Unified theme: solid
+#
+# Grayscale chrome, vivid data. The split is the whole idea:
+#   CHROME is neutral gray and recedes; DATA carries all the color.
+# That keeps gray free for its real job (de-emphasis, context, "not the story")
+# instead of spending it on single-series marks.
+#
+# THREE ZONES, not a smooth ramp. dbt-grays is dense near white (5 stops in
+# OKL 0.87-0.99), hollow through the middle (2 stops across a 0.37 gap), and
+# dense again near black (5 stops in 0.20-0.50). Any theme touching both ends
+# reads choppy — so solid places its zones deliberately rather than pretending
+# the ladder is even:
+#   INK     #222222 (ink,      OKL 0.25) — data labels, table values, prose
+#   VALUE   #313233 (heading,  OKL 0.32) — quantitative axis readouts, titles
+#   VOICE   #626366 (muted,    OKL 0.50) — category/time labels, support text
+#   ORIENT  #8A8C8F (subtitle, OKL 0.64) — axis titles, legend labels
+#   CHROME  #D0D3D9 (grid-emphasis, OKL 0.87) — measure gridlines + their ticks, borders
+#   SCAFFOLD #EDEFF2 (grid, OKL 0.95) — category/time gridlines + their ticks
+# CHROME and SCAFFOLD split one job in two: gridlines are not a single role. At
+# hairline width the only way to sit the category grid behind the measure grid is
+# contrast, so the two take adjacent-but-distinct rungs.
+# Plus one rung off that ladder, used once: #494A4C (inactive, OKL 0.41) for
+# reference rule/tick marks. Those are author-placed annotations, not chrome and
+# not data, so they sit deliberately between VALUE and CHROME.
+# The ORIENT rung is what vivid skips (it jumps 0.50 -> 0.87); filling it is why
+# solid reads calmer than vivid without editorial's nine-rung fussiness.
+#
+# LINE TEXTURE. stark inherits _base's widths flat. solid widens the spread:
+# hairline gridlines (1.0, down from 1.5) against a heavier zero rule (1.5), so
+# structure and scaffolding stop reading as the same stroke.
+#
+# stark = 1 chrome tier · vivid = 4 coarse tiers · editorial = 9 soft tiers ·
+# solid = 6 placed tiers, grouped into three jobs.
+
+# PARENT. `stark`, not `vivid`, although solid resolves closer to vivid than any
+# other pair in the corpus. Extending vivid would express today's overlap more
+# directly, but it would also make every future vivid retune land here silently —
+# and solid's whole proposition is a rule about restraint that vivid does not
+# share. The structural root is the honest parent; the overlap is convergence,
+# not inheritance.
+extends: stark
+style:
+  background: dbt-grays.white
+  page:
+    background: dbt-grays.white
+  accent: &orient dbt-grays.subtitle    # grayscale accent — no hue in the chrome
+  muted: &voice dbt-grays.muted         # stark collapses this to ink; solid is multi-tier
+  font:
+    color: &ink dbt-grays.ink
+  border:
+    color: &chrome dbt-grays.grid-emphasis
+  title:
+    font:
+      color: &value dbt-grays.heading
+      weight: 600
+    subtitle:
+      font:
+        color: *voice
+  text:
+    font:
+      color: *ink
+
+  charts:
+    color:
+      categorical:
+        # Neutral, because nothing is encoded. This slot fires only when a chart
+        # has no `color:` channel — so hue would be carrying no information.
+        # Spending it there makes colour mean "a mark" instead of "a category",
+        # and leaves nothing in reserve for the moment an author does want to
+        # single something out. Charts that DO encode by hue (a `color:`
+        # channel, a scale, conditional formatting, semantic KPI tones) still
+        # get the full vivid-10 palette; the theme constrains the default, not
+        # the palette.
+        #
+        # ONE stop, no rhythm. editorial/cream cycle three inks across repeated
+        # single-series charts, which works there because every editorial-10
+        # stop is muted and the cycle stays below the reading threshold. On a
+        # vivid palette it reads as an encoding that means nothing.
+        #
+        # `heading`, not black: #000000 renders as a hole on the page. Not
+        # `muted` or lighter either — that rung is where de-emphasised context
+        # data lives, and a default mark is not context.
+        single_series_palette: [dbt-grays.heading]
+
+    axis:
+      line:
+        color: *chrome
+      grid:
+        # Category/time grid. At hairline width there is no thickness left to
+        # subordinate one axis to the other, so contrast does that job: this sits
+        # two rungs closer to the canvas than the measure grid on axis_y.
+        color: dbt-grays.grid
+        width: 1                 # hairline (base is 1.5) — scaffolding, not structure
+      ticks:
+        # A tick and its gridline mark the same value; they read as one mark
+        # crossing the axis line, so the tick takes the grid's rung above.
+        color: dbt-grays.grid
+      labels:
+        font:
+          color: *voice          # category/time labels
+      title:
+        font:
+          color: *orient         # axis titles orient; they don't compete
+
+    axis_y:
+      ticks:
+        width: 1
+        color: *chrome           # tracks the measure grid below
+      grid:
+        color: *chrome           # measure grid reads above the vertical one
+        zero:
+          # Structural, not a mark. This token also paints the unity rule that
+          # percent-format line/area charts draw at 100%, so it can land in the
+          # middle of a plot rather than under it — at ink weight that reads as
+          # a data line. `muted` still separates cleanly from the hairline grid
+          # (OKL 0.50 vs 0.87) without competing with the marks.
+          color: *voice
+          width: 1.5
+
+    axis_quantitative:
+      grid:
+        color: *chrome           # a quantitative x (scatter) is a measure too
+      ticks:
+        color: *chrome           # tracks the quantitative grid above
+        width: 1
+        count: 6                 # sparse, like editorial/vivid
+      labels:
+        font:
+          # Numeric readouts at max contrast — vivid's values-pop posture, and
+          # the same rung this theme already gives every other rendered number
+          # (data labels, table values, tooltip values). heading and ink are
+          # indistinguishable at label size, so matching vivid here costs
+          # nothing perceptually and removes a divergence that had no reason
+          # behind it.
+          color: *ink
+
+    legend:
+      visible: false             # direct-labeling by default
+      label:
+        font:
+          # A legend label names a category, exactly as a category tick label
+          # does — same job, same rung. It sat at ORIENT with the axis titles,
+          # which made it the palest text on the chart: the key you read the
+          # colours with, fainter than the ticks. Axis titles orient; a legend
+          # label identifies.
+          color: *voice
+      title:
+        font:
+          color: *value
+
+    bar:
+      legend:
+        visible: true            # load-bearing for bars that cannot direct-label
+      axis_x:
+        labels:
+          align: inward
+    heatmap:
+      axis_y:
+        labels:
+          align: inward
+    scatter:
+      legend:
+        visible: true            # scatter encodes color/size → needs a legend
+      # Quant×quant keeps even grid weight. `_base` states that as its own 1.5
+      # measure width, which stops tracking once a theme goes hairline — restate
+      # it against this theme's width so both axes stay matched.
+      axis_x:
+        grid:
+          width: 1
+
+    marks:
+      bar:
+        border:
+          radius: 2
+      text:
+        font:
+          color: *ink            # direct data labels sit at full ink
+      rule:
+        stroke:
+          color: dbt-grays.inactive
+      geoshape:
+        fill: *chrome                   # unjoined regions recede into chrome
+
+    # Progress-track gray for both spark surfaces. stark pins the standalone
+    # spark_bar to dbt-grays.fill-muted (#e5e7eb), an off-ladder alias, while
+    # the in-table spark sits on grid-emphasis — two grays for one idea. Pin
+    # both to the same ladder rung so a spark reads identically whether it is
+    # standalone or in a table cell. The filled portion of both is left unset
+    # and resolves through single_series_palette, like any other single-series
+    # mark.
+    spark_bar:
+      bar:
+        background: *chrome
+
+    table:
+      border:
+        color: *chrome
+      header:
+        font:
+          color: *value
+      row:
+        stripe:
+          color: dbt-grays.surface-subtle
+      spark:
+        bar:
+          background: *chrome
+
+    data_table:
+      font:
+        color: *ink
+      label:
+        font:
+          color: *voice
+      divider:
+        color: *chrome
+
+    pie:
+      total:
+        value:
+          font:
+            color: *ink
+        label:
+          font:
+            color: *voice
+
+    # Soft tooltip. stark (the structural root) sets a sharp/thick/no-shadow/
+    # triangle tooltip for its utilitarian voice; solid wants the shadowed card.
+    tooltip:
+      background: dbt-grays.white
+      label:
+        font:
+          # ORIENT, one rung below the legend label — deliberate, not a leftover.
+          # A tooltip label is genuinely subordinate: you are reading the value,
+          # and the label only says which value it is. A legend label is the
+          # opposite — the category name IS the content, which is why that one
+          # sits at VOICE with the tick labels.
+          color: *orient
+      value:
+        font:
+          color: *ink
+      border:
+        color: *chrome
+        width: 0.0
+        radius: 4.0
+      shadow:
+        visible: true
+      swatch:
+        radius: 3.0
+      active_marker: fill
+
+  variables:
+    font:
+      color: *voice
+    border:
+      color: *chrome
+    input:
+      border:
+        color: *chrome

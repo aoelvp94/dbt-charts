@@ -1,0 +1,22 @@
+# Tone palette — warning
+#
+# Six named role slots. No LUT, no interpolation.
+
+name: warning
+description: |
+  Pay attention — something needs input, but nothing's broken.
+  Western learned color convention: amber/gold = caution/slow.
+  Session 4 of M2 palette design.
+
+design_notes: |
+  H=72° — midpoint of exploration candidates W2 and W3. Selected after
+  user feedback that H=60° read too yellow and H=90° too green. Slots
+  tuned for WCAG AA pairing (text-on-bg, solid-on-white).
+
+aliases:
+  bg:           "#fff3e5"    # very light cream-amber background
+  subtle:       "#ffe7ca"    # secondary fill / hover-on-bg
+  border:       "#f0b871"    # mid-tone divider / outline
+  solid:        "#e69812"    # canonical "pay attention" fill
+  solid-hover:  "#c68100"    # darker variant for button hover state
+  text:         "#643f00"    # AA-contrast text color on .bg and on white

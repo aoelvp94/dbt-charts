@@ -1,0 +1,96 @@
+"""Render-time capture of user-visible text truncations.
+
+Generalises the axis-title seam to all truncation surfaces. The ContextVar
+sink is opened by ``_collect_render_warnings`` in ``renderer.py`` before the
+spec-generation/render pass; recording functions called from chart renderers
+write into it as a side-effect, then detectors under ``render/warnings/``
+read the collected dict via ``WarningContext.text_truncations``.
+
+``surface`` discriminates which detector owns the record:
+  "axis_title"   — cartesian x/y axis title (emitters/_cartesian.py)
+  "chart_title"  — chart title or subtitle (title_overflow.py)
+  "kpi_label"    — KPI card label (kpi.py)
+  "table_header" — table column header (table.py)
+  "table_cell"   — table body cell (table.py)
+  "callout_text" — callout title, message, or hint (callout.py)
+  "spark_label"  — spark-bar row label (spark_bar.py)
+
+``authored_field`` is the YAML key or column name the squiggle should point
+at, e.g. "x_label", "title", "label", or a column name for tables.
+``authored_text`` is the full text before truncation.
+"""
+
+from __future__ import annotations
+
+import contextvars
+from collections.abc import Generator
+from contextlib import contextmanager
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict
+
+TruncationSurface = Literal[
+    "axis_title",
+    "chart_title",
+    "kpi_label",
+    "table_header",
+    "table_cell",
+    "callout_text",
+    "spark_label",
+]
+
+
+class TextTruncation(BaseModel):
+    """One text element that was cut with an ellipsis (or clipped) at render."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    surface: TruncationSurface
+    authored_field: str
+    authored_text: str
+
+
+_sinks: contextvars.ContextVar[tuple[dict[str, list[TextTruncation]], ...]] = (
+    contextvars.ContextVar("text_truncation_sinks", default=())
+)
+
+
+@contextmanager
+def collect_text_truncations() -> Generator[dict[str, list[TextTruncation]]]:
+    """Open a fresh sink; yield the collected map of chart_id → truncations.
+
+    ``record_text_truncation`` writes into the innermost open sink while the
+    context is open. Nested opens do not leak — each yields its own dict.
+    """
+    collected: dict[str, list[TextTruncation]] = {}
+    token = _sinks.set((*_sinks.get(), collected))
+    try:
+        yield collected
+    finally:
+        _sinks.reset(token)
+
+
+def record_text_truncation(
+    chart_id: str,
+    surface: TruncationSurface,
+    authored_text: str,
+    authored_field: str,
+) -> None:
+    """Record one truncated text element into the innermost open sink, if any.
+
+    No-op when no sink is open (e.g. during the main SVG render, where the
+    warning-collection pass has not opened a sink yet).
+    """
+    sinks = _sinks.get()
+    if not sinks:
+        return
+    sink = sinks[-1]
+    if chart_id not in sink:
+        sink[chart_id] = []
+    sink[chart_id].append(
+        TextTruncation(
+            surface=surface,
+            authored_field=authored_field,
+            authored_text=authored_text,
+        )
+    )

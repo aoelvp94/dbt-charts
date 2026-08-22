@@ -1,0 +1,36 @@
+# Visible board that extends the _dark-brand hidden base.
+#
+# ./_dark-brand.yml is a path ref anchored to this file's directory.
+# Theme name ("neon") must come first so _dark-brand.yml (last) wins in
+# the style merge — later extends entries have higher priority.
+# style.accent is inherited from _dark-brand; not set here.
+
+title: Product Performance (dark brand)
+description: >
+  Demonstrates extending a hidden board (./_dark-brand.yml) to inherit a shared
+  dark theme and brand accent colour.
+
+source: examples_db
+
+extends:
+  - neon
+  - ./_dark-brand.yml
+
+queries:
+  category_revenue:
+    columns: [category, revenue]
+    values:
+      - ["Electronics", 151980]
+      - ["Accessories", 48840]
+      - ["Tools", 34900]
+
+charts:
+  by_category:
+    query: category_revenue
+    type: bar
+    x: category
+    y: revenue
+
+rows:
+  - cols:
+      - by_category

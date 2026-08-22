@@ -1,0 +1,23 @@
+# Diverging palette — dbt-div-orange-teal-dark (dark-canvas fork)
+#
+
+name: dbt-div-orange-teal-dark
+family: diverging
+description: Warm orange (low) to teal (high). Symmetric arms; fully CVD-safe. Non-politically-loaded.
+  Dark-canvas fork.
+design_notes: 'Dark-canvas fork of dbt-div-orange-teal. Dark near-neutral midpoint (#322f2f) recedes toward
+  canvas; poles brighten+saturate outward. Source pole hues preserved.
+
+  '
+colors:
+- '#f69a5a'
+- '#ea833c'
+- '#d46d27'
+- '#a35d2d'
+- '#744d32'
+- '#322f2f'
+- '#327471'
+- '#2da39e'
+- '#27d4ce'
+- '#3ceae3'
+- '#5af6f1'

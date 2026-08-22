@@ -1,0 +1,35 @@
+title: Bar Mirror — Mixed-Sign Data
+description: |
+  Regression check: style.axis_y.mirror on a single-series bar chart whose
+  y-values are mixed-sign (both positive and negative). The corner-radius
+  split (positive bars get a top-corner radius, negative bars a bottom-corner
+  radius) used to pop the y encoding off the outer spec, breaking mirror's
+  lookup. Should render a y-axis on both edges without crashing.
+theme: editorial
+source: examples_db
+
+queries:
+  net_change:
+    type: values
+    columns: [month, net_change]
+    values:
+      - ["Jan", 100]
+      - ["Feb", -40]
+      - ["Mar", 260]
+      - ["Apr", -120]
+      - ["May", 80]
+
+charts:
+  net_change_mirrored:
+    query: net_change
+    type: bar
+    x: month
+    y: net_change
+    style:
+      orientation: vertical
+      axis_y:
+        mirror: true
+
+rows:
+- cols:
+  - net_change_mirrored

@@ -1,0 +1,173 @@
+title: "Fivetran + dbt Celebration"
+
+source: duckdb_local
+
+queries:
+  revenue_with_projection: |
+    -- Generate exponential curve revenue data (hardcoded for reliability)
+    WITH revenue_data AS (
+      SELECT * FROM VALUES
+        ('2024-01', 0, 'Actual', 100000.0),
+        ('2024-02', 1, 'Actual', 115000.0),
+        ('2024-03', 2, 'Actual', 132250.0),
+        ('2024-04', 3, 'Actual', 152087.5),
+        ('2024-05', 4, 'Actual', 174900.6),
+        ('2024-06', 5, 'Actual', 201135.7),
+        ('2024-07', 6, 'Actual', 231306.1),
+        ('2024-08', 7, 'Actual', 266002.0),
+        ('2024-09', 8, 'Actual', 305902.3),
+        ('2024-10', 9, 'Projected', 917706.9),
+        ('2024-11', 10, 'Projected', 1055362.9),
+        ('2024-12', 11, 'Projected', 1213667.4)
+      AS t(month, month_num, revenue_type, revenue)
+    )
+    SELECT
+      month,
+      month_num,
+      revenue_type,
+      ROUND(revenue, 2) AS revenue
+    FROM revenue_data
+    ORDER BY month_num
+
+charts:
+  revenue_chart:
+    title: "Revenue Over Time"
+    query: revenue_with_projection
+    type: line
+    x: month
+    y: revenue
+    color: revenue_type
+
+rows:
+  # Header section with logos and wild styling
+  - cols:
+      - style:
+          background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
+          padding: 30
+          border:
+            radius: 15
+          margin: "0 0 20px 0"
+        text: |
+          # 🚀 Welcome to the Wildest Dashboard! 🚀
+
+          ## The Ultimate dbt charts Showcase
+
+          This dashboard demonstrates **ALL** the advanced markup features you can use!
+
+          ### Powered By:
+
+          <div style="display: flex; gap: 10px; align-items: center; margin: 15px 0; flex-wrap: wrap; justify-content: center;">
+            <img src="/assets/images/dbt-logo.svg" alt="dbt logo" style="height: 24px; max-width: 80px; background: white; padding: 4px 8px; border-radius: 4px;" />
+            <span style="font-size: 16px; font-weight: bold; color: white;">+</span>
+            <img src="/assets/images/fivetran-logo.svg" alt="Fivetran logo" style="height: 24px; max-width: 100px; background: white; padding: 4px 8px; border-radius: 4px;" />
+          </div>
+
+          ---
+
+          > **💡 Pro Tip:** This dashboard uses tables, lists, code blocks, emojis, and more!
+
+          | Feature | Status | Notes |
+          |--------|--------|-------|
+          | Markdown | ✅ | Full support |
+          | Images | ✅ | Inline logos |
+          | Tables | ✅ | This table! |
+          | Code | ✅ | `inline code` |
+          | Lists | ✅ | Bullet points |
+          | Emojis | ✅ | 🎉🎊✨ |
+
+  # The Big Question Section
+  - cols:
+      - style:
+          background: "#fff3cd"
+          padding: 25
+          border:
+            width: 3
+            color: "#ffc107"
+            radius: 10
+          margin: "0 0 20px 0"
+        text: |
+          ## 🤔 The Multi-Billion Dollar Question 🤔
+
+          ### Have dbt and Fivetran merged yet?!
+
+          <div style="font-size: 24px; margin: 20px 0;">
+            <label style="cursor: pointer; display: inline-flex; align-items: center; gap: 10px;">
+              <input type="checkbox" id="merge-checkbox" style="width: 24px; height: 24px;" />
+              <strong>YES! They merged! 🎉</strong>
+            </label>
+          </div>
+
+  # Content showcase section
+  - cols:
+      - style:
+          background: "#e3f2fd"
+          padding: 20
+          border:
+            radius: 10
+        text: |
+          ### 📊 Code Blocks
+
+          ```sql
+          SELECT
+            region,
+            SUM(revenue) AS total
+          FROM orders
+          GROUP BY region
+          ```
+
+          You can show SQL, Python, YAML, or any code!
+
+      - style:
+          background: "#f3e5f5"
+          padding: 20
+          border:
+            radius: 10
+        text: |
+          ### 📝 Lists & Formatting
+
+          **Bold text** and *italic text* work great!
+
+          - Unordered lists
+          - With multiple items
+          - And nested sub-items
+
+          > Blockquotes are perfect for callouts!
+
+  # The ONE chart (as requested)
+  - title: "📈 Revenue Growth (Exponential Curve)"
+    cols:
+      - revenue_chart
+
+  # Footer with more advanced features
+  - cols:
+      - style:
+          background: "#1a1a1a"
+          color: "#ffffff"
+          padding: 30
+          border:
+            radius: 15
+          margin: "20px 0 0 0"
+        text: |
+          ## 🌟 Advanced Markup Features Showcase 🌟
+
+          ### Links
+
+          Check out [dbt](https://www.getdbt.com) and [Fivetran](https://www.fivetran.com)!
+
+          ### Inline Code
+
+          Use `code` for variable names, functions, or SQL snippets!
+
+          ### Emoji Support
+
+          🎉 🎊 ✨ 🚀 📊 📈 📉 💡 ⚡ 🔥 💯 🎯 🏆
+
+          ### Mixed Content
+
+          You can combine **everything**:
+          - Lists with `code`
+          - **Bold** and *italic* together
+          - Tables with emojis 🎨
+          - Images with text
+
+          > **Final Note:** This dashboard is intentionally wild to showcase all features!

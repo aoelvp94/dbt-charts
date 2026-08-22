@@ -1,0 +1,23 @@
+# Diverging palette — crimson-green (financial loss/gain)
+#
+
+name: dbt-div-crimson-green
+family: diverging
+description: Crimson (low/loss) to green (high/gain). Session 3 red-green exploration D2 design.
+design_notes: |
+  Hue pair H=355°/150° with light asymmetry (dark crimson + light green)
+  engineered to pass CVD where symmetric red-green normally fails. Paired
+  with icon/label in production use per R8 discipline.
+
+colors:
+  - "#540a31"
+  - "#7f2a51"
+  - "#a94c75"
+  - "#c37e99"
+  - "#d9afbe"
+  - "#e4e4e4"
+  - "#a9caae"
+  - "#72ac7e"
+  - "#338f4e"
+  - "#0a6b31"
+  - "#00481d"

@@ -1,0 +1,22 @@
+# Sequential palette — brown
+#
+# Hand-authored 11-stop spine. Downsamples drive seq palette resolution.
+
+name: dbt-seq-brown
+family: sequential
+description: Low-chroma warm ramp (cream → tan → warm-brown). Pairs with the cream theme. Renamed from dbt-seq-warm; hexes unchanged.
+design_notes: |
+  Monotonic L* from 0.95 → 0.25. Low chroma to harmonize with dbt-creams scaffold on warm-canvas themes. Renamed from dbt-seq-warm in Session 8; hexes unchanged.
+
+colors:
+  - "#f3eee6"    # step 1 — lightest
+  - "#e7d3cb"
+  - "#d6baad"
+  - "#c4a391"
+  - "#b08d76"
+  - "#9b785e"    # step 6 — mid
+  - "#856447"
+  - "#6e5233"
+  - "#584020"
+  - "#422f11"
+  - "#341911"    # step 11 — darkest

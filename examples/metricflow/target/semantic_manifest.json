@@ -1,0 +1,52 @@
+{
+  "semantic_models": [
+    {
+      "name": "orders",
+      "node_relation": {
+        "alias": "orders",
+        "schema_name": "main",
+        "relation_name": "main.orders"
+      },
+      "entities": [
+        { "name": "order_id", "type": "primary", "expr": "order_id" }
+      ],
+      "measures": [
+        {
+          "name": "total_revenue",
+          "agg": "sum",
+          "expr": "revenue",
+          "agg_time_dimension": "order_date"
+        }
+      ],
+      "dimensions": [
+        {
+          "name": "order_date",
+          "type": "time",
+          "type_params": { "time_granularity": "day" },
+          "expr": "order_date"
+        },
+        { "name": "region", "type": "categorical", "expr": "region" }
+      ]
+    }
+  ],
+  "metrics": [
+    {
+      "name": "total_revenue",
+      "type": "simple",
+      "type_params": { "measure": { "name": "total_revenue" } }
+    }
+  ],
+  "project_configuration": {
+    "time_spine_table_configurations": [],
+    "time_spines": [
+      {
+        "node_relation": {
+          "alias": "time_spine_day",
+          "schema_name": "main",
+          "relation_name": "main.time_spine_day"
+        },
+        "primary_column": { "name": "date_day", "time_granularity": "day" }
+      }
+    ]
+  }
+}

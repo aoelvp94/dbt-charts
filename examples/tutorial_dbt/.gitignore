@@ -1,0 +1,9 @@
+# dbt generated files
+target/
+logs/
+dbt_packages/
+dbt_modules/
+
+# IDE
+.idea/
+*.iml

@@ -1,0 +1,4 @@
+queries:
+  shared_kpi:
+    sql: SELECT 1 AS n
+    source: db

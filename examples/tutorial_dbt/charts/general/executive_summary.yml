@@ -1,0 +1,35 @@
+title: "Executive Summary"
+source: duckdb_local
+
+text: |
+  A high-level snapshot of company performance for executive review.
+  These KPIs represent our core business health metrics.
+
+  📈 *Updated daily at 6:00 AM UTC*
+
+queries:
+  sales_totals: |
+    SELECT
+      SUM(revenue) AS total_revenue,
+      COUNT(*) AS order_count
+    FROM {{ ref('fct_orders') }}
+
+charts:
+  revenue_kpi:
+    label: "Total Revenue"
+    query: sales_totals
+    type: kpi
+    value: total_revenue
+
+  orders_kpi:
+    label: "Total Orders"
+    query: sales_totals
+    type: kpi
+    value: order_count
+
+rows:
+  - id: kpi_section
+    title: "Key Performance Indicators"
+    cols:
+      - revenue_kpi
+      - orders_kpi

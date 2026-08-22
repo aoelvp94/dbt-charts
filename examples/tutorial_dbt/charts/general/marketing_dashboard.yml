@@ -1,0 +1,97 @@
+# Marketing Command Center
+title: "Marketing Command Center"
+source: duckdb_local
+
+text: |
+  Track your marketing spend, conversions, and ROI across all channels.
+
+queries:
+  spend: |
+    SELECT SUM(revenue) AS total_spend
+    FROM {{ ref('fct_orders') }}
+
+  clicks: |
+    SELECT COUNT(*) AS total_clicks
+    FROM {{ ref('fct_orders') }}
+
+  roi: |
+    SELECT SUM(revenue) / COUNT(DISTINCT customer_id) AS roi
+    FROM {{ ref('fct_orders') }}
+
+  spend_trend: |
+    SELECT
+      DATE_TRUNC('month', order_date)::VARCHAR AS month,
+      SUM(revenue) AS total_spend
+    FROM {{ ref('fct_orders') }}
+    GROUP BY 1
+    ORDER BY 1 DESC
+
+  channel_mix: |
+    SELECT
+      region AS channel,
+      SUM(revenue) AS total_spend
+    FROM {{ ref('fct_orders') }}
+    GROUP BY 1
+    ORDER BY 2 DESC
+
+  campaigns: |
+    SELECT
+      region AS campaign_name,
+      SUM(revenue) AS total_spend,
+      COUNT(*) AS total_clicks,
+      COUNT(DISTINCT customer_id) AS conversions
+    FROM {{ ref('fct_orders') }}
+    GROUP BY 1
+    ORDER BY 2 DESC
+
+charts:
+  spend_kpi:
+    label: "Total Spend"
+    type: kpi
+    query: spend
+    value: total_spend
+
+  clicks_kpi:
+    label: "Total Clicks"
+    type: kpi
+    query: clicks
+    value: total_clicks
+
+  roi_kpi:
+    label: "ROI"
+    type: kpi
+    query: roi
+    value: roi
+
+  spend_trend_chart:
+    title: "Spend Over Time"
+    type: line
+    query: spend_trend
+    x: month
+    y: total_spend
+
+  channel_mix_chart:
+    title: "Channel Mix"
+    type: bar
+    query: channel_mix
+    x: channel
+    y: total_spend
+
+  campaigns_table:
+    title: "Campaign Performance"
+    type: table
+    query: campaigns
+
+rows:
+  - height: "100px"
+    cols:
+      - spend_kpi
+      - clicks_kpi
+      - roi_kpi
+
+  - cols:
+      - spend_trend_chart
+      - channel_mix_chart
+
+  - cols:
+      - campaigns_table

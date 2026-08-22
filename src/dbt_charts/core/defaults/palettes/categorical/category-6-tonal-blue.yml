@@ -1,0 +1,22 @@
+# Categorical palette — category-6-tonal-blue
+#
+# Single-hue categorical palette anchored on vivid-10 slot 0 (blue, H≈248.8°
+# in OKLCH). Strict-safe core of 4 stops (color-alone CVD-safe under Leonardo
+# ΔE ≥ 11) plus 2 extended stops that REQUIRE redundant form encoding
+# (dash/marker/pattern) past slot 4. See docs/guides/palettes.md#tonal-monochrome-category-6-tonal-.
+
+name: category-6-tonal-blue
+description: |
+  Tonal monochromatic blue palette. 6 stops at fixed hue (H≈248.8°), all in
+  the blue family. Use for editorial / brand-restrained dashboards that want
+  one hue throughout. Strict-safe core: slots 0-3 (Leonardo ΔE ≥ 11 pairwise).
+  Extended: slots 4-5 (require dash, marker, or pattern redundancy past slot 4).
+  See docs/guides/palettes.md#tonal-monochrome-category-6-tonal-.
+
+colors:
+  - "#0375c4"    # 0 — bluish (anchor / default single-series)
+  - "#81b3e5"    # 1 — carolina blue (light tint)
+  - "#004a7f"    # 2 — prussian blue (dark saturated)
+  - "#002341"    # 3 — marine (very dark)
+  - "#6f89a3"    # 4 — blue/grey (extended; form-redundant)
+  - "#c2d3e4"    # 5 — light blue grey (extended; form-redundant)

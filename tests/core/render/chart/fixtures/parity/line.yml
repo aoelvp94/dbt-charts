@@ -1,0 +1,13 @@
+chart_id: chart1
+chart:
+  type: line
+  query: q
+  x: month
+  y: revenue
+queries:
+  q:
+    columns: [month, revenue]
+    values:
+      - [Jan, 100]
+      - [Feb, 200]
+      - [Mar, 150]

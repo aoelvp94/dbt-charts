@@ -1,0 +1,19 @@
+title: "Sources"
+
+queries:
+  sources:
+    type: schema
+
+charts:
+  source_list:
+    title: Sources
+    type: table
+    query: sources
+    link: "/data/{{ name }}/"
+    style:
+      columns:
+        name:
+          label: Source
+
+rows:
+  - source_list

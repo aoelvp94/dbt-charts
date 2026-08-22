@@ -1,0 +1,234 @@
+"""Generic patch-model factory for compiled style/config models.
+
+This module owns two public factories:
+
+``build_patch_model(compiled_cls)``
+    All-Optional authored-overlay variant.  Nested BaseModel fields are
+    recursively converted to their Patch versions
+    (e.g. ``PaddingStyle → PaddingStylePatch | None``).  Use for ``*Patch``
+    types in ``authored.py``.
+
+``build_patch_model_ext(compiled_cls, is_recursive)``
+    Parameterised variant.  Pass ``is_recursive=False`` to make every field
+    ``T | None = None`` while keeping nested BaseModel fields as their
+    original compiled types (e.g. ``PaddingStyle | None``).  Use for
+    cascade-sentinel bases where cascade fills fields with compiled values.
+
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from functools import cache
+from typing import Annotated, Any, ForwardRef, Union
+
+from pydantic import BaseModel, ConfigDict, Field, create_model
+from pydantic_core import PydanticUndefinedType
+
+from dbt_charts.core.compile.models.markers import (
+    Facet,
+    Inherit,
+    InheritSlot,
+    Merge,
+    SkipInheritSlots,
+)
+
+# Marker types forwarded verbatim from the canonical model field to its Patch
+# variant. `Facet` covers the whole semantic vocabulary at once: a facet states
+# what the field *means*, which a patch of it means just as much, so a new one
+# must never have to be added here to survive generation.
+_FORWARDED_MARKER_TYPES = (Inherit, InheritSlot, SkipInheritSlots, Merge, Facet)
+
+
+class _PatchBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+# Maps compiled class → its hand-written patch class, consulted before synthesis.
+# Prevents build_patch_model from synthesising a duplicate when a hand-written patch
+# already exists for a compiled type (e.g. BorderStyle → BorderStylePatch).
+_PATCH_REGISTRY: dict[type, type] = {}
+
+
+def register_patch(compiled_cls: type[BaseModel]) -> Callable[[type], type]:
+    """Decorator: register a hand-written patch class for compiled_cls.
+
+    Apply to the patch class so the registration lives next to the definition:
+
+        @register_patch(BorderStyle)
+        class BorderStylePatch(BaseModel): ...
+    """
+
+    def decorator(patch_cls: type) -> type:
+        _PATCH_REGISTRY[compiled_cls] = patch_cls
+        return patch_cls
+
+    return decorator
+
+
+def register_as_own_patch(cls: type[BaseModel]) -> type[BaseModel]:
+    """Register cls as its own patch (already all-optional, no compiled counterpart).
+
+    Use for models that are authored-only patch shapes with no corresponding compiled
+    class — e.g. ``BorderStylePatch``.  Prevents ``build_patch_model`` from recursively
+    synthesising a ``BorderStylePatchPatch`` when it encounters the type as a field.
+    """
+    _PATCH_REGISTRY[cls] = cls
+    return cls
+
+
+def _has_required_fields(cls: type[BaseModel]) -> bool:
+    """Return True if any field on cls has no default (is required)."""
+    return any(
+        isinstance(fi.default, PydanticUndefinedType) and fi.default_factory is None
+        for fi in cls.model_fields.values()
+    )
+
+
+def _is_extra_allow_section(cls: type) -> bool:
+    """True for a BaseModel that is an ``extra="allow"`` keyed-collection section.
+
+    Such a section stores its real payload as named extras (``<field>.<name>: {...}``)
+    and carries ``Merge(Strategy.BY_KEY)`` on the parent field — i.e. it merges as a
+    dict keyed by name, not field-by-field. The faithful patch shape for such a
+    section is a plain ``dict``: it accepts any named entry (extra="forbid" patches
+    would reject them) and ``merge_patches`` merges it natively via the by_key
+    branch (``{**lower, **upper}``).
+    """
+    return issubclass(cls, BaseModel) and cls.model_config.get("extra") == "allow"
+
+
+def _is_optional(annotation: Any) -> bool:
+    """Return True if annotation already includes NoneType."""
+    args = getattr(annotation, "__args__", ())
+    return type(None) in args
+
+
+def _unwrap_optional_base_model(annotation: Any) -> type[BaseModel] | None:
+    """If annotation is `T | None` where T is a single BaseModel subclass, return T; else None."""
+    if not _is_optional(annotation):
+        return None
+    inner_types = [a for a in annotation.__args__ if a is not type(None)]
+    if len(inner_types) != 1:
+        return None
+    inner = inner_types[0]
+    if isinstance(inner, type) and issubclass(inner, BaseModel):
+        return inner
+    return None
+
+
+def _make_patch_annotation(annotation: Any, *, is_recursive: bool) -> Any:
+    """Make annotation Optional, optionally recursing into nested BaseModel fields."""
+    if annotation is None or annotation is type(None):
+        return type(None)
+    # Any | None ≡ Any — wrapping is vacuous and misleads type-checkers.
+    if annotation is Any:
+        return Any
+    if is_recursive:
+        # T | None where T is a BaseModel: recurse to produce PatchT | None.
+        # Without this, the compiled T (with required fields) ends up in the patch
+        # annotation instead of the all-Optional patch variant.
+        if inner := _unwrap_optional_base_model(annotation):
+            if _is_extra_allow_section(inner):
+                return dict[str, Any] | None
+            if issubclass(inner, _PatchBase) and not _has_required_fields(inner):
+                return inner | None
+            return build_patch_model_ext(inner, is_recursive=True) | None
+        if _is_optional(annotation):
+            # Union with None but inner is not a single BaseModel — keep as-is.
+            return annotation
+        # Bare BaseModel subclass → recurse to get its patch version.
+        # _PatchBase subclasses are typically all-Optional patch types — return as-is,
+        # UNLESS they add required fields (e.g. RootFontStyle adds emoji: Literal[...]).
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            if _is_extra_allow_section(annotation):
+                return dict[str, Any] | None
+            if issubclass(annotation, _PatchBase) and not _has_required_fields(
+                annotation
+            ):
+                return annotation | None
+            return build_patch_model_ext(annotation, is_recursive=True) | None
+    else:
+        # Non-recursive: already-optional annotations pass through unchanged;
+        # everything else falls to the `annotation | None` below.
+        if _is_optional(annotation):
+            return annotation
+    # ForwardRef participates in runtime model generation here; Python 3.10 cannot do
+    # `ForwardRef(...) | None`, so keep the explicit Union form for that narrow case.
+    if isinstance(annotation, ForwardRef):
+        return Union[annotation, None]  # noqa: UP007
+    # Scalars, list[X], Union types without None, and (when non-recursive) BaseModel
+    # subclasses all land here — just wrap with None.
+    return annotation | None
+
+
+@cache
+def build_patch_model_ext(
+    compiled_cls: type[BaseModel],
+    is_recursive: bool = True,
+    base_cls: type[BaseModel] | None = None,
+) -> type[BaseModel]:
+    """Generate an all-Optional model from a compiled model.
+
+    Args:
+        compiled_cls: The compiled Pydantic model to patch.
+        is_recursive: When True (default), nested BaseModel fields are
+            recursively converted to their Patch versions
+            (e.g. ``PaddingStyle → PaddingStylePatch | None``).
+            When False, every field becomes ``T | None = None`` while keeping
+            original compiled types for nested BaseModels
+            (e.g. ``PaddingStyle | None``).  Use False for cascade-sentinel
+            bases where the cascade fills fields with compiled-type values.
+        base_cls: Override the generated model's base class. Defaults to
+            ``_PatchBase``. Pass a subclass of ``_PatchBase`` to inject
+            validators into the generated patch model (e.g. desugar mixins).
+
+    Returns:
+        A dynamically created BaseModel subclass named ``<OriginalName>Patch``
+        with all fields Optional and defaulting to None.
+    """
+    if is_recursive and compiled_cls in _PATCH_REGISTRY:
+        return _PATCH_REGISTRY[compiled_cls]
+    fields: dict[str, Any] = {}
+    for name, field_info in compiled_cls.model_fields.items():
+        if field_info.exclude:
+            continue
+        annotation = field_info.annotation
+        patch_annotation = _make_patch_annotation(annotation, is_recursive=is_recursive)
+        # Forward every _FORWARDED_MARKER_TYPES marker from the source field so
+        # the generated patch type carries the same annotations.
+        forwarded_markers = [
+            m
+            for m in (field_info.metadata or [])
+            if isinstance(m, _FORWARDED_MARKER_TYPES)
+        ]
+        if forwarded_markers:
+            # Annotated[tuple([T, m1, ...])] is the portable subscript form (3.10–3.13).
+            patch_annotation = Annotated[tuple([patch_annotation] + forwarded_markers)]
+        fields[name] = (
+            patch_annotation,
+            Field(default=None, description=field_info.description),
+        )
+
+    actual_base = base_cls if base_cls is not None else _PatchBase
+    patch_name = f"{compiled_cls.__name__}Patch"
+    patch_cls = create_model(
+        patch_name,
+        __base__=actual_base,
+        __module__=compiled_cls.__module__,
+        **fields,
+    )
+    compiled_doc = (compiled_cls.__doc__ or "").strip()
+    patch_cls.__doc__ = (
+        f"Authored overlay for {compiled_cls.__name__}. {compiled_doc}".strip()
+    )
+    return patch_cls
+
+
+def build_patch_model(compiled_cls: type[BaseModel]) -> type[BaseModel]:
+    """Generate an all-Optional recursive patch model from a compiled model.
+
+    Equivalent to ``build_patch_model_ext(compiled_cls, is_recursive=True)``.
+    Nested BaseModel fields are recursively converted to their Patch versions.
+    """
+    return build_patch_model_ext(compiled_cls, is_recursive=True)

@@ -1,0 +1,328 @@
+"""Variable utilities for Dataface.
+
+Stage: COMPILE (utilities used by both execute and render)
+Purpose: Shared variable processing functions.
+
+This module provides utilities for working with variables that are needed
+by both the execute and render stages.
+"""
+
+import json
+import math
+from datetime import date, datetime
+from typing import Any
+
+from dbt_charts.core.compile.models.board.normalized import VariableValues
+from dbt_charts.core.compile.models.variable.authored import Variable
+from dbt_charts.core.diagnostics.execution import ExecutionError
+
+
+def parse_variable_json_strings(variables: VariableValues) -> VariableValues:
+    """Parse JSON strings in variables (e.g., from URL parameters).
+
+    When variables come from URL query parameters, complex values like
+    date ranges are often serialized as JSON strings. This function
+    parses them back to their native Python types.
+
+    This function is idempotent - calling it on already-parsed values
+    returns them unchanged.
+
+    Args:
+        variables: Variable values that may contain JSON strings
+
+    Returns:
+        Variables with JSON strings parsed to their actual types
+
+    Example:
+        >>> parse_variable_json_strings({"date_range": '["2024-01-01", "2024-01-31"]'})
+        {"date_range": ["2024-01-01", "2024-01-31"]}
+    """
+    parsed: dict[str, Any] = {}
+    for key, value in variables.items():
+        if isinstance(value, str):
+            # Try to parse as JSON (for date ranges, arrays, objects)
+            if value.startswith("[") or value.startswith("{"):
+                try:
+                    parsed[key] = json.loads(value)
+                except (json.JSONDecodeError, ValueError):
+                    # Not valid JSON, keep as string
+                    parsed[key] = value
+            else:
+                parsed[key] = value
+        else:
+            parsed[key] = value
+    return parsed
+
+
+# Input kinds that carry a non-string SQL type. Everything else (text, select,
+# multiselect, radio, …) stays a string/list and needs no coercion.
+_DATE_INPUTS = frozenset({"date", "datepicker"})
+_NUMBER_INPUTS = frozenset({"number", "slider", "range"})
+# Scalar typed inputs where an empty string means "unset" (→ None), like the
+# renderer's absent-check. daterange is excluded — it handles endpoints itself.
+_SCALAR_TYPED_INPUTS = _DATE_INPUTS | _NUMBER_INPUTS | frozenset({"checkbox"})
+_BOOL_TRUE = frozenset({"true", "1", "yes", "on"})
+_BOOL_FALSE = frozenset({"false", "0", "no", "off"})
+
+# The scalar runtime domain a single-value coercer may receive. Spelled out (not
+# `Any`/`object`) so the coercers stay typed for mypy without tripping the
+# dbt_charts/core type-state gate, which blocks both; broad enough that every
+# isinstance below is meaningful and the trailing type-error raise stays reachable.
+# Container inputs (daterange lists) are dispatched inline in the loop, not
+# through these helpers.
+_Coercible = str | int | float | bool | date
+
+# What a multiselect value can arrive as, once unset has been mapped to an empty
+# sequence by the caller. Spelled out for the same reason `_Coercible` is: the
+# core type-state gate counts explicit `Any` and `| None` nodes, and a public
+# coercer should not be the one exception to the rule this module follows.
+_MultiselectRaw = _Coercible | list[_Coercible] | tuple[_Coercible, ...]
+
+# Unset, in the shape `coerce_multiselect` accepts. Callers map `None` and a
+# missing key onto this rather than the coercer widening its own domain.
+UNSET_MULTISELECT: tuple[_Coercible, ...] = ()
+
+
+def variable_value_is_absent(value: Any) -> bool:
+    """Whether a variable holds no value, by the rule `required:` is checked with.
+
+    None, a blank string, and an empty collection all count: URL params arrive as
+    strings, so `?region=` is as unscoped as no value at all. Falsiness is not the
+    same test — `default: false` on a checkbox and `default: 0` on a slider are
+    values, and reading them as absent is the difference between a control the
+    panel withholds and one it offers.
+    """
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, set)):
+        return len(value) == 0
+    return False
+
+
+def parse_iso_date(value: str) -> date:
+    """Parse an ISO ``YYYY-MM-DD`` string to a ``date``, raising ``ValueError``.
+
+    The shared date parser for both boundaries: the compile-time default check
+    (wraps ValueError as CompilationError) and runtime coercion (wraps it as
+    ExecutionError). Keeping one parser means both agree on what a date is.
+    """
+    return date.fromisoformat(value.strip())
+
+
+def coerce_variable_values(
+    values: VariableValues, registry: dict[str, Variable]
+) -> VariableValues:
+    """Coerce runtime variable values to their declared semantic Python types.
+
+    Runs at the runtime boundary (query execution), after defaults and user
+    values have merged. URL params, CLI, and API values arrive as strings; a
+    ``date`` variable's ``"2024-01-01"`` must reach SQL as a ``date`` object so
+    strict engines get ``DATE '2024-01-01'`` (inline path) or a typed bound
+    parameter — not a varchar that Trino/BigQuery refuse to compare to a date
+    column. The semantic type comes from the variable's ``input`` kind; values
+    that don't match it raise ``ExecutionError`` (fail fast, no silent fixups).
+
+    Names absent from ``registry`` (builtins, dir-navigation context) have no
+    declared type and pass through untouched. An empty string is treated as
+    unset (``None``), matching the renderer's absent-check.
+    """
+    result: VariableValues = {}
+    for name, value in values.items():
+        var = registry.get(name)
+        if var is None:
+            result[name] = value
+            continue
+        kind = var.input
+        if kind == "multiselect":
+            # Ahead of the None check below: an unset multiselect is [], not None.
+            result[name] = coerce_multiselect(
+                UNSET_MULTISELECT if value is None else value
+            )
+            continue
+        if value is None:
+            result[name] = value
+            continue
+        if (
+            isinstance(value, str)
+            and not value.strip()
+            and kind in _SCALAR_TYPED_INPUTS
+        ):
+            result[name] = None  # empty scalar typed input = unset
+        elif kind in _DATE_INPUTS:
+            result[name] = _coerce_date(name, value)
+        elif kind == "daterange":
+            if not isinstance(value, (list, tuple)) or len(value) != 2:
+                raise ExecutionError(
+                    f"Variable '{name}': daterange value must be [start, end], "
+                    f"got {value!r}"
+                )
+            # Each endpoint is None or an empty string (both unset), or a
+            # date/ISO-string. Inlined so the element type is inferred from the
+            # comprehension rather than a separately-written `list[str | None]`
+            # annotation — the type-state counter's `optional` category would
+            # still count that annotation (report-only, not gate-blocking), but
+            # inference reads cleaner here regardless.
+            result[name] = [
+                (
+                    None
+                    if endpoint is None
+                    or (isinstance(endpoint, str) and not endpoint.strip())
+                    else _coerce_date(name, endpoint)
+                )
+                for endpoint in value
+            ]
+        elif kind in _NUMBER_INPUTS:
+            result[name] = _coerce_number(name, value)
+        elif kind == "checkbox":
+            result[name] = _coerce_bool(name, value)
+        else:
+            result[name] = value
+    return result
+
+
+def normalize_multiselect_values(
+    values: VariableValues, registry: dict[str, Variable]
+) -> VariableValues:
+    """Give every registered `multiselect` a list value, adding `[]` when absent.
+
+    The render boundary's counterpart to the coercion `coerce_variable_values`
+    does for queries — same narrowing rule, applied where render merges defaults
+    with runtime values. Render does not run the full coercion (date/number
+    narrowing raises, and a bad date should fail at query time, not while
+    drawing), but a multiselect must be a list on both paths or a heading
+    template safe in one is a crash in the other.
+
+    Absent names matter as much as present ones: a multiselect with no
+    ``default:`` never reaches ``variable_defaults`` at all, so a template would
+    see Jinja's Undefined and ``| join`` would raise — the failure that took
+    down whole boards.
+    """
+    normalized = dict(values)
+    for name, var in registry.items():
+        if var.input == "multiselect":
+            raw = values.get(name)
+            normalized[name] = coerce_multiselect(
+                UNSET_MULTISELECT if raw is None else raw
+            )
+    return normalized
+
+
+def coerce_multiselect(value: _MultiselectRaw) -> list[_Coercible]:
+    """Narrow any runtime shape of a `multiselect` value to `list[str]`.
+
+    One declared input type used to reach templates as three shapes — `list`
+    from a `default:`, `str` after an interaction (the control degrades to a
+    single value and the runtime writes it back as a string), `None` with no
+    default — so every author had to guard `join` by hand, and an unguarded one
+    took down a whole board. This is the single place that shape is decided.
+
+    Unset is `[]`, never `None`: an empty selection means "no filter", and a
+    list is the only shape that makes `{{ v | join(', ') }}` safe unconditionally.
+    Callers map an absent or `None` value onto `UNSET_MULTISELECT` before calling
+    in.
+
+    Members keep their own types. The shape being fixed here is the *container*,
+    not the element: re-typing an integer option to a string would bind a varchar
+    where the column is numeric, which is the silent-stringification failure the
+    surrounding coercers exist to prevent. Display sites stringify for display;
+    the SQL path must not.
+    """
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    if isinstance(value, str) and not value.strip():
+        return []
+    return [value]
+
+
+def _coerce_date(name: str, value: _Coercible) -> date:
+    """Narrow one date/datepicker (or daterange endpoint) value to a ``date``.
+
+    Accepts what the runtime boundary produces — an ISO string or a native
+    ``date`` (from a compile default) — and rejects everything else, notably a
+    ``datetime``: it is a ``date`` subclass, so ``_to_sql_literal`` would emit
+    ``TIMESTAMP`` for it, the exact varchar↔date mismatch this coercion prevents.
+    Callers handle the empty-string-is-unset case before reaching here.
+    """
+    if isinstance(value, datetime):
+        raise ExecutionError(
+            f"Variable '{name}': date value must be a calendar date, not a "
+            f"datetime with a time component, got {value!r}"
+        )
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return parse_iso_date(value)
+        except ValueError:
+            raise ExecutionError(
+                f"Variable '{name}': date value must be an ISO date "
+                f"(YYYY-MM-DD), got {value!r}"
+            ) from None
+    raise ExecutionError(
+        f"Variable '{name}': date value must be a string, got {type(value).__name__}"
+    )
+
+
+def _coerce_number(name: str, value: _Coercible) -> int | float:
+    if isinstance(value, bool):
+        raise ExecutionError(
+            f"Variable '{name}': number value must be numeric, got a boolean"
+        )
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return _require_finite(name, value)
+    if isinstance(value, str):
+        return _parse_number(name, value.strip())
+    raise ExecutionError(
+        f"Variable '{name}': number value must be numeric, got {type(value).__name__}"
+    )
+
+
+def _parse_number(name: str, text: str) -> int | float:
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        parsed = float(text)
+    except ValueError:
+        raise ExecutionError(
+            f"Variable '{name}': number value must be numeric, got {text!r}"
+        ) from None
+    return _require_finite(name, parsed)
+
+
+def _require_finite(name: str, value: float) -> float:
+    if not math.isfinite(value):
+        raise ExecutionError(
+            f"Variable '{name}': number value must be finite, got {value!r}"
+        )
+    return value
+
+
+def _coerce_bool(name: str, value: _Coercible) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in _BOOL_TRUE:
+            return True
+        if text in _BOOL_FALSE:
+            return False
+    raise ExecutionError(
+        f"Variable '{name}': checkbox value must be a boolean, got {value!r}"
+    )
+
+
+__all__ = [
+    "UNSET_MULTISELECT",
+    "coerce_multiselect",
+    "coerce_variable_values",
+    "normalize_multiselect_values",
+    "parse_iso_date",
+    "parse_variable_json_strings",
+    "variable_value_is_absent",
+]

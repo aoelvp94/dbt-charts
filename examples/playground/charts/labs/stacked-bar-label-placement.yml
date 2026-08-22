@@ -1,0 +1,190 @@
+title: "Stacked bar value labels — segment midpoints and the fit test"
+description: >
+  EXPECTED: `position: middle` centers each label inside its OWN stacked
+  segment, and a segment too short to hold its label drops it instead of
+  painting a collision. Before this change `middle` drew nothing at all on a
+  stacked bar (the whole label layer was silently dropped), so authors used
+  `top` — which pins every label to its segment's ceiling, right under the
+  label of the segment above it.
+extends: editorial
+
+queries:
+  starts:
+    columns: [month, plan, logos]
+    values:
+      - ["Jun", "Free", 100]
+      - ["Jun", "Paid", 50]
+      - ["Jul", "Free", 80]
+      - ["Jul", "Paid", 60]
+      - ["Aug", "Free", 30]
+      - ["Aug", "Paid", 4]
+
+  new_starts:
+    columns: [month, plan, logos]
+    values:
+      - ["Jun", "Free", 300]
+      - ["Jun", "Paid", 300]
+      - ["Jul", "Free", 300]
+      - ["Jul", "Paid", 300]
+      - ["Aug", "Free", 40]
+      - ["Aug", "Paid", 300]
+
+charts:
+  ceiling:
+    query: starts
+    type: bar
+    title: "CONTROL — position: top"
+    subtitle: >
+      EXPECTED: each label sits just inside its segment's TOP edge, so it reads
+      as belonging to the boundary rather than to the band. Aug's 4-logo sliver
+      is too short to hold a label and carries none.
+    x: month
+    y: logos
+    color: plan
+    style:
+      stack: zero
+      orientation: vertical
+      marks:
+        bar:
+          labels:
+            visible: true
+            position: top
+
+  centered:
+    query: starts
+    type: bar
+    title: "position: middle"
+    subtitle: >
+      EXPECTED: each label sits at the vertical CENTER of its own segment —
+      100 halfway up Jun's Free band, 50 halfway up Jun's Paid band. Same
+      suppressed sliver on Aug. This drew nothing at all before.
+    x: month
+    y: logos
+    color: plan
+    style:
+      stack: zero
+      orientation: vertical
+      marks:
+        bar:
+          labels:
+            visible: true
+            position: middle
+
+  repro_ceiling:
+    query: starts
+    type: bar
+    title: "REPRO — position: top, with stack totals"
+    subtitle: >
+      EXPECTED: Aug's "30" sits at its segment ceiling, crowding the "34" total
+      drawn just above it — the Fivetran TV "New Starts" collision.
+    x: month
+    y: logos
+    color: plan
+    style:
+      stack: zero
+      orientation: vertical
+      marks:
+        bar:
+          labels:
+            visible: true
+            position: top
+          total_label:
+            visible: true
+
+  repro_centered:
+    query: starts
+    type: bar
+    title: "REPRO FIXED — position: middle, with stack totals"
+    subtitle: >
+      EXPECTED: the same chart, readable. Aug's "30" drops to its band center,
+      clearing the "34" total above it. Nothing overlaps.
+    x: month
+    y: logos
+    color: plan
+    style:
+      stack: zero
+      orientation: vertical
+      marks:
+        bar:
+          labels:
+            visible: true
+            position: middle
+          total_label:
+            visible: true
+
+  short_ceiling:
+    query: starts
+    type: bar
+    title: "SHORT CARD — position: top"
+    subtitle: >
+      EXPECTED: the collision itself. In a short card Aug's "30" and the "34"
+      total are drawn about 3px apart and read as one smudge.
+    x: month
+    y: logos
+    color: plan
+    style:
+      stack: zero
+      orientation: vertical
+      max_height: 150
+      marks:
+        bar:
+          labels:
+            visible: true
+            position: top
+          total_label:
+            visible: true
+
+  short_centered:
+    query: starts
+    type: bar
+    title: "SHORT CARD — position: middle"
+    subtitle: >
+      EXPECTED: the same short card, legible. "30" sits at its band center and
+      the "34" total keeps its own air above the bar.
+    x: month
+    y: logos
+    color: plan
+    style:
+      stack: zero
+      orientation: vertical
+      max_height: 150
+      marks:
+        bar:
+          labels:
+            visible: true
+            position: middle
+          total_label:
+            visible: true
+
+  plot_rect:
+    query: new_starts
+    type: bar
+    title: "PLOT RECT — a segment measured against the box it is drawn in"
+    subtitle: >
+      EXPECTED: Aug's 40-logo segment carries NO label. On a 283px card with a
+      pinned 0-800 axis, chrome leaves a plot rectangle near 220px, so 40 logos
+      is about 11px of room for a label that needs 12.65px. Measured against
+      the whole card instead, the threshold is 35.7 units and the label is
+      wrongly kept. Every 300 keeps its label.
+    x: month
+    y: logos
+    color: plan
+    style:
+      stack: zero
+      orientation: vertical
+      max_height: 283
+      axis_y:
+        scale:
+          continuous:
+            domain: [0, 800]
+      marks:
+        bar:
+          labels:
+            visible: true
+            position: middle
+
+rows:
+  - cols: [ceiling, centered]
+  - cols: [repro_ceiling, repro_centered]
+  - cols: [short_ceiling, short_centered]
+  - cols: [plot_rect]

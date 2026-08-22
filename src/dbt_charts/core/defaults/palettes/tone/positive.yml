@@ -1,0 +1,22 @@
+# Tone palette — positive
+#
+# Six named role slots. No LUT, no interpolation.
+
+name: positive
+description: |
+  Confirmed successful actions, gains, completions.
+  Western learned color convention: green = go/good/safe.
+  Session 4 of M2 palette design.
+
+design_notes: |
+  Blue-shifted green (H=155°), not pure green (H=135°). Picked so negative.solid
+  ↔ positive.solid pass CVD ΔE. solid L=0.55 sits just under vivid-10 green L≈0.66.
+  Paired with icon + label in production use.
+
+aliases:
+  bg:           "#e3f8e9"    # very light green background
+  subtle:       "#cff2da"    # secondary fill / hover-on-bg
+  border:       "#82cb9b"    # mid-tone divider / outline
+  solid:        "#00884d"    # canonical "all good" fill
+  solid-hover:  "#006d3c"    # darker variant for button hover state
+  text:         "#003e20"    # AA-contrast text color on .bg and on white

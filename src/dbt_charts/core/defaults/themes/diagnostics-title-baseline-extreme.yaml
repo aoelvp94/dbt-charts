@@ -1,0 +1,8 @@
+# Unified theme: diagnostics-title-baseline-extreme
+
+extends: stark
+style:
+  title:
+    position:
+      anchor: start
+      baseline: bottom

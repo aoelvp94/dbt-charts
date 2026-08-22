@@ -1,0 +1,149 @@
+title: Grouped Bar Overlap
+description: |
+  Demonstrates `style.bar.overlap` — the within-group spacing dial for grouped
+  bars. Positive overlaps, 0 touches, negative gaps. Keywords: `none` (small
+  gap), `flush` (touching), `partial` (25% overlap), `full` (bars coincide),
+  `auto` (default — 2 series → partial, 3+ series → none).
+
+  Same query within each block; the only field that varies is
+  `style.overlap` (and `style.orientation` for the columns block).
+
+  Row 1 shows the spectrum as vertical columns; row 2 is the same spectrum as
+  horizontal bars (default auto-orientation for a categorical x). Row 3 covers
+  the `auto` default at 2 vs 3 series.
+
+  Positive overlap (`partial`/`full`) is only valid for 2 series — overlapping
+  3+ series buries the middle one, so it raises an error; `auto` backs off to
+  `none` at 3+ automatically. 2-series blocks use status (new / solved); the
+  3-series block uses channel (email / api / chat).
+
+style:
+  charts:
+    legend:
+      position: top
+      direction: horizontal
+
+source: dundersign_db
+queries:
+  by_priority_status:
+    sql: |
+      SELECT priority, status, COUNT(*) AS tickets
+      FROM tickets
+      WHERE priority IN ('low', 'normal', 'high', 'urgent')
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+  by_priority_channel:
+    sql: |
+      SELECT priority, via_channel, COUNT(*) AS tickets
+      FROM tickets
+      WHERE priority IN ('low', 'normal', 'high', 'urgent')
+        AND via_channel IN ('email', 'api', 'chat')
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+
+charts:
+  c2_none:
+    query: by_priority_status
+    type: bar
+    title: "Columns · none"
+    subtitle: small gap
+    x: priority
+    y: tickets
+    color: status
+    style:
+      orientation: vertical
+      overlap: none
+  c2_flush:
+    query: by_priority_status
+    type: bar
+    title: "Columns · flush"
+    subtitle: touching (hairline only)
+    x: priority
+    y: tickets
+    color: status
+    style:
+      orientation: vertical
+      overlap: flush
+  c2_partial:
+    query: by_priority_status
+    type: bar
+    title: "Columns · partial (2-series default)"
+    subtitle: ~25% overlap
+    x: priority
+    y: tickets
+    color: status
+    style:
+      orientation: vertical
+      overlap: partial
+  c2_full:
+    query: by_priority_status
+    type: bar
+    title: "Columns · full"
+    subtitle: bars coincide
+    x: priority
+    y: tickets
+    color: status
+    style:
+      orientation: vertical
+      overlap: full
+  g2_none:
+    query: by_priority_status
+    type: bar
+    title: "Bars · none"
+    subtitle: small gap
+    x: priority
+    y: tickets
+    color: status
+    style:
+      overlap: none
+  g2_flush:
+    query: by_priority_status
+    type: bar
+    title: "Bars · flush"
+    subtitle: touching (hairline only)
+    x: priority
+    y: tickets
+    color: status
+    style:
+      overlap: flush
+  g2_partial:
+    query: by_priority_status
+    type: bar
+    title: "Bars · partial (2-series default)"
+    subtitle: ~25% overlap
+    x: priority
+    y: tickets
+    color: status
+    style:
+      overlap: partial
+  g2_full:
+    query: by_priority_status
+    type: bar
+    title: "Bars · full"
+    subtitle: bars coincide
+    x: priority
+    y: tickets
+    color: status
+    style:
+      overlap: full
+  g2_auto:
+    query: by_priority_status
+    type: bar
+    title: "Bars · auto (default)"
+    subtitle: auto → partial at 2 series
+    x: priority
+    y: tickets
+    color: status
+  g3_auto:
+    query: by_priority_channel
+    type: bar
+    title: "3 series · auto (default)"
+    subtitle: auto → gap at 3 series (positive overlap is disallowed for 3+)
+    x: priority
+    y: tickets
+    color: via_channel
+
+rows:
+  - cols: ['c2_none', 'c2_flush', 'c2_partial', 'c2_full']
+  - cols: ['g2_none', 'g2_flush', 'g2_partial', 'g2_full']
+  - cols: ['g2_auto', 'g3_auto']

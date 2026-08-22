@@ -1,0 +1,94 @@
+# dbt charts Project Configuration — examples/playground
+#
+# Self-contained gallery project. examples/ is a container of independent
+# projects; this file makes playground one of them.
+
+server:
+  port: 19410
+
+sources:
+  # DuckDB example database (built from CSVs via build_examples_db.py)
+  # duckdb_config opts the source into enable_external_access=True so every
+  # connection to this file (SqlAdapter, LayeredSchemaResolver, super-schema)
+  # opens with the same config. DuckDB rejects mismatched configs on the same
+  # file; declaring the value once on the source keeps all openers consistent.
+  examples_db:
+    type: duckdb
+    path: examples.duckdb
+    duckdb_config:
+      enable_external_access: true
+
+  # Dundersign demo company — sampled schema inside examples.duckdb
+  dundersign_db:
+    type: duckdb
+    path: examples.duckdb
+    schema: dundersign
+    duckdb_config:
+      enable_external_access: true
+
+  # Demo-parity source for the docs copy/paste fences. Every environment in
+  # the Dundersign lineage names its warehouse source `db` (the
+  # examples/dundersign_dbt project, the dundersign_bigquery deployment, and
+  # the cloud demo org), so a docs fence that says `source: db` resolves here
+  # and in docs CI, and is schema-compatible with the demo datasets (two-part
+  # refs like dundersign.users / dundersign_serving.monthly_metrics name
+  # schemas here, datasets on BigQuery).
+  db:
+    type: duckdb
+    path: examples.duckdb
+    duckdb_config:
+      enable_external_access: true
+
+  # DuckDB source for dev-only labs boards only. The ../tutorial_dbt sibling path
+  # resolves in the repo but NOT in an installed wheel (labs are excluded from the
+  # bundle), so no shipped gallery board may reference this source.
+  duckdb_local:
+    type: duckdb
+    path: ../tutorial_dbt/data/sample.duckdb
+    duckdb_config:
+      enable_external_access: true
+
+  # Named CSV file sources for the table/KPI specimen boards. files: paths are
+  # relative to this project root, so they resolve no matter which charts/
+  # subdirectory references them — unlike a per-query relative source: path,
+  # which the playground cannot resolve (see libs/playground/AGENTS.md).
+  kpi_specimens:
+    type: csv
+    files:
+      quarterly_kpis: charts/assets/data/kpi-specimens/quarterly_kpis.csv
+
+  table_specimens:
+    type: csv
+    files:
+      company_revenue: charts/assets/data/table-specimens/company_revenue.csv
+      company_revenue_with_total: charts/assets/data/table-specimens/company_revenue_with_total.csv
+      company_revenue_with_avg: charts/assets/data/table-specimens/company_revenue_with_avg.csv
+      company_revenue_full_summary: charts/assets/data/table-specimens/company_revenue_full_summary.csv
+      us_states_top8: charts/assets/data/table-specimens/us_states_top8.csv
+      growth_rates: charts/assets/data/table-specimens/growth_rates.csv
+      growth_rates_pct: charts/assets/data/table-specimens/growth_rates_pct.csv
+      country_gdp: charts/assets/data/table-specimens/country_gdp.csv
+      country_gdp_with_avg_col: charts/assets/data/table-specimens/country_gdp_with_avg_col.csv
+      museum_visitors: charts/assets/data/table-specimens/museum_visitors.csv
+      sales_pipeline: charts/assets/data/table-specimens/sales_pipeline.csv
+      state_demographics: charts/assets/data/table-specimens/state_demographics.csv
+      events_dates: charts/assets/data/table-specimens/events_dates.csv
+      events_dates_full: charts/assets/data/table-specimens/events_dates_full.csv
+
+  area_stack_modes:
+    type: csv
+    files:
+      three_series: charts/assets/data/area-stack-modes/three_series.csv
+
+  chart_lab_import_review:
+    type: csv
+    files:
+      lab_vertical_bar: charts/assets/data/chart-lab-import-review/lab_vertical_bar.csv
+      lab_line_multi_2: charts/assets/data/chart-lab-import-review/lab_line_multi_2.csv
+      lab_line_multi_6: charts/assets/data/chart-lab-import-review/lab_line_multi_6.csv
+      lab_area_multi_2: charts/assets/data/chart-lab-import-review/lab_area_multi_2.csv
+      lab_bar_category: charts/assets/data/chart-lab-import-review/lab_bar_category.csv
+      lab_column_line_combo: charts/assets/data/chart-lab-import-review/lab_column_line_combo.csv
+      lab_column_stacked: charts/assets/data/chart-lab-import-review/lab_column_stacked.csv
+      lab_donut_2: charts/assets/data/chart-lab-import-review/lab_donut_2.csv
+      lab_donut_6: charts/assets/data/chart-lab-import-review/lab_donut_6.csv

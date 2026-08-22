@@ -1,0 +1,7 @@
+# Unified theme: diagnostics-title-center
+
+extends: stark
+style:
+  title:
+    position:
+      anchor: middle

@@ -1,0 +1,152 @@
+"""Theme-stage style classes: Style root."""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from dbt_charts.core.compile.models.markers import Color
+from dbt_charts.core.compile.models.primitives import (
+    BorderStyle,
+    SpacingValues,
+)
+from dbt_charts.core.compile.models.schema_names import PaletteName
+from dbt_charts.core.compile.models.style.theme.board import (
+    FrameStyle,
+    PlaceholderStyle,
+    RootFontStyle,
+    TextStyle,
+    TitleStyle,
+)
+from dbt_charts.core.compile.models.style.theme.charts import (
+    ChartsStyle,
+)
+from dbt_charts.core.compile.models.style.theme.layout import (
+    LayoutStyle,
+)
+from dbt_charts.core.compile.models.style.theme.page import (
+    FooterStyle,
+    PageStyle,
+    TimestampStyle,
+)
+from dbt_charts.core.compile.models.style.theme.variables import (
+    VariablesStyle,
+)
+
+
+class Style(BaseModel):
+    """Authoritative compiled style. Built from a single theme YAML file.
+
+    All sections present with defaults matching themes/stark.yaml.
+    This is the 'compiled from theme' layer — not yet resolved/cascaded.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    frame: FrameStyle = Field(description="Board-level structural frame dimensions.")
+    background: Annotated[str, Color()] = Field(
+        description="Working-surface background color (board and card fills)."
+    )
+    # Semantic color tokens — set once at root level, cascade to UI chrome.
+    # accent: focus_color, input.focus_color (via Inherit)
+    # muted: secondary TEXT only (KPI support rows, table/spark subtitles,
+    # more-rows/empty-state lines). Bar-track fills are required theme
+    # values (spark_bar.bar.background, table.spark.bar.background) — they
+    # used to Inherit from muted, which conflated fill- and text-grade grays.
+    # font.color: tick.stroke.color, rule.stroke.color (via Inherit)
+    # spark colors (spark.color, spark.bar.color, spark_bar.bar.color) seed from
+    # single_series_palette[0] in resolved.py — not Inherit, since list indexing
+    # can't be expressed as a declarative path.
+    accent: Annotated[str, Color()] = Field(
+        description="Accent color token cascaded to sparklines, bars, and focus rings."
+    )
+    muted: Annotated[str, Color()] = Field(
+        description="Muted secondary-text color token (KPI support rows, table and spark subtitles)."
+    )
+    font: RootFontStyle = Field(
+        description="Root font configuration including emoji mode."
+    )
+    border: BorderStyle = Field(
+        description="Default border style cascaded to all chart cards."
+    )
+    box_shadow: str | None = Field(
+        default=None,
+        description="CSS box shadow for chart cards; None means no shadow.",
+    )
+    opacity: float = Field(description="Default mark opacity (0–1).")
+    title: TitleStyle = Field(description="Board and board title style.")
+    text: TextStyle = Field(description="Markdown and plain text content style.")
+    placeholder: PlaceholderStyle = Field(
+        description="Placeholder overlay style for empty charts."
+    )
+    charts: ChartsStyle = Field(
+        description="Root of all chart-type styles and shared chart configuration."
+    )
+    layout: LayoutStyle = Field(
+        description="Layout container styles (rows, cols, grid, tabs, details)."
+    )
+    variables: VariablesStyle = Field(description="Variable controls chrome style.")
+    page: PageStyle = Field(description="Page-level canvas style (behind the board).")
+    footer: FooterStyle = Field(description="Page footer chrome visibility.")
+    timestamp: TimestampStyle = Field(
+        description="Data-freshness chrome: visibility, placement, format, and font."
+    )
+    # Cascade-managed sentinel — None means "no aliases at this cascade level" (not empty).
+    # The default theme ships None (all built-in names are engine-predefined, not theme aliases).
+    # Board YAML patches may supply user-defined aliases (→ dict) or omit (→ None).
+    # merge_onto_base key-wise merges board-level aliases onto theme aliases so board keys win
+    # while unredefined theme keys propagate. None is intentional here — unlike other
+    # Compiled fields the theme populates, this sentinel distinguishes "no override"
+    # from "empty override" across every cascade step, not just the base.
+    formats: dict[str, str] | None = Field(
+        default=None,
+        description="Format alias map; None means no aliases at this cascade level.",
+    )
+    # Theme palette role assignments.
+    # Keys (role names) stay open — no enforced enum. Values are looked up as
+    # an exact key against the shipped palette index (palette.py's
+    # color_from_theme); unlike ScaleTargetConfig.palette/
+    # CategoricalColorStyle.palette, nothing here ever goes through the
+    # name:N_r shorthand parser, so a bare PaletteName is the only legal
+    # value — no str fallback arm needed.
+    # Default theme seeds conventional roles (chrome, info, negative, positive,
+    # warning, category, sequence, diverge). Child themes may override
+    # individual roles.
+    # None = not authored at this cascade level.
+    palettes: dict[str, PaletteName] | None = Field(
+        default=None,
+        description=(
+            "Theme palette role assignments: open dict mapping role name to palette file name. "
+            "Default seed: chrome, info, negative, positive, warning, category, sequence, diverge."
+        ),
+    )
+    # Top-level theme role shortcuts.
+    # Optional bare aliases: e.g. ink → chrome.heading. Board authors write the
+    # bare name; resolver dispatches via the dotted palette address.
+    # None = no top-level aliases at this cascade level.
+    roles: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "Optional top-level theme role aliases: bare name → role.alias. "
+            "e.g. ink: chrome.heading"
+        ),
+    )
+    # Not theme-populated; per-board authored CSS-chrome. None = no padding override.
+    padding: SpacingValues | None = Field(
+        default=None,
+        description="Per-board padding override (CSS shorthand or structured).",
+    )
+    # Not theme-populated; per-board authored CSS-chrome. None = no margin override.
+    margin: SpacingValues | None = Field(
+        default=None,
+        description="Per-board margin override (CSS shorthand or structured).",
+    )
+    # Not theme-populated; per-board gap override in pixels. None = use layout gap token.
+    gap: float | None = Field(
+        default=None, description="Per-board gap between layout items in pixels."
+    )
+    # Not theme-populated; per-board text color override. None = inherit from theme.
+    color: Annotated[str | None, Color()] = Field(
+        default=None, description="Per-board text color override as a CSS color string."
+    )

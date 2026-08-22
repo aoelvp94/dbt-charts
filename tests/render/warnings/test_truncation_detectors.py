@@ -1,0 +1,290 @@
+"""Tests for the five new text-truncation detector modules.
+
+One detector per surface: chart_title, kpi_label, table_header, table_cell,
+callout_text, spark_label.  Each test builds a WarningContext with a
+TextTruncation record for the relevant surface and asserts the detector fires.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from dbt_charts.core.diagnostics import (
+    WARN_CALLOUT_TEXT_TRUNCATED,
+    WARN_CHART_TITLE_TRUNCATED,
+    WARN_KPI_LABEL_TRUNCATED,
+    WARN_SPARK_LABEL_TRUNCATED,
+    WARN_TABLE_TEXT_TRUNCATED,
+)
+from dbt_charts.core.render.chart.text_truncation import TextTruncation
+from dbt_charts.core.render.warnings import (
+    callout_text_truncated,
+    chart_title_truncated,
+    kpi_label_truncated,
+    spark_label_truncated,
+    table_text_truncated,
+)
+from dbt_charts.core.render.warnings.base import WarningContext
+
+from ...core._board_utils import make_test_resolved_board, make_test_resolved_chart
+
+
+def _ctx(
+    chart_id: str,
+    truncations: list[TextTruncation],
+    rows: list[dict[str, Any]] | None = None,
+) -> WarningContext:
+    from dbt_charts.core.compile.models.chart.normalized import BarChart
+
+    chart = BarChart(id=chart_id, type="bar", query_name="q", x="x", y="y")
+    chart_rows = rows or [{"x": "a", "y": 1}]
+    resolved = make_test_resolved_chart(chart, chart_rows)
+    board = make_test_resolved_board(charts={resolved.id: resolved})
+    return WarningContext(
+        board_spec=board,
+        chart_results={chart_id: chart_rows},
+        vega_specs={},
+        text_truncations={chart_id: truncations},
+    )
+
+
+# ── chart_title ────────────────────────────────────────────────────────────────
+
+
+def test_chart_title_detector_fires_on_title_truncation() -> None:
+    ctx = _ctx(
+        "c1",
+        [
+            TextTruncation(
+                surface="chart_title",
+                authored_field="title",
+                authored_text="A Very Long Title",
+            )
+        ],
+    )
+    warnings = chart_title_truncated.detect(ctx)
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert w.code == WARN_CHART_TITLE_TRUNCATED.code
+    assert w.chart == "c1"
+    assert "c1" in w.message
+    assert "title" in w.message
+    assert w.path == "charts.c1.title"
+
+
+def test_chart_title_detector_ignores_other_surfaces() -> None:
+    ctx = _ctx(
+        "c2",
+        [
+            TextTruncation(
+                surface="kpi_label", authored_field="label", authored_text="Long Label"
+            )
+        ],
+    )
+    assert chart_title_truncated.detect(ctx) == []
+
+
+def test_chart_title_detector_silent_when_no_truncations() -> None:
+    from dbt_charts.core.compile.models.chart.normalized import BarChart
+
+    chart = BarChart(id="c3", type="bar", query_name="q", x="x", y="y")
+    rows: list[dict[str, Any]] = [{"x": "a", "y": 1}]
+    resolved = make_test_resolved_chart(chart, rows)
+    board = make_test_resolved_board(charts={resolved.id: resolved})
+    ctx = WarningContext(
+        board_spec=board,
+        chart_results={"c3": rows},
+        vega_specs={},
+    )
+    assert chart_title_truncated.detect(ctx) == []
+
+
+# ── kpi_label ─────────────────────────────────────────────────────────────────
+
+
+def test_kpi_label_detector_fires_on_label_truncation() -> None:
+    ctx = _ctx(
+        "k1",
+        [
+            TextTruncation(
+                surface="kpi_label",
+                authored_field="label",
+                authored_text="A Very Long KPI Label",
+            )
+        ],
+    )
+    warnings = kpi_label_truncated.detect(ctx)
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert w.code == WARN_KPI_LABEL_TRUNCATED.code
+    assert w.chart == "k1"
+    assert "k1" in w.message
+    assert w.path == "charts.k1.label"
+
+
+def test_kpi_label_detector_ignores_other_surfaces() -> None:
+    ctx = _ctx(
+        "k2",
+        [
+            TextTruncation(
+                surface="chart_title", authored_field="title", authored_text="Title"
+            )
+        ],
+    )
+    assert kpi_label_truncated.detect(ctx) == []
+
+
+# ── table_text ────────────────────────────────────────────────────────────────
+
+
+def test_table_text_detector_fires_on_header_truncation() -> None:
+    ctx = _ctx(
+        "t1",
+        [
+            TextTruncation(
+                surface="table_header",
+                authored_field="revenue",
+                authored_text="Revenue Per Quarter",
+            )
+        ],
+    )
+    warnings = table_text_truncated.detect(ctx)
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert w.code == WARN_TABLE_TEXT_TRUNCATED.code
+    assert w.chart == "t1"
+    assert "revenue" in w.message
+    assert w.path == "charts.t1.revenue"
+
+
+def test_table_text_detector_fires_on_cell_truncation() -> None:
+    ctx = _ctx(
+        "t2",
+        [
+            TextTruncation(
+                surface="table_cell",
+                authored_field="description",
+                authored_text="A long description value",
+            )
+        ],
+    )
+    warnings = table_text_truncated.detect(ctx)
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert w.code == WARN_TABLE_TEXT_TRUNCATED.code
+    assert "description" in w.message
+
+
+def test_table_text_detector_deduplicates_per_column() -> None:
+    """Multiple cell truncations in the same column → one warning per column."""
+    ctx = _ctx(
+        "t3",
+        [
+            TextTruncation(
+                surface="table_cell",
+                authored_field="notes",
+                authored_text="First long value",
+            ),
+            TextTruncation(
+                surface="table_cell",
+                authored_field="notes",
+                authored_text="Second long value",
+            ),
+            TextTruncation(
+                surface="table_cell",
+                authored_field="other",
+                authored_text="Another long value",
+            ),
+        ],
+    )
+    warnings = table_text_truncated.detect(ctx)
+    assert len(warnings) == 2
+    paths = {w.path for w in warnings}
+    assert paths == {"charts.t3.notes", "charts.t3.other"}
+
+
+def test_table_text_detector_ignores_other_surfaces() -> None:
+    ctx = _ctx(
+        "t4",
+        [
+            TextTruncation(
+                surface="chart_title", authored_field="title", authored_text="Title"
+            )
+        ],
+    )
+    assert table_text_truncated.detect(ctx) == []
+
+
+# ── callout_text ──────────────────────────────────────────────────────────────
+
+
+def test_callout_text_detector_fires_on_hint_truncation() -> None:
+    ctx = _ctx(
+        "cl1",
+        [
+            TextTruncation(
+                surface="callout_text",
+                authored_field="hint",
+                authored_text="A very long hint text",
+            )
+        ],
+    )
+    warnings = callout_text_truncated.detect(ctx)
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert w.code == WARN_CALLOUT_TEXT_TRUNCATED.code
+    assert w.chart == "cl1"
+    assert "hint" in w.message
+    assert w.path == "charts.cl1.hint"
+
+
+def test_callout_text_detector_ignores_other_surfaces() -> None:
+    ctx = _ctx(
+        "cl2",
+        [
+            TextTruncation(
+                surface="kpi_label", authored_field="label", authored_text="Label"
+            )
+        ],
+    )
+    assert callout_text_truncated.detect(ctx) == []
+
+
+# ── spark_label ───────────────────────────────────────────────────────────────
+
+
+def test_spark_label_detector_fires_on_label_truncation() -> None:
+    ctx = _ctx(
+        "s1",
+        [
+            TextTruncation(
+                surface="spark_label",
+                authored_field="y",
+                authored_text="A Very Long Category Label",
+            ),
+            TextTruncation(
+                surface="spark_label",
+                authored_field="y",
+                authored_text="Another Long Label",
+            ),
+        ],
+    )
+    warnings = spark_label_truncated.detect(ctx)
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert w.code == WARN_SPARK_LABEL_TRUNCATED.code
+    assert w.chart == "s1"
+    assert "2" in w.message  # truncation_count
+    assert w.path == "charts.s1.y"
+
+
+def test_spark_label_detector_ignores_other_surfaces() -> None:
+    ctx = _ctx(
+        "s2",
+        [
+            TextTruncation(
+                surface="table_cell", authored_field="col", authored_text="value"
+            )
+        ],
+    )
+    assert spark_label_truncated.detect(ctx) == []

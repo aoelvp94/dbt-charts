@@ -1,0 +1,299 @@
+title: Chart-Lab Import Review
+description: |
+  Inspection surface for the supported chart families and the dataset shapes
+  each one expects.
+theme: cream
+source: examples_db
+text: |
+  One representative chart per family, sized for direct comparison:
+  - `line-single`
+  - `line-multi-2`
+  - `line-multi-6`
+  - `area-multi-2`
+  - `bar-category`
+  - `column-timeseries`
+  - `column-line-combo` (actual bars with target line, shared y scale)
+  - `column-difference` (actual vs. target delta, sign-colored bars)
+  - `column-stacked` (endpoint labels at segment midpoints)
+  - `column-stacked-100` (endpoint labels on the normalized 0..100% scale)
+  - `column-grouped` (side-by-side columns, default for multi-series bars)
+  - `donut-2`
+  - `donut-6`
+queries:
+  lab_vertical_bar:
+    type: sql
+    sql: SELECT * FROM lab_vertical_bar
+    source: chart_lab_import_review
+  lab_line_multi_2:
+    type: sql
+    sql: SELECT * FROM lab_line_multi_2
+    source: chart_lab_import_review
+  lab_line_multi_6:
+    type: sql
+    sql: SELECT * FROM lab_line_multi_6
+    source: chart_lab_import_review
+  lab_area_multi_2:
+    type: sql
+    sql: SELECT * FROM lab_area_multi_2
+    source: chart_lab_import_review
+  lab_bar_category:
+    type: sql
+    sql: SELECT * FROM lab_bar_category
+    source: chart_lab_import_review
+  lab_column_line_combo:
+    type: sql
+    sql: SELECT * FROM lab_column_line_combo
+    source: chart_lab_import_review
+  lab_column_stacked:
+    type: sql
+    sql: SELECT * FROM lab_column_stacked
+    source: chart_lab_import_review
+  lab_donut_2:
+    type: sql
+    sql: SELECT * FROM lab_donut_2
+    source: chart_lab_import_review
+  lab_donut_6:
+    type: sql
+    sql: SELECT * FROM lab_donut_6
+    source: chart_lab_import_review
+charts:
+  line_single_review:
+    query: lab_vertical_bar
+    type: line
+    title: Monthly Revenue
+    subtitle: "Family: line-single"
+    x: date
+    y: value
+    style:
+      axis_x:
+        scale:
+          padding: 24
+      axis_y:
+        scale:
+          continuous:
+            zero: false
+        labels:
+          format: currency_compact
+      marks:
+        point:
+          size: 36
+  line_multi_2_review:
+    query: lab_line_multi_2
+    type: line
+    title: Weekly Revenue
+    subtitle: Two-series line.
+    x: date
+    y: value
+    color: series
+    style:
+      axis_x:
+        labels:
+          time_unit: yearquarter
+      axis_y:
+        # Tick ladder is derived, not pinned, so it tracks the data.
+        labels:
+          format: currency_compact
+      endpoint_labels:
+        visible: True
+  line_multi_6_review:
+    query: lab_line_multi_6
+    type: line
+    title: Weekly Revenue
+    subtitle: Six-series line.
+    x: date
+    y: value
+    color: series
+    style:
+      axis_x:
+        labels:
+          time_unit: yearquarter
+      axis_y:
+        labels:
+          format: currency_compact
+      endpoint_labels:
+        visible: True
+  area_review:
+    query: lab_area_multi_2
+    type: area
+    title: Weekly Revenue
+    subtitle: Two-series stacked area.
+    x: date
+    y: value
+    color: series
+    style:
+      color:
+        categorical:
+          palette:
+            - "#2d74b3"
+            - "#40a97b"
+      axis_x:
+        labels:
+          time_unit: yearquarter
+        #fill: linear
+      axis_y:
+        labels:
+          format: currency_compact
+      endpoint_labels:
+        visible: True
+  bar_review:
+    query: lab_bar_category
+    type: bar
+    title: Bar - Category Comparison
+    subtitle: "Family: bar-category"
+    x: category
+    y: value
+    sort:
+      by: value
+      order: desc
+    style:
+      orientation: horizontal
+      axis_y:
+        labels:
+          format: currency_compact
+  column_timeseries_review:
+    query: lab_vertical_bar
+    type: bar
+    title: Column - Timeseries
+    subtitle: "Family: column-timeseries"
+    x: date
+    y: value
+    style:
+      axis_y:
+        labels:
+          format: currency_compact
+  column_line_combo_review:
+    query: lab_column_line_combo
+    type: bar
+    title: Column + Line Combo
+    subtitle: "Family: column-line-combo (actual bars with target line)"
+    x: date
+    y: actual
+    layers:
+      - type: line
+        y: target
+        style:
+          marks:
+            line:
+              stroke:
+                width: 2
+                color: "#dea628"
+            point:
+              size: 48
+              color: "#dea628"
+              filled: False
+    style:
+      axis_x:
+        grid:
+          visible: False
+      axis_y:
+        labels:
+          format: currency_compact
+  column_difference_review:
+    query: lab_column_line_combo
+    type: bar
+    title: Column - Difference
+    subtitle: "Family: column-difference (actual vs. target delta)"
+    x: date
+    y: difference
+    color: direction
+    style:
+      color:
+        categorical:
+          palette:
+            - "#2d74b3"
+            - "#da5a23"
+      stack: zero
+      axis_y:
+        labels:
+          format: currency_compact
+  column_stacked_review:
+    query: lab_column_stacked
+    type: bar
+    title: Column - Stacked
+    subtitle: "Family: column-stacked (absolute values)"
+    x: date
+    y: value
+    color: region
+    style:
+      axis_y:
+        labels:
+          format: currency_compact
+      endpoint_labels:
+        visible: True
+      stack: zero
+  column_stacked_100_review:
+    query: lab_column_stacked
+    type: bar
+    title: Column - 100% Stacked
+    subtitle: "Family: column-stacked-100 (normalized)"
+    x: date
+    y: value
+    color: region
+    style:
+      axis_y:
+        labels:
+          format: percent_whole
+        scale:
+          values:
+          - 0
+          - 0.25
+          - 0.5
+          - 0.75
+          - 1
+      endpoint_labels:
+        visible: True
+      stack: normalize
+  column_grouped_review:
+    query: lab_column_stacked
+    type: bar
+    title: Column - Grouped
+    subtitle: "Family: column-grouped (side-by-side, new default for multi-series)"
+    x: date
+    y: value
+    color: region
+    style:
+      axis_y:
+        labels:
+          format: currency_compact
+  donut_2_review:
+    query: lab_donut_2
+    type: pie
+    title: Donut - Two Slice
+    subtitle: "Family: donut-2"
+    theta: value
+    color: segment
+    total:
+      label: Total Revenue
+      format: $,.0f
+    style:
+      inner_radius: 0.62
+      marks:
+        slice:
+          labels:
+            template: |
+              {{ percent | format('.0%') }} {{ color }}
+              ${{ (value / 1000) | format('.0f') }}k
+
+  donut_6_review:
+    query: lab_donut_6
+    type: donut
+    title: Donut - Six Slice
+    subtitle: "Family: donut-6"
+    theta: value
+    color: segment
+    style:
+      marks:
+        slice:
+          labels:
+            template: |
+              {{ percent | format('.0%') }} {{ color }}
+              ${{ (value / 1000) | format('.0f') }}k
+
+rows:
+  - {'title': 'Line', 'cols': ['line_single_review', 'line_multi_2_review']}
+  - {'cols': ['line_multi_6_review', 'area_review']}
+  - {'title': 'Bar & Column', 'cols': ['bar_review', 'column_timeseries_review']}
+  - {'cols': ['column_line_combo_review', 'column_difference_review']}
+  - {'cols': ['column_stacked_review', 'column_stacked_100_review']}
+  - {'cols': ['column_grouped_review']}
+  - {'title': 'Donut', 'cols': ['donut_2_review', 'donut_6_review']}

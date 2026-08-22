@@ -1,0 +1,22 @@
+# Sequential palette — dbt-seq-teal-dark (dark-canvas fork)
+#
+
+name: dbt-seq-teal-dark
+family: sequential
+description: Single-hue teal/turquoise. Anchored between cat-10 cyan and editorial-10 teal; replaces dbt-seq-cyan.
+  Dark-canvas fork.
+design_notes: "Dark-canvas fork of dbt-seq-teal. Luminance-monotonic recede\u2192pop; recede end is a\
+  \ low-chroma dark neutral above canvas void, pop end high-chroma with capped lightness so it glows on\
+  \ dark. Hue 185\xB0 from source.\n"
+colors:
+- '#212f30'
+- '#224c50'
+- '#25686e'
+- '#26868e'
+- '#26a4af'
+- '#24c4d1'
+- '#32d6e3'
+- '#4ae0ec'
+- '#63e8f3'
+- '#7feff9'
+- '#9cf5fc'

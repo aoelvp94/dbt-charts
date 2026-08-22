@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title | safe }}</title>
+    <style>
+        {% include "page.css" %}
+    </style>
+{% if controls_css %}    <style>{{ controls_css | safe }}</style>
+{% endif %}
+</head>
+<body>
+{% if chrome %}{{ chrome | safe }}
+{% endif %}    <div class="dataface-wrapper">
+        <div class="dataface-svg-container dataface-board" data-dbt-board>
+            {{ svg | safe }}
+        </div>
+    </div>
+{% if controls_runtime %}    <script>{{ controls_runtime | safe }}</script>
+{% endif %}
+{% if livereload %}    <script>(function(){var s=new EventSource("/__livereload");s.onmessage=function(){location.reload()};})();</script>
+{% endif %}</body>
+</html>

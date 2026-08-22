@@ -1,0 +1,208 @@
+# Customer Analytics Dashboard
+# Analyzes customer behavior, segments, and lifetime value
+
+title: "Customer Analytics"
+description: "Deep dive into customer segments, behavior, and value"
+source: dbt_charts_examples
+
+variables:
+  date_range:
+    options:
+      static: ["Last 30 Days", "Last 90 Days", "Last Year", "All Time"]
+    default: "All Time"
+
+queries:
+  # Customer segments by order frequency
+  customer_segments: |
+    WITH customer_orders AS (
+      SELECT
+        customer_id,
+        customer_name,
+        COUNT(*) as order_count,
+        SUM(revenue) as total_spent,
+        MIN(order_date) as first_order,
+        MAX(order_date) as last_order
+      FROM {{ ref('fct_orders') }}
+      GROUP BY 1, 2
+    )
+    SELECT
+      CASE
+        WHEN order_count >= 5 THEN 'VIP (5+ orders)'
+        WHEN order_count >= 3 THEN 'Regular (3-4 orders)'
+        WHEN order_count >= 2 THEN 'Returning (2 orders)'
+        ELSE 'One-time'
+      END as segment,
+      COUNT(*) as customer_count,
+      ROUND(AVG(total_spent), 2) as avg_lifetime_value,
+      ROUND(SUM(total_spent), 2) as segment_revenue
+    FROM customer_orders
+    GROUP BY 1
+    ORDER BY customer_count DESC
+
+  # Top customers by revenue
+  top_customers: |
+    SELECT
+      customer_name,
+      COUNT(*) as orders,
+      ROUND(SUM(revenue), 2) as total_revenue,
+      ROUND(AVG(revenue), 2) as avg_order_value,
+      MIN(order_date) as first_order,
+      MAX(order_date) as last_order
+    FROM {{ ref('fct_orders') }}
+    WHERE customer_name IS NOT NULL
+    GROUP BY 1
+    ORDER BY total_revenue DESC
+    LIMIT 15
+
+  # Customer acquisition over time
+  customer_acquisition: |
+    WITH first_orders AS (
+      SELECT
+        customer_id,
+        MIN(order_date) as first_order_date
+      FROM {{ ref('fct_orders') }}
+      GROUP BY 1
+    )
+    SELECT
+      DATE_TRUNC('month', first_order_date) as month,
+      COUNT(*) as new_customers
+    FROM first_orders
+    GROUP BY 1
+    ORDER BY 1
+
+  # Revenue by customer tenure
+  revenue_by_tenure: |
+    WITH customer_tenure AS (
+      SELECT
+        customer_id,
+        customer_signup_date,
+        order_date,
+        revenue,
+        CASE
+          WHEN customer_signup_date IS NULL THEN 'Unknown'
+          WHEN order_date - customer_signup_date < 30 THEN '< 30 days'
+          WHEN order_date - customer_signup_date < 90 THEN '30-90 days'
+          WHEN order_date - customer_signup_date < 180 THEN '90-180 days'
+          ELSE '180+ days'
+        END as tenure_bucket
+      FROM {{ ref('fct_orders') }}
+    )
+    SELECT
+      tenure_bucket,
+      COUNT(*) as orders,
+      ROUND(SUM(revenue), 2) as total_revenue,
+      ROUND(AVG(revenue), 2) as avg_order_value
+    FROM customer_tenure
+    GROUP BY 1
+    ORDER BY
+      CASE tenure_bucket
+        WHEN '< 30 days' THEN 1
+        WHEN '30-90 days' THEN 2
+        WHEN '90-180 days' THEN 3
+        WHEN '180+ days' THEN 4
+        ELSE 5
+      END
+
+  # Summary metrics
+  summary: |
+    SELECT
+      COUNT(DISTINCT customer_id) as total_customers,
+      ROUND(SUM(revenue) / COUNT(DISTINCT customer_id), 2) as avg_customer_value,
+      ROUND(AVG(revenue), 2) as avg_order_value
+    FROM {{ ref('fct_orders') }}
+
+charts:
+  total_customers:
+    label: "Total Customers"
+    type: kpi
+    query: summary
+    value: total_customers
+    style:
+      value:
+        format: integer
+
+  avg_customer_value:
+    label: "Avg Customer Value"
+    type: kpi
+    query: summary
+    value: avg_customer_value
+    style:
+      value:
+        format: currency
+
+  avg_order_value:
+    label: "Avg Order Value"
+    type: kpi
+    query: summary
+    value: avg_order_value
+    style:
+      value:
+        format: currency
+
+  segment_pie:
+    title: "Customer Segments"
+    type: pie
+    query: customer_segments
+    theta: customer_count
+    color: segment
+    style:
+      marks:
+        slice:
+          labels:
+            template: "{{ '{:.0%}'.format(percent) }} {{ segment }}"
+
+  segment_revenue:
+    title: "Revenue by Segment"
+    type: bar
+    query: customer_segments
+    x: segment
+    y: segment_revenue
+    style:
+      orientation: horizontal
+
+  acquisition_trend:
+    title: "New Customer Acquisition"
+    type: area
+    query: customer_acquisition
+    x: month
+    y: new_customers
+
+  tenure_analysis:
+    title: "Revenue by Customer Tenure"
+    type: bar
+    query: revenue_by_tenure
+    x: tenure_bucket
+    y: total_revenue
+
+  top_customers_table:
+    title: "Top 15 Customers"
+    type: table
+    query: top_customers
+    style:
+      columns:
+        customer_name:
+          label: Customer
+        orders:
+          label: Orders
+        total_revenue:
+          label: Total Revenue
+          format: currency
+        avg_order_value:
+          label: Avg Order
+          format: currency
+
+rows:
+  - cols:
+      - total_customers
+      - avg_customer_value
+      - avg_order_value
+
+  - cols:
+      - segment_pie
+      - segment_revenue
+
+  - cols:
+      - acquisition_trend
+      - tenure_analysis
+
+  - top_customers_table

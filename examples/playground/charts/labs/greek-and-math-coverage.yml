@@ -1,0 +1,52 @@
+title: Greek and Math Coverage — Serif
+description: >
+  Evidence board for the widened font subset, serif half. Every glyph below must be
+  painted by Source Serif 4 — not by a system font that happens to look similar. A
+  screenshot cannot tell those apart; check the drawn advance. Sans half:
+  `greek-and-math-coverage-sans`.
+
+theme: editorial
+
+text: |
+  ## What to check
+
+  The browser paints only from `/static/fonts/*.woff2`. Anything the vendored file
+  lacks falls through to a system font at a different advance width than the engine
+  measured with, which is the defect this board exists to catch.
+
+  **EXPECTED: every line below paints in Source Serif 4, upright and italic.**
+  The served serif is subsetted to the shared text recipe — Latin, punctuation,
+  currency, Greek, Mathematical Operators, super/subscripts and arrows — so every
+  glyph here is one we ship rather than one the reader's machine happens to have.
+
+rows:
+  - text: |
+      ### Greek used as notation
+
+      μ σ α β Δ π λ ρ θ Ω
+
+  - text: |
+      ### Operators
+
+      ≤ ≥ ≈ ≠ ± × ÷ ∑ √ ∞ ∂ ∫ ∈ ⊂
+
+  - text: |
+      ### Positions and trend
+
+      x² x₂ ‰ ° → ← ↑ ↓ ↔
+
+  - text: |
+      ### Italic
+
+      **EXPECTED: this line paints from a subsetted woff2**, the same recipe as
+      the upright — italic is not a narrower face here.
+
+      *μ σ Δ ≤ ≥ ∑ √ ∞ → x²*
+
+  - text: |
+      ### Statistics, as a board would actually write them
+
+      **EXPECTED: no glyph on these two lines is painted by a system font.**
+
+      Revenue grew 12.4% (σ = 3.1, μ = 48.2) — every cohort ≥ 40 and ∑ = 1,204.
+      Confidence interval ±2.3, α = 0.05, effect size ≈ 0.8 → significant.

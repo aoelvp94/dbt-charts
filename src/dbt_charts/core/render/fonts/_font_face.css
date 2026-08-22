@@ -1,0 +1,71 @@
+/* Generated from dbt_charts.core.fonts.FONT_REGISTRY — regenerate with `just gen-font-face-css`. Do not edit by hand. */
+@font-face {
+  font-family: 'Inter Variable';
+  src: url('/static/fonts/InterVariable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inter Variable';
+  src: url('/static/fonts/InterVariable-Italic.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'dbt Sans Tabular';
+  src: url('/static/fonts/DBTSansTabular-Regular.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Source Serif 4';
+  src: url('/static/fonts/SourceSerif4Variable.woff2') format('woff2-variations');
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Source Serif 4';
+  src: url('/static/fonts/SourceSerif4-Italic.woff2') format('woff2-variations');
+  font-weight: 200 900;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Noto Emoji';
+  src: url('/static/fonts/NotoEmoji-Regular.woff2') format('woff2');
+  font-display: swap;
+  unicode-range:
+    U+2139, U+2197-2198, U+231B, U+23F0,
+    U+23F3, U+2600, U+2699, U+26A0-26A1,
+    U+26D4, U+2705, U+270F, U+2728,
+    U+2744, U+274C, U+2753, U+2757,
+    U+27A1, U+2B05-2B07, U+2B50, U+FE0F,
+    U+1F30D-1F30F, U+1F327, U+1F3AF, U+1F3C6,
+    U+1F3E2, U+1F3E6, U+1F41B, U+1F464-1F465,
+    U+1F4A1, U+1F4AF-1F4B0, U+1F4B2-1F4B3, U+1F4B5,
+    U+1F4C1, U+1F4C4-1F4C5, U+1F4C8-1F4CD, U+1F4DD,
+    U+1F4E6, U+1F50D, U+1F517, U+1F525,
+    U+1F527-1F528, U+1F53A-1F53B, U+1F550, U+1F5D3,
+    U+1F600, U+1F610, U+1F61E, U+1F641-1F642,
+    U+1F680, U+1F6AB, U+1F6D2, U+1F6E0,
+    U+1F947, U+1F9FE;
+}
+@font-face {
+  font-family: 'Source Code Pro';
+  src: url('/static/fonts/SourceCodePro-Regular.woff2') format('woff2');
+  font-display: swap;
+}
+@font-face {
+  font-family: 'dbt Serif Oldstyle Tabular';
+  src: url('/static/fonts/DBTSerifOldstyleTabular-Regular.woff2') format('woff2');
+  font-display: swap;
+}
+@font-face {
+  font-family: 'dbt Serif Oldstyle Proportional';
+  src: url('/static/fonts/DBTSerifOldstyleProportional-Regular.woff2') format('woff2');
+  font-display: swap;
+}

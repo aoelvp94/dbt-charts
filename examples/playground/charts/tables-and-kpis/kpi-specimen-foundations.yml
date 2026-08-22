@@ -1,0 +1,295 @@
+title: KPI Specimen Foundations
+description: 'Design evaluation surface for the dbt charts KPI quantitative-text-object (#1754).
+  Each group probes one structural decision: editorial-vs-BI style poles, three-slot
+  anatomy, tone, glyph, support row, and string-literal status. Inspect these as design
+  probes, not finished dashboards.
+
+  '
+source: examples_db
+text: 'KPI is a left-aligned three-slot typographic object: **value**, **label**,
+  optional **support row**. No card chrome by default. Group A compares the editorial
+  (cream + serif) and BI (white + sans) style poles. Groups B–F isolate one design
+  axis each (anatomy, tone, glyph, support row, status).
+
+  '
+queries:
+  q:
+    type: sql
+    sql: SELECT * FROM quarterly_kpis
+    source: kpi_specimens
+charts:
+  variant_editorial:
+    type: kpi
+    query: q
+    label: Quarterly revenue
+    value: revenue
+    style:
+      background: '#FAF7F0'
+      value:
+        format: currency_compact
+        font:
+          family: '''Source Serif 4'', Georgia, ''Times New Roman'', serif'
+    support:
+      value: delta_pct
+      label: vs last quarter
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  variant_bi:
+    type: kpi
+    query: q
+    label: Quarterly revenue
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+      background: '#ffffff'
+    support:
+      value: delta_pct
+      label: vs last quarter
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  anatomy_value_only:
+    type: kpi
+    query: q
+    label: ''
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+  anatomy_value_title:
+    type: kpi
+    query: q
+    label: Quarterly revenue
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+  anatomy_value_title_support:
+    type: kpi
+    query: q
+    label: Quarterly revenue
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+    support:
+      value: delta_pct
+      label: vs last quarter
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  anatomy_wrapping_title_support:
+    type: kpi
+    query: q
+    label: Net new monthly recurring revenue from enterprise tier customers
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+    support:
+      value: delta_pct
+      label: vs last quarter
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  tone_positive:
+    type: kpi
+    query: q
+    label: Tone — positive
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+    support:
+      value: growth_pct
+      label: growth
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  tone_negative:
+    type: kpi
+    query: q
+    label: Tone — negative
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+    support:
+      value: decline_pct
+      label: decline
+      format: percent_delta
+      glyph: ▼
+      tone: negative
+  tone_neutral:
+    type: kpi
+    query: q
+    label: Tone — none (default chrome)
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+    support:
+      value: growth_pct
+      label: change
+      format: percent_delta
+  tone_warning:
+    type: kpi
+    query: q
+    label: Tone — warning
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+    support:
+      value: growth_pct
+      label: at risk
+      format: percent_delta
+      tone: warning
+  glyph_up_positive:
+    type: kpi
+    query: q
+    label: Up arrow (value-row glyph, no tone)
+    value: growth_pct
+    style:
+      value:
+        format: percent_delta
+      glyph:
+        character: ▲
+  glyph_down_negative:
+    type: kpi
+    query: q
+    label: Down arrow (value-row glyph, no tone)
+    value: decline_pct
+    style:
+      value:
+        format: percent_delta
+      glyph:
+        character: ▼
+  glyph_dot_default:
+    type: kpi
+    query: q
+    label: Dot glyph (value-row default)
+    value: growth_pct
+    style:
+      value:
+        format: percent_delta
+      glyph:
+        character: ●
+  color_override:
+    type: kpi
+    query: q
+    label: Value and glyph with explicit style color
+    value: growth_pct
+    style:
+      color: '#bf8700'
+      value:
+        format: percent_delta
+      glyph:
+        character: ▲
+  support_title_only:
+    type: kpi
+    query: q
+    label: Quarterly revenue
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+    support:
+      label: vs last quarter
+  support_value_format:
+    type: kpi
+    query: q
+    label: Quarterly revenue
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+    support:
+      value: delta
+      label: vs last quarter
+      format: +$,.2s
+  support_full:
+    type: kpi
+    query: q
+    label: Quarterly revenue
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+    support:
+      value: delta_pct
+      label: vs last quarter
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  support_negative:
+    type: kpi
+    query: q
+    label: Quarterly revenue
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+    support:
+      value: decline_pct
+      label: vs target
+      format: percent_delta
+      glyph: ▼
+      tone: negative
+  status_string:
+    type: kpi
+    query:
+      rows:
+      - status: On track
+    label: Pipeline status
+    value: status
+    support:
+      glyph: ●
+      label: on track
+      tone: positive
+  status_warning:
+    type: kpi
+    query:
+      rows:
+      - status: At risk
+    label: Risk level
+    value: status
+    support:
+      glyph: ●
+      label: at risk
+      tone: warning
+rows:
+- title: 'A: Style variants — Editorial vs BI'
+  cols:
+  - variant_editorial
+  - variant_bi
+- title: 'B: Three-slot anatomy'
+  cols:
+  - anatomy_value_only
+  - anatomy_value_title
+  - anatomy_value_title_support
+  - anatomy_wrapping_title_support
+- title: 'C: Tone palette'
+  cols:
+  - tone_positive
+  - tone_negative
+  - tone_neutral
+  - tone_warning
+- title: 'D: Glyphs'
+  cols:
+  - glyph_up_positive
+  - glyph_down_negative
+  - glyph_dot_default
+  - color_override
+- title: 'E: Support row'
+  cols:
+  - support_title_only
+  - support_value_format
+  - support_full
+  - support_negative
+- title: 'F: Status (string-literal value)'
+  cols:
+  - status_string
+  - status_warning

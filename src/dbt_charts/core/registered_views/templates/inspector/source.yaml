@@ -1,0 +1,20 @@
+title: [[ ("Inspector: " ~ path.source) | tojson ]]
+
+queries:
+  schemas:
+    type: schema
+    source: [[ path.source | tojson ]]
+
+charts:
+  schema_list:
+    title: Schemas
+    type: table
+    query: schemas
+    link: [[ ("/inspector/" ~ path.source ~ "/{{ name }}/") | tojson ]]
+    style:
+      columns:
+        name:
+          label: Schema
+
+rows:
+  - schema_list

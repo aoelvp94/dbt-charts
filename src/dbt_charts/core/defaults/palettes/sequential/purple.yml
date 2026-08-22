@@ -1,0 +1,22 @@
+# Sequential palette — purple
+#
+# Hand-authored 11-stop spine. Downsamples drive seq palette resolution.
+
+name: dbt-seq-purple
+family: sequential
+description: Single-hue purple. Sits between cat-10 purple and editorial-10 plum via chroma alone.
+design_notes: |
+  Monotonic L* from 0.95 → 0.25. Hue anchored on cat-10 purple (H≈319.1°); c_max=0.11 (down from 0.13). Session 8 retune.
+
+colors:
+  - "#f5eaf8"    # step 1 — lightest
+  - "#e5ceeb"
+  - "#d4b3dd"
+  - "#c29acd"
+  - "#af82bb"
+  - "#9b6ba8"    # step 6 — mid
+  - "#875694"
+  - "#72427e"
+  - "#5c3068"
+  - "#471f51"
+  - "#32113a"    # step 11 — darkest

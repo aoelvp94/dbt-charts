@@ -1,0 +1,28 @@
+title: Board With Variables
+
+variables:
+  region:
+    input: select
+    default: US
+    options:
+      static: [US, EU, APAC]
+
+queries:
+  sales_by_region:
+    sql: |
+      SELECT region, revenue
+      FROM (VALUES ('US', 500), ('EU', 320), ('APAC', 210)) AS t(region, revenue)
+      WHERE region = '{{ region }}'
+    source: mem
+
+charts:
+  region_revenue:
+    type: bar
+    query: sales_by_region
+    x: region
+    y: revenue
+    title: Revenue — {{ region }}
+
+rows:
+  - cols:
+      - region_revenue

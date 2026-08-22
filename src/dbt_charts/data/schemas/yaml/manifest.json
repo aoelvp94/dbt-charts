@@ -1,0 +1,32 @@
+{
+  "schemas": [
+    {
+      "version": "0.3.0",
+      "released_at": "2026-07-31",
+      "file": "0.3.0.json",
+      "sha256": "7d693edf0d1bbbedd132d6f87e2148cf7289c04de95126064f78d5dc95e87b94",
+      "predecessor": null
+    },
+    {
+      "version": "0.3.1",
+      "released_at": "2026-08-04",
+      "file": "0.3.1.json",
+      "sha256": "469e90a26d415caef4be7a306a5f225c0edca62ab382f7448fcd3c9883d98e48",
+      "predecessor": "0.3.0"
+    },
+    {
+      "version": "0.4.0",
+      "released_at": "2026-08-07",
+      "file": "0.4.0.json",
+      "sha256": "6f61fddccb1cea14f8be35ddcd61f01aee6ca884ddbca90fe3d18f762fe93d4c",
+      "predecessor": "0.3.1"
+    },
+    {
+      "version": "0.5.0",
+      "released_at": "2026-08-21",
+      "file": "0.5.0.json",
+      "sha256": "a274d9c4595df8e2afcaeffc415e042568c6013e72383e44a1cb7d89251ba713",
+      "predecessor": "0.4.0"
+    }
+  ]
+}

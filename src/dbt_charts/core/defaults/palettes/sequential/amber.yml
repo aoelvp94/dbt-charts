@@ -1,0 +1,22 @@
+# Sequential palette — amber
+#
+# Hand-authored 11-stop spine. Downsamples drive seq palette resolution.
+
+name: dbt-seq-amber
+family: sequential
+description: Single-hue amber (cream → honey → deep amber). Renamed from dbt-seq-gold; mid-stops read as amber/honey rather than pure gold.
+design_notes: |
+  Monotonic L* from 0.95 → 0.25. Hue anchored on cat-10 gold (H≈82.1°); c_max=0.12 (warm hues need more chroma to read as themselves). Session 8 retune + rename from dbt-seq-gold.
+
+colors:
+  - "#f6edde"    # step 1 — lightest
+  - "#e8d5b2"
+  - "#d9bd8a"
+  - "#c8a565"
+  - "#b68e41"
+  - "#a2781a"    # step 6 — mid
+  - "#8b6400"
+  - "#725200"
+  - "#5a4000"
+  - "#432f00"
+  - "#2e1f00"    # step 11 — darkest

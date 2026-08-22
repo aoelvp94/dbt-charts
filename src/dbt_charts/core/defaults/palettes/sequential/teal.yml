@@ -1,0 +1,22 @@
+# Sequential palette — teal
+#
+# Hand-authored 11-stop spine. Downsamples drive seq palette resolution.
+
+name: dbt-seq-teal
+family: sequential
+description: Single-hue teal/turquoise. Anchored between cat-10 cyan and editorial-10 teal; replaces dbt-seq-cyan.
+design_notes: |
+  Monotonic L* from 0.95 → 0.25. Hue=205° (between editorial-10 teal at 194° and cat-10 cyan at 210°); c_max=0.11. New palette in Session 8.
+
+colors:
+  - "#dff3f5"    # step 1 — lightest
+  - "#b5e1e6"
+  - "#8cced6"
+  - "#64bac4"
+  - "#3aa6b2"
+  - "#00919d"    # step 6 — mid
+  - "#007a85"
+  - "#00646d"
+  - "#004f56"
+  - "#003b40"
+  - "#00272b"    # step 11 — darkest

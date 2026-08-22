@@ -1,0 +1,233 @@
+# Date Column Profile Template
+#
+# Analysis of a date/timestamp column. Schema panel pulls from the
+# LayeredSchemaResolver; live time-series, gap, and distribution panels
+# stay on warehouse SQL.
+#
+# URL: /inspect/date_column/?model=<table>&column=<col>
+#
+# Required variables:
+#   - model: Table/model name
+#   - column: Column name to analyze
+
+title: "Date Column: {{ model }}.{{ column }}"
+
+text: |
+  [Back to {{ model }}](/inspect/model/?model={{ model }}&source_name={{ source_name }})
+
+variables:
+  model:
+    input: text
+    visible: false
+    default: ""
+  column:
+    input: text
+    visible: false
+    default: ""
+  source_name:
+    input: text
+    visible: false
+    default: ""
+  schema_name:
+    input: text
+    visible: false
+    default: ""
+
+queries:
+  column_schema:
+    type: schema
+    source: "{{ source_name }}"
+    schema: "{{ schema_name }}"
+    table: "{{ model }}"
+    column: "{{ column }}"
+
+  # Basic date stats
+  stats:
+    source: "{{ source_name }}"
+    sql: |
+      SELECT
+        COUNT(*) as total_count,
+        COUNT({{ column }}) as non_null_count,
+        COUNT(*) - COUNT({{ column }}) as null_count,
+        ROUND(100.0 * (COUNT(*) - COUNT({{ column }})) / COUNT(*), 2) as null_pct,
+        MIN({{ column }})::DATE as min_date,
+        MAX({{ column }})::DATE as max_date,
+        COUNT(DISTINCT {{ column }}::DATE) as distinct_dates,
+        MAX({{ column }})::DATE - MIN({{ column }})::DATE as date_span_days
+      FROM {{ model }}
+
+  # Records per day
+  daily_counts:
+    source: "{{ source_name }}"
+    sql: |
+      SELECT
+        {{ column }}::DATE as date,
+        COUNT(*) as count
+      FROM {{ model }}
+      WHERE {{ column }} IS NOT NULL
+      GROUP BY {{ column }}::DATE
+      ORDER BY date
+
+  # Day of week distribution
+  dow_distribution:
+    source: "{{ source_name }}"
+    sql: |
+      SELECT
+        CASE DAYOFWEEK({{ column }})
+          WHEN 0 THEN 'Sunday'
+          WHEN 1 THEN 'Monday'
+          WHEN 2 THEN 'Tuesday'
+          WHEN 3 THEN 'Wednesday'
+          WHEN 4 THEN 'Thursday'
+          WHEN 5 THEN 'Friday'
+          WHEN 6 THEN 'Saturday'
+        END as day_of_week,
+        DAYOFWEEK({{ column }}) as dow_num,
+        COUNT(*) as count
+      FROM {{ model }}
+      WHERE {{ column }} IS NOT NULL
+      GROUP BY DAYOFWEEK({{ column }})
+      ORDER BY DAYOFWEEK({{ column }})
+
+  # Monthly distribution
+  monthly_counts:
+    source: "{{ source_name }}"
+    sql: |
+      SELECT
+        DATE_TRUNC('month', {{ column }})::DATE as month,
+        COUNT(*) as count
+      FROM {{ model }}
+      WHERE {{ column }} IS NOT NULL
+      GROUP BY DATE_TRUNC('month', {{ column }})
+      ORDER BY month
+
+  # Date gaps (missing dates)
+  date_gaps:
+    source: "{{ source_name }}"
+    sql: |
+      WITH date_range AS (
+        SELECT GENERATE_SERIES(
+          MIN({{ column }})::DATE,
+          MAX({{ column }})::DATE,
+          INTERVAL '1 day'
+        )::DATE as expected_date
+        FROM {{ model }}
+        WHERE {{ column }} IS NOT NULL
+      ),
+      actual_dates AS (
+        SELECT DISTINCT {{ column }}::DATE as actual_date
+        FROM {{ model }}
+        WHERE {{ column }} IS NOT NULL
+      )
+      SELECT
+        expected_date as missing_date
+      FROM date_range
+      WHERE expected_date NOT IN (SELECT actual_date FROM actual_dates)
+      ORDER BY expected_date
+      LIMIT 50
+
+charts:
+  schema_panel:
+    title: Schema
+    type: table
+    query: column_schema
+    style:
+      columns:
+        name:
+          label: Column
+        actual_type:
+          label: Type
+        role:
+          label: Role
+        semantic_type:
+          label: Semantic
+        description:
+          label: Description
+
+  # Stats KPIs
+  min_date:
+    label: Earliest Date
+    type: kpi
+    query: stats
+    value: min_date
+
+  max_date:
+    label: Latest Date
+    type: kpi
+    query: stats
+    value: max_date
+
+  distinct_dates:
+    label: Distinct Dates
+    type: kpi
+    query: stats
+    value: distinct_dates
+    style:
+      value:
+        format: ",.0f"
+
+  date_span:
+    label: Date Span (Days)
+    type: kpi
+    query: stats
+    value: date_span_days
+    style:
+      value:
+        format: ",.0f"
+
+  null_pct:
+    label: "Null %"
+    type: kpi
+    query: stats
+    value: null_pct
+    style:
+      value:
+        format: ".1f"
+
+  # Time series
+  daily_chart:
+    title: Records per Day
+    type: line
+    query: daily_counts
+    x: date
+    y: count
+
+  # Monthly trend
+  monthly_chart:
+    title: Records per Month
+    type: bar
+    query: monthly_counts
+    x: month
+    y: count
+
+  # Day of week
+  dow_chart:
+    title: Day of Week Distribution
+    type: bar
+    query: dow_distribution
+    x: day_of_week
+    y: count
+
+  # Gaps table
+  gaps_table:
+    title: Missing Dates (first 50)
+    type: table
+    query: date_gaps
+    style:
+      columns:
+        missing_date:
+          label: Missing Date
+
+rows:
+  - schema_panel
+  - cols:
+      - min_date
+      - max_date
+      - distinct_dates
+      - date_span
+      - null_pct
+  - daily_chart
+  - cols:
+      - monthly_chart
+      - dow_chart
+  - gaps_table

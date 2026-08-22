@@ -1,0 +1,179 @@
+theme: stark
+title: Series Label Placement
+description: |
+  Series labels name each plotted series. By default, dbt charts puts those
+  names in a categorical legend on the side of the chart. Set
+  `style.<family>.endpoint_labels.visible: true` to move them **onto the
+  chart**, anchored to where each series actually lives — no more eye-bounce
+  between the legend and the data.
+
+  Where they land depends on the chart family:
+
+  - **Line** — at the right edge, on each line's final point
+  - **Area** — at the right edge, on each band's final value
+  - **Vertical stacked bar** — in a side pane, anchored to each segment's vertical midpoint in the rightmost column
+  - **Horizontal stacked bar** — a single rail **above** the top row, anchored to each segment's horizontal midpoint
+
+  Toggle a chart's `endpoint_labels.visible` to flip between legend-on-side
+  and labels-on-chart and you'll see the categorical legend turn off
+  automatically (the two would encode the same series→colour mapping
+  twice). The y-axis also auto-flips to the left on line/area/vertical-bar
+  so it doesn't collide with the right-edge label pane.
+
+  This feature requires a multi-series chart (the `color` channel). It's a
+  no-op on single-series charts — there's only one series to name.
+
+charts:
+  line_endpoint_labels:
+    query: monthly_revenue_by_product
+    type: line
+    title: Line — labels at each line's right endpoint
+    x: month
+    y: revenue
+    color: product
+    style:
+      endpoint_labels:
+        visible: True
+  area_endpoint_labels:
+    query: monthly_signups_by_channel
+    type: area
+    title: Area — labels at each band's right endpoint
+    x: month
+    y: signups
+    color: channel
+    style:
+      endpoint_labels:
+        visible: True
+  vertical_stacked_endpoint_labels:
+    query: quarterly_tickets_by_priority
+    type: bar
+    title: Vertical stacked bar — labels in a side pane
+    x: quarter
+    y: ticket_count
+    color: priority
+    style:
+      endpoint_labels:
+        visible: True
+      stack: zero
+  horizontal_stacked_endpoint_labels:
+    query: tickets_by_team_priority
+    type: bar
+    title: Horizontal stacked bar — top-row series rail
+    x: team
+    y: ticket_count
+    color: priority
+    style:
+      orientation: horizontal
+      endpoint_labels:
+        visible: True
+      stack: zero
+  horizontal_stacked_no_endpoint_labels:
+    query: tickets_by_team_priority
+    type: bar
+    title: Same chart with the feature OFF — labels in the side legend
+    x: team
+    y: ticket_count
+    color: priority
+    style:
+      orientation: horizontal
+      stack: zero
+queries:
+  monthly_revenue_by_product:
+    columns:
+      - month
+      - product
+      - revenue
+    values:
+      - ['2025-01-01', 'Gadget', 18500]
+      - ['2025-02-01', 'Gadget', 19800]
+      - ['2025-03-01', 'Gadget', 21200]
+      - ['2025-04-01', 'Gadget', 22400]
+      - ['2025-05-01', 'Gadget', 24100]
+      - ['2025-06-01', 'Gadget', 25600]
+      - ['2025-01-01', 'Widget', 12200]
+      - ['2025-02-01', 'Widget', 12900]
+      - ['2025-03-01', 'Widget', 14000]
+      - ['2025-04-01', 'Widget', 14500]
+      - ['2025-05-01', 'Widget', 15400]
+      - ['2025-06-01', 'Widget', 16200]
+      - ['2025-01-01', 'Sprocket', 8700]
+      - ['2025-02-01', 'Sprocket', 9100]
+      - ['2025-03-01', 'Sprocket', 9600]
+      - ['2025-04-01', 'Sprocket', 9900]
+      - ['2025-05-01', 'Sprocket', 10400]
+      - ['2025-06-01', 'Sprocket', 10900]
+  monthly_signups_by_channel:
+    columns:
+      - month
+      - channel
+      - signups
+    values:
+      - ['2025-01-01', 'Organic', 320]
+      - ['2025-02-01', 'Organic', 360]
+      - ['2025-03-01', 'Organic', 410]
+      - ['2025-04-01', 'Organic', 470]
+      - ['2025-05-01', 'Organic', 540]
+      - ['2025-06-01', 'Organic', 590]
+      - ['2025-01-01', 'Paid', 140]
+      - ['2025-02-01', 'Paid', 160]
+      - ['2025-03-01', 'Paid', 175]
+      - ['2025-04-01', 'Paid', 200]
+      - ['2025-05-01', 'Paid', 230]
+      - ['2025-06-01', 'Paid', 260]
+      - ['2025-01-01', 'Partner', 60]
+      - ['2025-02-01', 'Partner', 70]
+      - ['2025-03-01', 'Partner', 85]
+      - ['2025-04-01', 'Partner', 100]
+      - ['2025-05-01', 'Partner', 115]
+      - ['2025-06-01', 'Partner', 130]
+  quarterly_tickets_by_priority:
+    columns:
+      - quarter
+      - priority
+      - ticket_count
+    values:
+      - ['Q1', 'Low', 220]
+      - ['Q1', 'Normal', 380]
+      - ['Q1', 'High', 150]
+      - ['Q1', 'Urgent', 45]
+      - ['Q2', 'Low', 260]
+      - ['Q2', 'Normal', 410]
+      - ['Q2', 'High', 170]
+      - ['Q2', 'Urgent', 55]
+      - ['Q3', 'Low', 290]
+      - ['Q3', 'Normal', 450]
+      - ['Q3', 'High', 190]
+      - ['Q3', 'Urgent', 60]
+      - ['Q4', 'Low', 330]
+      - ['Q4', 'Normal', 490]
+      - ['Q4', 'High', 210]
+      - ['Q4', 'Urgent', 75]
+  tickets_by_team_priority:
+    columns:
+      - team
+      - priority
+      - ticket_count
+    values:
+      - ['Billing', 'Low', 180]
+      - ['Billing', 'Normal', 310]
+      - ['Billing', 'High', 120]
+      - ['Billing', 'Urgent', 35]
+      - ['Onboarding', 'Low', 140]
+      - ['Onboarding', 'Normal', 240]
+      - ['Onboarding', 'High', 90]
+      - ['Onboarding', 'Urgent', 20]
+      - ['Integrations', 'Low', 100]
+      - ['Integrations', 'Normal', 220]
+      - ['Integrations', 'High', 180]
+      - ['Integrations', 'Urgent', 70]
+      - ['Platform', 'Low', 80]
+      - ['Platform', 'Normal', 150]
+      - ['Platform', 'High', 160]
+      - ['Platform', 'Urgent', 95]
+rows:
+  - {'text': 'Series labels name each plotted series. By default, the names sit in\na categorical **legend** off to the side of the chart. Set\n`style.<family>.endpoint_labels.visible: true` to move them **onto\nthe chart**, anchored to where each series actually lives — no more\neye-bounce between the legend and the data.\n'}
+  - {'cols': ['line_endpoint_labels', 'area_endpoint_labels']}
+  - {'text': '## Stacked bars: side pane vs. top-row rail\n\nVertical and horizontal stacked bars place series labels in different\npositions, driven by reading direction. Vertical stacks read\ntop-to-bottom along the measure axis, so per-segment side labels feel\nnatural; horizontal stacks read left-to-right inside one row, so a\nsingle rail above the top row reads as the direct equivalent.\n'}
+  - {'cols': ['vertical_stacked_endpoint_labels', 'horizontal_stacked_endpoint_labels']}
+  - {'text': '## Before and after\n\nThe same horizontal stacked bar, with the feature OFF (default —\ncategorical legend on the side) and ON (top-row rail). When the rail\nis on, the legend turns off automatically: the two would encode the\nsame series→colour mapping twice.\n'}
+  - {'cols': ['horizontal_stacked_no_endpoint_labels', 'horizontal_stacked_endpoint_labels']}

@@ -1,0 +1,19 @@
+title: No Warehouse Board
+
+queries:
+  kpis:
+    type: values
+    columns: [label, value]
+    values:
+      - [Active Users, 1042]
+      - [Sessions Today, 387]
+      - [Avg Duration, 4.2]
+
+charts:
+  kpi_table:
+    type: table
+    query: kpis
+
+rows:
+  - cols:
+      - kpi_table

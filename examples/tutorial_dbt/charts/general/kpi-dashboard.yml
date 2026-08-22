@@ -1,0 +1,67 @@
+title: "Executive KPIs"
+source: duckdb_local
+
+text: |
+  **Key Performance Indicators** — Core metrics driving our business success.
+
+  | Metric | Target | Status |
+  |--------|--------|--------|
+  | Revenue | $50K | 🟢 On Track |
+  | Orders | 500+ | 🟢 On Track |
+  | AOV | $100 | 🟡 Needs Attention |
+  | Customers | 200+ | 🟢 On Track |
+
+queries:
+  totals: |
+    SELECT
+      SUM(revenue) AS total_revenue,
+      COUNT(*) AS order_count,
+      AVG(revenue) AS avg_order_value,
+      COUNT(DISTINCT customer_id) AS customer_count
+    FROM {{ ref('fct_orders') }}
+  trends: |
+    SELECT
+      DATE_TRUNC('month', order_date)::VARCHAR AS month,
+      SUM(revenue) AS total_revenue
+    FROM {{ ref('fct_orders') }}
+    GROUP BY 1
+    ORDER BY 1 DESC
+
+charts:
+  revenue_kpi:
+    label: "Total Revenue"
+    query: totals
+    type: kpi
+    value: total_revenue
+
+  orders_kpi:
+    label: "Total Orders"
+    query: totals
+    type: kpi
+    value: order_count
+
+  aov_kpi:
+    label: "Avg Order Value"
+    query: totals
+    type: kpi
+    value: avg_order_value
+
+  customers_kpi:
+    label: "Customers"
+    query: totals
+    type: kpi
+    value: customer_count
+
+rows:
+  - title: "Key Metrics"
+    grid:
+      columns: 24
+      items:
+        - item: revenue_kpi
+          col_span: 6
+        - item: orders_kpi
+          col_span: 6
+        - item: aov_kpi
+          col_span: 6
+        - item: customers_kpi
+          col_span: 6

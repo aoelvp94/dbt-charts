@@ -1,0 +1,39 @@
+title: "Prose bold weight specimen — 600 vs the old hardcoded bold (700)"
+description: >
+  EXPECTED: bold text in every block below (including table headers) should
+  read at weight 600 — the theme's own bold token — not the browser/CSS-default
+  bold (700). Left column is body size 11, right column is body size 14.
+extends: editorial
+cols:
+  - style:
+      text:
+        font:
+          size: 11
+    text: |
+      ### Body 11 — expect bold at weight 600
+
+      This is a paragraph of ordinary prose sitting next to **bold text that
+      should read at weight 600**, not the heavier browser-default bold. A
+      sentence can mix regular words with **several bold phrases** so you can
+      compare the two weights side by side without needing a second block.
+
+      | Column A | Column B |
+      | --- | --- |
+      | Header row shares **bold weight** with data-cell bold | plain cell |
+      | **Bold data cell** | plain cell |
+  - style:
+      text:
+        font:
+          size: 14
+    text: |
+      ### Body 14 — expect bold at weight 600
+
+      This is a paragraph of ordinary prose sitting next to **bold text that
+      should read at weight 600**, not the heavier browser-default bold. A
+      sentence can mix regular words with **several bold phrases** so you can
+      compare the two weights side by side without needing a second block.
+
+      | Column A | Column B |
+      | --- | --- |
+      | Header row shares **bold weight** with data-cell bold | plain cell |
+      | **Bold data cell** | plain cell |

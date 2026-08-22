@@ -1,0 +1,217 @@
+"""Format resolution and finalization — a compile-layer concern.
+
+Resolving a format spec to a concrete d3 string is part of the style cascade,
+so it lives in the compile layer where the cascade is baked. The render layer's
+d3 formatters (format_utils.py) import ``resolve_format`` from here.
+This module also owns ``finalize_kpi_value_format()``, the KPI headline's
+data-aware format defaulting rule — baked into ``ResolvedKpiChart.format`` at
+resolve, consumed as-is by render.
+
+Three-way resolution contract (see predefined_formats.py's module docstring):
+
+| source         | behaviour                                               |
+|----------------|---------------------------------------------------------|
+| enum member    | house rules: engine spec + round-aware trim             |
+| style.formats  | native d3: literal spec, no trim, no post-process       |
+| inline d3      | native d3: literal spec, no trim, no post-process       |
+
+House glyphs (MINUS, NULL_DISPLAY) are typography, not format semantics, and
+remain universal regardless of resolution path.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from d3_format import parse as _d3_parse
+from d3_format.errors import D3FormatError
+from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.font_measure import compose_decimal_units
+from dbt_charts.core.text.format_d3 import is_d3_si_spec, round_aware_spec
+from dbt_charts.core.text.numeral_scale import build_decimal_pad_table
+from dbt_charts.core.text.predefined_formats import (
+    PREDEFINED_NUMBER_NAMES,
+    PREDEFINED_SPECS,
+    PREDEFINED_TIME_NAMES,
+    PREDEFINED_TIME_SPECS,
+)
+
+
+def resolve_format(
+    format_input: str | FormatConfig | dict[str, Any] | None,
+    formats: dict[str, str] | None = None,
+) -> str:
+    """Convert format input to a d3 format string.
+
+    Resolution order (three-way contract):
+    1. Predefined enum member — engine-owned spec with round-aware trim.
+    2. style.formats alias — literal target spec, no trim.
+    3. Inline d3 passthrough — literal spec, no trim.
+
+    This function itself never validates the passthrough case — compile-time
+    validation (``compile/validate/formats.py``) rejects specs that are none
+    of these three, before this function's caller would raise deep inside
+    rendering.
+
+    Args:
+        format_input: Format specification (string, FormatConfig, dict, or None)
+        formats: The resolved format alias dict (compiled_style.formats).
+                 None = no user aliases defined.
+
+    Returns:
+        D3 format string, or "" for null/empty input.
+    """
+    if format_input is None:
+        return ""
+
+    if isinstance(format_input, FormatConfig):
+        format_str = format_input.spec or ""
+    elif isinstance(format_input, dict):
+        format_str = format_input.get("spec", "")
+    else:
+        format_str = str(format_input)
+
+    if not format_str:
+        return ""
+
+    # Path 1: predefined enum member — house rules, engine-owned spec + trim.
+    # Native predefined formatters (PREDEFINED_NATIVE) are not d3 specs; they
+    # pass through as-is so format_value / format_kpi_parts can detect them.
+    if format_str in PREDEFINED_NUMBER_NAMES:
+        if format_str not in PREDEFINED_SPECS:
+            return format_str  # native formatter — pass through
+        return round_aware_spec(PREDEFINED_SPECS[format_str])
+    if format_str in PREDEFINED_TIME_NAMES:
+        return PREDEFINED_TIME_SPECS[format_str]
+
+    # Path 2: user-defined alias — native d3, no trim.
+    if formats and format_str in formats:
+        return formats[format_str]
+
+    # Path 3: inline d3 string — native d3, no trim.
+    return format_str
+
+
+def resolve_label_format(
+    raw: str | FormatConfig | None,
+    formats: dict[str, str] | None,
+) -> tuple[str | None, bool]:
+    """Resolve a label/KPI format and decide whether house rules apply.
+
+    ``is_house`` is True when the raw value is a predefined enum member whose
+    resolved spec is SI-shaped. Predefined members are engine-owned semantics;
+    a literal d3 spec or a user alias is always a native-d3 opt-out.
+
+    Returns (resolved_spec, is_house); resolved_spec is None both when raw is
+    None and when raw is a FormatConfig with no spec (e.g. prefix/suffix only).
+    """
+    if raw is None:
+        return None, False
+    if isinstance(raw, FormatConfig):
+        if raw.spec is None:
+            return None, False
+        raw_str = raw.spec
+    else:
+        raw_str = raw
+    if not raw_str:
+        return None, False
+    resolved = resolve_format(raw, formats)
+    is_house = raw_str in PREDEFINED_NUMBER_NAMES and is_d3_si_spec(resolved)
+    return resolved or None, is_house
+
+
+# d3's first SI prefix ("k") engages at 1000. Below it, ".2s" doesn't compact —
+# it rounds to 2 significant figures on plain digits instead (131 -> "130"),
+# which drops information the author never asked to lose. Digit-integrity
+# rule: rounding is acceptable under SI compaction, never on plain digits —
+# so the default only compacts once compaction is real.
+_KPI_SI_COMPACT_THRESHOLD = 1000.0
+
+
+def finalize_kpi_value_format(
+    format_input: str | FormatConfig | None,
+    value: float | None,
+) -> FormatConfig | None:
+    """Finalize the KPI headline's number format from its cascaded style and value.
+
+    KPI is a hero number that the reader pauses on, so it defaults to the
+    narrative notation register (``1.5mn``) instead of the analytic register
+    (``1.5 M``) used on axis ticks and table cells. When neither spec nor
+    notation is authored, and ``value`` is large enough to actually compact
+    (``|value| >= 1000``), it also defaults to compact SI form (``".2~s"``) so
+    narrative notation shows up — notation alone is a no-op against a non-SI
+    spec. Below that threshold there is nothing to compact, so the value
+    renders its exact digits (no spec at all) rather than a misleadingly
+    rounded plain number. An explicit spec always wins over the SI default.
+    """
+    compact_eligible = value is not None and abs(value) >= _KPI_SI_COMPACT_THRESHOLD
+    if isinstance(format_input, str):
+        return FormatConfig(spec=format_input, notation="narrative")
+    spec = format_input.spec if format_input is not None else None
+    notation = format_input.notation if format_input is not None else None
+    if notation is None:
+        notation = "narrative"
+    if spec is None and notation in ("narrative", "analytic") and compact_eligible:
+        # 2 sig figs (the KPI precision) with trim. Not a predefined name: the
+        # predefined "compact" is 6 sig figs (for chart axes). FormatConfig.notation
+        # above carries "narrative" so the inline spec still gets narrative register.
+        spec = ".2~s"
+    if format_input is None and spec is None:
+        return None
+    return FormatConfig(
+        spec=spec,
+        prefix=format_input.prefix if format_input is not None else None,
+        suffix=format_input.suffix if format_input is not None else None,
+        notation=notation,
+    )
+
+
+def decimal_pad_table_for(
+    fmt: str | None, font_family: str, max_precision: int | None = None
+) -> tuple[str, ...]:
+    """Pre-computed pad table for a trim-enabled fixed-point spec, or empty.
+
+    Returns a tuple of length ``precision + 2`` (indices 0..precision+1) where
+    index ``i`` is the trailing pad for ``missing_len == i``.
+
+    Compute missing_len from the trimmed string::
+
+        frac = len(num_str.partition(".")[2])
+        missing_len = precision - frac if frac else precision + 1
+
+    Then ``num_str += decimal_pad_table[missing_len]``.
+
+    Returns ``()`` for non-trim-enabled or non-fixed-point specs (SI, no-spec,
+    PREDEFINED_NATIVE, percent, or any d3 spec whose type is not ``"f"`` or
+    whose ``trim`` flag is off).
+
+    ``max_precision``, when given, caps the table at the caller's own
+    observed maximum fractional depth rather than the spec's full declared
+    precision. A column whose format has no explicit precision (a bare
+    ``~s``/``~f``) falls back to 6 -- correct for the format's own
+    significant-figure contract, but usually far wider than any row's
+    actual trimmed depth ever reaches, over-provisioning the pad table (and
+    the column width measured against it) for a case that in practice never
+    occurs. The cap only ever narrows the table; it never widens one that
+    would otherwise be built from a real precision.
+    """
+    if not fmt:
+        return ()
+    try:
+        spec = _d3_parse(fmt)
+    except D3FormatError:
+        # PREDEFINED_NATIVE names (percent_number, date_short, …) and strftime
+        # directives are not d3 grammar -- D3FormatError is the expected normal
+        # path for any format that isn't a literal d3 spec.
+        return ()
+    if not spec.trim or spec.type != "f":
+        return ()
+    precision = spec.precision if spec.precision is not None else 6
+    if max_precision is not None:
+        precision = min(precision, max_precision)
+    # precision=0 means no fractional digits are ever produced; trimming is a
+    # no-op, so mixed-depth cannot occur and the pad table would only inflate.
+    if precision == 0:
+        return ()
+    digit_unit, dot_unit = compose_decimal_units(font_family)
+    return build_decimal_pad_table(precision, digit_unit, dot_unit)

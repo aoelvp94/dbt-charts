@@ -1,0 +1,15 @@
+chart_id: chart1
+chart:
+  type: bubble_map
+  query: q
+  latitude: lat
+  longitude: lon
+  color: count
+  size: pop
+queries:
+  q:
+    columns: [name, lat, lon, count, pop]
+    values:
+      - [NYC, 40.7, -74.0, 100, 8000000]
+      - [LA, 34.0, -118.2, 75, 4000000]
+      - [CHI, 41.8, -87.6, 50, 2700000]

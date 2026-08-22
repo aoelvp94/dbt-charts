@@ -1,0 +1,22 @@
+# Sequential palette — dbt-seq-purple-dark (dark-canvas fork)
+#
+
+name: dbt-seq-purple-dark
+family: sequential
+description: Single-hue purple. Sits between cat-10 purple and editorial-10 plum via chroma alone. Dark-canvas
+  fork.
+design_notes: "Dark-canvas fork of dbt-seq-purple. Luminance-monotonic recede\u2192pop; recede end is\
+  \ a low-chroma dark neutral above canvas void, pop end high-chroma with capped lightness so it glows\
+  \ on dark. Hue 288\xB0 from source.\n"
+colors:
+- '#2d2130'
+- '#43204b'
+- '#562163'
+- '#6b217d'
+- '#802197'
+- '#961fb2'
+- '#ac1ccf'
+- '#c01ce8'
+- '#ca2eef'
+- '#d341f6'
+- '#db56fb'

@@ -1,0 +1,594 @@
+"""Tests for grouped column chart default behavior.
+
+When a bar chart has a color field and stack is not authored (None), the
+renderer defaults to side-by-side grouped columns via xOffset (vertical) or
+yOffset (horizontal) instead of VL's stacked default.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from dbt_charts.core.compile.config import (
+    get_chart_rendering,
+    get_theme_style,
+    reset_config,
+)
+from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+from dbt_charts.core.compile.models.chart.normalized import BarChart, Chart
+from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.compile.models.style.authored import (
+    BarChartStylePatch,
+)
+from dbt_charts.core.compile.resolve import resolve
+from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
+
+from .conftest import chart_pane
+
+_RESOLVED_STYLE, _BOARD_STYLE = resolve_style_and_context(get_theme_style())
+
+
+@pytest.fixture(autouse=True)
+def _reset():
+    reset_config()
+    yield
+    reset_config()
+
+
+def _chart(
+    *, stack=None, orientation: str = "vertical", color="region", overlap=None, **kwargs
+) -> Chart:
+    return BarChart(
+        id="test_bar",
+        query=SqlQuery(sql="SELECT 1", source="test"),
+        query_name="q",
+        type="bar",
+        x="category",
+        y="revenue",
+        color=color,
+        stack=stack,
+        style=BarChartStylePatch(orientation=orientation, overlap=overlap),
+        **kwargs,
+    )
+
+
+MULTI_SERIES_DATA = [
+    {"category": "Alpha", "revenue": 100, "region": "North"},
+    {"category": "Alpha", "revenue": 80, "region": "South"},
+    {"category": "Beta", "revenue": 120, "region": "North"},
+    {"category": "Beta", "revenue": 90, "region": "South"},
+]
+
+SINGLE_SERIES_DATA = [
+    {"category": "Alpha", "revenue": 100},
+    {"category": "Beta", "revenue": 200},
+]
+
+
+THREE_SERIES_DATA = [
+    {"category": "Alpha", "revenue": 100, "region": "North"},
+    {"category": "Alpha", "revenue": 80, "region": "South"},
+    {"category": "Alpha", "revenue": 60, "region": "West"},
+    {"category": "Beta", "revenue": 120, "region": "North"},
+    {"category": "Beta", "revenue": 90, "region": "South"},
+    {"category": "Beta", "revenue": 70, "region": "West"},
+]
+
+
+def _get_encoding(spec: dict) -> dict:
+    """Return encoding from a single-layer or layered spec.
+
+    Endpoint labels may have wrapped the chart in hconcat/vconcat — unwrap to
+    the real chart pane first (chart_pane() is a no-op otherwise).
+    """
+    spec = chart_pane(spec)
+    if "encoding" in spec:
+        return spec["encoding"]
+    layers = spec.get("layer", [])
+    return layers[0].get("encoding", {}) if layers else {}
+
+
+def _get_mark(spec: dict) -> dict:
+    """Return the bar mark dict from a single-layer or layered spec."""
+    spec = chart_pane(spec)
+    if "mark" in spec:
+        return spec["mark"]
+    for layer in spec.get("layer", []):
+        mark = layer.get("mark", {})
+        if isinstance(mark, dict) and mark.get("type") == "bar":
+            return mark
+    return {}
+
+
+class TestGroupedBarOverlap:
+    """style.bar.overlap controls within-group bar spacing.
+
+    Gap/touch (fraction ≤ 0) and vertical overlap emit a band-relative bar width;
+    horizontal overlap emits a ``bandwidth('yOffset')`` size expression (Vega
+    clamps height band > 1, so the band shorthand can't overlap horizontal
+    bars — the expression form isn't clamped and needs no panel dimensions).
+    Positive overlap is restricted to exactly 2 series.
+    """
+
+    def _spec(self, data, *, width=None, height=None, **kw):
+        return generate_vega_lite_spec(
+            _chart(**kw),
+            data,
+            width=width,
+            height=height,
+        )
+
+    def test_auto_two_series_uses_partial_band(self):
+        # auto + 2 series, vertical → partial (0.25) → width band 1.25.
+        spec = self._spec(MULTI_SERIES_DATA)
+        assert "xOffset" in _get_encoding(spec)
+        assert _get_mark(spec)["width"]["band"] == pytest.approx(1.25)
+
+    def test_auto_three_series_uses_no_overlap_gap(self):
+        # auto + 3 series → none (-0.1) → width band 0.9 (a gap); no error.
+        spec = self._spec(THREE_SERIES_DATA)
+        assert _get_mark(spec)["width"]["band"] == pytest.approx(0.9)
+
+    def test_flush_touches_via_band(self):
+        spec = self._spec(MULTI_SERIES_DATA, overlap="flush")
+        assert _get_mark(spec)["width"]["band"] == pytest.approx(1.0)
+
+    def test_full_drops_offset_to_coincide(self):
+        spec = self._spec(MULTI_SERIES_DATA, overlap="full")
+        assert "xOffset" not in _get_encoding(spec)
+
+    def test_above_one_clamps_to_full(self):
+        # 1 is the maximum: a fraction >1 coincides exactly like 'full' (bars
+        # never cross past each other), so the offset is dropped, not amplified.
+        spec = self._spec(MULTI_SERIES_DATA, overlap=1.5)
+        assert "xOffset" not in _get_encoding(spec)
+
+    def test_vertical_numeric_overlap_uses_band(self):
+        spec = self._spec(MULTI_SERIES_DATA, overlap=0.5)
+        assert _get_mark(spec)["width"]["band"] == pytest.approx(1.5)
+
+    def test_horizontal_two_series_overlap_uses_bandwidth_expression(self):
+        # Horizontal overlap needs an explicit size (height band clamps at 1).
+        # bandwidth('yOffset') is Vega's own resolved per-series offset-scale
+        # width — no panel dimension needed, no chrome guess.
+        spec = self._spec(
+            MULTI_SERIES_DATA, orientation="horizontal", overlap="partial"
+        )
+        assert "yOffset" in _get_encoding(spec)
+        mark = _get_mark(spec)
+        assert mark.get("size") == {"expr": "1.25 * bandwidth('yOffset')"}
+        assert "height" not in mark
+
+    def test_horizontal_overlap_ignores_panel_dimensions(self):
+        # The bandwidth expression is resolved by Vega at its own layout time,
+        # so passing (or omitting) width/height must not change the spec.
+        with_dims = self._spec(
+            MULTI_SERIES_DATA,
+            orientation="horizontal",
+            overlap="partial",
+            width=400.0,
+            height=300.0,
+        )
+        without_dims = self._spec(
+            MULTI_SERIES_DATA, orientation="horizontal", overlap="partial"
+        )
+        assert _get_mark(with_dims)["size"] == _get_mark(without_dims)["size"]
+
+    def test_horizontal_overlap_renders_nonzero_bar_thickness(self):
+        """Render the bandwidth() expression through vl-convert end to end.
+
+        The spec-level tests above pin the expression string, but its
+        correctness hinges entirely on Vega naming the offset scale
+        'yOffset' at expression-eval time — an external dependency a renamed
+        or re-scoped scale would silently break (every bar would collapse to
+        zero height) while the unit tests above stayed green. Render for
+        real and assert the bars have measurable, non-degenerate thickness.
+        """
+        try:
+            import vl_convert as vlc  # noqa: F401 — skip marker
+        except ImportError:
+            pytest.skip("vl_convert not installed")
+
+        import re
+
+        from dbt_charts.core.render.converters.chart import render_vega_spec
+
+        chart = _chart(orientation="horizontal", overlap="partial")
+        resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
+        svg = render_vega_spec(
+            spec,
+            "svg",
+            _RESOLVED_STYLE,
+            width=400.0,
+            height=300.0,
+            is_placeholder=False,
+            chart_id="chart",
+        )
+        mark_group = re.search(
+            r'<g class="mark-rect[^"]*"[^>]*>(.*?)</g>', svg, re.DOTALL
+        )
+        assert mark_group, "no bar mark group found in rendered SVG"
+        thicknesses = [
+            abs(float(v))
+            for v in re.findall(
+                r'd="M[0-9.\-]+,[0-9.\-]+h[0-9.\-]+v(-?[0-9.]+)h', mark_group.group(1)
+            )
+        ]
+        assert thicknesses, "no bar path 'd' attributes matched — regex is stale"
+        assert all(t > 1.0 for t in thicknesses), (
+            f"bar thicknesses {thicknesses} include a near-zero bar — "
+            "bandwidth('yOffset') resolved to ~0, the offset scale name assumption broke"
+        )
+
+    def test_three_series_positive_overlap_raises(self):
+        with pytest.raises(ChartDataError, match="2 series"):
+            generate_vega_lite_spec(
+                _chart(overlap="partial"),
+                THREE_SERIES_DATA,
+            )
+
+    def test_single_series_default_does_not_raise(self):
+        # Regression: a bar with color encoding where every x maps to the same
+        # color value (1:1, single series) must not raise. xOffset is suppressed
+        # because color is 1:1 with x — the grouped-bar overlap feature never
+        # fires, and the 2-series guard is never reached.
+        single_color = [
+            {"category": "Alpha", "revenue": 100, "region": "North"},
+            {"category": "Beta", "revenue": 120, "region": "North"},
+        ]
+        spec = self._spec(single_color)  # default overlap=auto
+        # xOffset is suppressed: both categories map to the same color "North"
+        # (1:1 with x), so full-width bars are emitted, no grouped layout.
+        assert "xOffset" not in _get_encoding(spec)
+
+
+class TestGroupedColumnsDefault:
+    """stack="none" (theme default) + color → grouped (xOffset for vertical, yOffset for horizontal)."""
+
+    def test_vertical_bar_with_color_emits_xoffset(self):
+        chart = _chart()
+        resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
+        enc = _get_encoding(spec)
+        assert "xOffset" in enc, (
+            "vertical bar with color and no stack should emit xOffset"
+        )
+        assert enc["xOffset"]["field"] == "region"
+
+    def test_horizontal_bar_with_color_emits_yoffset(self):
+        chart = _chart(orientation="horizontal")
+        resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
+        enc = _get_encoding(spec)
+        assert "yOffset" in enc, (
+            "horizontal bar with color and no stack should emit yOffset"
+        )
+        assert enc["yOffset"]["field"] == "region"
+
+    def test_no_offset_without_color(self):
+        chart = BarChart(
+            id="test_bar_no_color",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            type="bar",
+            x="category",
+            y="revenue",
+            style=BarChartStylePatch(orientation="vertical"),
+        )
+        resolve(chart, SINGLE_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, SINGLE_SERIES_DATA)
+        enc = _get_encoding(spec)
+        assert "xOffset" not in enc
+        assert "yOffset" not in enc
+
+
+class TestExplicitStackOverridesGroupedDefault:
+    """Stacking modes zero/normalize/center override the grouped (side-by-side) default."""
+
+    def test_stack_zero_produces_stacked_not_grouped(self):
+        chart = _chart(stack="zero")
+        resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
+        enc = _get_encoding(spec)
+        assert "xOffset" not in enc
+        assert "yOffset" not in enc
+
+    def test_stack_normalize_produces_normalized_not_grouped(self):
+        chart = _chart(stack="normalize")
+        resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
+        enc = _get_encoding(spec)
+        assert "xOffset" not in enc
+        assert "yOffset" not in enc
+
+
+MIXED_SIGN_DATA = [
+    {"category": "Alpha", "revenue": -50, "region": "North"},
+    {"category": "Alpha", "revenue": 80, "region": "South"},
+    {"category": "Beta", "revenue": 120, "region": "North"},
+    {"category": "Beta", "revenue": -30, "region": "South"},
+]
+
+
+class TestGroupedBarZeroRuleOffset:
+    """Zero-baseline rule must not inherit the grouped-bar xOffset/yOffset encoding."""
+
+    def _get_zero_rule_layer(self, spec: dict) -> dict | None:
+        for layer in spec.get("layer", []):
+            mark = layer.get("mark", {})
+            if isinstance(mark, dict) and mark.get("type") == "rule":
+                enc = layer.get("encoding", {})
+                if "y" in enc and enc["y"].get("datum") == 0:
+                    return layer
+        return None
+
+    def test_vertical_grouped_zero_rule_overrides_xoffset(self):
+        """Zero rule layer must override xOffset to 0 so it spans the full grid line."""
+        chart = _chart()
+        resolve(chart, MIXED_SIGN_DATA, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, MIXED_SIGN_DATA)
+        assert "layer" in spec, "zero rule should convert spec to layered"
+        rule = self._get_zero_rule_layer(spec)
+        assert rule is not None, "zero rule layer not found"
+        enc = rule.get("encoding", {})
+        assert "xOffset" in enc, (
+            "zero rule must override xOffset to prevent inheritance"
+        )
+        assert enc["xOffset"] == {"value": 0}, (
+            f"zero rule xOffset must be {{value: 0}}, got {enc['xOffset']}"
+        )
+
+    def test_horizontal_grouped_zero_rule_overrides_yoffset(self):
+        """Horizontal grouped bar zero rule must override yOffset to 0."""
+        chart = _chart(orientation="horizontal")
+        resolve(chart, MIXED_SIGN_DATA, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, MIXED_SIGN_DATA)
+        assert "layer" in spec
+        # For horizontal bar the zero rule encodes x (the measure axis)
+        rule = None
+        for layer in spec.get("layer", []):
+            mark = layer.get("mark", {})
+            if isinstance(mark, dict) and mark.get("type") == "rule":
+                enc = layer.get("encoding", {})
+                if "x" in enc and enc["x"].get("datum") == 0:
+                    rule = layer
+                    break
+        assert rule is not None, "horizontal zero rule layer not found"
+        enc = rule.get("encoding", {})
+        assert "yOffset" in enc, "horizontal zero rule must override yOffset"
+        assert enc["yOffset"] == {"value": 0}
+
+
+class TestGroupedBarScalePadding:
+    """Grouped bar charts need inner+outer padding for visual separation."""
+
+    def test_vertical_grouped_bar_x_scale_padding(self):
+        """Grouped vertical bars: paddingInner creates group gaps, paddingOuter prevents edge overflow."""
+        chart = _chart()
+        resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        bar_cfg = get_chart_rendering().bar
+        spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
+        x_scale = spec.get("encoding", {}).get("x", {}).get("scale", {})
+        assert x_scale.get("paddingInner") == bar_cfg.grouped_bar_padding_inner
+        assert x_scale.get("paddingOuter") == bar_cfg.grouped_bar_padding_outer
+        assert "padding" not in x_scale, (
+            "grouped bar must not have padding shorthand — it overrides explicit paddingOuter in Vega"
+        )
+
+    def test_horizontal_grouped_bar_y_scale_padding(self) -> None:
+        """Grouped horizontal bars: same padding contract on y scale."""
+        bar_cfg = get_chart_rendering().bar
+        chart = _chart(orientation="horizontal")
+        resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
+        y_scale = spec.get("encoding", {}).get("y", {}).get("scale", {})
+        assert y_scale.get("paddingInner") == bar_cfg.grouped_bar_padding_inner
+        assert y_scale.get("paddingOuter") == bar_cfg.grouped_bar_padding_outer
+        assert "padding" not in y_scale, "grouped bar must not have padding shorthand"
+
+    def test_non_grouped_bar_uses_bar_padding_not_grouped_defaults(self):
+        """Non-grouped single-series bar must not get forced grouped paddingInner/paddingOuter."""
+        chart = BarChart(
+            id="test_bar_no_color",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            type="bar",
+            x="category",
+            y="revenue",
+            style=BarChartStylePatch(orientation="vertical"),
+        )
+        resolve(chart, SINGLE_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, SINGLE_SERIES_DATA)
+        x_scale = spec.get("encoding", {}).get("x", {}).get("scale", {})
+        assert x_scale.get("paddingOuter") is None, (
+            "non-grouped bar must not have forced paddingOuter"
+        )
+
+
+class TestGroupedBarWithLayers:
+    """Grouped-bar spacing and overlap must survive an authored `layers:` block.
+
+    BarEmitter wraps the flat spec into a layered spec (render_cartesian_overlay)
+    whenever chart.layers is non-empty; the grouped-bar padding + overlap must be
+    applied to the flat spec before that wrap, or it silently never fires.
+    """
+
+    def _chart_with_line_layer(self, **kwargs) -> Chart:
+        return _chart(layers=[LineLayer(type="line", y="target")], **kwargs)
+
+    def _bar_scale(self, spec: dict, channel: str) -> dict:
+        """Scale for `channel` as the bar mark sees it.
+
+        A layered spec hoists the shared quantitative channel to the top level
+        and leaves the categorical one on the bar layer, and which channel that
+        is flips with orientation — so look at the bar layer first, then fall
+        back to the top-level encoding VL would inherit from.
+        """
+        for layer in spec.get("layer", []):
+            mark = layer.get("mark", {})
+            if isinstance(mark, dict) and mark.get("type") == "bar":
+                enc = layer.get("encoding", {})
+                if channel in enc:
+                    return enc[channel].get("scale", {})
+        return spec.get("encoding", {}).get(channel, {}).get("scale", {})
+
+    def test_layered_grouped_bar_x_scale_padding(self) -> None:
+        """A grouped bar with a layers: line still gets the grouped-bar band padding."""
+        chart = self._chart_with_line_layer()
+        resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        bar_cfg = get_chart_rendering().bar
+        spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
+        x_scale = self._bar_scale(spec, "x")
+        assert x_scale.get("paddingInner") == bar_cfg.grouped_bar_padding_inner
+        assert x_scale.get("paddingOuter") == bar_cfg.grouped_bar_padding_outer
+        assert "padding" not in x_scale, (
+            "grouped bar must not have padding shorthand — it overrides explicit paddingOuter in Vega"
+        )
+
+    def test_layered_grouped_bar_overlap_differs_from_default(self) -> None:
+        """style.overlap must not be a silent no-op once the chart has a layers: block.
+
+        Both specs are layered, so mark.width lands as a bandwidth() expr
+        (_fix_bar_band_width converts {"band": f} -> {"expr": "f * bandwidth(...)"});
+        assert the two exprs differ rather than pinning either literal string.
+        """
+        default_chart = self._chart_with_line_layer()
+        resolve(default_chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        default_spec = generate_vega_lite_spec(default_chart, MULTI_SERIES_DATA)
+
+        none_chart = self._chart_with_line_layer(overlap="none")
+        resolve(none_chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        none_spec = generate_vega_lite_spec(none_chart, MULTI_SERIES_DATA)
+
+        default_width = _get_mark(default_spec)["width"]
+        none_width = _get_mark(none_spec)["width"]
+        assert default_width != none_width, (
+            "overlap='none' must emit a different bar width than the default on a "
+            f"layered grouped bar chart; both were {default_width!r}"
+        )
+
+    def test_layered_horizontal_grouped_bar_y_scale_padding(self) -> None:
+        """The horizontal half takes a different route and needs its own gate.
+
+        `_fix_bar_band_width` keys off `"xOffset" in encoding`, which is false
+        for a horizontal grouped bar, so the rescue that carries the vertical
+        band shorthand across the layer wrap never runs here. The band padding
+        must still reach the categorical (y) scale.
+        """
+        chart = self._chart_with_line_layer(orientation="horizontal")
+        resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        bar_cfg = get_chart_rendering().bar
+        spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
+        y_scale = self._bar_scale(spec, "y")
+        assert y_scale.get("paddingInner") == bar_cfg.grouped_bar_padding_inner
+        assert y_scale.get("paddingOuter") == bar_cfg.grouped_bar_padding_outer
+
+    def test_layered_horizontal_grouped_bar_honors_overlap(self) -> None:
+        """style.overlap must reach the horizontal layered path too.
+
+        The 2-series default resolves to positive overlap, which on horizontal
+        emits `mark.size` and drops `mark.height`; `overlap: none` keeps the
+        band-relative height instead. Compare the whole mark so either channel
+        moving counts.
+        """
+        default_chart = self._chart_with_line_layer(orientation="horizontal")
+        resolve(default_chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        default_mark = _get_mark(
+            generate_vega_lite_spec(default_chart, MULTI_SERIES_DATA)
+        )
+
+        none_chart = self._chart_with_line_layer(
+            orientation="horizontal", overlap="none"
+        )
+        resolve(none_chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        none_mark = _get_mark(generate_vega_lite_spec(none_chart, MULTI_SERIES_DATA))
+
+        default_size = (default_mark.get("size"), default_mark.get("height"))
+        none_size = (none_mark.get("size"), none_mark.get("height"))
+        assert default_size != none_size, (
+            "overlap='none' must change the horizontal bar's size/height on a "
+            f"layered grouped bar chart; both were {default_size!r}"
+        )
+
+
+class TestGroupedBarTopRuleOffset:
+    """100%-baseline rule (_top_rule_layer) must not inherit grouped xOffset/yOffset."""
+
+    def _get_top_rule_layer(self, spec: dict, datum_channel: str) -> dict | None:
+        for layer in chart_pane(spec).get("layer", []):
+            mark = layer.get("mark", {})
+            if isinstance(mark, dict) and mark.get("type") == "rule":
+                enc = layer.get("encoding", {})
+                if datum_channel in enc and enc[datum_channel].get("datum") == 1:
+                    return layer
+        return None
+
+    def test_vertical_grouped_normalize_top_rule_overrides_xoffset(self):
+        chart = _chart(stack="normalize")
+        resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
+        assert "layer" in chart_pane(spec)
+        rule = self._get_top_rule_layer(spec, "y")
+        assert rule is not None, (
+            "top rule layer not found for normalize-stacked vertical bar"
+        )
+        enc = rule.get("encoding", {})
+        assert "xOffset" in enc, "top rule must override xOffset to prevent inheritance"
+        assert enc["xOffset"] == {"value": 0}
+
+    def test_horizontal_grouped_normalize_top_rule_overrides_yoffset(self):
+        chart = _chart(stack="normalize", orientation="horizontal")
+        resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
+        assert "layer" in chart_pane(spec)
+        rule = self._get_top_rule_layer(spec, "x")
+        assert rule is not None, (
+            "top rule layer not found for normalize-stacked horizontal bar"
+        )
+        enc = rule.get("encoding", {})
+        assert "yOffset" in enc, "top rule must override yOffset to prevent inheritance"
+        assert enc["yOffset"] == {"value": 0}
+
+
+class TestGroupedColumnsSkipsStackingHelpers:
+    """Grouped default must not apply stacking-specific VL properties."""
+
+    def test_grouped_bar_has_no_order_encoding(self):
+        """Z-order pinning (encoding.order) is for stacked bars only."""
+        chart = _chart()
+        resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
+        enc = _get_encoding(spec)
+        assert "order" not in enc, (
+            "grouped bar should not have encoding.order (that's for stacked z-order)"
+        )
+
+    def test_stacked_bar_still_has_order_encoding(self):
+        """Explicit stack=zero should still emit encoding.order for z-ordering."""
+        chart = _chart(stack="zero")
+        resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
+        enc = _get_encoding(spec)
+        assert "order" in enc, "stacked bar should still emit encoding.order"
+
+    def test_grouped_bar_y_scale_domain_max_not_stacked_total(self):
+        """Grouped bars must not use the stacked-total as domainMax.
+
+        The stacked total for MULTI_SERIES_DATA is 210 (120+90 for Beta).
+        The grouped max per bar is 120; the tick-value algorithm may extend
+        domainMax to a nice value above 120, but it must never reach 210.
+        """
+        chart = _chart()
+        resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
+        enc = _get_encoding(spec)
+        y_scale = enc.get("y", {}).get("scale", {})
+        stacked_total = 210  # Beta: 120+90
+        domain_max = y_scale.get("domainMax")
+        assert domain_max != stacked_total, (
+            f"grouped bar must not use stacked total {stacked_total} as domainMax "
+            f"(stacking helper fired for grouped bar); got scale={y_scale}"
+        )

@@ -1,0 +1,32 @@
+title: "Revenue (MetricFlow)"
+
+text: |
+  `revenue`'s `metrics:`/`dimensions:` keys make it a metricflow query. dbt charts
+  lowers it to SQL at compile time by calling MetricFlow's own compiler against
+  this project's semantic manifest (`target/semantic_manifest.json`), then runs
+  the resulting SQL through the `analytics` dbt_profile source like any other
+  SQL query.
+
+  Group-by names use MetricFlow's own entity-qualified naming convention —
+  `order_id__region`, not bare `region` — because the manifest's `orders`
+  semantic model keys `region` off the `order_id` entity. `time_grain: month`
+  is dbt charts's own field; it expands to the reserved `metric_time__month`
+  group-by name automatically.
+
+queries:
+  revenue:
+    source: analytics
+    metrics: [total_revenue]
+    dimensions: [order_id__region]
+    time_grain: month
+
+charts:
+  revenue_by_region:
+    query: revenue
+    type: bar
+    x: metric_time__month
+    y: total_revenue
+    color: order_id__region
+
+rows:
+  - revenue_by_region

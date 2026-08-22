@@ -1,0 +1,62 @@
+"""Isolated-DuckDB execution over named in-memory rowsets.
+
+Runs author-controlled SQL over named row-dict sets in a fresh in-process DuckDB
+with external access disabled. The engine's namespace holds ONLY the registered
+rows — no application tables, no other cache entries, nothing on any shared or
+application-database connection — so the SQL cannot read data outside the rows it
+explicitly references. This is the one home for both ``{{ queries.X.cache }}``
+composition (fed the upstream rows by the executor) and the Cloud file-source
+path (fed the materialized file rows).
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from dbt_charts.core.execute._duckdb_cache_base import _rows_from_result
+from dbt_charts.core.execute.cache_backend import CacheRows
+
+
+def compose_over_named_rows(
+    sql: str,
+    named_rows: dict[str, CacheRows],
+    params: list[Any],
+    limit: int | None = None,
+) -> CacheRows:
+    """Execute *sql* over *named_rows* in an isolated in-process DuckDB.
+
+    Each entry in *named_rows* is registered as a table under its key (a
+    zero-copy Arrow table). *sql* is parameterized ($1/$2/…) with *params*
+    bound by the driver — never string-interpolated — and external access is
+    disabled, so the composing SQL can reach neither the filesystem/network nor
+    any table other than the registered rows.
+
+    Args:
+        sql: Parameterized composing SQL; every table reference must resolve to
+            a key of *named_rows*.
+        named_rows: Mapping of table name → row dicts to register.
+        params: Positional parameter values in $1/$2/… order.
+        limit: Bounds the fetch itself via ``fetchmany()`` — a join across two
+            upstream tables each near the row ceiling can otherwise blow up
+            memory during composition, before any post-fetch check runs. None
+            fetches everything.
+
+    Returns:
+        List of row dicts.
+
+    Raises:
+        RuntimeError: Wraps any DuckDB execution error with context (including a
+            reference to a table that is not one of the registered rowsets).
+    """
+    import duckdb
+    import pyarrow as pa
+
+    conn = duckdb.connect(":memory:", config={"enable_external_access": False})
+    try:
+        for name, rows in named_rows.items():
+            conn.register(name, pa.Table.from_pylist(rows))
+        return _rows_from_result(conn.execute(sql, params), limit=limit)
+    except Exception as e:  # noqa: BLE001 — duckdb/pyarrow raise various internal exception types at the composition boundary
+        raise RuntimeError(f"Isolated-engine query failed: {e}\nSQL:\n{sql}") from e
+    finally:
+        conn.close()

@@ -1,0 +1,68 @@
+line-length = 88
+target-version = "py310"
+
+[format]
+# ruff 0.16 formats Python fences inside Markdown by default; keep the
+# formatter scoped to Python source (Black parity -- docs fences are prose).
+exclude = ["*.md"]
+
+[lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # Pyflakes
+    "I",     # isort
+    "B",     # flake8-bugbear
+    "C4",    # flake8-comprehensions
+    "DJ",    # flake8-django
+    "UP",    # pyupgrade
+    "SIM",   # flake8-simplify
+    "S110",  # flake8-bandit: try-except-pass
+    "BLE001",  # flake8-blind-except: catch broad Exception/BaseException without re-raising
+    "TRY002",  # flake8-tryceratops: raise-vanilla-class
+    "PT",    # flake8-pytest-style
+]
+ignore = [
+    "E501",  # line too long (the formatter handles this)
+    "E731",  # lambda assignment (sometimes useful)
+    "E402",  # module import not at top (needed for conditional imports, circular import avoidance)
+    "B008",  # function call in default argument (FastAPI pattern: Body(), Query(), Depends())
+    "SIM102",  # collapsible if (nested ifs often more readable for complex conditions)
+    "PT018",  # composite-assertion: stylistic; splitting `assert a and b` rarely improves diagnostics
+]
+# Scoped to [lint] on purpose: a top-level `preview` also switches the
+# formatter to its preview style, which would format dbt-charts/ differently
+# from the rest of the repo. PLW1514 is preview-only until Ruff 0.16.
+preview = true
+extend-select = [
+    "PTH",       # flake8-use-pathlib
+    "PLW1514",   # unspecified-encoding on open() / .read_text() / .write_text()
+]
+
+[lint.per-file-ignores]
+# vulture-whitelist.py is input to vulture, not runnable Python (bare names,
+# no imports) -- B018 (useless expression) and F821 (undefined name) both
+# false-fire on every entry. "**/" matches both the monorepo path
+# (oss/vulture-whitelist.py) and the post-export path (vulture-whitelist.py
+# at the standalone repo root).
+"**/vulture-whitelist.py" = ["B018", "F821"]
+
+[lint.isort]
+# Combine aliased imports from same module into single statement
+combine-as-imports = true
+# Packages imported within dbt-charts/ (src + tests), pruned from the full
+# monorepo list in root pyproject.toml. Unlisted packages (asql, evals, lexp,
+# likeml, etc.) have no actual imports here. Notable inclusions:
+# `dbt-charts` -- test-namespace package (from dbt-charts.tests.*);
+# `dbt_charts_playground` -- conditional CLI import (cli/main.py);
+# `dbt_charts_super_schema` -- optional extension, conditionally imported;
+# `nimble` -- repo-local tool imported in one test.
+known-first-party = [
+    "dbt-charts",
+    "dbt_charts",
+    "dbt_charts_playground",
+    "dbt_charts_super_schema",
+    "d3_format",
+    "mdsvg",
+    "nimble",
+]

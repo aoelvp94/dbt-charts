@@ -1,0 +1,22 @@
+# Sequential palette — dbt-seq-amber-dark (dark-canvas fork)
+#
+
+name: dbt-seq-amber-dark
+family: sequential
+description: "Single-hue amber (cream \u2192 honey \u2192 deep amber). Renamed from dbt-seq-gold; mid-stops\
+  \ read as amber/honey rather than pure gold. Dark-canvas fork."
+design_notes: "Dark-canvas fork of dbt-seq-amber. Luminance-monotonic recede\u2192pop; recede end is a\
+  \ low-chroma dark neutral above canvas void, pop end high-chroma with capped lightness so it glows on\
+  \ dark. Hue 43\xB0 from source.\n"
+colors:
+- '#302c21'
+- '#4b3f20'
+- '#635121'
+- '#7d6321'
+- '#977621'
+- '#b2891f'
+- '#cf9c1c'
+- '#e8af1c'
+- '#efb92e'
+- '#f6c341'
+- '#fbcc56'

@@ -1,0 +1,5 @@
+# Dataface project configuration
+#
+# This file anchors the project root. Running `dct serve` from any
+# subdirectory will walk up to find this file and use its directory
+# as the serve root.

@@ -1,0 +1,20 @@
+title: Malformed Board
+
+queries:
+  sales:
+    type: values
+    columns: [product, revenue]
+    values:
+      - [Widget, 120]
+      - [Gadget, 85]
+
+charts:
+  broken_chart:
+    type: nope_not_a_real_chart_type
+    query: sales
+    x: product
+    y: revenue
+
+rows:
+  - cols:
+      - broken_chart

@@ -1,0 +1,21 @@
+# Tone palette — info
+#
+# Six named role slots. No LUT, no interpolation.
+
+name: info
+description: |
+  Informational notes, neutral status messages, and non-error callouts.
+  Blue convention: readable system information without warning/error semantics.
+
+design_notes: |
+  Restores the deleted semantic info palette slots captured in the DFT feedback
+  notes: bg, border, solid, and text. subtle and solid-hover are companion
+  roles for the existing tone palette contract.
+
+aliases:
+  bg:           "#e7f4ff"    # very light blue background
+  subtle:       "#d6ecff"    # secondary fill / hover-on-bg
+  border:       "#6bb9f8"    # mid-tone divider / outline
+  solid:        "#008cdd"    # canonical "information" fill
+  solid-hover:  "#0070b3"    # darker variant for button hover state
+  text:         "#003659"    # AA-contrast text color on .bg and on white

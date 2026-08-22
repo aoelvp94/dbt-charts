@@ -1,0 +1,288 @@
+"""TDD: axis → axis_x/y/quantitative cascade for ALL fields, at render time.
+
+charts.axis_x/axis_y/axis_quantitative carry SkipInheritSlots, not InheritSlot:
+apply_inherit never fills their unset leaves from the shared `axis` global at
+compile time — they stay sparse, authored-only overlays. The cascade happens at
+render/emit time instead, via resolved_axis_style() (compile/resolve/style/axis_cascade.py),
+which merges axis_x/y/quantitative onto axis in the canonical layer order.
+
+So: setting a field on charts.axis reaches axis_x/y/quantitative through
+resolved_axis_style(), not by reading charts.axis_x/y/quantitative directly.
+"""
+
+from __future__ import annotations
+
+from typing import TypeVar
+
+import pytest
+from pydantic import BaseModel
+
+from dbt_charts.core.compile.config import get_theme_style, reset_config
+from dbt_charts.core.compile.resolve.style.axis_cascade import resolved_axis_style
+from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
+
+_ModelT = TypeVar("_ModelT", bound=BaseModel)
+
+
+@pytest.fixture(autouse=True)
+def _reset():
+    reset_config()
+    yield
+    reset_config()
+
+
+def _omit(model: _ModelT, field_name: str) -> _ModelT:
+    values = {
+        name: None if name == field_name else getattr(model, name)
+        for name in type(model).model_fields
+    }
+    return type(model).model_construct(
+        _fields_set=model.model_fields_set - {field_name},
+        **values,
+    )
+
+
+def test_axis_grid_color_cascades_to_axis_x():
+    """axis.grid.color reaches axis_x when axis_x.grid.color is omitted."""
+    base = get_theme_style("editorial")
+    axis_patch = base.charts.axis.model_copy(
+        update={"grid": base.charts.axis.grid.model_copy(update={"color": "#aabbcc"})}
+    )
+    axis_x_patch = base.charts.axis_x.model_copy(
+        update={"grid": _omit(base.charts.axis_x.grid, "color")}
+    )
+    patched = base.model_copy(
+        update={
+            "charts": base.charts.model_copy(
+                update={"axis": axis_patch, "axis_x": axis_x_patch}
+            )
+        }
+    )
+    resolved = resolve_chart_style_context(patched)
+    # Use "ordinal" (not "quantitative") so axis_quantitative's own Layer-3
+    # authored grid.color doesn't mask the axis_x/axis cascade under test.
+    emitted = resolved_axis_style(
+        resolved, "axis_x", "ordinal", chart_type="", label_authored=False
+    )
+    assert emitted.grid.color == "#aabbcc"
+
+
+def test_axis_grid_zero_color_cascades_to_measure_axis():
+    """axis_y.grid.zero.color reaches the resolved quantitative y-axis.
+
+    grid.zero is a MeasureGridStyle field (axis_y only — BaseAxisGridStyle
+    for axis and axis_x do not have it). Setting it on axis_y and clearing it
+    from axis_quantitative verifies the axis_y layer provides the value.
+    X-axis always has zero=None (BaseAxisGridStyle — zero is structurally absent).
+    """
+    from dbt_charts.core.compile.models.style.theme import AxisGridZeroStyle
+
+    base = get_theme_style("editorial")
+    new_zero = AxisGridZeroStyle(color="#ff0000", width=1)
+    axis_y_patch = base.charts.axis_y.model_copy(
+        update={"grid": base.charts.axis_y.grid.model_copy(update={"zero": new_zero})}
+    )
+    axis_quantitative_patch = base.charts.axis_quantitative.model_copy(
+        update={
+            "grid": base.charts.axis_quantitative.grid.model_copy(
+                update={"color": None}
+            )
+        }
+    )
+    patched = base.model_copy(
+        update={
+            "charts": base.charts.model_copy(
+                update={
+                    "axis_y": axis_y_patch,
+                    "axis_quantitative": axis_quantitative_patch,
+                }
+            )
+        }
+    )
+    resolved = resolve_chart_style_context(patched)
+    emitted_y = resolved_axis_style(
+        resolved, "axis_y", "quantitative", chart_type="", label_authored=False
+    )
+    assert emitted_y.grid.zero is not None
+    assert emitted_y.grid.zero.color == "#ff0000"
+    # x-axis has no zero — BaseAxisGridStyle doesn't have the field.
+    emitted_x = resolved_axis_style(
+        resolved, "axis_x", "quantitative", chart_type="", label_authored=False
+    )
+    assert emitted_x.grid.zero is None
+
+
+def test_axis_grid_visible_cascades_to_child_axes():
+    """axis.grid.visible cascades to child axes when omitted."""
+    base = get_theme_style("editorial")
+    axis_patch = base.charts.axis.model_copy(
+        update={"grid": base.charts.axis.grid.model_copy(update={"visible": False})}
+    )
+
+    def _clear_visible(ax):
+        return ax.model_copy(update={"grid": _omit(ax.grid, "visible")})
+
+    patched = base.model_copy(
+        update={
+            "charts": base.charts.model_copy(
+                update={
+                    "axis": axis_patch,
+                    "axis_x": _clear_visible(base.charts.axis_x),
+                    "axis_y": _clear_visible(base.charts.axis_y),
+                    "axis_quantitative": _clear_visible(base.charts.axis_quantitative),
+                }
+            )
+        }
+    )
+    resolved = resolve_chart_style_context(patched)
+    emitted_x = resolved_axis_style(
+        resolved, "axis_x", "quantitative", chart_type="", label_authored=False
+    )
+    emitted_y = resolved_axis_style(
+        resolved, "axis_y", "quantitative", chart_type="", label_authored=False
+    )
+    assert emitted_x.grid.visible is False
+    assert emitted_y.grid.visible is False
+
+
+def test_child_axis_explicit_value_wins_over_cascade():
+    """An explicit value in axis_x beats the cascaded value from axis."""
+    base = get_theme_style("editorial")
+    axis_patch = base.charts.axis.model_copy(
+        update={"grid": base.charts.axis.grid.model_copy(update={"color": "#parent"})}
+    )
+    axis_x_patch = base.charts.axis_x.model_copy(
+        update={"grid": base.charts.axis_x.grid.model_copy(update={"color": "#child"})}
+    )
+    patched = base.model_copy(
+        update={
+            "charts": base.charts.model_copy(
+                update={"axis": axis_patch, "axis_x": axis_x_patch}
+            )
+        }
+    )
+    resolved = resolve_chart_style_context(patched)
+    emitted = resolved_axis_style(
+        resolved, "axis_x", "ordinal", chart_type="", label_authored=False
+    )
+    assert emitted.grid.color == "#child"
+
+
+def test_axis_line_visible_cascades():
+    """axis.line.visible cascades to child axes."""
+    base = get_theme_style("editorial")
+    axis_patch = base.charts.axis.model_copy(
+        update={"line": base.charts.axis.line.model_copy(update={"visible": True})}
+    )
+
+    def _clear_visible(ax):
+        return ax.model_copy(update={"line": _omit(ax.line, "visible")})
+
+    patched = base.model_copy(
+        update={
+            "charts": base.charts.model_copy(
+                update={
+                    "axis": axis_patch,
+                    "axis_x": _clear_visible(base.charts.axis_x),
+                    "axis_y": _clear_visible(base.charts.axis_y),
+                }
+            )
+        }
+    )
+    resolved = resolve_chart_style_context(patched)
+    emitted_x = resolved_axis_style(
+        resolved, "axis_x", "quantitative", chart_type="", label_authored=False
+    )
+    emitted_y = resolved_axis_style(
+        resolved, "axis_y", "quantitative", chart_type="", label_authored=False
+    )
+    assert emitted_x.line.visible is True
+    assert emitted_y.line.visible is True
+
+
+def test_axis_ticks_visible_cascades():
+    """axis.ticks.visible cascades to child axes."""
+    base = get_theme_style("editorial")
+    axis_patch = base.charts.axis.model_copy(
+        update={"ticks": base.charts.axis.ticks.model_copy(update={"visible": True})}
+    )
+
+    def _clear_visible(ax):
+        return ax.model_copy(update={"ticks": _omit(ax.ticks, "visible")})
+
+    patched = base.model_copy(
+        update={
+            "charts": base.charts.model_copy(
+                update={
+                    "axis": axis_patch,
+                    "axis_y": _clear_visible(base.charts.axis_y),
+                    "axis_quantitative": _clear_visible(base.charts.axis_quantitative),
+                }
+            )
+        }
+    )
+    resolved = resolve_chart_style_context(patched)
+    emitted_y = resolved_axis_style(
+        resolved, "axis_y", "quantitative", chart_type="", label_authored=False
+    )
+    assert emitted_y.ticks.visible is True
+
+
+def test_base_axis_with_null_grid_color_raises():
+    """Every cascade source must provide grid.color — missing from all layers raises.
+
+    The editorial theme provides grid.color at both the shared axis and the
+    per-channel axis_y layers. Nulling all sources leaves the resolved axis
+    without a grid.color, which build_resolved_axis (called by resolved_axis_style)
+    rejects at emit time.
+    """
+    base = get_theme_style("editorial")
+
+    def _null_color(ax):
+        return ax.model_copy(
+            update={"grid": ax.grid.model_copy(update={"color": None})}
+        )
+
+    patched = base.model_copy(
+        update={
+            "charts": base.charts.model_copy(
+                update={
+                    "axis": _null_color(base.charts.axis),
+                    "axis_x": _null_color(base.charts.axis_x),
+                    "axis_y": _null_color(base.charts.axis_y),
+                    "axis_quantitative": _null_color(base.charts.axis_quantitative),
+                }
+            )
+        }
+    )
+    resolved = resolve_chart_style_context(patched)
+    with pytest.raises(ValueError, match="grid.color"):
+        resolved_axis_style(
+            resolved, "axis_y", "quantitative", chart_type="", label_authored=False
+        )
+
+
+def test_editorial_cream_resolves_without_error():
+    """cream theme resolves cleanly and axis_y emits zero color.
+
+    grid.zero lives on MeasureGridStyle (axis_y only). The cream theme sets
+    axis_y.grid.zero.color; the resolved y-axis carries it through.
+    X-axis has no zero (BaseAxisGridStyle — zero is structurally absent).
+    """
+    resolved = resolve_chart_style_context(get_theme_style("cream"))
+    # axis_y.grid is MeasureGridStyle — zero is available on the raw theme slot.
+    axis_y_zero_color = (
+        resolved.axis_y.grid.zero.color
+        if resolved.axis_y.grid.zero is not None
+        else None
+    )
+    emitted_y = resolved_axis_style(
+        resolved, "axis_y", "quantitative", chart_type="", label_authored=False
+    )
+    assert emitted_y.grid.zero is not None
+    assert emitted_y.grid.zero.color == axis_y_zero_color
+    # x-axis has no zero — BaseAxisGridStyle doesn't have the field.
+    emitted_x = resolved_axis_style(
+        resolved, "axis_x", "quantitative", chart_type="", label_authored=False
+    )
+    assert emitted_x.grid.zero is None

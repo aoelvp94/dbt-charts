@@ -1,0 +1,759 @@
+"""Integration tests: chart channel syntax → Vega-Lite spec emission.
+
+TDD: these tests were written before the implementation.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+from pydantic import TypeAdapter
+
+from dbt_charts.core.compile.config import (
+    get_theme_style,
+)
+from dbt_charts.core.compile.models.chart.normalized import (
+    BarChart,
+    Chart,
+    KpiChart,
+    TableChart,
+)
+from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.compile.resolve import resolve
+from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
+from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
+
+_BOARD_STYLE, _BOARD_CONTEXT = resolve_style_and_context(get_theme_style())
+
+_DUMMY_QUERY = SqlQuery(sql="SELECT 1", source="test")
+
+
+def _color_enc(spec: dict) -> dict | None:
+    """Find color encoding in a VL spec, checking top-level then layers."""
+    top = spec.get("encoding", {})
+    if "color" in top:
+        return top["color"]
+    for layer in spec.get("layer", []):
+        layer_enc = layer.get("encoding", {})
+        if "color" in layer_enc:
+            return layer_enc["color"]
+    return None
+
+
+def _bar_mark(spec: dict) -> dict | str | None:
+    """Get the bar mark from a VL spec (handles layered bar charts)."""
+    mark = spec.get("mark")
+    if mark is not None:
+        return mark
+    for layer in spec.get("layer", []):
+        lm = layer.get("mark")
+        if lm is not None and (
+            lm == "bar" or (isinstance(lm, dict) and lm.get("type") == "bar")
+        ):
+            return lm
+    return None
+
+
+_BAR_DATA = [
+    {"category": "A", "arr": 2_000_000},
+    {"category": "B", "arr": 500_000},
+]
+
+
+def _bar_chart(**kwargs: Any) -> Chart:
+    return BarChart(
+        id="test_chart",
+        query=_DUMMY_QUERY,
+        query_name="q",
+        type="bar",
+        x="category",
+        y="arr",
+        **kwargs,
+    )
+
+
+# ============================================================================
+# §8c: color gradient on bar chart
+# ============================================================================
+
+
+def test_color_gradient_bar_chart():
+    """color: field + style.color.scale.palette → VL quantitative color encoding with scale.range."""
+    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
+
+    chart = _bar_chart(
+        color="arr",
+        style=BarChartStylePatch.model_validate(
+            {"color": {"gradient": {"palette": ["#ffffff", "#0000ff"]}}}
+        ),
+    )
+    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
+    color_enc = spec.get("encoding", {}).get("color")
+    assert color_enc is not None, "Expected color encoding"
+    assert color_enc.get("field") == "arr"
+    assert color_enc.get("type") == "quantitative"
+    scale = color_enc.get("scale", {})
+    assert "range" in scale
+    assert scale["range"] == ["#ffffff", "#0000ff"]
+
+
+def test_color_gradient_named_scheme_bar_chart():
+    """color: field + style.color.scale.palette: <named scheme string> → VL
+    scale.scheme, not scale.range of the scheme name's individual characters.
+
+    Regression for _channels.py's ``channel_to_encoding`` gradient branch,
+    which called ``list(ch.scale.palette)`` unconditionally — a string
+    palette like "blues" became ``["b", "l", "u", "e", "s"]``.
+    """
+    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
+
+    chart = _bar_chart(
+        color="arr",
+        style=BarChartStylePatch.model_validate(
+            {"color": {"gradient": {"palette": "blues"}}}
+        ),
+    )
+    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
+    color_enc = spec.get("encoding", {}).get("color")
+    assert color_enc is not None, "Expected color encoding"
+    scale = color_enc.get("scale", {})
+    assert scale.get("scheme") == "blues"
+    assert "range" not in scale
+
+
+def test_color_gradient_dataface_named_palette_resolves_to_stops():
+    """color: field + style.color.scale.palette: <Dataface named palette> →
+    VL scale.range of resolved hex stops, not scale.scheme with the raw
+    Dataface name — Vega doesn't recognize a Dataface name as a scheme, so
+    forwarding it as one is a silent no-op: Vega logs an unrecognized-scheme
+    warning and paints with its own default coloring instead of the palette
+    the author asked for.
+    """
+    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
+    from dbt_charts.core.compile.resolve.style.palette import palette as resolve_palette
+
+    chart = _bar_chart(
+        color="arr",
+        style=BarChartStylePatch.model_validate(
+            {"color": {"gradient": {"palette": "dbt-seq-blue"}}}
+        ),
+    )
+    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
+    color_enc = spec.get("encoding", {}).get("color")
+    assert color_enc is not None, "Expected color encoding"
+    scale = color_enc.get("scale", {})
+    assert scale.get("range") == resolve_palette("dbt-seq-blue")
+    assert "scheme" not in scale
+
+
+# ============================================================================
+# §8e: conditional color on bar chart
+# ============================================================================
+
+
+def test_color_conditional_bar_chart():
+    """conditional_formatting.<col>.when → VL color-channel condition array."""
+
+    chart = _bar_chart(
+        conditional_formatting={
+            "arr": {
+                "when": [
+                    {"gt": 1_000_000, "background": "#1aff3c"},
+                    {"lte": 0, "background": "#ff0000"},
+                ]
+            }
+        }
+    )
+    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
+    color_enc = _color_enc(spec)
+    assert color_enc is not None
+    conditions = color_enc.get("condition", [])
+    assert len(conditions) == 2
+    assert "arr" in conditions[0]["test"]
+    assert conditions[0]["value"] == "#1aff3c"
+    assert color_enc.get("value") is None  # fallback is null
+
+
+# ============================================================================
+# §8h: literal chart.style.color (already works, regression guard)
+# ============================================================================
+
+
+def test_literal_style_color_passes_through():
+    """chart.style.color (literal) still works as before — no resolved channel emitted."""
+    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
+
+    chart = _bar_chart(
+        style=BarChartStylePatch.model_validate({"color": {"static": "#ff0000"}})
+    )
+    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
+    # chart.style.color is the literal cascade — no channel encoding
+    assert resolved.resolved_channels == {}
+
+
+def test_chart_local_named_palette_overrides_theme_palette_mark_fill():
+    """``style.palette: <name>`` resolves and supplies palette[0] for single-series mark fill.
+
+    Regression test for the cascade plumbing: the chart-local named-palette
+    override must reach ``effective.palette`` so the single-series bar fill
+    picks up the override's stop[0], not the theme palette's stop[0].
+    """
+    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
+    from dbt_charts.core.compile.resolve.style.palette import palette as resolve_palette
+
+    chart = _bar_chart(
+        style=BarChartStylePatch.model_validate(
+            {"color": {"categorical": {"palette": "dbt-seq-rust"}}}
+        )
+    )
+    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
+    expected_stop_0 = resolve_palette("dbt-seq-rust")[0]
+    mark = _bar_mark(spec)
+    assert isinstance(mark, dict), "Expected mark dict with fill"
+    assert mark.get("fill") == expected_stop_0
+
+
+def test_heatmap_chart_local_palette_overrides_theme_for_colorless_rect_fill():
+    """``style.palette`` on a colorless heatmap reaches ``config.rect.fill``.
+
+    Regression for removing the assemble-time re-patch (translate.py's
+    path/rect/symbol/shape/trail loop): the heatmap emitter now bakes
+    ``config.rect.fill`` directly from its own already-resolved effective
+    palette instead of relying on a post-merge correction.
+    """
+    from dbt_charts.core.compile.models.chart.normalized import HeatmapChart
+    from dbt_charts.core.compile.models.style.authored import HeatmapChartStylePatch
+    from dbt_charts.core.compile.resolve.style.palette import palette as resolve_palette
+
+    chart = HeatmapChart(
+        id="heatmap_test",
+        query=_DUMMY_QUERY,
+        query_name="q",
+        type="heatmap",
+        x="col",
+        y="row",
+        style=HeatmapChartStylePatch.model_validate(
+            {"color": {"categorical": {"palette": "dbt-seq-rust"}}}
+        ),
+    )
+    data = [
+        {"col": "A", "row": "1"},
+        {"col": "B", "row": "2"},
+    ]
+    resolved = resolve(chart, data, chart_style_context=_BOARD_CONTEXT)
+    spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
+    expected_stop_0 = resolve_palette("dbt-seq-rust")[0]
+    assert spec["config"]["rect"]["fill"] == expected_stop_0
+
+
+def test_literal_style_color_overrides_palette_mark_fill():
+    """``style.color: "#hex"`` statically colors the bars (no data channel).
+
+    style.color replaces palette[0] as mark.fill when no data color channel
+    is present.  When a data color channel IS present, has_color_encoding=True
+    suppresses mark.fill entirely so the encoding wins.
+    """
+    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
+
+    chart = _bar_chart(
+        style=BarChartStylePatch.model_validate({"color": {"static": "#7B7B7B"}})
+    )
+    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
+    # style.color overrides palette[0] → mark.fill is the style color
+    mark = _bar_mark(spec)
+    assert isinstance(mark, dict), "Expected mark dict with fill"
+    assert mark["fill"] == "#7B7B7B"
+
+
+# ============================================================================
+# §8a partial: KPI chart with color.when evaluates against data row
+# ============================================================================
+
+
+def test_kpi_color_when():
+    """KPI chart with conditional_formatting evaluates font.color rule against data row."""
+    from dbt_charts.core.compile.resolve.style.board import resolve_style
+    from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+    _kpi_data = [{"revenue": 2_500_000}]
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "kpi1",
+            "query": _DUMMY_QUERY,
+            "query_name": "q",
+            "type": "kpi",
+            "value": "revenue",
+            "conditional_formatting": {
+                "revenue": {
+                    "when": [
+                        {"gt": 2_000_000, "font": {"color": "#00ff00"}},
+                        {"lte": 2_000_000, "font": {"color": "#ff0000"}},
+                    ]
+                }
+            },
+        }
+    )
+    resolved = resolve(chart, _kpi_data, chart_style_context=_BOARD_CONTEXT)
+    svg = render_kpi_svg(
+        resolved,
+        _kpi_data,
+        board_style=resolve_style(get_theme_style()),
+    )
+    # Revenue is 2.5M > 2M → should use #00ff00
+    assert "#00ff00" in svg
+
+
+# ============================================================================
+# Tables read conditional_formatting directly — no lowering into style.columns
+# ============================================================================
+
+
+def test_table_conditional_formatting_preserved_on_source_chart():
+    """Table CF is preserved on the chart-level block for direct render access.
+
+    Post ``delete-tablecolumnconfig-when``, the table renderer reads ``when``
+    rules straight from ``chart.conditional_formatting``. Resolve must not
+    synthesize or mutate ``style.columns[*].when`` to carry CF.
+    """
+    _table_data = [
+        {"region": "US", "arr": 1_200_000},
+        {"region": "EU", "arr": 400_000},
+    ]
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "table1",
+            "query": _DUMMY_QUERY,
+            "query_name": "q",
+            "type": "table",
+            "conditional_formatting": {
+                "arr": {
+                    "when": [
+                        {"gt": 1_000_000, "font": {"color": "#00ff00"}},
+                        {"lte": 1_000_000, "font": {"color": "#ff0000"}},
+                    ]
+                }
+            },
+        }
+    )
+    resolved = resolve(chart, _table_data, chart_style_context=_BOARD_CONTEXT)
+    assert resolved is not None
+    # CF block survives on the resolved chart, where the table renderer reads it.
+    assert resolved.conditional_formatting is not None
+    assert "arr" in resolved.conditional_formatting
+
+
+# ============================================================================
+# Regression: dict-form color must not crash validation.py (TypeError on hash)
+# ============================================================================
+
+
+def test_bar_chart_conditional_formatting_no_crash_in_render():
+    """conditional_formatting on bar chart must not crash in the full render path."""
+
+    chart = _bar_chart(
+        conditional_formatting={
+            "arr": {
+                "when": [
+                    {"gt": 1_000_000, "background": "#1aff3c"},
+                    {"lte": 0, "background": "#ff0000"},
+                ]
+            }
+        }
+    )
+    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
+    # render_standard_vega_spec returns a VL spec dict — must not raise
+    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
+    assert spec is not None
+    assert "mark" in spec or "layer" in spec
+
+
+# ============================================================================
+# Series grouping: detail encoding for line/area/scatter
+# ============================================================================
+
+
+# ============================================================================
+# VL conditional expression: json.dumps escaping
+# ============================================================================
+
+
+def test_conditional_expr_safe_field_quoting():
+    """Conditional color test expression uses json.dumps for safe field quoting."""
+
+    chart = _bar_chart(
+        conditional_formatting={
+            "arr": {"when": [{"gt": 0, "background": "#00ff00"}]},
+        }
+    )
+    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
+    color_enc = _color_enc(spec)
+    assert color_enc is not None, "Expected color encoding in spec or layers"
+    conditions = color_enc["condition"]
+    # Field must be quoted with json.dumps: datum["arr"] not datum['arr']
+    assert 'datum["arr"]' in conditions[0]["test"]
+
+
+# ============================================================================
+# Gradient domain: only set when both min and max are authored
+# ============================================================================
+
+
+def test_gradient_domain_skipped_when_only_min_set():
+    """Gradient with only min set should not emit domain (VL scans data for max)."""
+    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
+
+    chart = _bar_chart(
+        color="arr",
+        style=BarChartStylePatch.model_validate(
+            {"color": {"gradient": {"palette": ["#fff", "#000"], "min": 0}}}
+        ),
+    )
+    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
+    scale = spec["encoding"]["color"].get("scale", {})
+    assert "domain" not in scale
+
+
+def test_gradient_domain_set_when_both_min_and_max():
+    """Gradient with both min and max should emit domain = [min, max]."""
+    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
+
+    chart = _bar_chart(
+        color="arr",
+        style=BarChartStylePatch.model_validate(
+            {
+                "color": {
+                    "gradient": {"palette": ["#fff", "#000"], "min": 0, "max": 5000000}
+                }
+            }
+        ),
+    )
+    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
+    scale = spec["encoding"]["color"].get("scale", {})
+    assert scale.get("domain") == [0, 5_000_000]
+
+
+# ============================================================================
+
+# ============================================================================
+# Table lowering: color.when lowers to style.columns
+# ============================================================================
+
+
+def test_table_conditional_formatting_flows_through_render_to_svg():
+    """Table CF rules from the chart-level block apply at render time."""
+    from dbt_charts.core.compile.resolve.style.board import resolve_style
+    from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+
+    _table_data = [
+        {"region": "US", "arr": 1_200_000},
+        {"region": "EU", "arr": 400_000},
+    ]
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "table1",
+            "query": _DUMMY_QUERY,
+            "query_name": "q",
+            "type": "table",
+            "conditional_formatting": {
+                "arr": {
+                    "when": [
+                        {"gt": 1_000_000, "font": {"color": "#00ff00"}},
+                        {"lte": 1_000_000, "font": {"color": "#ff0000"}},
+                    ]
+                }
+            },
+        }
+    )
+    resolved = resolve(chart, _table_data, chart_style_context=_BOARD_CONTEXT)
+    svg = render_table_svg(
+        resolved,
+        _table_data,
+        width=400,
+        height=200,
+        board_style=resolve_style(get_theme_style()),
+    )
+    # Both branches of the rule set must appear in the rendered SVG.
+    assert "#00ff00" in svg
+    assert "#ff0000" in svg
+
+
+def test_table_link_does_not_override_conditional_font_color():
+    """Conditional font color is explicit data styling; link affordance adds underline."""
+    from dbt_charts.core.compile.resolve.style.board import resolve_style
+    from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
+
+    table_data = [{"region": "US", "arr": 1_200_000}]
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "table1",
+            "query": _DUMMY_QUERY,
+            "query_name": "q",
+            "type": "table",
+            "link": "/detail/{{ region }}",
+            "conditional_formatting": {
+                "region": {
+                    "when": [
+                        {"eq": "US", "font": {"color": "#ff0000"}},
+                    ]
+                }
+            },
+        }
+    )
+
+    resolved = resolve(chart, table_data, chart_style_context=_BOARD_CONTEXT)
+    svg = render_table_svg(
+        resolved,
+        table_data,
+        width=400,
+        height=200,
+        board_style=resolve_style(get_theme_style()),
+    )
+
+    assert "#ff0000" in svg
+
+
+# ============================================================================
+# Boolean predicates emit valid JS (true/false not True/False)
+# ============================================================================
+
+
+def test_boolean_predicate_vl_emission():
+    """eq: true/false must emit 'true'/'false' in VL test expression (not Python 'True'/'False')."""
+
+    _data = [
+        {"category": "A", "is_active": True, "arr": 100},
+        {"category": "B", "is_active": False, "arr": 50},
+    ]
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "bool_chart",
+            "query": _DUMMY_QUERY,
+            "query_name": "q",
+            "type": "bar",
+            "x": "category",
+            "y": "arr",
+            "conditional_formatting": {
+                "is_active": {
+                    "when": [
+                        {"eq": True, "background": "#00ff00"},
+                        {"eq": False, "background": "#ff0000"},
+                    ]
+                }
+            },
+        }
+    )
+    resolved = resolve(chart, _data, chart_style_context=_BOARD_CONTEXT)
+    spec = render_resolved_chart(resolved, _data, _BOARD_STYLE).payload
+    color_enc = _color_enc(spec)
+    assert color_enc is not None, "Expected color encoding in spec or layers"
+    conditions = color_enc["condition"]
+    assert len(conditions) == 2
+    # Must use JS lowercase true/false, not Python True/False
+    assert "true" in conditions[0]["test"]
+    assert "True" not in conditions[0]["test"]
+    assert "false" in conditions[1]["test"]
+    assert "False" not in conditions[1]["test"]
+
+
+# ============================================================================
+# KPI cascade precedence: resolved channel overrides style literal
+# ============================================================================
+
+
+def test_kpi_channel_overrides_style_color():
+    """resolved_channels color (projected from conditional_formatting) takes priority
+    over chart.style.color."""
+    from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
+    from dbt_charts.core.compile.resolve.style.board import resolve_style
+    from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+    _kpi_data = [{"revenue": 3_000_000}]
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "kpi_cascade",
+            "query": _DUMMY_QUERY,
+            "query_name": "q",
+            "type": "kpi",
+            "value": "revenue",
+            "style": KpiChartStylePatch.model_validate(
+                {"color": "#aaaaaa"}
+            ),  # would be used as fallback
+            "conditional_formatting": {
+                "revenue": {
+                    "when": [
+                        {"gt": 2_000_000, "font": {"color": "#00ff00"}},  # should win
+                    ]
+                }
+            },
+        }
+    )
+    resolved = resolve(chart, _kpi_data, chart_style_context=_BOARD_CONTEXT)
+    svg = render_kpi_svg(
+        resolved,
+        _kpi_data,
+        board_style=resolve_style(get_theme_style()),
+    )
+    assert "#00ff00" in svg
+    assert "#aaaaaa" not in svg
+
+
+def test_kpi_style_color_used_as_fallback():
+    """chart.style.color flows through the cascade and lands as the KPI value fill.
+
+    Renderer reads from resolved_style — never from a Patch. The chart-local
+    color is merged onto resolved_style.color by build_chart_style_context (consumed
+    by the KPI value-color cascade in kpi.py).
+    """
+    from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
+    from dbt_charts.core.compile.resolve.style.board import resolve_style
+    from dbt_charts.core.render.chart.kpi import render_kpi_svg
+
+    _kpi_data = [{"revenue": 3_000_000}]
+    chart = KpiChart(
+        id="kpi_style_fallback",
+        query=_DUMMY_QUERY,
+        query_name="q",
+        type="kpi",
+        value="revenue",
+        style=KpiChartStylePatch.model_validate({"color": "#cccccc"}),
+    )
+    resolved = resolve(chart, _kpi_data, chart_style_context=_BOARD_CONTEXT)
+    svg = render_kpi_svg(
+        resolved,
+        _kpi_data,
+        board_style=resolve_style(get_theme_style()),
+    )
+    assert "#cccccc" in svg
+
+
+# ============================================================================
+# Table lowering: passthrough columns preserve original order
+# ============================================================================
+
+
+def test_table_cf_does_not_synthesize_style_columns_for_target_field():
+    """CF on a column NOT in style.columns does not synthesize a column entry.
+
+    After removing the CF → style.columns lowering, tables read rules straight
+    from the chart-level block. ``style.columns`` stays authored-only.
+    """
+    from dbt_charts.core.compile.models.chart.authored import TableColumnConfig
+    from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
+
+    _table_data = [
+        {"name": "Alice", "arr": 1_200_000, "region": "US"},
+    ]
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "table_order",
+            "query": _DUMMY_QUERY,
+            "query_name": "q",
+            "type": "table",
+            "style": TableChartStylePatch.model_validate(
+                {
+                    "columns": {
+                        "name": TableColumnConfig(),
+                        "region": TableColumnConfig(),
+                    }
+                }
+            ),
+            "conditional_formatting": {
+                "arr": {"when": [{"gt": 1_000_000, "font": {"color": "#00ff00"}}]},
+            },
+        }
+    )
+    resolved = resolve(chart, _table_data, chart_style_context=_BOARD_CONTEXT)
+    assert resolved.columns is not None
+    cols = resolved.columns
+    fields = list(cols.keys())
+    # Only authored columns remain — no injected "arr" entry.
+    assert fields == ["name", "region"]
+
+
+# ============================================================================
+# Table chart rejects literal/series color channel
+# ============================================================================
+
+
+def test_table_literal_color_channel_raises():
+    """color: {value: ...} is rejected at model creation time — use style.color.
+    Chart.color is str | None; dict-form is rejected as type error.
+    """
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="color"):
+        TableChart(
+            id="table_lit",
+            query=_DUMMY_QUERY,
+            query_name="q",
+            type="table",
+            color={"value": "#ff0000"},  # type: ignore[arg-type]
+        )
+
+
+# ============================================================================
+# Regression: link template with color channel
+# ============================================================================
+
+
+def test_link_template_with_color_channel():
+    """{{ color }} in link template resolves correctly when color uses channel grammar."""
+
+    _data = [
+        {"category": "A", "segment": "S1", "arr": 100},
+        {"category": "B", "segment": "S2", "arr": 200},
+    ]
+    chart = BarChart(
+        id="link_chart",
+        query=_DUMMY_QUERY,
+        query_name="q",
+        type="bar",
+        x="category",
+        y="arr",
+        color="segment",
+        link="?filter={{ color }}",
+    )
+    resolved = resolve(chart, _data, chart_style_context=_BOARD_CONTEXT)
+    # Must not raise — resolved_channels has color
+    spec = render_resolved_chart(resolved, _data, _BOARD_STYLE).payload
+    assert spec is not None
+
+
+# ============================================================================
+# 1B.6b: KPI gradient mode with CSV-string cell value
+# ============================================================================
+
+
+def test_kpi_gradient_color_csv_string_interpolates():
+    """KPI gradient color channel must interpolate when cell value is a numeric string.
+
+    CSV-loaded data arrives as str. The isinstance(cell_value, (int, float)) gate
+    in kpi.py must not short-circuit to null_color for valid numeric strings.
+    """
+    from dbt_charts.core.compile.models.chart.authored import ScaleTargetConfig
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
+    from dbt_charts.core.render.chart.kpi import _evaluate_channel_for_row
+
+    ch = ResolvedStyleChannel(
+        channel="color",
+        mode="gradient",
+        data_field="score",
+        scale=ScaleTargetConfig(
+            palette=["#ffffff", "#0000ff"], min=0.0, max=100.0, null_color="#aaaaaa"
+        ),
+    )
+    # "50" is a CSV-string numeric — must produce an interpolated color, NOT null_color.
+    result = _evaluate_channel_for_row({"color": ch}, "color", {"score": "50"})
+    assert result is not None
+    assert result != "#aaaaaa", "CSV-string value fell through to null_color"
+    assert result.startswith("#")

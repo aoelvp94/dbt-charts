@@ -1,0 +1,69 @@
+{
+  "top_level_keys": [
+    "aliases",
+    "auto_link",
+    "cache",
+    "card_gap",
+    "chart_focus",
+    "charts",
+    "cols",
+    "description",
+    "details",
+    "extends",
+    "grid",
+    "height",
+    "html_policy",
+    "id",
+    "queries",
+    "rows",
+    "source",
+    "style",
+    "tabs",
+    "tags",
+    "text",
+    "title",
+    "variables",
+    "visible",
+    "width"
+  ],
+  "enum_values_by_key": {
+    "type": [
+      "area",
+      "bar",
+      "bubble_map",
+      "callout",
+      "donut",
+      "geoshape",
+      "heatmap",
+      "histogram",
+      "kpi",
+      "line",
+      "map",
+      "pie",
+      "point_map",
+      "scatter",
+      "spark_bar",
+      "table"
+    ],
+    "input": [
+      "auto",
+      "checkbox",
+      "date",
+      "datepicker",
+      "daterange",
+      "input",
+      "multiselect",
+      "number",
+      "radio",
+      "range",
+      "select",
+      "slider",
+      "text",
+      "textarea"
+    ]
+  },
+  "sql_block_scalar_keys": [
+    "query",
+    "sql"
+  ]
+}

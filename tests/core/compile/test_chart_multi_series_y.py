@@ -1,0 +1,170 @@
+"""Multi-field `y:` combinations that are decidable from structure alone.
+
+Each case here used to reach a render emitter and raise a bare-message
+``ChartDataError``, which the diagnostics layer stamps ``ERR-INTERNAL`` — so a
+board passed ``dft validate`` and then died at render with the engine's
+"this is a bug" code. They are data-free, so they belong on the authored model
+alongside ``_validate_data_table``.
+"""
+
+from __future__ import annotations
+
+import pytest
+from pydantic import TypeAdapter, ValidationError
+
+from dbt_charts.core.compile.models.chart.authored import AuthoredChart
+
+_chart_patch_adapter = TypeAdapter(AuthoredChart)
+
+
+def _validate(**fields: object) -> object:
+    return _chart_patch_adapter.validate_python({"query": "q", **fields})
+
+
+# =============================================================================
+# spark_bar — single-series family
+# =============================================================================
+
+
+def test_spark_bar_rejects_multi_field_y():
+    with pytest.raises(ValidationError) as exc:
+        _validate(type="spark_bar", x="month", y=["revenue", "cost"])
+    assert "single y" in str(exc.value)
+
+
+def test_spark_bar_accepts_single_element_y_list():
+    chart = _validate(type="spark_bar", x="month", y=["revenue"])
+    assert chart.y == ["revenue"]
+
+
+# =============================================================================
+# bar / area — color: and layers: are single-series-only with a y list
+# =============================================================================
+
+
+_CONDITIONAL_FORMATTING = {"revenue": {"when": [{"gt": 100, "background": "#ff0000"}]}}
+
+
+@pytest.mark.parametrize("chart_type", ["bar", "area"])
+def test_rejects_color_with_multi_field_y(chart_type: str):
+    with pytest.raises(
+        ValidationError, match="color is not supported with multi-metric"
+    ):
+        _validate(type=chart_type, x="month", y=["revenue", "cost"], color="region")
+
+
+@pytest.mark.parametrize("chart_type", ["bar", "area"])
+def test_rejects_color_with_single_element_y_list(chart_type: str):
+    # The emitters branch on isinstance(y, list), not on length — `y: [revenue]`
+    # takes the same folded path, so it must be rejected the same way.
+    with pytest.raises(
+        ValidationError, match="color is not supported with multi-metric"
+    ):
+        _validate(type=chart_type, x="month", y=["revenue"], color="region")
+
+
+@pytest.mark.parametrize("chart_type", ["bar", "area"])
+def test_rejects_layers_with_multi_field_y(chart_type: str):
+    with pytest.raises(
+        ValidationError, match="layers are not supported with multi-metric"
+    ):
+        _validate(
+            type=chart_type,
+            x="month",
+            y=["revenue", "cost"],
+            layers=[{"type": "line", "y": "target"}],
+        )
+
+
+@pytest.mark.parametrize("chart_type", ["bar", "area"])
+def test_rejects_conditional_formatting_with_multi_field_y(chart_type: str):
+    # conditional_formatting projects into the mark-fill channel, so it collides
+    # with the folded measures exactly as an authored color: does — but the
+    # author never wrote a color:, so the message must name the field they did.
+    with pytest.raises(
+        ValidationError, match="conditional_formatting is not supported"
+    ):
+        _validate(
+            type=chart_type,
+            x="month",
+            y=["revenue", "cost"],
+            conditional_formatting=_CONDITIONAL_FORMATTING,
+        )
+
+
+@pytest.mark.parametrize("chart_type", ["bar", "area"])
+def test_accepts_conditional_formatting_with_single_y(chart_type: str):
+    chart = _validate(
+        type=chart_type,
+        x="month",
+        y="revenue",
+        conditional_formatting=_CONDITIONAL_FORMATTING,
+    )
+    assert chart.conditional_formatting is not None
+
+
+def test_bar_rejects_multi_field_y_without_x():
+    with pytest.raises(ValidationError, match="require an x field"):
+        _validate(type="bar", y=["revenue", "cost"])
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"color": "segment"},
+        {"conditional_formatting": _CONDITIONAL_FORMATTING},
+        {},
+    ],
+)
+def test_histogram_is_not_caught_by_the_bar_rules(fields: dict[str, object]):
+    # A histogram bins x and counts, never reading y — the emitter returns into
+    # the histogram path before the multi-metric branch, so these combinations
+    # render today and must not be newly rejected.
+    chart = _validate(type="histogram", x="amount", y=["a", "b"], **fields)
+    assert chart.type == "histogram"
+
+
+# =============================================================================
+# axis_y.mirror — one shared y-scale, no meaning across series
+#
+# Stays a render-time check: mirror is cascade-resolved, so a theme layer can
+# turn it on for a chart that never authored it. It only has to stop being
+# ERR-INTERNAL.
+# =============================================================================
+
+
+@pytest.mark.parametrize("mirror", [True, {"format": "$,.2f"}])
+def test_authored_model_accepts_mirror_with_multi_field_y(mirror: object):
+    chart = _validate(
+        type="line",
+        x="month",
+        y=["revenue", "cost"],
+        style={"axis_y": {"mirror": mirror}},
+    )
+    assert chart.y == ["revenue", "cost"]
+
+
+# =============================================================================
+# Combinations the authored model still accepts — the validators above must not
+# widen past bar/area. This pins parse-time acceptance only; it makes no claim
+# about what each family emits (scatter's multi-y y-channel and heatmap's
+# dropped color: are separate defects, not something these validators decide).
+# =============================================================================
+
+
+@pytest.mark.parametrize("chart_type", ["bar", "line", "area", "scatter", "heatmap"])
+def test_accepts_plain_multi_field_y(chart_type: str):
+    chart = _validate(type=chart_type, x="month", y=["revenue", "cost"])
+    assert chart.y == ["revenue", "cost"]
+
+
+@pytest.mark.parametrize("chart_type", ["line", "scatter", "heatmap"])
+def test_accepts_color_with_multi_field_y_on_supporting_families(chart_type: str):
+    chart = _validate(type=chart_type, x="month", y=["revenue", "cost"], color="region")
+    assert chart.color == "region"
+
+
+@pytest.mark.parametrize("chart_type", ["bar", "area"])
+def test_accepts_color_with_single_y(chart_type: str):
+    chart = _validate(type=chart_type, x="month", y="revenue", color="region")
+    assert chart.color == "region"

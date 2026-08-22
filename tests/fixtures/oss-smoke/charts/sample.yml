@@ -1,0 +1,18 @@
+title: OSS smoke sample
+
+queries:
+  sales:
+    type: values
+    rows:
+      - {product: Widget, revenue: 100}
+
+charts:
+  revenue_by_product:
+    type: bar
+    query: sales
+    x: product
+    y: revenue
+
+rows:
+  - cols:
+      - revenue_by_product

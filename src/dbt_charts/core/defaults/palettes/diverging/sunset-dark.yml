@@ -1,0 +1,22 @@
+# Diverging palette — dbt-div-sunset-dark (dark-canvas fork)
+#
+
+name: dbt-div-sunset-dark
+family: diverging
+description: Paul Tol's sunset scheme, resampled to 11 stops. SRON-published CVD-safe diverging. Dark-canvas
+  fork.
+design_notes: "Dark-canvas fork of dbt-div-sunset. Multi-hue (teal\u2192cyan\u2192\u2026\u2192orange\u2192\
+  red) preserved; source lightness profile inverted so the pale center recedes and saturated ends pop\
+  \ on dark.\n"
+colors:
+- '#6ee2dc'
+- '#48d5e2'
+- '#308eae'
+- '#145581'
+- '#213e4e'
+- '#434023'
+- '#86690d'
+- '#b76700'
+- '#c64e08'
+- '#dd3a16'
+- '#e73f39'

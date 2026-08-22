@@ -1,0 +1,63 @@
+"""Theme-stage style classes: callout chart family."""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from dbt_charts.core.compile.models.markers import (
+    Color,
+    InheritSlot,
+)
+from dbt_charts.core.compile.models.primitives import (
+    BorderStyle,
+    FontStyle,
+    ToneLiteral,
+)
+from dbt_charts.core.compile.models.style.theme.board import (
+    PaddingStyle,
+)
+
+
+class CalloutElementStyle(BaseModel):
+    """Font + y_offset for a callout title or message."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # InheritSlot: callout title/message font fills from charts.font.
+    font: Annotated[FontStyle, InheritSlot(from_path="Style.charts.font")] = Field(
+        default_factory=FontStyle, description="Element font style overrides."
+    )
+    y_offset: float = Field(
+        description="Vertical offset from the element's anchor in pixels."
+    )
+
+
+class CalloutChartStyle(BaseModel):
+    """Chart-family style for ``type: callout`` charts and runtime chart-error fallback cards.
+
+    Background/border/text colors are resolved from ``{tone}.*`` palette roles
+    (bg, border, solid, text) at render time.  This model carries structural
+    defaults (padding, section_gap, font metrics) plus the semantic tone selector.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    preferred_width: float = Field(description="Preferred callout width in pixels.")
+
+    tone: ToneLiteral = Field(
+        description="Semantic tone for palette-role lookup (info | positive | negative | warning).",
+    )
+    background: Annotated[str, Color()] = Field(
+        description="Callout card background color (info.bg default)."
+    )
+    border: BorderStyle = Field(description="Callout card border style.")
+    padding: Annotated[PaddingStyle, InheritSlot(from_path="Style.charts.padding")] = (
+        Field(description="Per-chart-type padding override; 4 sides in pixels.")
+    )
+    section_gap: float = Field(
+        description="Vertical gap between callout title and message in pixels."
+    )
+    title: CalloutElementStyle = Field(description="Callout title element style.")
+    message: CalloutElementStyle = Field(description="Callout message element style.")

@@ -1,0 +1,18 @@
+title: Project Overview
+
+queries:
+  metrics:
+    type: values
+    rows:
+      - {category: A, count: 10}
+
+charts:
+  metrics_chart:
+    type: bar
+    query: metrics
+    x: category
+    y: count
+
+rows:
+  - cols:
+      - metrics_chart

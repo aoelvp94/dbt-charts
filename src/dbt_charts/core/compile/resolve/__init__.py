@@ -1,0 +1,33 @@
+"""resolve — normalized chart → ResolvedChart.
+
+Re-exports the public surface of `resolve.chart` (see its docstring).
+`resolve.style` (per-chart and board-level style cascade) is a sibling
+package, imported directly (`dbt_charts.core.compile.resolve.style`) — not
+re-exported here.
+"""
+
+from .chart import (
+    AutomaticLinkCandidate,
+    auto_link_excludes_x,
+    default_chart_width,
+    infer_pivot_measure_names,
+    preferred_chart_width,
+    resolve,
+    resolve_chart_display_title,
+    resolve_y_zero,
+    should_fetch_table_fk_links,
+    should_synthesize_auto_link,
+)
+
+__all__ = [
+    "AutomaticLinkCandidate",
+    "auto_link_excludes_x",
+    "default_chart_width",
+    "infer_pivot_measure_names",
+    "preferred_chart_width",
+    "resolve",
+    "resolve_chart_display_title",
+    "resolve_y_zero",
+    "should_fetch_table_fk_links",
+    "should_synthesize_auto_link",
+]

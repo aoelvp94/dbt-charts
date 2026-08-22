@@ -1,0 +1,18 @@
+title: Board With Bound Dataset
+
+queries:
+  products:
+    type: values
+    rows:
+      - {region: North, revenue: 100}
+
+charts:
+  revenue_chart:
+    type: bar
+    query: products
+    x: region
+    y: revenue
+
+rows:
+  - cols:
+      - revenue_chart

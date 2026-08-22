@@ -1,0 +1,253 @@
+# Numeric Column Profile Template
+#
+# Detailed analysis of a numeric column: declared schema, histogram,
+# percentiles, outliers. Schema panel pulls from the LayeredSchemaResolver;
+# the live histogram / percentile / outlier panels stay on warehouse SQL
+# because they need the actual data to compute.
+#
+# URL: /inspect/numeric_column/?model=<table>&column=<col>
+#
+# Required variables:
+#   - model: Table/model name
+#   - column: Column name to analyze
+
+title: "Numeric Column: {{ model }}.{{ column }}"
+
+text: |
+  [Back to {{ model }}](/inspect/model/?model={{ model }}&source_name={{ source_name }})
+
+variables:
+  model:
+    input: text
+    visible: false
+    default: ""
+  column:
+    input: text
+    visible: false
+    default: ""
+  source_name:
+    input: text
+    visible: false
+    default: ""
+  schema_name:
+    input: text
+    visible: false
+    default: ""
+
+queries:
+  column_schema:
+    type: schema
+    source: "{{ source_name }}"
+    schema: "{{ schema_name }}"
+    table: "{{ model }}"
+    column: "{{ column }}"
+
+  # Basic stats
+  stats:
+    source: "{{ source_name }}"
+    sql: |
+      SELECT
+        COUNT(*) as total_count,
+        COUNT({{ column }}) as non_null_count,
+        COUNT(*) - COUNT({{ column }}) as null_count,
+        ROUND(100.0 * (COUNT(*) - COUNT({{ column }})) / COUNT(*), 2) as null_pct,
+        MIN({{ column }}) as min_value,
+        MAX({{ column }}) as max_value,
+        ROUND(AVG({{ column }}), 4) as mean_value,
+        ROUND(STDDEV({{ column }}), 4) as std_dev,
+        COUNT(DISTINCT {{ column }}) as distinct_count
+      FROM {{ model }}
+
+  # Percentiles
+  percentiles:
+    source: "{{ source_name }}"
+    sql: |
+      SELECT
+        'P10' as percentile, PERCENTILE_CONT(0.10) WITHIN GROUP (ORDER BY {{ column }}) as value FROM {{ model }}
+      UNION ALL
+      SELECT
+        'P25' as percentile, PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY {{ column }}) as value FROM {{ model }}
+      UNION ALL
+      SELECT
+        'P50 (Median)' as percentile, PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY {{ column }}) as value FROM {{ model }}
+      UNION ALL
+      SELECT
+        'P75' as percentile, PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY {{ column }}) as value FROM {{ model }}
+      UNION ALL
+      SELECT
+        'P90' as percentile, PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY {{ column }}) as value FROM {{ model }}
+      UNION ALL
+      SELECT
+        'P99' as percentile, PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY {{ column }}) as value FROM {{ model }}
+
+  # Histogram data (10 bins)
+  histogram:
+    source: "{{ source_name }}"
+    sql: |
+      WITH bounds AS (
+        SELECT
+          MIN({{ column }}) as min_val,
+          MAX({{ column }}) as max_val,
+          (MAX({{ column }}) - MIN({{ column }})) / 10.0 as bin_width
+        FROM {{ model }}
+        WHERE {{ column }} IS NOT NULL
+      ),
+      binned AS (
+        SELECT
+          FLOOR(({{ column }} - b.min_val) / NULLIF(b.bin_width, 0)) as bin_num,
+          b.min_val,
+          b.bin_width
+        FROM {{ model }}, bounds b
+        WHERE {{ column }} IS NOT NULL
+      )
+      SELECT
+        ROUND(min_val + (bin_num * bin_width), 2) as bin_start,
+        ROUND(min_val + ((bin_num + 1) * bin_width), 2) as bin_end,
+        COUNT(*) as count
+      FROM binned
+      GROUP BY bin_num, min_val, bin_width
+      ORDER BY bin_num
+
+  # Potential outliers (beyond 3 std devs)
+  outliers:
+    source: "{{ source_name }}"
+    sql: |
+      WITH stats AS (
+        SELECT
+          AVG({{ column }}) as mean_val,
+          STDDEV({{ column }}) as std_val
+        FROM {{ model }}
+        WHERE {{ column }} IS NOT NULL
+      )
+      SELECT
+        {{ column }} as value,
+        ROUND(({{ column }} - s.mean_val) / NULLIF(s.std_val, 0), 2) as z_score
+      FROM {{ model }}, stats s
+      WHERE {{ column }} IS NOT NULL
+        AND ABS(({{ column }} - s.mean_val) / NULLIF(s.std_val, 0)) > 3
+      ORDER BY ABS(({{ column }} - s.mean_val) / NULLIF(s.std_val, 0)) DESC
+      LIMIT 20
+
+charts:
+  schema_panel:
+    title: Schema
+    type: table
+    query: column_schema
+    style:
+      columns:
+        name:
+          label: Column
+        actual_type:
+          label: Type
+        role:
+          label: Role
+        semantic_type:
+          label: Semantic
+        description:
+          label: Description
+
+  # Stats KPIs
+  min_val:
+    label: Min
+    type: kpi
+    query: stats
+    value: min_value
+    style:
+      value:
+        format: ",.4g"
+
+  max_val:
+    label: Max
+    type: kpi
+    query: stats
+    value: max_value
+    style:
+      value:
+        format: ",.4g"
+
+  mean_val:
+    label: Mean
+    type: kpi
+    query: stats
+    value: mean_value
+    style:
+      value:
+        format: ",.4g"
+
+  std_val:
+    label: Std Dev
+    type: kpi
+    query: stats
+    value: std_dev
+    style:
+      value:
+        format: ",.4g"
+
+  null_pct:
+    label: "Null %"
+    type: kpi
+    query: stats
+    value: null_pct
+    style:
+      value:
+        format: ".1f"
+
+  distinct:
+    label: Distinct
+    type: kpi
+    query: stats
+    value: distinct_count
+    style:
+      value:
+        format: ",.0f"
+
+  # Histogram
+  histogram_chart:
+    title: Distribution
+    type: bar
+    query: histogram
+    x: bin_start
+    y: count
+    x_label: Value
+    y_label: Count
+
+  # Percentiles table
+  percentiles_table:
+    title: Percentiles
+    type: table
+    query: percentiles
+    style:
+      columns:
+        percentile:
+          label: Percentile
+        value:
+          label: Value
+          format: ",.4g"
+
+  # Outliers table
+  outliers_table:
+    title: Potential Outliers (|z| > 3)
+    type: table
+    query: outliers
+    style:
+      columns:
+        value:
+          label: Value
+          format: ",.4g"
+        z_score:
+          label: Z-Score
+          format: ".2f"
+
+rows:
+  - schema_panel
+  - cols:
+      - min_val
+      - max_val
+      - mean_val
+      - std_val
+      - null_pct
+      - distinct
+  - histogram_chart
+  - cols:
+      - percentiles_table
+      - outliers_table

@@ -1,0 +1,14 @@
+chart_id: chart1
+chart:
+  type: spark_bar
+  query: q
+  x: frequency
+  y: category
+  title: Value Distribution
+queries:
+  q:
+    columns: [category, frequency]
+    values:
+      - [Category A, 100]
+      - [Category B, 75]
+      - [Category C, 50]

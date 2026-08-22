@@ -1,0 +1,13 @@
+chart_id: chart1
+chart:
+  type: scatter
+  query: q
+  x: cost
+  y: revenue
+queries:
+  q:
+    columns: [cost, revenue]
+    values:
+      - [100, 200]
+      - [150, 350]
+      - [80, 180]

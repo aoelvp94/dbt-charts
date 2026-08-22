@@ -1,0 +1,22 @@
+# Sequential palette — green
+#
+# Hand-authored 11-stop spine. Downsamples drive seq palette resolution.
+
+name: dbt-seq-green
+family: sequential
+description: Single-hue green. Sits between cat-10 green and editorial-10 sage via chroma alone.
+design_notes: |
+  Monotonic L* from 0.95 → 0.25. Hue anchored on cat-10 green (H≈161.3°); c_max=0.10 (down from 0.13). Session 8 retune.
+
+colors:
+  - "#e4f3ea"    # step 1 — lightest
+  - "#c0e1cf"
+  - "#9eceb4"
+  - "#7eba9b"
+  - "#60a684"
+  - "#44926e"    # step 6 — mid
+  - "#287d59"
+  - "#086946"
+  - "#005336"
+  - "#003e27"
+  - "#002a19"    # step 11 — darkest

@@ -1,0 +1,23 @@
+title: "Simple Example"
+description: "Minimal example showing SQL data source usage"
+source: examples_db
+
+queries:
+  revenue_by_date: |
+    SELECT
+      date,
+      SUM(revenue) AS revenue
+    FROM ecommerce_orders
+    GROUP BY date
+    ORDER BY date
+
+charts:
+  revenue_trend:
+    query: revenue_by_date
+    type: line
+    x: date
+    y: revenue
+
+rows:
+  - cols:
+      - revenue_trend

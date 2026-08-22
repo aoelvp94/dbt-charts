@@ -1,0 +1,60 @@
+title: Sales Board with Filters
+source: duckdb_local
+variables:
+  region:
+    column: orders.region
+    options:
+      static:
+        - North
+        - South
+        - East
+        - West
+  date_range:
+    input: daterange
+    column: orders.order_date
+    default:
+      - 2024-01-01
+      - 2024-12-31
+  min_revenue:
+    column: orders.revenue
+    min: 0
+    max: 1000000
+    step: 1000
+    default: 10000
+queries:
+  filtered_sales: |
+    SELECT
+      DATE_TRUNC('month', order_date)::VARCHAR AS month,
+      region,
+      SUM(revenue) AS total_revenue,
+      COUNT(*) AS order_count
+    FROM {{ ref('fct_orders') }}
+    WHERE
+      {{ filter('region', region) }}
+      AND {{ filter_date_range('order_date', date_range) }}
+    GROUP BY 1, 2
+    HAVING SUM(revenue) >= {% if min_revenue is defined %}{{ min_revenue }}{% else %}0{% endif %}
+    ORDER BY 1 DESC
+
+charts:
+  revenue_chart:
+    title: Revenue by Month
+    query: filtered_sales
+    type: bar
+    x: month
+    y: total_revenue
+    color: region
+    style:
+      stack: zero
+  orders_chart:
+    title: Orders by Month
+    query: filtered_sales
+    type: line
+    x: month
+    y: order_count
+  sales_table:
+    title: Sales Details
+    query: filtered_sales
+    type: table
+rows:
+  - {'grid': {'columns': 24, 'items': [{'item': 'revenue_chart', 'width': 12}, {'item': 'orders_chart', 'width': 12}, {'item': 'sales_table', 'width': 24}]}}

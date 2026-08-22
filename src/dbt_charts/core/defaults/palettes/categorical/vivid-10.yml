@@ -1,0 +1,58 @@
+# Categorical palette — vivid-10
+#
+# Chroma-pushed retune of category-10's arrangement: same hue-per-slot
+# identity, more saturated on the dull cool leads. Blue/cyan/green/gold/moss
+# are pushed toward the sRGB gamut ceiling (chroma ~0.13-0.16, hue held);
+# brown/purple/orange/gray/charcoal are byte-identical to the old category-10
+# stops. Purple is deliberately NOT bumped — a more-chromatic purple slides
+# toward blue under protanopia and worsens the blue-purple pair.
+#
+# Categorical palettes have no LUT, no surface variants, no interpolation.
+# Stops are what you get — exactly as authored.
+#
+# Companions (positional pairing — slot N of the companion pairs with slot N
+# here; reviewers edit the variant set together when vivid-10 changes):
+#   - `vivid-10-dark.yml`  — darker twin, used to ink direct labels (e.g.
+#     endpoint labels on multi-series lines) so the label sits a notch
+#     darker than its line.
+#   - `vivid-10-light.yml` — moderate lighter twin, sitting under the ghost
+#     tier: lighter than base, no louder, same hue.
+#   - `vivid-10-ghost.yml` — extreme pale twin, used to ghost out-of-focus
+#     members in highlight-columns / dim-the-chorus emphasis.
+
+name: vivid-10
+description: |
+  Default 10-color categorical palette for qualitative data encoding.
+  Blue-first; chroma-pushed cool leads over an earth-and-neutral expansion
+  after the first five hues. Retune of the former category-10 arrangement,
+  holding each slot's hue while lifting the muted blue/cyan/green/gold/moss
+  toward the M2 chart-fill chroma band.
+
+colors:
+  - "#0073c2"    # 1 — blue (default single-series)
+  - "#00c8ee"    # 2 — cyan
+  - "#00ad75"    # 3 — green
+  - "#7a5531"    # 4 — brown
+  - "#e1a500"    # 5 — gold
+  - "#a46fb2"    # 6 — purple
+  - "#da5a23"    # 7 — orange
+  - "#6a9228"    # 8 — moss
+  - "#949daa"    # 9 — gray
+  - "#505b6b"    # 10 — charcoal
+
+# Named hue roles — swap-invariant color tokens. `category.green` addresses the
+# green slot of whichever palette the theme's `category` role points to, so
+# swapping stark ↔ editorial keeps green green without an author change. Values
+# are 1-indexed slot refs (they follow a hex retune automatically). This
+# vocabulary is identical in editorial-10.yml — the palette themes swap to.
+aliases:
+  blue: 1
+  sky: 2
+  green: 3
+  brown: 4
+  gold: 5
+  purple: 6
+  orange: 7
+  sage: 8
+  gray: 9
+  charcoal: 10

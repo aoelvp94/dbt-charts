@@ -1,0 +1,295 @@
+# Palette Reference — live showcase of dbt charts scaffold and tone palettes.
+#
+# Each table row's "swatch" cell is painted with a palette token via a
+# conditional_formatting rule — the same resolution path that motivated
+# the palette-token-resolution fix (DFT_CORE-RESOLVE_PALETTE_TOKENS_IN_CHART_LEVEL_COLOR_AND_BACKGROUND_FIELDS_CURRENTLY_LEAK_THROUGH_UNRESOLVED…).
+# This board is the integration regression fixture: render it and assert
+# zero unresolved tokens appear in the HTML output.
+
+title: "Palette Reference (Token Resolution Showcase)"
+description: |
+  Live dbt charts palette reference using cell-background conditional formatting.
+  Each swatch is painted by a palette token (e.g. dbt-creams.canvas)
+  resolved at compile time — demonstrating and regression-testing the
+  palette-token-in-chart-style fix.
+
+source: examples_db
+
+queries:
+  scaffold_creams:
+    columns: [stop, hex]
+    values:
+      - ["canvas",       "#FAF7F0"]
+      - ["surface-subtle", "#F5F2EB"]
+      - ["grid",         "#E9E1D2"]
+      - ["border",       "#DDD3C0"]
+      - ["grid-emphasis","#CEC1AB"]
+      - ["disabled",     "#B2A691"]
+      - ["subtitle",     "#918878"]
+      - ["muted",        "#6F685D"]
+      - ["inactive",     "#56504A"]
+      - ["heading",      "#403B37"]
+      - ["ink",          "#2A2725"]
+
+  scaffold_grays:
+    columns: [stop, hex]
+    values:
+      - ["canvas",       "#FAFAFA"]
+      - ["surface-subtle", "#F7F8FA"]
+      - ["grid",         "#EDEFF2"]
+      - ["border",       "#DFE1E5"]
+      - ["grid-emphasis","#D0D3D9"]
+      - ["disabled",     "#B0B2B8"]
+      - ["subtitle",     "#8A8C8F"]
+      - ["muted",        "#626366"]
+      - ["inactive",     "#494A4C"]
+      - ["heading",      "#313233"]
+      - ["ink",          "#222222"]
+
+  tone_negative:
+    columns: [slot, hex]
+    values:
+      - ["bg",          "#ffedec"]
+      - ["subtle",      "#ffdbd8"]
+      - ["border",      "#e79491"]
+      - ["solid",       "#94001e"]
+      - ["solid-hover", "#6e0014"]
+      - ["text",        "#4b000a"]
+
+  tone_positive:
+    columns: [slot, hex]
+    values:
+      - ["bg",          "#e3f8e9"]
+      - ["subtle",      "#cff2da"]
+      - ["border",      "#82cb9b"]
+      - ["solid",       "#00884d"]
+      - ["solid-hover", "#006d3c"]
+      - ["text",        "#003e20"]
+
+  tone_warning:
+    columns: [slot, hex]
+    values:
+      - ["bg",          "#fff3e5"]
+      - ["subtle",      "#ffe7ca"]
+      - ["border",      "#f0b871"]
+      - ["solid",       "#e69812"]
+      - ["solid-hover", "#c68100"]
+      - ["text",        "#643f00"]
+
+rows:
+  - title: "Scaffold Palettes"
+    cols:
+      - creams_table
+      - grays_table
+  - title: "Tone Palettes"
+    cols:
+      - negative_table
+      - positive_table
+      - warning_table
+
+charts:
+  creams_table:
+    query: scaffold_creams
+    type: table
+    title: "dbt-creams (scaffold — warm cream)"
+    style:
+      pagination:
+        enabled: false
+      columns:
+        stop:
+          label: Stop
+          width: "120px"
+        hex:
+          label: Hex
+          width: "110px"
+    conditional_formatting:
+      stop:
+        when:
+          - eq: "canvas"
+            background: "dbt-creams.canvas"
+          - eq: "surface-subtle"
+            background: "dbt-creams.surface-subtle"
+          - eq: "grid"
+            background: "dbt-creams.grid"
+          - eq: "border"
+            background: "dbt-creams.border"
+          - eq: "grid-emphasis"
+            background: "dbt-creams.grid-emphasis"
+          - eq: "disabled"
+            background: "dbt-creams.disabled"
+          - eq: "subtitle"
+            background: "dbt-creams.subtitle"
+          - eq: "muted"
+            background: "dbt-creams.muted"
+            font:
+              color: "#FAF7F0"
+          - eq: "inactive"
+            background: "dbt-creams.inactive"
+            font:
+              color: "#FAF7F0"
+          - eq: "heading"
+            background: "dbt-creams.heading"
+            font:
+              color: "#FAF7F0"
+          - eq: "ink"
+            background: "dbt-creams.ink"
+            font:
+              color: "#FAF7F0"
+
+  grays_table:
+    query: scaffold_grays
+    type: table
+    title: "dbt-grays (scaffold — neutral gray)"
+    style:
+      pagination:
+        enabled: false
+      columns:
+        stop:
+          label: Stop
+          width: "120px"
+        hex:
+          label: Hex
+          width: "110px"
+    conditional_formatting:
+      stop:
+        when:
+          - eq: "canvas"
+            background: "dbt-grays.canvas"
+          - eq: "surface-subtle"
+            background: "dbt-grays.surface-subtle"
+          - eq: "grid"
+            background: "dbt-grays.grid"
+          - eq: "border"
+            background: "dbt-grays.border"
+          - eq: "grid-emphasis"
+            background: "dbt-grays.grid-emphasis"
+          - eq: "disabled"
+            background: "dbt-grays.disabled"
+          - eq: "subtitle"
+            background: "dbt-grays.subtitle"
+            font:
+              color: "#FAFAFA"
+          - eq: "muted"
+            background: "dbt-grays.muted"
+            font:
+              color: "#FAFAFA"
+          - eq: "inactive"
+            background: "dbt-grays.inactive"
+            font:
+              color: "#FAFAFA"
+          - eq: "heading"
+            background: "dbt-grays.heading"
+            font:
+              color: "#FAFAFA"
+          - eq: "ink"
+            background: "dbt-grays.ink"
+            font:
+              color: "#FAFAFA"
+
+  negative_table:
+    query: tone_negative
+    type: table
+    title: "negative (tone)"
+    style:
+      pagination:
+        enabled: false
+      columns:
+        slot:
+          label: Slot
+          width: "120px"
+        hex:
+          label: Hex
+          width: "110px"
+    conditional_formatting:
+      slot:
+        when:
+          - eq: "bg"
+            background: "negative.bg"
+          - eq: "subtle"
+            background: "negative.subtle"
+          - eq: "border"
+            background: "negative.border"
+          - eq: "solid"
+            background: "negative.solid"
+            font:
+              color: "#ffedec"
+          - eq: "solid-hover"
+            background: "negative.solid-hover"
+            font:
+              color: "#ffedec"
+          - eq: "text"
+            background: "negative.text"
+            font:
+              color: "#ffedec"
+
+  positive_table:
+    query: tone_positive
+    type: table
+    title: "positive (tone)"
+    style:
+      pagination:
+        enabled: false
+      columns:
+        slot:
+          label: Slot
+          width: "120px"
+        hex:
+          label: Hex
+          width: "110px"
+    conditional_formatting:
+      slot:
+        when:
+          - eq: "bg"
+            background: "positive.bg"
+          - eq: "subtle"
+            background: "positive.subtle"
+          - eq: "border"
+            background: "positive.border"
+          - eq: "solid"
+            background: "positive.solid"
+            font:
+              color: "#e3f8e9"
+          - eq: "solid-hover"
+            background: "positive.solid-hover"
+            font:
+              color: "#e3f8e9"
+          - eq: "text"
+            background: "positive.text"
+            font:
+              color: "#e3f8e9"
+
+  warning_table:
+    query: tone_warning
+    type: table
+    title: "warning (tone)"
+    style:
+      pagination:
+        enabled: false
+      columns:
+        slot:
+          label: Slot
+          width: "120px"
+        hex:
+          label: Hex
+          width: "110px"
+    conditional_formatting:
+      slot:
+        when:
+          - eq: "bg"
+            background: "warning.bg"
+          - eq: "subtle"
+            background: "warning.subtle"
+          - eq: "border"
+            background: "warning.border"
+          - eq: "solid"
+            background: "warning.solid"
+            font:
+              color: "#fff3e5"
+          - eq: "solid-hover"
+            background: "warning.solid-hover"
+            font:
+              color: "#fff3e5"
+          - eq: "text"
+            background: "warning.text"
+            font:
+              color: "#fff3e5"

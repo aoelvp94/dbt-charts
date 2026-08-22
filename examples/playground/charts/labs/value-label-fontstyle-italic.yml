@@ -1,0 +1,120 @@
+title: "Value-label fontStyle — italic must actually paint"
+description: >
+  EXPECTED: the value labels marked ITALIC below render in an italic font.
+  Before this change `labels.font.style: italic` parsed and emitted nothing, so
+  every one of these read roman. Compare each italic chart against the roman
+  control directly beside it — same data, same size, only font.style differs.
+extends: editorial
+
+queries:
+  pace:
+    columns: [month, revenue]
+    values:
+      - ["Jan", 120]
+      - ["Feb", 148]
+      - ["Mar", 176]
+      - ["Apr", 205]
+
+  mix:
+    columns: [month, channel, signups]
+    values:
+      - ["Jan", "Organic", 90]
+      - ["Jan", "Paid", 40]
+      - ["Feb", "Organic", 105]
+      - ["Feb", "Paid", 48]
+      - ["Mar", "Organic", 118]
+      - ["Mar", "Paid", 52]
+
+charts:
+  bar_roman:
+    query: pace
+    type: bar
+    title: "BAR — control (no font.style)"
+    subtitle: "EXPECTED: upright roman value labels above each bar"
+    x: month
+    y: revenue
+    style:
+      marks:
+        bar:
+          labels:
+            visible: true
+
+  bar_italic:
+    query: pace
+    type: bar
+    title: "BAR — labels.font.style: italic"
+    subtitle: "EXPECTED: the same value labels, slanted — an italic font, not roman"
+    x: month
+    y: revenue
+    style:
+      marks:
+        bar:
+          labels:
+            visible: true
+            font:
+              style: italic
+
+  point_roman:
+    query: pace
+    type: line
+    title: "LINE/POINT — control (no font.style)"
+    subtitle: "EXPECTED: upright roman value labels above each point"
+    x: month
+    y: revenue
+    style:
+      marks:
+        point:
+          labels:
+            visible: true
+
+  point_italic:
+    query: pace
+    type: line
+    title: "LINE/POINT — labels.font.style: italic"
+    subtitle: "EXPECTED: the same point labels, slanted"
+    x: month
+    y: revenue
+    style:
+      marks:
+        point:
+          labels:
+            visible: true
+            font:
+              style: italic
+
+  total_roman:
+    query: mix
+    type: bar
+    title: "STACK TOTAL — control (no font.style)"
+    subtitle: "EXPECTED: upright roman total above each stack"
+    x: month
+    y: signups
+    color: channel
+    style:
+      stack: zero
+      marks:
+        bar:
+          total_label:
+            visible: true
+
+  total_italic:
+    query: mix
+    type: bar
+    title: "STACK TOTAL — total_label.font.style: italic"
+    subtitle: "EXPECTED: the same stack totals, slanted"
+    x: month
+    y: signups
+    color: channel
+    style:
+      stack: zero
+      marks:
+        bar:
+          total_label:
+            visible: true
+            font:
+              style: italic
+
+rows:
+  - cols: [bar_roman, bar_italic]
+  - cols: [point_roman, point_italic]
+  - cols: [total_roman, total_italic]

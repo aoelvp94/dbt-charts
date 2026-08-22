@@ -1,0 +1,185 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.4.1.json",
+  "autosize": {
+    "contains": "padding",
+    "resize": true,
+    "type": "fit"
+  },
+  "background": "#FAFAFA",
+  "config": {
+    "circle": {
+      "opacity": 1.0
+    },
+    "font": "'Inter Variable', 'Noto Emoji', Inter, system-ui, sans-serif",
+    "mark": {
+      "invalid": "break-paths-show-domains"
+    },
+    "range": {
+      "category": [
+        "#3164a3",
+        "#779bc9",
+        "#ad9c7f",
+        "#7a8895",
+        "#8a576f",
+        "#5c7b5c",
+        "#d49656",
+        "#ae6349",
+        "#609f9e",
+        "#232f3a"
+      ]
+    },
+    "rule": {
+      "stroke": "#222222",
+      "strokeWidth": 1.0
+    },
+    "text": {
+      "align": "center",
+      "fill": "#313233",
+      "font": "'Inter Variable', 'Noto Emoji', Inter, system-ui, sans-serif",
+      "fontSize": 11.0,
+      "fontWeight": "400"
+    },
+    "title": {
+      "anchor": "start",
+      "color": "#494A4C",
+      "font": "'Source Serif 4', 'Noto Emoji', Georgia, 'Times New Roman', serif",
+      "fontSize": 18,
+      "fontWeight": 500,
+      "offset": 10.0,
+      "subtitleColor": "#8A8C8F",
+      "subtitleFont": "'Inter Variable', 'Noto Emoji', Inter, system-ui, sans-serif",
+      "subtitleFontSize": 11.0,
+      "subtitleFontWeight": 400.0
+    },
+    "view": {
+      "continuousHeight": 300.0,
+      "continuousWidth": 360.0,
+      "discreteHeight": 360.0,
+      "discreteWidth": 360.0,
+      "stroke": null
+    }
+  },
+  "data": {
+    "values": [
+      {
+        "kind": "A",
+        "price": 10
+      },
+      {
+        "kind": "A",
+        "price": 12
+      },
+      {
+        "kind": "B",
+        "price": 11
+      },
+      {
+        "kind": "A",
+        "price": 15
+      },
+      {
+        "kind": "B",
+        "price": 18
+      },
+      {
+        "kind": "B",
+        "price": 22
+      },
+      {
+        "kind": "A",
+        "price": 25
+      },
+      {
+        "kind": "B",
+        "price": 28
+      }
+    ]
+  },
+  "encoding": {
+    "color": {
+      "field": "kind",
+      "legend": null,
+      "title": "Kind",
+      "type": "nominal"
+    },
+    "x": {
+      "axis": {
+        "domain": false,
+        "domainColor": "#EDEFF2",
+        "domainWidth": 1.0,
+        "format": ".3~s",
+        "grid": false,
+        "gridColor": "#D0D3D9",
+        "gridOpacity": 1.0,
+        "gridWidth": 1.0,
+        "labelAngle": 0.0,
+        "labelColor": "#626366",
+        "labelFont": "'dbt Sans Tabular', 'Noto Emoji', Inter, system-ui, sans-serif",
+        "labelFontSize": 11.0,
+        "labelFontWeight": "400",
+        "labelOverlap": false,
+        "labelPadding": 6.0,
+        "labelSeparation": 16.0,
+        "offset": 1.0,
+        "tickColor": "#D0D3D9",
+        "tickCount": 6,
+        "tickSize": 6.0,
+        "tickWidth": 1.5,
+        "ticks": true,
+        "title": null
+      },
+      "bin": true,
+      "field": "price",
+      "title": "Price",
+      "type": "quantitative"
+    },
+    "y": {
+      "aggregate": "count",
+      "axis": {
+        "domain": false,
+        "domainColor": "#EDEFF2",
+        "domainWidth": 1.0,
+        "format": ".3~s",
+        "grid": true,
+        "gridColor": "#D0D3D9",
+        "gridOpacity": 1.0,
+        "gridWidth": 1.5,
+        "labelColor": "#626366",
+        "labelFont": "'dbt Sans Tabular', 'Noto Emoji', Inter, system-ui, sans-serif",
+        "labelFontSize": 11.0,
+        "labelFontWeight": "400",
+        "labelPadding": 6.0,
+        "labelSeparation": 16.0,
+        "orient": "left",
+        "tickColor": "#D0D3D9",
+        "tickSize": 6.0,
+        "tickWidth": 1.5,
+        "ticks": false,
+        "titleColor": "#8A8C8F",
+        "titleFont": "'Inter Variable', 'Noto Emoji', Inter, system-ui, sans-serif",
+        "titleFontSize": 11.0,
+        "titleFontWeight": 600.0,
+        "titlePadding": 10.0
+      },
+      "title": "Count",
+      "type": "quantitative"
+    }
+  },
+  "mark": {
+    "continuousBandSize": 20.0,
+    "cornerRadiusEnd": 2.0,
+    "stroke": "transparent",
+    "strokeWidth": 0.0,
+    "tooltip": true,
+    "type": "bar",
+    "width": {
+      "band": 0.8
+    }
+  },
+  "padding": {
+    "bottom": 0,
+    "left": 0,
+    "right": 0,
+    "top": 0
+  }
+}

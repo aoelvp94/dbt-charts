@@ -1,0 +1,23 @@
+# Diverging palette — orange-teal (non-politically-loaded)
+#
+
+name: dbt-div-orange-teal
+family: diverging
+description: Warm orange (low) to teal (high). Symmetric arms; fully CVD-safe. Non-politically-loaded.
+design_notes: |
+  For contexts where red/blue carries unwanted political connotation.
+  Symmetric arms about step 6 midpoint. Passes CVD under deut/prot/trit.
+  Session 3 of M2 palette design.
+
+colors:
+  - "#4c1f00"
+  - "#7d3700"
+  - "#ab561d"
+  - "#c38562"
+  - "#d9b39f"
+  - "#e4e4e4"
+  - "#96c8c4"
+  - "#47a8a2"
+  - "#00827d"
+  - "#005b57"
+  - "#003634"

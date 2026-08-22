@@ -1,0 +1,132 @@
+title: Sales Dashboard with Imported Analysis
+source: examples_db
+queries:
+  category_summary_data: |
+    SELECT
+      category,
+      SUM(revenue) AS revenue
+    FROM ecommerce_orders
+    GROUP BY category
+    ORDER BY revenue DESC
+
+  regional_overview_data: |
+    SELECT
+      region,
+      SUM(revenue) AS revenue
+    FROM ecommerce_orders
+    GROUP BY region
+    ORDER BY revenue DESC
+
+  revenue_total:
+    columns:
+      - revenue
+    values:
+      - [847291.5]
+charts:
+  total_revenue:
+    label: Total Revenue
+    query: revenue_total
+    type: kpi
+    value: revenue
+  category_summary:
+    title: Revenue by Category
+    query: category_summary_data
+    type: bar
+    x: category
+    y: revenue
+    style:
+      stack: zero
+  regional_overview:
+    style:
+      marks:
+        slice:
+          labels:
+            template: "{{ '{:.0%}'.format(percent) }} {{ region }}"
+    title: Sales by Region
+    query: regional_overview_data
+    type: pie
+    theta: revenue
+    color: region
+rows:
+  - cols:
+      - total_revenue
+      - category_summary
+  - regional_overview
+  - title: Product Analysis
+    style:
+      padding: 20px
+      margin: 20px 0 0 0
+    variables:
+      product_filter:
+        label: Select Product
+        options:
+          static:
+            - Widget A
+            - Widget B
+            - Gadget X
+            - Gadget Y
+            - Tool Z
+        default: Widget A
+      region_filter:
+        label: Select Regions
+        options:
+          static:
+            - North
+            - South
+            - East
+            - West
+        default:
+          - North
+          - South
+      date_range:
+        input: daterange
+    queries:
+      product_trend_data: |
+        SELECT
+          date,
+          product,
+          SUM(revenue) AS revenue
+        FROM ecommerce_orders
+        GROUP BY date, product
+        ORDER BY date, product
+      product_breakdown_data: |
+        SELECT
+          product,
+          category,
+          SUM(revenue) AS revenue
+        FROM ecommerce_orders
+        GROUP BY product, category
+        ORDER BY revenue DESC
+      regional_comparison_data: |
+        SELECT
+          region,
+          SUM(revenue) AS revenue
+        FROM ecommerce_orders
+        GROUP BY region
+        ORDER BY revenue DESC
+    charts:
+      product_trend:
+        title: "Product Trend{% if product_filter %} - {{ product_filter }}{% endif %}"
+        query: product_trend_data
+        type: line
+        x: date
+        y: revenue
+        color: product
+      product_breakdown:
+        title: "Revenue Breakdown{% if product_filter %} - {{ product_filter }}{% endif %}"
+        query: product_breakdown_data
+        type: bar
+        x: product
+        y: revenue
+        color: category
+      regional_comparison:
+        title: "Regional Comparison{% if region_filter %} - {{ region_filter|join(', ') }}{% endif %}"
+        query: regional_comparison_data
+        type: bar
+        x: region
+        y: revenue
+    rows:
+      - cols:
+          - product_trend
+          - product_breakdown
+      - regional_comparison

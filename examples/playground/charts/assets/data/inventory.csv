@@ -1,0 +1,9 @@
+product_id,product_name,category,price,stock_quantity,supplier
+1,Widget A,Electronics,29.99,150,Acme Corp
+2,Widget B,Electronics,27.50,200,Acme Corp
+3,Gadget X,Accessories,34.00,75,Tech Supplies Inc
+4,Gadget Y,Accessories,30.00,100,Tech Supplies Inc
+5,Tool Z,Tools,31.67,90,Hardware Co
+6,Widget C,Electronics,25.00,180,Acme Corp
+7,Gadget Z,Accessories,28.50,60,Tech Supplies Inc
+8,Tool A,Tools,35.00,45,Hardware Co

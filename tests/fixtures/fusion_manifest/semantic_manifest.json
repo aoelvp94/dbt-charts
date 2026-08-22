@@ -1,0 +1,15 @@
+{
+  "metrics": [],
+  "project_configuration": {
+    "dsi_package_version": {
+      "major_version": "0",
+      "minor_version": "0",
+      "patch_version": "0"
+    },
+    "metadata": null,
+    "time_spine_table_configurations": [],
+    "time_spines": []
+  },
+  "saved_queries": [],
+  "semantic_models": []
+}

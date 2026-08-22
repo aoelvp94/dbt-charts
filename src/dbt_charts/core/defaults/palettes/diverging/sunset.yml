@@ -1,0 +1,24 @@
+# Diverging palette — Paul Tol sunset
+#
+
+name: dbt-div-sunset
+family: diverging
+description: Paul Tol's sunset scheme, resampled to 11 stops. SRON-published CVD-safe diverging.
+design_notes: |
+  Multi-hue diverging: teal → cyan → light → yellow → orange → red.
+  Referenced from Paul Tol (SRON) — well-studied CVD-safe diverging ramp.
+  Included for climate/atmospheric data contexts where it is conventional.
+  Session 3 of M2 palette design.
+
+colors:
+  - "#125a56"
+  - "#17858f"
+  - "#48abcd"
+  - "#92c9ee"
+  - "#cee0ea"
+  - "#eceada"
+  - "#f4dc8f"
+  - "#ffb350"
+  - "#f77d36"
+  - "#e03b16"
+  - "#a01813"

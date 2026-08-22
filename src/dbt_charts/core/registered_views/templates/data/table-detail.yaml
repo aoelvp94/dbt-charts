@@ -1,0 +1,30 @@
+title: [[ (path.source ~ "/" ~ path.schema ~ "/" ~ path.table ~ " (detail)") | tojson ]]
+
+[% set vars = plan_key_variables(queries.columns.rows) %]
+[% if vars %]
+variables:
+[% for v in vars %]
+  [[ v.name | tojson ]]:
+    input: [[ v.input | tojson ]]
+    visible: true
+[% endfor %]
+[% endif %]
+
+queries:
+  row:
+    type: sql
+    source: [[ path.source | tojson ]]
+    sql: >-
+      SELECT * FROM [[ sql_identifier(path.schema) ]].[[ sql_identifier(path.table) ]]
+      WHERE 1=1
+      [% for v in vars %]AND {{ filter('[[ v.name ]]', [[ v.name ]]) }}
+      [% endfor %]LIMIT 2
+
+charts:
+  row_detail:
+    title: [[ path.table | tojson ]]
+    type: table
+    query: row
+
+rows:
+  - row_detail

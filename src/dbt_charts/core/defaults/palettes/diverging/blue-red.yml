@@ -1,0 +1,25 @@
+# Diverging palette — default blue-red
+#
+
+name: dbt-div-blue-red
+family: diverging
+description: Default CVD-safe diverging. Blue (low) to red (high), light midpoint.
+design_notes: |
+  Symmetric arms about midpoint at step 6. RdBu-family editorial posture.
+  Passes CVD under deut/prot/trit at common subset counts (N=3, N=5).
+
+colors:
+  - "#002f55"    # step 1 — low extreme (blue)
+  - "#00508a"
+  - "#2575b9"
+  - "#689bcc"
+  - "#a3c0dd"
+  - "#e4e4e4"    # step 6 — midpoint (neutral light)
+  - "#dcb1a9"
+  - "#c88074"
+  - "#b04f41"
+  - "#852c21"
+  - "#590b05"    # step 11 — high extreme (red)
+
+# Diverging-specific: even-N subsets auto-skip the midpoint, odd-N include it.
+# The resolver handles this — no per-palette YAML data needed.

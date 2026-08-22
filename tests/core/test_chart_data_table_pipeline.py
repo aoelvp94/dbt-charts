@@ -1,0 +1,2717 @@
+"""End-to-end pipeline tests for chart.data_table.
+
+Goes compile → resolve → render and asserts the Vega-Lite output shape.
+Complements the unit tests in tests/core/compile/test_data_table_attachment.py
+by confirming the primitive actually threads through the public renderer.
+"""
+
+from __future__ import annotations
+
+import datetime
+import importlib
+from typing import Any
+
+import pytest
+from pydantic import TypeAdapter
+
+from dbt_charts.core.compile.config import (
+    get_default_theme_name,
+    get_theme_style,
+    reset_config,
+)
+from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.compile.resolve import resolve
+from dbt_charts.core.compile.resolve.style.board import (
+    resolve_chart_style_context,
+    resolve_style,
+)
+from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec, render_chart
+from dbt_charts.core.render.errors import RenderError
+
+from .conftest import chart_pane
+
+_BOARD_STYLE = resolve_style(get_theme_style())
+_BOARD_CONTEXT = resolve_chart_style_context(get_theme_style())
+
+
+def _render_v2_spec(
+    chart: Chart,
+    data: list[dict[str, Any]],
+    *,
+    width: float,
+    height: float,
+    monkeypatch: Any,
+) -> dict[str, Any]:
+    """Render *chart* through the v2 path and return the captured VL spec dict."""
+    board_style = resolve_style(get_theme_style(get_default_theme_name()))
+    board_context = resolve_chart_style_context(
+        get_theme_style(get_default_theme_name())
+    )
+    vl_module = importlib.import_module("dbt_charts.core.render.chart.vega_lite")
+    captured: dict[str, Any] = {}
+
+    def _capture(_chart_id: str, renderer: str, spec: dict[str, Any]) -> None:
+        captured[renderer] = spec
+
+    monkeypatch.setattr(vl_module, "_trace_vl_spec", _capture)
+    render_chart(
+        chart,
+        board_style,
+        board_context,
+        data,
+        format="svg",
+        width=width,
+        height=height,
+    )
+    spec = captured.get("v2")
+    assert spec is not None, "expected v2 renderer to fire; check chart.v2"
+    return spec
+
+
+@pytest.fixture(autouse=True)
+def _reset_config():
+    reset_config()
+    yield
+    reset_config()
+
+
+def _compiled_bar_with_data_table(entries):
+    """Build a vertical-bar Chart with a data_table block, bypassing YAML parsing.
+
+    Orientation is pinned to vertical: data_table is unsupported on horizontal
+    bars (see test_render_bar_horizontal_with_data_table_errors_at_render), and
+    "month" is a categorical string x that would otherwise auto-resolve to
+    horizontal.
+    """
+    flat = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "bar",
+            "x": "month",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": entries,
+            "style": {"orientation": "vertical"},
+        }
+    )
+    return flat
+
+
+_SAMPLE_DATA = [
+    {"month": "Jan", "revenue": 100.0},
+    {"month": "Feb", "revenue": 200.0},
+    {"month": "Mar", "revenue": 150.0},
+]
+
+_TEMPORAL_DATA = [
+    {"date": "2024-01-01", "revenue": 100.0},
+    {"date": "2024-02-01", "revenue": 200.0},
+    {"date": "2024-03-01", "revenue": 150.0},
+]
+
+
+def _compiled_line_temporal_with_data_table(entries):
+    flat = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "line",
+            "x": "date",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": entries,
+        }
+    )
+    return flat
+
+
+def _compiled_area_temporal_with_data_table(entries):
+    flat = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "area",
+            "x": "date",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": entries,
+        }
+    )
+    return flat
+
+
+def test_render_pipeline_svg_width_overhead_independent_of_requested_width():
+    # Pinning the autosize:pad trade-off documented in attach_data_table:
+    # the outer SVG is wider than spec.width by axis-y label + padding
+    # overhead, but that overhead is independent of the requested width.
+    # Compare two requests to assert the contract — a relative test
+    # survives vl_convert font-metric updates and theme tweaks that an
+    # absolute-bound test would flip on.
+    import re
+
+    pytest.importorskip("vl_convert")
+    import vl_convert as vlc
+
+    def overhead(width: int) -> float:
+        chart = _compiled_bar_with_data_table([{"source": "revenue", "format": "$.2s"}])
+        _rc = resolve(chart, _SAMPLE_DATA, chart_style_context=_BOARD_CONTEXT)
+        spec = generate_vega_lite_spec(chart, _SAMPLE_DATA, width=width, height=200)
+        svg = vlc.vegalite_to_svg(spec)
+        m = re.search(r'<svg[^>]*?width="([0-9.]+)"', svg)
+        assert m is not None
+        return float(m.group(1)) - width
+
+    over_400 = overhead(400)
+    over_1200 = overhead(1200)
+    assert over_400 > 0, "autosize:pad always overshoots by axis overhead"
+    assert abs(over_1200 - over_400) < 5, (
+        f"overhead must be width-independent; got {over_400} at 400 vs "
+        f"{over_1200} at 1200"
+    )
+
+
+def test_render_pipeline_with_data_table_synthesizes_height_when_only_width_given():
+    # Optional callers (warnings detector, diagnostic scripts) reach the
+    # public API with width=None,height=None — we don't want to drop those
+    # charts. When a width is supplied but no height, attach_data_table
+    # synthesizes a height from charts_style.aspect_ratio clamped to
+    # [min_height, max_height]. That gives pixel-y placement an anchor
+    # without forcing every caller to know the resolved chart sizing.
+    chart = _compiled_bar_with_data_table([{"source": "revenue"}])
+    _rc = resolve(chart, _SAMPLE_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _SAMPLE_DATA, width=400, height=None)
+    assert isinstance(spec["height"], (int, float))
+    assert spec["height"] > 0
+
+
+def test_render_pipeline_with_data_table_falls_back_to_preferred_width_anchor():
+    # generate_vega_lite_spec's own width resolution (preferred_chart_width)
+    # is the single place an omitted width becomes a number, upstream of the
+    # data_table strip — width and height both absent no longer raises; it
+    # anchors on the chart family's theme preferred_width instead.
+    from dbt_charts.core.compile.resolve import preferred_chart_width
+
+    chart = _compiled_bar_with_data_table([{"source": "revenue"}])
+    _rc = resolve(chart, _SAMPLE_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _SAMPLE_DATA, width=None, height=None)
+    size_target = spec["hconcat"][0] if "hconcat" in spec else spec
+    assert size_target["width"] == preferred_chart_width(chart, _BOARD_CONTEXT)
+
+
+def test_render_pipeline_bumps_correct_padding_side_with_data_table():
+    # Regression: render_standard_vega_spec previously rebuilt the padding
+    # dict and clobbered bump_padding_bottom's data-table strip reservation.
+    # Verify that the correct padding side is increased by the strip height.
+    # With the default position=top, the strip is above the plot → padding.top bumped.
+    chart = _compiled_bar_with_data_table([{"source": "revenue", "format": "$.2s"}])
+    _rc = resolve(chart, _SAMPLE_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _SAMPLE_DATA, width=400, height=200)
+    padding = spec["padding"]
+    # the spec starts at {0,0,0,0}; default position=top bumps padding.top.
+    assert padding["left"] == 0
+    assert padding["top"] > 0  # strip height reserved above the plot
+    assert padding["right"] == 0
+    assert padding["bottom"] == 0  # no bottom bump for position=top
+
+
+def test_render_bar_with_source_row_adds_layer():
+    chart = _compiled_bar_with_data_table([{"source": "revenue", "format": "$.2s"}])
+    _rc = resolve(chart, _SAMPLE_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _SAMPLE_DATA, width=400, height=200)
+    assert "layer" in spec
+    layers = spec["layer"]
+    text_layers = [
+        layer
+        for layer in layers
+        if isinstance(layer.get("mark"), dict) and layer["mark"].get("type") == "text"
+    ]
+    # Exactly one attached-row text layer for the source entry.
+    assert len(text_layers) >= 1
+
+
+def test_render_bar_with_aggregate_row_adds_aggregate_transform():
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "bar",
+            "x": "month",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [{"aggregate": "sum", "source": "revenue"}],
+            "style": {"orientation": "vertical"},
+        }
+    )
+    _rc = resolve(chart, _SAMPLE_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _SAMPLE_DATA, width=400, height=200)
+    layers = spec["layer"]
+    agg_layers = [
+        layer
+        for layer in layers
+        if any("aggregate" in t for t in layer.get("transform", []))
+    ]
+    assert len(agg_layers) == 1
+    agg = agg_layers[0]["transform"][0]
+    assert agg["groupby"] == ["month"]
+    assert agg["aggregate"][0]["field"] == "revenue"
+
+
+def test_render_bar_horizontal_with_data_table_errors_at_render():
+    # Horizontal bars swap VL channels (category on y, measure on x), so the
+    # strip's category-axis assumptions (built for x-as-category) don't hold.
+    # Rather than emit a broken spec, refuse until horizontal support exists.
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "bar",
+            "x": "region",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [{"source": "revenue"}],
+            "style": {"orientation": "horizontal"},
+        }
+    )
+    data = [
+        {"region": "East", "revenue": 100.0},
+        {"region": "West", "revenue": 200.0},
+    ]
+    resolved_chart = resolve(chart, data, chart_style_context=_BOARD_CONTEXT)
+    assert resolved_chart.orientation == "horizontal"
+    with pytest.raises(RenderError, match=r"(?i)horizontal"):
+        generate_vega_lite_spec(chart, data, width=400, height=200)
+
+
+def test_render_line_supports_data_table():
+    # Chart-type eligibility: spec §1 includes line.
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "line",
+            "x": "month",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [{"source": "revenue"}],
+        }
+    )
+    _rc = resolve(chart, _SAMPLE_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _SAMPLE_DATA, width=400, height=200)
+    assert "layer" in spec
+
+
+def test_render_area_supports_data_table():
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "area",
+            "x": "month",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [{"source": "revenue"}],
+        }
+    )
+    _rc = resolve(chart, _SAMPLE_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _SAMPLE_DATA, width=400, height=200)
+    assert "layer" in spec
+
+
+def test_render_bar_with_data_table_produces_svg_with_row_labels():
+    # HIGH 2: pipeline test must go all the way to SVG and assert the
+    # strip's text actually renders. Skipped when vl_convert is not
+    # installed.
+    pytest.importorskip("vl_convert")
+
+    from dbt_charts.core.render.chart.vega_lite import render_chart
+
+    chart = _compiled_bar_with_data_table(
+        [{"source": "revenue", "format": "$.0f", "label": "REV"}]
+    )
+    svg = render_chart(
+        chart,
+        resolve_style(get_theme_style()),
+        resolve_chart_style_context(get_theme_style()),
+        _SAMPLE_DATA,
+        format="svg",
+        width=600,
+        height=320,
+    )
+    # Label text must appear in the SVG output (left-stub by default).
+    assert "REV" in svg
+    # At least one per-x formatted cell value renders (raw value or format
+    # output — both match the format-string contract).
+    assert "$100" in svg or ">100<" in svg
+
+
+def test_render_bar_data_table_missing_cell_and_default_label_in_svg():
+    pytest.importorskip("vl_convert")
+
+    from dbt_charts.core.render.chart.vega_lite import render_chart
+
+    chart = _compiled_bar_with_data_table([{"source": "sample_size", "format": ",d"}])
+    data = [
+        {"month": "Jan", "revenue": 100.0, "sample_size": 10},
+        {"month": "Feb", "revenue": 120.0, "sample_size": None},
+    ]
+    svg = render_chart(
+        chart,
+        resolve_style(get_theme_style()),
+        resolve_chart_style_context(get_theme_style()),
+        data,
+        format="svg",
+        width=600,
+        height=320,
+    )
+    assert "Sample Size" in svg
+    assert ">-</text>" in svg
+    assert ">NaN<" not in svg
+    assert ">null<" not in svg
+
+
+def test_render_bar_data_table_ambiguous_source_errors_at_render():
+    # CRITICAL 4: bare source: on a query with multiple rows per x must
+    # error at render time and point the author at aggregate:.
+    from dbt_charts.core.diagnostics.chart_data import ChartDataError  # noqa: F401
+
+    chart = _compiled_bar_with_data_table([{"source": "revenue"}])
+    pivoted_data = [
+        {"month": "Jan", "revenue": 60.0, "segment": "A"},
+        {"month": "Jan", "revenue": 40.0, "segment": "B"},
+        {"month": "Feb", "revenue": 120.0, "segment": "A"},
+        {"month": "Feb", "revenue": 80.0, "segment": "B"},
+    ]
+    # validate_preaggregated_data would fire first for a bar chart with
+    # multi-row-per-x data, so this test routes through the attachment
+    # validator directly to isolate the ambiguous-aggregation guard.
+    from dbt_charts.core.render.chart.data_table_attachment import (
+        validate_data_table_against_data,
+    )
+
+    assert chart.data_table is not None
+    with pytest.raises(RenderError, match=r"(?i)ambiguous|multiple rows") as excinfo:
+        validate_data_table_against_data(chart.data_table, "month", pivoted_data)
+    assert "aggregate" in str(excinfo.value).lower()
+
+
+def test_render_bar_data_table_missing_source_column_errors_at_render():
+    from dbt_charts.core.render.chart.data_table_attachment import (
+        validate_data_table_against_data,
+    )
+
+    chart = _compiled_bar_with_data_table([{"source": "sample_size"}])
+    data_without_sample_size = [{"month": "Jan", "revenue": 100.0}]
+    assert chart.data_table is not None
+    with pytest.raises(RenderError, match="sample_size"):
+        validate_data_table_against_data(
+            chart.data_table, "month", data_without_sample_size
+        )
+
+
+def test_render_bar_data_table_rejects_over_40_x_ticks():
+    from dbt_charts.core.render.chart.data_table_attachment import (
+        validate_data_table_against_data,
+    )
+
+    chart = _compiled_bar_with_data_table([{"source": "revenue"}])
+    big_data = [{"month": f"M{i}", "revenue": float(i)} for i in range(45)]
+    assert chart.data_table is not None
+    with pytest.raises(RenderError, match="40"):
+        validate_data_table_against_data(chart.data_table, "month", big_data)
+
+
+def test_render_chart_without_data_table_is_unchanged_shape():
+    # A bar chart with no data_table block must render with a bar mark and
+    # no data_table strip / extra padding.  The bar lives in layer[0]
+    # alongside the zero-baseline rule layer added by the standard renderer.
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "bar",
+            "x": "month",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+        }
+    )
+    _rc = resolve(chart, _SAMPLE_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _SAMPLE_DATA, width=400, height=200)
+    # No data_table → no strip layer; the only non-mark layer is the zero rule.
+    layers = spec.get("layer") or [{"mark": spec.get("mark", {})}]
+    assert layers[0].get("mark", {}).get("type") == "bar"
+    # No data_table padding inflation
+    assert "padding" not in spec or all(
+        v <= 50 for v in spec["padding"].values() if isinstance(v, (int, float))
+    )
+
+
+# =============================================================================
+# REGRESSION: line/area + temporal x — strip must inherit parent x type
+# =============================================================================
+
+
+def test_line_temporal_x_strip_layers_inherit_x_type():
+    # Regression: _shared_x_encoding hardcoded ordinal; line+ordinal x caused
+    # a vl-convert null-deref because the strip layers had mismatched scale type.
+    # Line always routes a bucketed-calendar grain to continuous temporal (see
+    # value-driven-axis-type-inference); strip layers must match.
+    chart = _compiled_line_temporal_with_data_table([{"source": "revenue"}])
+    _rc = resolve(chart, _TEMPORAL_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _TEMPORAL_DATA, width=400, height=200)
+    assert "layer" in spec
+    # x encoding is at the top level in a halo-layered spec
+    parent_x_type = spec["encoding"]["x"]["type"]
+    assert parent_x_type == "temporal"
+    # Every data-bound text layer (strip rows) must use the same x type.
+    text_layers = [
+        layer
+        for layer in spec["layer"]
+        if isinstance(layer.get("mark"), dict)
+        and layer["mark"].get("type") == "text"
+        and "field" in layer.get("encoding", {}).get("x", {})
+    ]
+    assert text_layers, "expected at least one data-bound strip text layer"
+    for layer in text_layers:
+        assert layer["encoding"]["x"]["type"] == "temporal", (
+            f"strip layer x type must match parent temporal, got {layer['encoding']['x']['type']!r}"
+        )
+
+
+def test_area_temporal_x_strip_layers_inherit_x_type():
+    chart = _compiled_area_temporal_with_data_table([{"source": "revenue"}])
+    _rc = resolve(chart, _TEMPORAL_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _TEMPORAL_DATA, width=400, height=200)
+    assert "layer" in spec
+    text_layers = [
+        layer
+        for layer in spec["layer"]
+        if isinstance(layer.get("mark"), dict)
+        and layer["mark"].get("type") == "text"
+        and "field" in layer.get("encoding", {}).get("x", {})
+    ]
+    assert text_layers
+    for layer in text_layers:
+        assert layer["encoding"]["x"]["type"] == "temporal"
+
+
+def test_line_temporal_x_data_table_no_crash_through_vl_convert():
+    pytest.importorskip("vl_convert")
+    from dbt_charts.core.render.chart.vega_lite import render_chart
+
+    chart = _compiled_line_temporal_with_data_table(
+        [{"source": "revenue", "format": "$.0f"}]
+    )
+    # Must not raise — previously crashed with "Cannot read properties of null (reading 'type')"
+    svg = render_chart(
+        chart,
+        resolve_style(get_theme_style()),
+        resolve_chart_style_context(get_theme_style()),
+        _TEMPORAL_DATA,
+        format="svg",
+        width=600,
+        height=320,
+    )
+    assert svg  # non-empty SVG means vl-convert succeeded
+
+
+def test_area_temporal_x_data_table_no_crash_through_vl_convert():
+    pytest.importorskip("vl_convert")
+    from dbt_charts.core.render.chart.vega_lite import render_chart
+
+    chart = _compiled_area_temporal_with_data_table(
+        [{"source": "revenue", "format": "$.0f"}]
+    )
+    svg = render_chart(
+        chart,
+        resolve_style(get_theme_style()),
+        resolve_chart_style_context(get_theme_style()),
+        _TEMPORAL_DATA,
+        format="svg",
+        width=600,
+        height=320,
+    )
+    assert svg
+
+
+def test_bar_with_data_table_promotes_tooltip_to_spec_level():
+    """Pipeline: bar with data_table has tooltip on the bar mark layer.
+
+    V2 bar emits mark-level tooltip:True on the bar mark rather than
+    spec.encoding.tooltip array. Both let Vega-Lite show row data on hover;
+    mark-level is V2's canonical shape.
+    """
+    chart = _compiled_bar_with_data_table([{"source": "revenue", "format": "$.0f"}])
+    _rc = resolve(chart, _SAMPLE_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _SAMPLE_DATA, width=400, height=200)
+
+    bar_layers = [
+        layer
+        for layer in spec.get("layer", [])
+        if isinstance(layer.get("mark"), dict) and layer["mark"].get("type") == "bar"
+    ]
+    assert bar_layers, "expected at least one bar mark layer"
+    has_tooltip = any(layer["mark"].get("tooltip") is True for layer in bar_layers)
+    # Accept either mark-level tooltip:True (V2 shape) or spec-level
+    # encoding.tooltip array (V1 shape / future promotion).
+    spec_has_tooltip = "tooltip" in (spec.get("encoding") or {})
+    assert has_tooltip or spec_has_tooltip, (
+        "bar with data_table must have tooltip on the bar mark (mark.tooltip=True) "
+        "or a spec-level encoding.tooltip so hovering shows row values."
+    )
+
+
+# =============================================================================
+# TEMPORAL/DATE-LIKE ORDINAL SAMPLING — over-40-row bypass
+# =============================================================================
+
+
+def _compiled_line_yearmonth_with_data_table(entries):
+    """Line chart with year-month string x (ordinal-inferred, but date-like)."""
+    return TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "line",
+            "x": "month",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": entries,
+        }
+    )
+
+
+def _yearmonth_data(n: int) -> list[dict]:
+    """n rows of year-month string x like Looker's FORMAT_TIMESTAMP('%Y-%m', ...)."""
+    import datetime
+
+    start = datetime.date(2016, 1, 1)
+    rows = []
+    for i in range(n):
+        d = datetime.date(start.year + i // 12, (start.month + i - 1) % 12 + 1, 1)
+        rows.append({"month": f"{d.year:04d}-{d.month:02d}", "revenue": float(i)})
+    return rows
+
+
+def test_line_yearmonth_ordinal_over_40_rows_does_not_raise():
+    # Regression for dashboard 1291's transformations_model_runs tile:
+    # accounts_timeline_date_month is "YYYY-MM" string — inferred as ordinal
+    # by Dataface but semantically temporal. The strip must thin safely at
+    # dense widths without raising, whether that comes from the >40-row
+    # sampling path or the visible-tick parity filter.
+    data = _yearmonth_data(97)
+    chart = _compiled_line_yearmonth_with_data_table(
+        [{"aggregate": "sum", "source": "revenue"}]
+    )
+    _rc = resolve(chart, data, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, data, width=400, height=200)
+    assert "layer" in spec
+    # Sampling transforms should appear on data-bound strip cell layers.
+    text_layers = _strip_text_layers(spec)
+    assert text_layers
+    for tl in text_layers:
+        assert _has_strip_thinning(tl), (
+            "dense ordinal yearmonth data must thin the strip rather than render "
+            f"every cell. Got transforms: {tl.get('transform')}"
+        )
+
+
+def test_line_yearmonth_ordinal_30_rows_strip_thins_when_cells_wider_than_band():
+    # 30 yearmonth labels at a 600px render width: band = 600/30 = 20px. The
+    # axis overlap walk tilts labels to -90° where the footprint (~16px) fits the
+    # 20px band, so all 30 AXIS labels are visible. But strip thinning is decided
+    # by the strip's OWN cell width, not the axis's tilted-label fit: the strip's
+    # horizontal number cells are far wider than 20px, so the strip must thin.
+    # (A tilted axis label needs only its glyph height horizontally; a horizontal
+    # currency cell needs its full width — decoupling these is the whole fix.)
+    data = _yearmonth_data(30)
+    chart = _compiled_line_yearmonth_with_data_table(
+        [{"aggregate": "sum", "source": "revenue"}]
+    )
+    _rc = resolve(chart, data, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, data, width=600, height=200)
+    assert "layer" in spec
+    text_layers = _strip_text_layers(spec)
+    assert text_layers
+    # Horizontal cells overflow the 20px band even though tilted axis labels fit,
+    # so every strip row must thin.
+    assert all(_has_strip_thinning(tl) for tl in text_layers), (
+        "30 yearmonth labels at 600px (20px/band): tilted axis labels fit, but the "
+        "strip's horizontal cells are wider than the band — the strip must thin."
+    )
+
+
+def test_mon_yyyy_label_ordinal_over_40_thins_without_raising():
+    # "Jan 2024" labels are normalized to ISO dates by normalize_labeled_temporal
+    # before the data-table validator runs. After normalization the values ARE
+    # lex-sortable-chronologically ("2024-01-01" < "2024-02-01"), so the
+    # sampling window fires correctly — no cardinality error.
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "line",
+            "x": "month",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [{"aggregate": "sum", "source": "revenue"}],
+        }
+    )
+    import calendar
+
+    months = list(calendar.month_abbr)[1:]  # Jan..Dec
+    data = [
+        {"month": f"{m} {2016 + i // 12}", "revenue": float(i)}
+        for i, m in enumerate(months * 5)  # 60 distinct month-year combos
+    ]
+    _rc = resolve(chart, data, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, data, width=400, height=200)
+    assert "layer" in spec
+    text_layers = _strip_text_layers(spec)
+    assert text_layers
+    for tl in text_layers:
+        assert _has_strip_thinning(tl), (
+            "dense ordinal Mon YYYY labels must thin the strip rather than "
+            f"render every cell. Got transforms: {tl.get('transform')}"
+        )
+
+
+# ── per_series row order regression tests ────────────────────────────────
+#
+# These tests drive apply_chart_data_table_post_pass's stack-vs-non-stack branch
+# end-to-end (compile → render). The unit tests in test_data_table_attachment
+# exercise attach_data_table with hand-supplied series_order and so don't
+# regress if the branch in apply_chart_data_table_post_pass is broken or removed.
+
+
+def _compiled_chart_with_color_and_per_series(
+    chart_type: str,
+    stack: str = "zero",
+) -> Chart:
+    payload: dict[str, Any] = {
+        "id": "test_chart",
+        "type": chart_type,
+        "x": "month",
+        "y": "revenue",
+        "color": "category",
+        "query": SqlQuery(sql="SELECT 1", source="test_db"),
+        "query_name": "q",
+        "data_table": [{"per_series": "revenue", "format": "$,.0f"}],
+    }
+    if chart_type == "bar" or chart_type == "area":
+        payload["stack"] = stack
+    if chart_type == "bar":
+        # "month" is a categorical string x, which auto-resolves to horizontal;
+        # data_table is unsupported there, so pin vertical explicitly.
+        payload["style"] = {"orientation": "vertical"}
+    return TypeAdapter(Chart).validate_python(payload)
+
+
+_THREE_SERIES_DATA = [
+    {"month": "Jan", "category": c, "revenue": v}
+    for c, v in [("Apple", 100.0), ("Banana", 200.0), ("Cherry", 150.0)]
+] + [
+    {"month": "Feb", "category": c, "revenue": v}
+    for c, v in [("Apple", 110.0), ("Banana", 210.0), ("Cherry", 160.0)]
+]
+
+
+def _per_series_layer_order(spec: dict[str, Any]) -> list[str]:
+    """Return per-series strip rows in layer-index order (series_order[0] first).
+
+    series_order[0] = strip row 0 = VISUAL BOTTOM of the strip for
+    position:top (the default).  The visual reading order (top of strip first)
+    is the REVERSE of what this function returns.  Callers that care about
+    visual order should use reversed().
+
+    When endpoint labels fire (editorial default on line/area), the spec is
+    wrapped in hconcat; the layers live at hconcat[0].
+    """
+    import re
+
+    main = spec["hconcat"][0] if "hconcat" in spec else spec
+    series_order: list[str] = []
+    for layer in main.get("layer", []):
+        for transform in layer.get("transform", []) or []:
+            f = transform.get("filter")
+            if isinstance(f, str):
+                m = re.search(r"datum\['category'\] === '([^']+)'", f)
+                if m:
+                    series_order.append(m.group(1))
+                    break
+    return series_order
+
+
+def test_per_series_stacked_bar_strip_value_order_largest_sum_first():
+    """Stacked bars with default stack_order (value): VL puts the largest-sum series
+    at the baseline (bottom).  series_order[0] = largest sum (baseline) so that the
+    visual top of the strip (row N for position:top) shows the smallest-sum series,
+    matching chart top-to-bottom reading order.
+
+    _THREE_SERIES_DATA sums: Apple=210, Cherry=310, Banana=410.
+    Descending by sum: Banana → Cherry → Apple (series_order index order).
+    """
+
+    from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
+
+    chart = _compiled_chart_with_color_and_per_series(chart_type="bar", stack="zero")
+    _rc = resolve(chart, _THREE_SERIES_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _THREE_SERIES_DATA, width=400, height=200)
+    order = _per_series_layer_order(spec)
+    assert order == ["Banana", "Cherry", "Apple"], (
+        f"stacked bar (value order): series_order must be descending by global sum "
+        f"(largest = series_order[0]); got {order}"
+    )
+
+
+def test_per_series_grouped_bar_strip_is_alphabetical():
+    """Grouped (non-stacked) bars don't have a top-to-bottom stack — alphabetical."""
+    from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
+
+    chart = _compiled_chart_with_color_and_per_series(chart_type="bar", stack="none")
+    _rc = resolve(chart, _THREE_SERIES_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _THREE_SERIES_DATA, width=400, height=200)
+    order = _per_series_layer_order(spec)
+    assert order == [
+        "Apple",
+        "Banana",
+        "Cherry",
+    ], f"grouped bar strip rows must be alphabetical (legend order); got {order}"
+
+
+def test_per_series_stacked_area_strip_is_alphabetical():
+    """Stacked area: VL's nominal default puts alpha-FIRST at the baseline (series_order[0]).
+    Alpha-LAST (Cherry) sits at the top of the visual stack = series_order[N] = visual top
+    of the strip.  series_order is alpha-ascending (Apple first in layer order)."""
+    from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
+
+    chart = _compiled_chart_with_color_and_per_series(chart_type="area", stack="zero")
+    _rc = resolve(chart, _THREE_SERIES_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _THREE_SERIES_DATA, width=400, height=200)
+    order = _per_series_layer_order(spec)
+    assert order == ["Apple", "Banana", "Cherry"], (
+        "stacked area strip: series_order must be alpha-ascending "
+        "(alpha-first = series_order[0] at baseline); "
+        f"got {order}"
+    )
+
+
+def test_per_series_line_strip_by_last_x_y_ascending():
+    """Line chart strip: series_order[0] = lowest last-x y (bottom of chart).
+    Highest last-x y (chart top) = series_order[N] = visual top of strip.
+
+    _THREE_SERIES_DATA last x (Feb): Apple=110, Cherry=160, Banana=210.
+    Ascending by last-x y: Apple(110) → Cherry(160) → Banana(210).
+    """
+    from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
+
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "line",
+            "x": "month",
+            "y": "revenue",
+            "color": "category",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [{"per_series": "revenue", "format": "$,.0f"}],
+        }
+    )
+    _rc = resolve(chart, _THREE_SERIES_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _THREE_SERIES_DATA, width=400, height=200)
+    order = _per_series_layer_order(spec)
+    assert order == [
+        "Apple",
+        "Cherry",
+        "Banana",
+    ], (
+        f"line strip: series_order must be ascending by last-x y (lowest = series_order[0]); got {order}"
+    )
+
+
+def test_per_series_stacked_bar_position_top_adjacency_invariant():
+    """position=top stacked bar: series_order[0] = largest sum (Banana=410 = baseline).
+    For position:top, row 0 is at the VISUAL BOTTOM of the strip (closest to chart top).
+    The chart top shows the SMALLEST sum (Apple=210).  series_order[0]=Banana (largest)
+    means row 0 = Banana, and the visual top of the strip (row 2) = Apple.
+
+    _THREE_SERIES_DATA sums: Apple=210, Cherry=310, Banana=410.
+    Descending by sum: Banana(410) → Cherry(310) → Apple(210).
+    """
+    from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
+
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "bar",
+            "x": "month",
+            "y": "revenue",
+            "color": "category",
+            "stack": "zero",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [{"per_series": "revenue", "format": "$,.0f"}],
+            "style": {"orientation": "vertical", "data_table": {"position": "top"}},
+        }
+    )
+    _rc = resolve(chart, _THREE_SERIES_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _THREE_SERIES_DATA, width=400, height=200)
+    order = _per_series_layer_order(spec)
+    # series_order[0] = Banana (largest sum = baseline); visual top of strip = Apple.
+    assert order == ["Banana", "Cherry", "Apple"], (
+        f"position=top stacked bar: series_order[0] must be Banana (largest sum = baseline); "
+        f"got {order}"
+    )
+
+
+# =============================================================================
+# CADENCE DOWNSAMPLING — band cadence finer than label cadence
+# =============================================================================
+
+# 24 monthly ISO date rows (2 years) — same shape as interval-label-centering-lab.
+_MONTHLY_2Y_DATA = [
+    {
+        "date": f"{'2022' if i < 12 else '2023'}-{(i % 12) + 1:02d}-01",
+        "revenue": float(1000 + i * 100),
+    }
+    for i in range(24)
+]
+
+
+def _compiled_bar_monthly_quarterly_labels(entries, axis_type="ordinal"):
+    """Bar chart with monthly ISO date x, quarterly labels (lab chart 1/2/4 shape)."""
+    style_axis_x: dict[str, Any] = {
+        "time_unit": "yearmonth",
+        "labels": {"time_unit": "yearquarter"},
+    }
+    if axis_type == "temporal":
+        style_axis_x["type"] = "temporal"
+    return TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "bar",
+            "x": "date",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": entries,
+            "style": {"axis_x": style_axis_x},
+        }
+    )
+
+
+def _strip_text_layers(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return text layers from the spec that are data-bound strip cells."""
+    return [
+        layer
+        for layer in spec.get("layer", [])
+        if isinstance(layer.get("mark"), dict)
+        and layer["mark"].get("type") == "text"
+        and "field" in layer.get("encoding", {}).get("x", {})
+    ]
+
+
+def _period_filter_exprs(layer: dict[str, Any]) -> list[str]:
+    """Return all filter expressions from a layer's transforms."""
+    return [t["filter"] for t in layer.get("transform", []) if "filter" in t]
+
+
+def _has_strip_thinning(layer: dict[str, Any]) -> bool:
+    transforms = layer.get("transform", [])
+    return any("window" in t for t in transforms) or any(
+        "indexof" in expr or "utcmonth" in expr or "utcdate" in expr
+        for expr in _period_filter_exprs(layer)
+    )
+
+
+def test_ordinal_monthly_bands_quarterly_labels_adds_period_filter():
+    # Regression: 24 monthly bands + 8 quarterly labels → data_table must show
+    # 8 cells (one per quarter), not 24. Fix: period-opener filter on strip layers.
+    chart = _compiled_bar_monthly_quarterly_labels(
+        [{"source": "revenue", "format": "$,.0f", "label": "Revenue"}]
+    )
+    _rc = resolve(chart, _MONTHLY_2Y_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _MONTHLY_2Y_DATA, width=600, height=200)
+    assert "layer" in spec
+    text_layers = _strip_text_layers(spec)
+    assert text_layers, "expected at least one strip text layer"
+    for layer in text_layers:
+        exprs = _period_filter_exprs(layer)
+        # Ordinal and temporal paths share one canonical opens_label_period gate
+        # now (utcmonth/utcdate), not a separate indexof-list mechanism.
+        assert any("utcmonth" in e or "indexof" in e for e in exprs), (
+            "ordinal monthly-band + quarterly-label chart must have a "
+            "period-opener filter on every strip text layer; "
+            f"transforms: {layer.get('transform')}"
+        )
+
+
+def test_temporal_monthly_bands_quarterly_labels_adds_period_filter():
+    # Same fix for the temporal escape-hatch path (axis_x.type: temporal).
+    # Charts 1 and 2 in interval-label-centering-lab use this path.
+    chart = _compiled_bar_monthly_quarterly_labels(
+        [{"source": "revenue", "format": "$,.0f", "label": "Revenue"}],
+        axis_type="temporal",
+    )
+    _rc = resolve(chart, _MONTHLY_2Y_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _MONTHLY_2Y_DATA, width=600, height=200)
+    assert "layer" in spec
+    text_layers = _strip_text_layers(spec)
+    assert text_layers, "expected at least one strip text layer"
+    for layer in text_layers:
+        exprs = _period_filter_exprs(layer)
+        # Temporal path: expects utcmonth % 3 === 0 (quarter opener gate)
+        assert any("utcmonth" in e and "% 3 === 0" in e for e in exprs), (
+            "temporal monthly-band + quarterly-label chart must have a utcmonth % 3 "
+            "period-opener filter on every strip text layer; "
+            f"transforms: {layer.get('transform')}"
+        )
+
+
+def test_matching_band_and_label_cadence_no_period_filter():
+    # When band cadence == label cadence (quarterly bars + quarterly labels),
+    # no period-opener filter should be added.
+    quarterly_data = [
+        {"date": f"{y}-{m:02d}-01", "revenue": float(1000)}
+        for y in (2022, 2023)
+        for m in (1, 4, 7, 10)
+    ]
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "bar",
+            "x": "date",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [{"source": "revenue", "format": "$,.0f"}],
+            "style": {
+                "axis_x": {
+                    "time_unit": "yearquarter",
+                    "labels": {"time_unit": "yearquarter"},
+                }
+            },
+        }
+    )
+    _rc = resolve(chart, quarterly_data, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, quarterly_data, width=600, height=200)
+    assert "layer" in spec
+    text_layers = _strip_text_layers(spec)
+    assert text_layers
+    for layer in text_layers:
+        exprs = _period_filter_exprs(layer)
+        assert not any("indexof" in e or "utcmonth" in e for e in exprs), (
+            "quarterly bands + quarterly labels must NOT add a period-opener filter; "
+            f"got transforms: {layer.get('transform')}"
+        )
+
+
+def test_per_series_monthly_bands_quarterly_labels_adds_period_filter():
+    # Regression: per_series layers must also get the period-opener filter inserted
+    # after the per-series color filter and before sampling. Verify transform ordering.
+    monthly_two_series = [
+        {
+            "date": f"{'2022' if i < 12 else '2023'}-{(i % 12) + 1:02d}-01",
+            "revenue": float(1000 + i * 100),
+            "category": "A" if i % 2 == 0 else "B",
+        }
+        for i in range(24)
+    ]
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "bar",
+            "x": "date",
+            "y": "revenue",
+            "color": "category",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [{"per_series": "revenue", "format": "$,.0f"}],
+            "style": {
+                "axis_x": {
+                    "time_unit": "yearmonth",
+                    "labels": {"time_unit": "yearquarter"},
+                }
+            },
+        }
+    )
+    _rc = resolve(chart, monthly_two_series, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, monthly_two_series, width=600, height=200)
+    assert "layer" in spec
+    text_layers = _strip_text_layers(spec)
+    assert text_layers, "expected per_series strip text layers"
+    for layer in text_layers:
+        transforms = layer.get("transform", [])
+        exprs = _period_filter_exprs(layer)
+        # Period-opener filter must be present — ordinal and temporal paths
+        # share one canonical opens_label_period gate (utcmonth), not a
+        # separate indexof-list mechanism.
+        assert any("utcmonth" in e for e in exprs), (
+            "per_series monthly-band + quarterly-label layer must have period-opener filter; "
+            f"transforms: {transforms}"
+        )
+        # Series filter must appear before period-opener filter
+        series_idx = next(
+            (i for i, t in enumerate(transforms) if "category" in t.get("filter", "")),
+            None,
+        )
+        period_idx = next(
+            (i for i, t in enumerate(transforms) if "utcmonth" in t.get("filter", "")),
+            None,
+        )
+        assert series_idx is not None, f"no series filter in transforms: {transforms}"
+        assert period_idx is not None, f"no period filter in transforms: {transforms}"
+        assert series_idx < period_idx, (
+            f"series filter (idx {series_idx}) must precede period filter (idx {period_idx})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Grouped-by-default bars: strip rows must be alphabetical (not reverse).
+# Regression for the is_stacked_bar predicate that was not guarded against
+# the new stack=None + color → grouped default.
+# ---------------------------------------------------------------------------
+
+
+_PER_SERIES_DATA = [
+    {"month": "Jan", "revenue": 100.0, "segment": "Apple"},
+    {"month": "Jan", "revenue": 60.0, "segment": "Banana"},
+    {"month": "Jan", "revenue": 80.0, "segment": "Cherry"},
+    {"month": "Feb", "revenue": 120.0, "segment": "Apple"},
+    {"month": "Feb", "revenue": 70.0, "segment": "Banana"},
+    {"month": "Feb", "revenue": 90.0, "segment": "Cherry"},
+]
+
+
+def _series_filter_order(spec: dict[str, Any]) -> list[str]:
+    """Return the per-series strip row values in the order they appear in spec layers.
+
+    Endpoint labels may have wrapped the chart in hconcat/vconcat — unwrap to
+    the real chart pane first (chart_pane() is a no-op otherwise).
+    """
+    result: list[str] = []
+    for layer in chart_pane(spec).get("layer", []):
+        for t in layer.get("transform", []):
+            f = t.get("filter", "")
+            if "segment" in f and "===" in f:
+                # Extract 'Apple' from "datum['segment'] === 'Apple'"
+                val = f.split("===")[1].strip().strip("'")
+                if val not in result:
+                    result.append(val)
+    return result
+
+
+def test_per_series_grouped_bar_strip_rows_are_alphabetical():
+    """Grouped-by-default (stack=None + color) bars must emit strips alphabetically.
+
+    Previously is_stacked_bar fired for stack=None, emitting reverse-alphabetical
+    order as if the bars formed a stack (alpha-first at bottom = alpha-last at top).
+    Grouped bars carry no z-order pin; VL renders them alphabetical left-to-right.
+    """
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "t",
+            "type": "bar",
+            "x": "month",
+            "y": "revenue",
+            "color": "segment",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [{"per_series": "revenue"}],
+            "style": {"orientation": "vertical"},
+        }
+    )
+    _rc = resolve(chart, _PER_SERIES_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _PER_SERIES_DATA, width=400, height=200)
+    order = _series_filter_order(spec)
+    assert order == ["Apple", "Banana", "Cherry"], (
+        f"Grouped-by-default bar strip rows must be alphabetical; got {order}. "
+        "Stacked bars use reverse-alphabetical (alpha-last at top) but grouped "
+        "bars have no stack — they follow VL's alphabetical nominal default."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Period filter must NOT fire when bands are wide enough to show all cells.
+# Regression: for weekly ISO-date data over a short range, the ordinal
+# bucketed-time path set axis.values to 2 monthly openers and the period
+# filter restricted strip cells to those 2 positions — making the data
+# table look like scattered numbers instead of a proper cell-per-band table.
+# ---------------------------------------------------------------------------
+
+
+# 8 weekly ISO dates spanning Jan–Feb 2024 (one per calendar week).
+_WEEKLY_8W_DATA = [
+    {"week": f"2024-{m:02d}-{d:02d}", "revenue": float(1000 + i * 100)}
+    for i, (m, d) in enumerate(
+        [(1, 7), (1, 14), (1, 21), (1, 28), (2, 4), (2, 11), (2, 18), (2, 25)]
+    )
+]
+
+_MONTHLY_11M_DATA = [
+    {"month": month, "revenue": value}
+    for month, value in zip(
+        [
+            "2025-06-01",
+            "2025-07-01",
+            "2025-08-01",
+            "2025-09-01",
+            "2025-10-01",
+            "2025-11-01",
+            "2025-12-01",
+            "2026-01-01",
+            "2026-02-01",
+            "2026-03-01",
+            "2026-04-01",
+        ],
+        [8.43, 27.85, 24.02, 13.98, 31.82, 16.15, 5.47, 74.95, 0.15, 30.48, 16.87],
+        strict=True,
+    )
+]
+
+
+def _compiled_bar_monthly_full_cadence(entries, chart_format: str | None = None):
+    chart: dict[str, Any] = {
+        "id": "monthly_bar",
+        "type": "bar",
+        "x": "month",
+        "y": "revenue",
+        "query": SqlQuery(sql="SELECT 1", source="test_db"),
+        "query_name": "q",
+        "data_table": entries,
+    }
+    if chart_format is not None:
+        chart["format"] = chart_format
+    return TypeAdapter(Chart).validate_python(chart)
+
+
+def test_sparse_weekly_ordinal_no_period_filter():
+    """8 weekly bands at 576 px (72 px/band) must NOT have a period filter.
+
+    The ordinal bucketed-time path sets axis.values to monthly openers (2 values
+    for a 2-month range) and previously filtered strip cells to those 2 positions.
+    When band width >= 45 px all cells fit — the period filter must be suppressed
+    so the strip shows one value per weekly bar, not one per month.
+
+    Pre-fix: filter expression `indexof([...], datum['week']) >= 0` is present.
+    Post-fix: no period filter — all 8 cells render.
+    """
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "weekly_bar",
+            "type": "bar",
+            "x": "week",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [{"source": "revenue", "format": "$,.0f", "label": "Rev"}],
+        }
+    )
+    # 576 px / 8 bands = 72 px/band — well above the 45 px min
+    _rc = resolve(chart, _WEEKLY_8W_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _WEEKLY_8W_DATA, width=576, height=200)
+    assert "layer" in spec
+    text_layers = _strip_text_layers(spec)
+    assert text_layers, "expected at least one strip text layer"
+    for layer in text_layers:
+        exprs = _period_filter_exprs(layer)
+        assert not any("indexof" in e for e in exprs), (
+            "8 weekly bands at 576 px must NOT have a period filter — bands are "
+            "wide enough (72 px each) to show all cells without overlap. "
+            f"Got transforms: {layer.get('transform')}"
+        )
+
+
+def test_dense_monthly_ordinal_period_filter_fires_at_narrow_width():
+    """24 monthly bands at 300 px (12.5 px/band) MUST have a period filter.
+
+    When bands are too narrow to show all cells (< 45 px each), the period
+    filter must thin strip cells to label-period openers. This test ensures
+    the band-density guard only suppresses the filter for sparse data.
+
+    Pre-fix: filter already present (passes incidentally).
+    Post-fix: filter still present (the new guard doesn't interfere).
+    """
+    chart = _compiled_bar_monthly_quarterly_labels(
+        [{"source": "revenue", "format": "$,.0f"}]
+    )
+    # 300 px / 24 bands = 12.5 px/band — below the 45 px threshold
+    _rc = resolve(chart, _MONTHLY_2Y_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _MONTHLY_2Y_DATA, width=300, height=200)
+    assert "layer" in spec
+    text_layers = _strip_text_layers(spec)
+    assert text_layers, "expected at least one strip text layer"
+    any_period_filter = any(
+        any("utcmonth" in e for e in _period_filter_exprs(layer))
+        for layer in text_layers
+    )
+    assert any_period_filter, (
+        "24 monthly bands at 300 px (12.5 px/band) must have a period filter — "
+        "bands are too narrow to show all cells without overlap. "
+        "The band-density guard must not suppress filtering for dense data."
+    )
+
+
+def test_fitting_monthly_ordinal_cadence_does_not_calendar_thin_strip():
+    """11 ordinal monthly bars at 420px keep every non-overlapping label.
+
+    The month names fit at roughly 38 px per band. A previous edge/gap penalty
+    stepped this case to quarters even though the rendered labels did not
+    overlap. The data-table strip must not inherit a calendar-period filter;
+    its value cells may still apply their own generic density thinning.
+
+    V2 bar places shared encoding at the spec top level (not in layer[0]), so
+    we read spec["encoding"]["x"] directly.
+    """
+    chart = _compiled_bar_monthly_full_cadence(
+        [{"source": "revenue", "format": "$,.2f"}]
+    )
+    _rc = resolve(chart, _MONTHLY_11M_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _MONTHLY_11M_DATA, width=420, height=200)
+    base_x = spec["encoding"]["x"]
+    axis = base_x.get("axis", {})
+    assert base_x.get("type") == "ordinal"
+    # Calendar cadence resolves natively, never through parity.
+    assert axis.get("labelOverlap") is False
+    assert "utcmonth(toDate(datum.value)) % 3 === 0" not in axis.get("labelExpr", "")
+    # Strip does not receive a calendar-period gate from the unthinned axis.
+    text_layers = _strip_text_layers(spec)
+    assert text_layers, "expected at least one strip text layer"
+    filter_exprs = [e for layer in text_layers for e in _period_filter_exprs(layer)]
+    assert not any("utcmonth" in expr or "utcdate" in expr for expr in filter_exprs)
+
+
+def test_data_table_strip_renders_inherited_chart_format():
+    """A source row whose format was resolved from chart.format at normalize time
+    must produce a formatted strip cell.
+
+    normalize_chart() now resolves entry.format = chart.format for entries
+    reading chart.y before the chart reaches the render layer. This test
+    constructs the already-normalized Chart (bypassing normalize_chart) with
+    the format already set on the entry, reflecting the post-normalize state.
+    """
+    chart = _compiled_bar_monthly_full_cadence(
+        [{"source": "revenue", "label": "Revenue", "format": "~s"}],
+        chart_format="~s",
+    )
+    _rc = resolve(chart, _MONTHLY_11M_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _MONTHLY_11M_DATA, width=420, height=200)
+    text_layers = _strip_text_layers(spec)
+    assert text_layers, "expected at least one strip text layer"
+    calc_exprs = [
+        t["calculate"]
+        for layer in text_layers
+        for t in layer.get("transform", [])
+        if "calculate" in t
+    ]
+    assert any("format(datum.revenue, '~s')" in expr for expr in calc_exprs), (
+        "A data_table entry with format set must produce a formatted strip cell. "
+        f"Got calculate transforms: {calc_exprs}"
+    )
+
+
+def test_per_series_stacked_bar_strip_rows_are_reverse_alphabetical():
+    """Explicit stack=zero bars: series_order[0] = largest sum (at baseline).
+    Visual top of strip (series_order[N]) = smallest sum = chart top.
+
+    _PER_SERIES_DATA sums: Apple=220, Cherry=170, Banana=130.
+    Descending by sum: Apple → Cherry → Banana.
+    """
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "t",
+            "type": "bar",
+            "x": "month",
+            "y": "revenue",
+            "color": "segment",
+            "stack": "zero",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [{"per_series": "revenue"}],
+            "style": {"orientation": "vertical"},
+        }
+    )
+    _rc = resolve(chart, _PER_SERIES_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _PER_SERIES_DATA, width=400, height=200)
+    order = _series_filter_order(spec)
+    assert order == ["Apple", "Cherry", "Banana"], (
+        f"Stacked bar (value order): series_order must be descending by global sum "
+        f"(largest = series_order[0]); got {order}."
+    )
+
+
+# =============================================================================
+# by_measure multi-y data_table pipeline tests
+# =============================================================================
+
+# ISO date x so the chart renders as a temporal vertical bar (has explicit x enc).
+_MULTI_Y_DATA = [
+    {"date": "2024-01-01", "revenue": 100.0, "cost": 60.0},
+    {"date": "2024-02-01", "revenue": 200.0, "cost": 120.0},
+    {"date": "2024-03-01", "revenue": 150.0, "cost": 90.0},
+]
+
+
+def test_by_measure_multi_y_bar_compiles_and_has_two_strip_rows():
+    """Multi-y bar with by_measure entries produces a spec with two strip rows.
+
+    Each by_measure entry expands to one visual row — two entries → two rows.
+    The spec must be a valid layered spec with at least two x-bound text layers.
+    """
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "multi_y_bar",
+            "type": "bar",
+            "x": "date",
+            "y": ["revenue", "cost"],
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [
+                {"per_series": "revenue", "by_measure": True},
+                {"per_series": "cost", "by_measure": True},
+            ],
+        }
+    )
+    _rc = resolve(chart, _MULTI_Y_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _MULTI_Y_DATA, width=400, height=200)
+    assert "layer" in spec, "multi-y by_measure chart must produce a layered spec"
+    text_layers = _strip_text_layers(spec)
+    assert len(text_layers) >= 2, (
+        f"Expected at least 2 strip text layers (one per by_measure entry); "
+        f"got {len(text_layers)}. Layers: {[lyr.get('encoding') for lyr in text_layers]}"
+    )
+
+
+def test_by_measure_strip_rows_reference_measure_fields_directly():
+    """by_measure strip rows must read the named measure field without a series filter.
+
+    Unlike normal per_series rows (which have a 'datum[color_field] ===' filter),
+    by_measure rows read the measure field directly — no color groupby transform.
+    """
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "multi_y_bar",
+            "type": "bar",
+            "x": "date",
+            "y": ["revenue", "cost"],
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [
+                {"per_series": "revenue", "by_measure": True},
+                {"per_series": "cost", "by_measure": True},
+            ],
+        }
+    )
+    _rc = resolve(chart, _MULTI_Y_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _MULTI_Y_DATA, width=400, height=200)
+    text_layers = _strip_text_layers(spec)
+    # Collect all field names referenced by strip text layers.
+    text_fields = {
+        layer["encoding"]["text"]["field"]
+        for layer in text_layers
+        if "text" in layer.get("encoding", {})
+    }
+    # Must reference the measure fields (possibly after a format calculate as
+    # __data_table_N, but the per_series column must appear in transforms).
+    # Simpler check: no layer has a series-equality filter transform.
+    for layer in text_layers:
+        for t in layer.get("transform", []):
+            f = t.get("filter", "")
+            assert "===" not in f, (
+                f"by_measure strip rows must NOT have a series equality filter; "
+                f"got filter: {f!r}"
+            )
+    # Revenue or cost must be reachable from the text encoding or transforms.
+    all_transform_fields = set()
+    for layer in text_layers:
+        for t in layer.get("transform", []):
+            if "calculate" in t:
+                all_transform_fields.add(t["calculate"])
+    reachable = text_fields | all_transform_fields
+    assert any("revenue" in str(r) for r in reachable) or any(
+        "cost" in str(r) for r in reachable
+    ), (
+        f"by_measure strip layers must reference 'revenue' or 'cost'; "
+        f"text_fields={text_fields}, transforms={all_transform_fields}"
+    )
+
+
+# =============================================================================
+# Continuous-axis tick density: period_filter supersedes sampling
+# =============================================================================
+#
+# When a chart has a finer-grained x-axis than its label cadence (e.g. 365
+# daily rows displayed with monthly labels), the engine applies a
+# label_period_filter_expr to keep one cell per label period. A sampling
+# transform must NOT also be injected: sampling is computed from raw data row
+# count (365 > 40 → step=10), but with the period filter already restricting
+# output to 12 cells, sampling would further thin to 2 cells — an incorrect
+# result. When period_filter is in effect, sampling must be suppressed.
+
+
+_DAILY_365_DATA = [
+    {
+        "date": (datetime.date(2024, 1, 1) + datetime.timedelta(days=i)).isoformat(),
+        "revenue": float(100 + i),
+    }
+    for i in range(365)
+]
+
+
+def test_daily_data_with_monthly_labels_no_sampling_transform():
+    """365 daily rows with monthly labels must NOT have sampling transforms.
+
+    Regression: when n_x_values > CHART_DATA_TABLE_MAX_X_TICKS (365 > 40),
+    the validator computed sampling_step = ceil(365/40) = 10. Combined with
+    the label_period_filter_expr (which restricts to ~12 monthly openers),
+    sampling further thinned to ~2 cells. The strip showed 2 cells instead
+    of 12 — far fewer than the visible axis tick count.
+
+    Fix: when label_period_filter_expr is in effect, set sampling_step = 1
+    (no sampling). The period filter is already the correct thinning mechanism.
+    """
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "daily_revenue",
+            "type": "bar",
+            "x": "date",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [{"aggregate": "sum", "source": "revenue", "format": "~s"}],
+            "style": {
+                "axis_x": {
+                    "time_unit": "yearmonthdate",
+                    "labels": {"time_unit": "yearmonth"},
+                }
+            },
+        }
+    )
+    _rc = resolve(chart, _DAILY_365_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _DAILY_365_DATA, width=600, height=200)
+    assert "layer" in spec
+    text_layers = _strip_text_layers(spec)
+    assert text_layers, "expected at least one strip text layer"
+
+    # The period filter must be present (monthly labels on daily bands)
+    for layer in text_layers:
+        exprs = _period_filter_exprs(layer)
+        assert any("utcmonth" in e or "utcdate" in e for e in exprs), (
+            "daily data with monthly labels must have a period-opener filter "
+            "(utcmonth/utcdate gate); "
+            f"transforms: {layer.get('transform')}"
+        )
+
+    # Sampling must NOT be present — the period filter handles thinning
+    for layer in text_layers:
+        for t in layer.get("transform", []):
+            if "window" in t:
+                ops = [w.get("op") for w in (t.get("window") or [])]
+                assert "row_number" not in ops, (
+                    "strip layers must NOT have sampling (row_number window) when "
+                    "label_period_filter_expr is active — the period filter already "
+                    "restricts to label-period openers; adding sampling over-thins "
+                    f"the strip. Transforms: {layer.get('transform')}"
+                )
+
+
+def test_period_filtered_strip_with_predefined_format_shows_all_openers():
+    """A period-filtered strip using a predefined format must not over-thin.
+
+    Regression: the band-budget expansion for anchor affixes (band_budget_w >
+    max_cell_w) bypassed the unconditional `sampling_step = 1` reset, so a
+    365-row chart with `currency_compact` emitted a `% 46 === 0` sampling
+    transform on top of the monthly period filter — collapsing 12 openers to 1.
+    """
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "daily_revenue",
+            "type": "bar",
+            "x": "date",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [
+                {"aggregate": "sum", "source": "revenue", "format": "currency_compact"}
+            ],
+            "style": {
+                "axis_x": {
+                    "time_unit": "yearmonthdate",
+                    "labels": {"time_unit": "yearmonth"},
+                }
+            },
+        }
+    )
+    resolve(chart, _DAILY_365_DATA, chart_style_context=_BOARD_CONTEXT)
+    spec = generate_vega_lite_spec(chart, _DAILY_365_DATA, width=600, height=200)
+    assert "layer" in spec
+    text_layers = _strip_text_layers(spec)
+    assert text_layers
+
+    for layer in text_layers:
+        for t in layer.get("transform", []):
+            if "window" in t:
+                ops = [w.get("op") for w in (t.get("window") or [])]
+                assert "row_number" not in ops, (
+                    "strip layers must NOT have a sampling row_number window when "
+                    "label_period_filter_expr is active, even with a predefined format "
+                    f"that widens the band budget. Transforms: {layer.get('transform')}"
+                )
+
+
+# ---------------------------------------------------------------------------
+# V2 renderer parity: data_table strip thinning
+# ---------------------------------------------------------------------------
+
+
+def _bar_yearmonth_with_data_table() -> Chart:
+    return TypeAdapter(Chart).validate_python(
+        {
+            "id": "ym_bar",
+            "type": "bar",
+            "x": "month",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1"),
+            "query_name": "q",
+            "data_table": [{"source": "revenue", "label": "Revenue"}],
+        }
+    )
+
+
+def test_v2_bar_yearmonth_dense_data_table_thins_via_period_filter(
+    monkeypatch: Any,
+) -> None:
+    """48 ordinal yearmonth bars at 600px: bar's x path now normalizes
+    "YYYY-MM" bucket strings to ISO (same normalize_labeled_temporal call
+    line already made — see value-driven-axis-type-inference), and the
+    label cadence ladder auto-steps month labels to quarter at this density
+    (cadence-ladder task — replaces the old shrink/tilt behavior this test
+    name used to describe). The strip must thin to match via the
+    opens_label_period gate (not window-modulo).
+    """
+    data = _yearmonth_data(48)
+    chart = _bar_yearmonth_with_data_table()
+    spec = _render_v2_spec(chart, data, width=600, height=300, monkeypatch=monkeypatch)
+
+    text_layers = _strip_text_layers(spec)
+    assert text_layers, "expected at least one data_table strip text layer"
+
+    for tl in text_layers:
+        exprs = _period_filter_exprs(tl)
+        assert any("utcmonth" in e for e in exprs), (
+            "48 yearmonth labels at 600px must thin via the quarter-opener "
+            f"period filter. Transforms: {tl.get('transform')}"
+        )
+        for t in tl.get("transform", []):
+            assert "window" not in t, (
+                "period-filter thinning must not also apply window-modulo. "
+                f"Transforms: {tl.get('transform')}"
+            )
+
+
+def _weekly_date_data(n: int) -> list[dict]:
+    """n weekly true-DATE rows, one week apart, starting 2024-01-01."""
+    start = datetime.date(2024, 1, 1)
+    return [
+        {"week": start + datetime.timedelta(weeks=i), "revenue": float(i) * 100}
+        for i in range(n)
+    ]
+
+
+def _daily_date_data(n: int) -> list[dict]:
+    start = datetime.date(2024, 1, 1)
+    return [
+        {"day": start + datetime.timedelta(days=i), "revenue": float(i) * 100}
+        for i in range(n)
+    ]
+
+
+def _bar_daily_with_data_table() -> Chart:
+    return TypeAdapter(Chart).validate_python(
+        {
+            "id": "daily_bar",
+            "type": "bar",
+            "x": "day",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1"),
+            "query_name": "q",
+            "data_table": [{"source": "revenue", "label": "Revenue"}],
+        }
+    )
+
+
+def test_v2_bar_daily_monday_promotion_matches_data_table_filter(
+    monkeypatch: Any,
+) -> None:
+    data = _daily_date_data(60)
+    chart = _bar_daily_with_data_table()
+    spec = _render_v2_spec(chart, data, width=300, height=300, monkeypatch=monkeypatch)
+
+    monday_values = [
+        value.isoformat()
+        for value in (row["day"] for row in data)
+        if value.weekday() == 0
+    ]
+    assert spec["encoding"]["x"]["axis"]["values"] == monday_values
+    text_layers = _strip_text_layers(spec)
+    assert text_layers
+    for layer in text_layers:
+        assert any("utcday" in expression for expression in _period_filter_exprs(layer))
+
+
+def _line_weekly_with_data_table() -> Chart:
+    return TypeAdapter(Chart).validate_python(
+        {
+            "id": "weekly_line",
+            "type": "line",
+            "x": "week",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1"),
+            "query_name": "q",
+            "data_table": [{"source": "revenue", "label": "Revenue"}],
+        }
+    )
+
+
+def test_v2_line_sparse_weekly_temporal_data_table_shows_every_cell(
+    monkeypatch: Any,
+) -> None:
+    """Sparse weekly-grain temporal line (5 true-DATE points) must show one
+    data_table cell per data point, not collapse to the month-opener gate.
+
+    Regression: line/area now default to continuous temporal for any
+    BUCKETED_CALENDAR_UNITS grain (value-driven-axis-type-inference). The
+    temporal branch of _label_period_filter_expr computed label_tu (weekly ->
+    yearmonth) and applied the month-opener gate unconditionally whenever
+    label_tu != dft_time_unit — with no density guard, unlike the ordinal
+    branch's `spec_width / len(x_distinct) >= 45.0` check. 5 weekly points at
+    a normal chart width must render all 5 cells.
+    """
+    data = _weekly_date_data(5)
+    chart = _line_weekly_with_data_table()
+    spec = _render_v2_spec(chart, data, width=600, height=300, monkeypatch=monkeypatch)
+
+    assert spec["encoding"]["x"]["type"] == "temporal"
+    text_layers = _strip_text_layers(spec)
+    assert text_layers, "expected at least one data_table strip text layer"
+    for tl in text_layers:
+        assert not _period_filter_exprs(tl), (
+            "5 sparse weekly points must show every cell — no period filter "
+            f"expected. Transforms: {tl.get('transform')}"
+        )
+        assert not _has_strip_thinning(tl), (
+            f"5 sparse weekly points must not thin. Transforms: {tl.get('transform')}"
+        )
+
+
+def test_v2_line_dense_weekly_temporal_data_table_still_thins(
+    monkeypatch: Any,
+) -> None:
+    """Dense weekly-grain temporal line still thins via the month-opener gate."""
+    data = _weekly_date_data(60)
+    chart = _line_weekly_with_data_table()
+    spec = _render_v2_spec(chart, data, width=600, height=300, monkeypatch=monkeypatch)
+
+    assert spec["encoding"]["x"]["type"] == "temporal"
+    text_layers = _strip_text_layers(spec)
+    assert text_layers, "expected at least one data_table strip text layer"
+    for tl in text_layers:
+        # Temporal thinning is a raw opens_label_period boolean filter, not the
+        # ordinal path's indexof(...) list — _has_strip_thinning only checks
+        # for "window" or "indexof", so assert on the filter directly.
+        assert _period_filter_exprs(tl), (
+            "60 dense weekly points must thin the strip via a period filter. "
+            f"Transforms: {tl.get('transform')}"
+        )
+
+
+def test_v2_line_dense_monthly_data_table_matches_flushed_axis_thinning(
+    monkeypatch: Any,
+) -> None:
+    """The strip uses the same quarter-opener cadence as flushed axis labels."""
+    data = [
+        {
+            "date": f"{2024 + month // 12:04d}-{month % 12 + 1:02d}-01",
+            "revenue": float(month),
+        }
+        for month in range(24)
+    ]
+    chart = _compiled_line_temporal_with_data_table([{"source": "revenue"}])
+    spec = _render_v2_spec(chart, data, width=700, height=300, monkeypatch=monkeypatch)
+
+    assert (
+        "utcmonth(toDate(datum.value)) % 3 === 0"
+        in spec["encoding"]["x"]["axis"]["labelExpr"]
+    )
+    text_layers = _strip_text_layers(spec)
+    assert text_layers
+    for layer in text_layers:
+        assert any("utcmonth" in expr for expr in _period_filter_exprs(layer)), (
+            "data_table cells must use the axis's quarter-opener filter. "
+            f"Transforms: {layer.get('transform')}"
+        )
+
+
+def test_v2_line_data_table_respects_chart_local_flush_override(
+    monkeypatch: Any,
+) -> None:
+    """A chart-local flush override keeps the strip and axis on monthly labels."""
+    data = [
+        {
+            "date": f"{2024 + month // 12:04d}-{month % 12 + 1:02d}-01",
+            "revenue": float(month),
+        }
+        for month in range(24)
+    ]
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "monthly_line",
+            "type": "line",
+            "x": "date",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [{"source": "revenue"}],
+            "style": {"axis_x": {"labels": {"flush": False}}},
+        }
+    )
+    spec = _render_v2_spec(chart, data, width=700, height=300, monkeypatch=monkeypatch)
+
+    assert "% 3 === 0" not in spec["encoding"]["x"]["axis"]["labelExpr"]
+    for layer in _strip_text_layers(spec):
+        assert not _period_filter_exprs(layer), (
+            "the strip must retain every monthly cell when label flushing is off. "
+            f"Transforms: {layer.get('transform')}"
+        )
+
+
+def test_v2_bar_yearmonth_x_emits_axis_values(monkeypatch: Any) -> None:
+    """V2 bar chart with ordinal yearmonth x emits axis.values on the x encoding.
+
+    axis.values is the tick-visibility set that _label_period_filter_expr reads to
+    build the indexof period filter on data_table strips.  Without it the strip
+    falls back to window-modulo sampling and cells can appear between tick marks.
+    """
+    data = _yearmonth_data(12)
+    chart = _bar_yearmonth_with_data_table()
+
+    # V2
+    spec_v2 = _render_v2_spec(
+        chart, data, width=600, height=300, monkeypatch=monkeypatch
+    )
+    enc_x_v2 = spec_v2.get("encoding", {}).get("x", {})
+    assert enc_x_v2.get("axis", {}).get("values"), (
+        "V2 bar chart with yearmonth ordinal x must emit axis.values; "
+        "build_cartesian_x_encoding must call detect_time_unit for 'ordinal' data"
+    )
+
+
+def test_v2_bar_half_year_ordinal_renders_without_raising(monkeypatch: Any) -> None:
+    """V2 bar chart with half-year ordinal x (YYYY-Hn) renders without raising.
+
+    Half-year strings match DATE_LIKE_PATTERNS so infer_vega_type_from_data
+    returns "ordinal", but detect_time_unit cannot parse them and raises.
+    build_cartesian_x_encoding must degrade to time_unit=None on ValueError
+    so these charts fall back to window sampling, matching V1's plain-ordinal
+    behavior, instead of crashing the renderer.
+    """
+    flat = TypeAdapter(Chart).validate_python(
+        {
+            "id": "hy_bar",
+            "type": "bar",
+            "x": "period",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1"),
+            "query_name": "q",
+            "data_table": [{"source": "revenue", "label": "Revenue"}],
+            "style": {"orientation": "vertical"},
+        }
+    )
+    chart = flat
+    data = [
+        {"period": f"20{20 + i // 2:02d}-H{(i % 2) + 1}", "revenue": float(i)}
+        for i in range(12)
+    ]
+    # Must not raise ValueError
+    spec = _render_v2_spec(chart, data, width=600, height=300, monkeypatch=monkeypatch)
+    assert spec is not None
+
+
+# =============================================================================
+# BOARD RENDER PATH — render_resolved_chart is called directly by
+# rendering.py's board pipeline (no chart.data_table available, only
+# resolved.data_table). generate_vega_lite_spec / render_chart apply the
+# post-pass themselves and don't exercise this path.
+# =============================================================================
+
+
+def _strip_text_layers_from_vl(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    main = spec["hconcat"][0] if "hconcat" in spec else spec
+    return [
+        layer
+        for layer in main.get("layer", [])
+        if isinstance(layer.get("mark"), dict) and layer["mark"].get("type") == "text"
+    ]
+
+
+def test_board_path_render_resolved_chart_emits_data_table_strip_for_cartesian():
+    # Regression: render_resolved_chart (the function rendering.py's board
+    # pipeline calls directly) previously never applied the data_table
+    # post-pass, so attached data tables silently disappeared from boards
+    # while generate_vega_lite_spec/render_chart still rendered them fine.
+    from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
+
+    chart = _compiled_bar_with_data_table([{"source": "revenue", "format": "$.2s"}])
+    compiled = chart
+    resolved = resolve(compiled, _SAMPLE_DATA, chart_style_context=_BOARD_CONTEXT)
+    assert resolved.data_table is not None
+
+    artifact = render_resolved_chart(
+        resolved, _SAMPLE_DATA, _BOARD_STYLE, width=400, height=200
+    )
+    assert artifact.kind == "vega_spec"
+    assert isinstance(artifact.payload, dict)
+    text_layers = _strip_text_layers_from_vl(artifact.payload)
+    assert text_layers, (
+        "board render path (render_resolved_chart) must attach the "
+        "data_table strip's text layers"
+    )
+
+
+def test_data_table_bar_with_date_object_x_over_cap_samples_not_raises():
+    # Regression: a bar chart whose x is a `::date` column (datetime.date
+    # objects) is clamped to a categorical scale by the bar mark, but is really
+    # temporal. With >40 ticks the strip must SAMPLE (like V1's data-inferred
+    # x_type), not raise the ordinal/nominal cardinality cap. Before the fix the
+    # validator only recognized lex-sortable date STRINGS, so date OBJECTS fell
+    # through to the raise branch — crashing company-overview.yml's board render.
+    from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
+
+    weeks = [
+        {
+            "month": datetime.date(2018, 1, 1) + datetime.timedelta(weeks=i),
+            "revenue": float(i),
+        }
+        for i in range(72)
+    ]
+    chart = _compiled_bar_with_data_table([{"source": "revenue", "format": ",d"}])
+    resolved = resolve(chart, weeks, chart_style_context=_BOARD_CONTEXT)
+    assert resolved.data_table is not None
+    # Must not raise the 40-tick cap for a chronological (date-object) x axis.
+    artifact = render_resolved_chart(
+        resolved, weeks, _BOARD_STYLE, width=800, height=300
+    )
+    assert artifact.kind == "vega_spec"
+    assert isinstance(artifact.payload, dict)
+
+
+def test_shared_x_encoding_anchor_rules() -> None:
+    """Strip cell anchor must match where the base mark renders.
+
+    - ordinal/nominal → band center (0.5); marks render at the band center for
+      both bar and line, so mark_is_bar doesn't change it.
+    - temporal+timeUnit → band center (0.5) ONLY for a bar (spans the band);
+      line/area ride the per-point position (no bandPosition) so cells land on
+      the data point / grid tick and the band _end never widens the x-domain.
+    - plain temporal / quantitative → continuous, no band, no anchor.
+    """
+    from dbt_charts.core.render.chart.data_table_attachment import _shared_x_encoding
+
+    tu = {"field": "week", "type": "temporal", "timeUnit": "utcyearweek"}
+    bar = _shared_x_encoding(tu, mark_is_bar=True)
+    assert bar["bandPosition"] == 0.5 and bar["timeUnit"] == "utcyearweek"
+    line = _shared_x_encoding(tu, mark_is_bar=False)
+    assert "bandPosition" not in line and line["timeUnit"] == "utcyearweek"
+
+    for mib in (True, False):
+        ordinal = _shared_x_encoding(
+            {"field": "cat", "type": "ordinal"}, mark_is_bar=mib
+        )
+        assert ordinal["bandPosition"] == 0.5
+
+    plain_temporal = _shared_x_encoding(
+        {"field": "ts", "type": "temporal"}, mark_is_bar=False
+    )
+    assert "bandPosition" not in plain_temporal
+    quantitative = _shared_x_encoding(
+        {"field": "n", "type": "quantitative"}, mark_is_bar=True
+    )
+    assert "bandPosition" not in quantitative
+
+
+def test_temporal_line_data_table_does_not_widen_x_domain():
+    """A temporal line's data_table strip must not push the band _end into the
+    x-scale domain, which would extend the axis past the data (the "chart starts
+    in Dec / ends in Feb" regression). The strip rides the per-point position,
+    so the compiled x-scale domain references only the bucket-start field, never
+    a ``*_end`` companion.
+    """
+    import json
+
+    vlc = pytest.importorskip("vl_convert")
+    from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
+
+    chart = _compiled_line_temporal_with_data_table([{"source": "revenue"}])
+    spec = generate_vega_lite_spec(chart, _TEMPORAL_DATA)
+    vg = vlc.vegalite_to_vega(json.dumps(spec))
+    vg = json.loads(vg) if isinstance(vg, str) else vg
+
+    x_scale = next(s for s in vg["scales"] if s["name"] == "x")
+    domain = x_scale["domain"]
+    fields = (
+        {f["field"] for f in domain["fields"]}
+        if isinstance(domain, dict) and "fields" in domain
+        else set()
+    )
+    assert not any(f.endswith("_end") for f in fields), (
+        f"temporal line data_table widened the x-domain with a band _end field: "
+        f"{sorted(fields)} — strip must ride the per-point position"
+    )
+
+
+def _goal_row_calc(spec, index: int = 0) -> str | None:
+    """The calculate expression producing strip row `index`'s cell text."""
+    cell = f"__data_table_{index}"
+    for layer in spec.get("layer", []):
+        for transform in layer.get("transform", []):
+            if transform.get("as") == cell:
+                return transform["calculate"]
+    return None
+
+
+_GOAL_DATA = [
+    {"date": "2026-02-01", "revenue": 5.5, "goal": 441_000_000.0},
+    {"date": "2026-03-01", "revenue": 5.9, "goal": 448_000_000.0},
+    {"date": "2026-04-01", "revenue": 5.8, "goal": 456_000_000.0},
+    {"date": "2026-05-01", "revenue": 6.2, "goal": 473_000_000.0},
+]
+
+
+def test_pipeline_strip_declares_its_unit_once(monkeypatch):
+    """End to end: a builtin currency_compact row reads "$441mn 448 456 473".
+
+    Only engine-predefined format names get the house rule of declaring the unit
+    once. A raw literal like "$,.3s" repeats "$…M" on every cell and still must
+    — the author must use the predefined name to opt into the declare-once
+    behavior (see test_pipeline_raw_literal_format_is_not_anchored below).
+    """
+    chart = _compiled_line_temporal_with_data_table(
+        [{"source": "goal", "format": "currency_compact", "label": "Goal"}]
+    )
+    spec = _render_v2_spec(
+        chart, _GOAL_DATA, width=900, height=300, monkeypatch=monkeypatch
+    )
+
+    calc = _goal_row_calc(spec)
+    assert calc is not None, "expected a data_table strip row in the spec"
+    assert '"mn"' in calc
+    assert "datum.__data_table_drawn_index === 1" in calc
+    # The magnitude is divided out once rather than left to d3's `s` type.
+    assert "1000000.0" in calc
+    assert "currency_compact" not in calc
+
+
+def test_pipeline_percent_strip_declares_its_sign_once(monkeypatch):
+    """The TV board's shape: a builtin 'percent' row states "%" on the anchor."""
+    data = [
+        {"date": "2026-02-01", "revenue": 0.055, "goal": 0.055},
+        {"date": "2026-03-01", "revenue": 0.059, "goal": 0.062},
+        {"date": "2026-04-01", "revenue": 0.058, "goal": 0.25},
+    ]
+    chart = _compiled_line_temporal_with_data_table(
+        [{"source": "goal", "format": "percent", "label": "Goal"}]
+    )
+    spec = _render_v2_spec(chart, data, width=900, height=300, monkeypatch=monkeypatch)
+
+    calc = _goal_row_calc(spec)
+    assert calc is not None
+    # The author's own percent spec formats every cell — nothing is rebuilt —
+    # and the cells that don't declare the unit have the "%" removed.
+    # "percent" resolves to ".1%", so the emitted spec is the resolved form.
+    assert "format(datum.goal, '.1%')" in calc
+    assert "replace(format(datum.goal, '.1%'), \"%\", '')" in calc
+    assert "datum.__data_table_drawn_index === 1" in calc
+
+
+def test_pipeline_category_axis_anchors_on_the_first_cell_in_data_order(monkeypatch):
+    """A category axis carries `sort: null`, so data order IS the painted order.
+
+    That makes the leftmost cell exactly computable rather than assumed, so a
+    category strip declares its unit like any other — no reason for two strips
+    on one board to behave differently.
+    """
+    data = [
+        {"month": "Widget", "revenue": 100.0, "goal": 441_000_000.0},
+        {"month": "Anvil", "revenue": 200.0, "goal": 448_000_000.0},
+    ]
+    chart = _compiled_bar_with_data_table(
+        [{"source": "goal", "format": "currency_compact", "label": "Goal"}]
+    )
+    spec = _render_v2_spec(chart, data, width=900, height=300, monkeypatch=monkeypatch)
+
+    calc = _goal_row_calc(spec)
+    assert calc is not None
+    # Unsorted drawn_index window — anchor fires at DRAWN_INDEX==1 (Widget, first in data).
+    assert "__data_table_drawn_index" in calc
+    assert '"mn"' in calc
+
+
+def test_pipeline_authored_sort_on_a_category_axis_does_not_anchor(monkeypatch):
+    """An authored `sort:` replaces data order with one we cannot reproduce.
+
+    Fail closed there rather than guess — anchoring the wrong cell would strand
+    the unit somewhere in the middle of the row.
+    """
+    from pydantic import TypeAdapter
+
+    from dbt_charts.core.compile.models.chart.normalized import Chart
+    from dbt_charts.core.compile.models.query.normalized import SqlQuery
+
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "bar",
+            "x": "month",
+            "y": "revenue",
+            "sort": {"by": "revenue", "order": "desc"},
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [
+                {"source": "goal", "format": "currency_compact", "label": "Goal"}
+            ],
+            "style": {"orientation": "vertical"},
+        }
+    )
+    data = [
+        {"month": "Widget", "revenue": 100.0, "goal": 441_000_000.0},
+        {"month": "Anvil", "revenue": 200.0, "goal": 448_000_000.0},
+    ]
+    spec = _render_v2_spec(chart, data, width=900, height=300, monkeypatch=monkeypatch)
+
+    calc = _goal_row_calc(spec)
+    assert calc is not None
+    # Authored sort replaces data order — anchor cannot identify the leftmost
+    # cell, so the strip keeps per-cell formatting (no drawn-index window).
+    assert "__data_table_drawn_index" not in calc
+    assert "mn" not in calc
+
+
+def test_pipeline_left_aligned_strip_currency_does_not_anchor(monkeypatch):
+    """A currency strip on a left-oriented axis repeats the unit on every cell.
+
+    For left-oriented y-axes, a prefix-carrying format (currency) cannot anchor
+    without leaving the unit absent from non-anchor cells or using non-standard
+    trailing-prefix typography ('441$mn'). The strip routes to StripAnchor.nowhere()
+    so every cell formats with its own spec, preserving the currency symbol.
+    Orientation controls which side the affix hangs -- for prefix-free SI formats
+    (e.g. '.3s') the magnitude suffix still anchors on a left-axis strip.
+    """
+    from pydantic import TypeAdapter
+
+    from dbt_charts.core.compile.models.chart.normalized import Chart
+    from dbt_charts.core.compile.models.query.normalized import SqlQuery
+
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "line",
+            "x": "date",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [
+                {"source": "goal", "format": "currency_compact", "label": "Goal"}
+            ],
+            "style": {"axis_y": {"position": "left"}},
+        }
+    )
+    spec = _render_v2_spec(
+        chart, _GOAL_DATA, width=900, height=300, monkeypatch=monkeypatch
+    )
+
+    calc = _goal_row_calc(spec)
+    assert calc is not None
+    # Currency prefix routes to nowhere: no anchor fires, every cell shows $441mn.
+    assert "__data_table_drawn_index" not in calc, (
+        "currency format on left-axis must not anchor (StripAnchor.nowhere())"
+    )
+
+
+def test_pipeline_zero_first_row_anchors_on_the_first_nonzero_cell(monkeypatch):
+    """End to end: a magnitude row whose first period is 0 declares its unit on
+    the first cell that can carry it, and the zero cell shows a bare 0."""
+    data = [
+        {"date": "2026-01-01", "revenue": 5.0, "goal": 0.0},
+        {"date": "2026-02-01", "revenue": 5.9, "goal": 448_000_000.0},
+        {"date": "2026-03-01", "revenue": 6.0, "goal": 456_000_000.0},
+    ]
+    chart = _compiled_line_temporal_with_data_table(
+        [{"source": "goal", "format": "currency_compact", "label": "Goal"}]
+    )
+    spec = _render_v2_spec(chart, data, width=900, height=300, monkeypatch=monkeypatch)
+
+    calc = _goal_row_calc(spec)
+    assert calc is not None
+    # The unit gates on the carrying rank, so a 0 first cell cannot strand it.
+    assert "datum.__data_table_carries === 1" in calc
+    assert '"mn"' in calc
+
+
+def test_pipeline_negative_magnitude_signs_before_the_symbol(monkeypatch):
+    """A variance/goal row of negatives reads '-$448mn', not '$-448mn'."""
+    data = [
+        {"date": "2026-01-01", "revenue": 5.0, "goal": -441_000_000.0},
+        {"date": "2026-02-01", "revenue": 5.9, "goal": -448_000_000.0},
+    ]
+    chart = _compiled_line_temporal_with_data_table(
+        [{"source": "goal", "format": "currency_compact", "label": "Goal"}]
+    )
+    spec = _render_v2_spec(chart, data, width=900, height=300, monkeypatch=monkeypatch)
+
+    calc = _goal_row_calc(spec)
+    assert calc is not None
+    assert calc.index("datum.goal < 0 ? '−'") < calc.index('? "$"')
+    assert "abs(datum.goal)" in calc
+
+
+def test_pipeline_raw_literal_format_is_not_anchored(monkeypatch):
+    """A raw d3 literal like '$,.3s' keeps today's per-cell behavior.
+
+    House rules — the narrative register this feature applies — are for
+    engine-predefined format names only. A literal spec or user alias opts out
+    of the d3 opt-outs, and that contract must not be broken by this feature.
+    The author must use 'currency_compact' to get the declare-once behavior.
+    """
+    chart = _compiled_line_temporal_with_data_table(
+        [{"source": "goal", "format": "$,.3s", "label": "Goal"}]
+    )
+    spec = _render_v2_spec(
+        chart, _GOAL_DATA, width=900, height=300, monkeypatch=monkeypatch
+    )
+
+    calc = _goal_row_calc(spec)
+    assert calc is not None
+    # Raw literal is rendered per-cell using the author's own spec unchanged.
+    assert "$,.3s" in calc
+    assert '"mn"' not in calc
+    assert "__data_table_drawn_index" not in calc
+
+
+def test_pipeline_quantitative_x_does_not_anchor():
+    """A quantitative x axis has no leftmost band — anchoring is not valid there.
+
+    The category branch previously gated on field + no sort, with no type check,
+    so a quantitative x fell into it and anchored via at_value — landing the unit
+    on a random data point rather than the actual leftmost position.
+
+    Tested directly against the anchor-selection logic in the post-pass, injecting
+    a spec with quantitative x encoding to bypass the render pipeline's own
+    type inference.
+    """
+    from dbt_charts.core.render.chart.data_table_attachment import (
+        apply_chart_data_table_post_pass,
+    )
+
+    # Unique x values so the validator sees 1 row per x (no aggregation needed).
+    data = [
+        {"month": "Widget", "revenue": 5.0, "goal": 441_000_000.0},
+        {"month": "Anvil", "revenue": 5.9, "goal": 448_000_000.0},
+    ]
+    chart = _compiled_bar_with_data_table(
+        [{"source": "goal", "format": "currency_compact", "label": "Goal"}]
+    )
+    resolved = resolve(chart, data, chart_style_context=_BOARD_CONTEXT)
+    assert resolved.data_table is not None
+
+    # Swap the x encoding type to quantitative — the field/sort branch must
+    # reject this instead of anchoring on the first data value as a band.
+    spec = {
+        "mark": {"type": "bar"},
+        "encoding": {
+            "x": {"field": "month", "type": "quantitative"},
+            "y": {"field": "revenue", "type": "quantitative"},
+        },
+        "height": 300,
+        "width": 900,
+        "padding": {"top": 0, "bottom": 0, "left": 0, "right": 0},
+        "layer": [],
+    }
+    result_spec, _ = apply_chart_data_table_post_pass(
+        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar"
+    )
+
+    calc = _goal_row_calc(result_spec)
+    assert calc is not None
+    # Quantitative x has no bands: plain per-cell format, no anchor mechanism.
+    assert "__data_table_drawn_index" not in calc
+    assert 'datum["month"] ===' not in calc
+
+
+def test_pipeline_null_first_x_category_still_anchors_via_drawn_index(monkeypatch):
+    """A null first x on a category axis anchors at the first drawable band.
+
+    `by_drawn_index_data_order` ranks cells by data order using a window on the
+    value field — not the x field — so a null x band still receives DRAWN_INDEX=1
+    if its value is non-null and non-zero. No x-value equality test is needed.
+    """
+    data = [
+        {"month": None, "revenue": 100.0, "goal": 441_000_000.0},
+        {"month": "Widget", "revenue": 200.0, "goal": 448_000_000.0},
+    ]
+    chart = _compiled_bar_with_data_table(
+        [{"source": "goal", "format": "currency_compact", "label": "Goal"}]
+    )
+    spec = _render_v2_spec(chart, data, width=900, height=300, monkeypatch=monkeypatch)
+
+    calc = _goal_row_calc(spec)
+    assert calc is not None
+    # Drawn-index window fires — anchors at DRAWN_INDEX==1 (null band, first in data).
+    # No x-value equality test needed (the old at_value path required one).
+    assert "__data_table_drawn_index" in calc
+    assert 'datum["month"] === "Widget"' not in calc
+
+
+def test_pipeline_absent_sort_key_in_x_encoding_does_not_anchor():
+    """A nominal x encoding with no `sort` key at all must not anchor.
+
+    `sort: null` is Vega-Lite's opt-in to data order (the anchor prerequisite).
+    An absent sort key means VL picks alphabetical order — not predictable from
+    data row order, so anchoring on `first_x` would land the unit on the wrong
+    cell. The post-pass must distinguish absent from null.
+    """
+    from dbt_charts.core.render.chart.data_table_attachment import (
+        apply_chart_data_table_post_pass,
+    )
+
+    data = [
+        {"month": "Widget", "revenue": 5.0, "goal": 441_000_000.0},
+        {"month": "Anvil", "revenue": 5.9, "goal": 448_000_000.0},
+    ]
+    chart = _compiled_bar_with_data_table(
+        [{"source": "goal", "format": "currency_compact", "label": "Goal"}]
+    )
+    resolved = resolve(chart, data, chart_style_context=_BOARD_CONTEXT)
+    assert resolved.data_table is not None
+
+    # Nominal x without a sort key — VL defaults to alphabetical, not data order.
+    spec = {
+        "mark": {"type": "bar"},
+        "encoding": {
+            "x": {"field": "month", "type": "nominal"},
+            "y": {"field": "revenue", "type": "quantitative"},
+        },
+        "height": 300,
+        "width": 900,
+        "padding": {"top": 0, "bottom": 0, "left": 0, "right": 0},
+        "layer": [],
+    }
+    result_spec, _ = apply_chart_data_table_post_pass(
+        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar"
+    )
+
+    calc = _goal_row_calc(result_spec)
+    assert calc is not None
+    # Absent sort key → no anchor: plain per-cell format.
+    assert "__data_table_drawn_index" not in calc
+    assert 'datum["month"] ===' not in calc
+
+
+def test_pipeline_null_value_at_first_x_anchors_on_next_nonnull(monkeypatch):
+    """A null VALUE at the first x cell is skipped; anchor fires at next non-null.
+
+    CARRIES marks a cell only when its value is valid and finite, so a null
+    first cell receives CARRIES=0 and is skipped. The anchor fires at Anvil
+    (the first non-null cell), not stranded nowhere.
+    """
+    data = [
+        {"month": "Widget", "revenue": 100.0, "goal": None},
+        {"month": "Anvil", "revenue": 200.0, "goal": 448_000_000.0},
+        {"month": "Acme", "revenue": 150.0, "goal": 456_000_000.0},
+    ]
+    chart = _compiled_bar_with_data_table(
+        [{"source": "goal", "format": "currency_compact", "label": "Goal"}]
+    )
+    spec = _render_v2_spec(chart, data, width=900, height=300, monkeypatch=monkeypatch)
+
+    calc = _goal_row_calc(spec)
+    assert calc is not None
+    # Drawn-index window fires — anchors at DRAWN_INDEX==1 (Anvil, first non-null).
+    assert "__data_table_drawn_index" in calc
+    assert 'datum["month"] === "Widget"' not in calc
+
+
+def test_pipeline_format_config_object_anchors_when_spec_is_predefined(monkeypatch):
+    """format: {spec: currency_compact} must anchor like format: currency_compact.
+
+    The provenance gate unwraps FormatConfig.spec before checking the predefined
+    set — a frozen model object is always outside the frozenset without unwrapping.
+    """
+    data = [
+        {"month": "Widget", "revenue": 100.0, "goal": 441_000_000.0},
+        {"month": "Anvil", "revenue": 200.0, "goal": 448_000_000.0},
+    ]
+    chart = _compiled_bar_with_data_table(
+        [{"source": "goal", "format": {"spec": "currency_compact"}, "label": "Goal"}]
+    )
+    spec = _render_v2_spec(chart, data, width=900, height=300, monkeypatch=monkeypatch)
+
+    calc = _goal_row_calc(spec)
+    assert calc is not None
+    # FormatConfig with predefined spec → anchors.
+    assert '"mn"' in calc
+
+
+def test_pipeline_currency_compact_precision_derives_decimal_depth(monkeypatch):
+    """currency_compact (precision=None) derives decimals from significant figures.
+
+    The predefined spec $~s has no explicit precision, defaulting to 6 sig figs.
+    The decimal depth derives from the values. Changing the '6' fallback in
+    _magnitude_numerals must break this test.
+
+    Values 4.1M–12M: 4.1M needs 5 decimals at 6 sig figs (floor(log10(4.1))=0
+    → 6-1-0=5). The rebuilt spec uses the $~s spec's grouping (none — $~s has
+    no comma), so digit_spec is '.5~f', not ',.5~f'.
+    """
+    data = [
+        {"date": "2026-02-01", "revenue": 5.5, "goal": 4_100_000.0},
+        {"date": "2026-03-01", "revenue": 5.9, "goal": 5_500_000.0},
+        {"date": "2026-04-01", "revenue": 6.0, "goal": 5_200_000.0},
+        {"date": "2026-05-01", "revenue": 6.2, "goal": 12_000_000.0},
+    ]
+    chart = _compiled_line_temporal_with_data_table(
+        [{"source": "goal", "format": "currency_compact", "label": "Goal"}]
+    )
+    spec = _render_v2_spec(chart, data, width=900, height=300, monkeypatch=monkeypatch)
+
+    calc = _goal_row_calc(spec)
+    assert calc is not None
+    # depth = 5 (from 4.1M at 6 sig figs); no comma on $~s → '.5~f'
+    assert ".5~f" in calc
+    assert "1000000.0" in calc
+
+
+def test_pipeline_aggregate_min_zero_at_first_x_anchors_on_next_nonzero():
+    """aggregate:min with zero at the first cell anchors on the next non-zero cell.
+
+    The CARRIES window marks a cell only when its value is non-zero and finite,
+    so a zero first cell is skipped and the anchor fires on the first cell that
+    can actually carry the unit affix. No downgrade to plain.
+    """
+    from dbt_charts.core.render.chart.data_table_attachment import (
+        apply_chart_data_table_post_pass,
+    )
+
+    # Widget: min=0 (zero skipped by CARRIES), Anvil: min=448M (anchor fires here)
+    data = [
+        {"month": "Widget", "revenue": 100.0, "goal": 0.0},
+        {"month": "Widget", "revenue": 200.0, "goal": 5_000_000.0},
+        {"month": "Widget", "revenue": 300.0, "goal": 441_000_000.0},
+        {"month": "Anvil", "revenue": 150.0, "goal": 448_000_000.0},
+    ]
+    chart = _compiled_bar_with_data_table(
+        [
+            {
+                "aggregate": "min",
+                "source": "goal",
+                "format": "currency_compact",
+                "label": "Goal",
+            }
+        ]
+    )
+    # data[-2:] = last Widget row (goal=0) + Anvil row — unique x for the resolver.
+    resolved = resolve(chart, data[-2:], chart_style_context=_BOARD_CONTEXT)
+    assert resolved.data_table is not None
+
+    spec = {
+        "mark": {"type": "bar"},
+        "encoding": {
+            "x": {"field": "month", "type": "nominal", "sort": None},
+            "y": {"field": "revenue", "type": "quantitative"},
+        },
+        "height": 300,
+        "width": 900,
+        "padding": {"top": 0, "bottom": 0, "left": 0, "right": 0},
+        "layer": [],
+    }
+    result_spec, _ = apply_chart_data_table_post_pass(
+        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar"
+    )
+
+    calc = _goal_row_calc(result_spec)
+    assert calc is not None
+    # Anchor uses drawn_index (skips zero Widget, lands on Anvil)
+    assert "__data_table_drawn_index" in calc
+    assert '"mn"' in calc
+
+
+def test_pipeline_aggregate_min_nonzero_at_first_x_anchors():
+    """aggregate:min with a non-zero first cell anchors at that first cell."""
+    from dbt_charts.core.render.chart.data_table_attachment import (
+        apply_chart_data_table_post_pass,
+    )
+
+    data = [
+        {"month": "Widget", "revenue": 100.0, "goal": 441_000_000.0},
+        {"month": "Widget", "revenue": 200.0, "goal": 500_000_000.0},
+        {"month": "Anvil", "revenue": 150.0, "goal": 448_000_000.0},
+    ]
+    chart = _compiled_bar_with_data_table(
+        [
+            {
+                "aggregate": "min",
+                "source": "goal",
+                "format": "currency_compact",
+                "label": "Goal",
+            }
+        ]
+    )
+    resolved = resolve(chart, data[-2:], chart_style_context=_BOARD_CONTEXT)
+    assert resolved.data_table is not None
+
+    spec = {
+        "mark": {"type": "bar"},
+        "encoding": {
+            "x": {"field": "month", "type": "nominal", "sort": None},
+            "y": {"field": "revenue", "type": "quantitative"},
+        },
+        "height": 300,
+        "width": 900,
+        "padding": {"top": 0, "bottom": 0, "left": 0, "right": 0},
+        "layer": [],
+    }
+    result_spec, _ = apply_chart_data_table_post_pass(
+        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar"
+    )
+
+    calc = _goal_row_calc(result_spec)
+    assert calc is not None
+    # Anchor uses drawn_index; Widget is first in data order → DRAWN_INDEX=1 fires there.
+    assert "__data_table_drawn_index" in calc
+    assert '"mn"' in calc
+
+
+def test_pipeline_per_series_absent_at_first_x_anchors_at_own_first_cell():
+    """Each per_series series independently anchors at its own first non-zero cell.
+
+    When series B has no row at the chart's leftmost x (Widget), the drawn_index
+    window for series B starts at Anvil (its first row after the series filter).
+    Series B anchors at Anvil and series A anchors at Widget — neither falls to plain.
+    """
+    from dbt_charts.core.render.chart.data_table_attachment import (
+        apply_chart_data_table_post_pass,
+    )
+
+    # At month='Widget': only series A. At month='Anvil': both A and B.
+    data = [
+        {"month": "Widget", "revenue": 441_000_000.0, "series": "A"},
+        {"month": "Anvil", "revenue": 448_000_000.0, "series": "A"},
+        {"month": "Anvil", "revenue": 456_000_000.0, "series": "B"},
+    ]
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "bar",
+            "x": "month",
+            "y": "revenue",
+            "color": "series",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "data_table": [{"per_series": "revenue", "format": "currency_compact"}],
+            "style": {"orientation": "vertical"},
+        }
+    )
+    resolved = resolve(chart, data[:2], chart_style_context=_BOARD_CONTEXT)
+    assert resolved.data_table is not None
+
+    spec = {
+        "mark": {"type": "bar"},
+        "encoding": {
+            "x": {"field": "month", "type": "nominal", "sort": None},
+            "y": {"field": "revenue", "type": "quantitative"},
+            "color": {"field": "series", "type": "nominal"},
+        },
+        "height": 300,
+        "width": 900,
+        "padding": {"top": 0, "bottom": 0, "left": 0, "right": 0},
+        "layer": [],
+    }
+    result_spec, _ = apply_chart_data_table_post_pass(
+        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar"
+    )
+
+    # Series A (row 0): anchors at Widget (its first non-zero row in data order)
+    calc_a = _goal_row_calc(result_spec, index=0)
+    assert calc_a is not None
+    assert "__data_table_drawn_index" in calc_a
+    # Series B (row 1): anchors at Anvil (its only row — first in its filtered window)
+    calc_b = _goal_row_calc(result_spec, index=1)
+    assert calc_b is not None
+    assert "__data_table_drawn_index" in calc_b
+
+
+def test_pipeline_date_like_ordinal_with_data_order_anchors_via_drawn_index():
+    """A date-like ordinal x with sort:null uses an unsorted drawn_index window.
+
+    `by_drawn_index_data_order` uses a window without `sort:`, so it follows
+    data-insertion order. This is immune to query sort direction, datetime
+    normalization differences, and period-filter dropping the first row.
+    """
+    from dbt_charts.core.render.chart.data_table_attachment import (
+        apply_chart_data_table_post_pass,
+    )
+
+    # Descending query order: Mar first in data, Jan last.
+    data = [
+        {"month": "2026-03", "revenue": 6.2, "goal": 456_000_000.0},
+        {"month": "2026-02", "revenue": 5.9, "goal": 448_000_000.0},
+        {"month": "2026-01", "revenue": 5.5, "goal": 441_000_000.0},
+    ]
+    chart = _compiled_bar_with_data_table(
+        [{"source": "goal", "format": "currency_compact", "label": "Goal"}]
+    )
+    resolved = resolve(chart, data, chart_style_context=_BOARD_CONTEXT)
+    assert resolved.data_table is not None
+
+    spec = {
+        "mark": {"type": "bar"},
+        "encoding": {
+            "x": {"field": "month", "type": "nominal", "sort": None},
+            "y": {"field": "revenue", "type": "quantitative"},
+        },
+        "height": 300,
+        "width": 900,
+        "padding": {"top": 0, "bottom": 0, "left": 0, "right": 0},
+        "layer": [],
+    }
+    result_spec, _ = apply_chart_data_table_post_pass(
+        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar"
+    )
+
+    calc = _goal_row_calc(result_spec)
+    assert calc is not None
+    # Unsorted window — no equality test on x value; anchor fires at DRAWN_INDEX==1.
+    assert "__data_table_drawn_index" in calc
+    # No x-value equality expression (old at_value path) anywhere in the calc.
+    assert 'datum["month"] ===' not in calc
+
+
+def test_pipeline_date_like_ordinal_with_authored_sort_falls_to_plain():
+    """A date-like ordinal x with authored non-null sort must not anchor.
+
+    An authored sort's paint order cannot be reproduced from data rows alone;
+    fail-closed rather than anchor on the wrong cell.
+    """
+    from dbt_charts.core.render.chart.data_table_attachment import (
+        apply_chart_data_table_post_pass,
+    )
+
+    data = [
+        {"month": "2026-01", "revenue": 5.5, "goal": 441_000_000.0},
+        {"month": "2026-02", "revenue": 5.9, "goal": 448_000_000.0},
+        {"month": "2026-03", "revenue": 6.2, "goal": 456_000_000.0},
+    ]
+    chart = _compiled_bar_with_data_table(
+        [{"source": "goal", "format": "currency_compact", "label": "Goal"}]
+    )
+    resolved = resolve(chart, data, chart_style_context=_BOARD_CONTEXT)
+    assert resolved.data_table is not None
+
+    spec = {
+        "mark": {"type": "bar"},
+        "encoding": {
+            "x": {
+                "field": "month",
+                "type": "nominal",
+                "sort": [{"field": "revenue", "order": "descending"}],
+            },
+            "y": {"field": "revenue", "type": "quantitative"},
+        },
+        "height": 300,
+        "width": 900,
+        "padding": {"top": 0, "bottom": 0, "left": 0, "right": 0},
+        "layer": [],
+    }
+    result_spec, _ = apply_chart_data_table_post_pass(
+        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar"
+    )
+
+    calc = _goal_row_calc(result_spec)
+    assert calc is not None
+    # Authored sort → plain per-cell, no anchor.
+    assert "__data_table_drawn_index" not in calc
+    assert 'datum["month"] ===' not in calc
+
+
+def test_band_budget_expands_for_anchor_affix_at_narrow_width():
+    """Width thinning accounts for the anchor cell's affix width.
+
+    The anchor cell for currency_compact reads "$441mn" (prefix + digits + suffix)
+    while sibling cells read "441" (bare digits). The band budget must be expanded
+    to the anchor's measured width so the width-thinning step fires when the anchor
+    would overflow the band, even if bare cells would fit.
+
+    10 yearmonth rows at width=500: band=50px ≥ 45px so NO period filter fires
+    (period filter threshold is 45px/band; below that the period filter handles
+    thinning and sampling is suppressed). Bare-text "441" + 12px padding ~33.4px
+    — fits; no thinning without the budget expansion. Anchor "$441mn" + 12px
+    padding ~56.6px > 50px → width-thinning must fire (sampling_step > 1).
+    """
+    data = _yearmonth_data(10)
+    # Assign revenues in the millions so currency_compact lands on the mn tier.
+    for i, row in enumerate(data):
+        row["revenue"] = (441 + i) * 1_000_000.0
+    chart = _compiled_line_yearmonth_with_data_table(
+        [{"aggregate": "sum", "source": "revenue", "format": "currency_compact"}]
+    )
+    _rc = resolve(chart, data, chart_style_context=_BOARD_CONTEXT)
+    # width=500 → 50px/band: avoids the period-filter threshold (45px) so
+    # sampling is the only active thinning mechanism.
+    spec = generate_vega_lite_spec(chart, data, width=500, height=200)
+    assert "layer" in spec
+    text_layers = _strip_text_layers(spec)
+    assert text_layers, "expected at least one strip text layer"
+    # Sampling (row_number window) must fire: the anchor's affix width expanded the
+    # band budget beyond the 50px band, so the width-thinning step kicked in.
+    assert any(
+        any(
+            "row_number" in str(t.get("window", []))
+            for t in layer.get("transform", [])
+            if "window" in t
+        )
+        for layer in text_layers
+    ), (
+        "strip must thin (row_number window) when the anchor cell's affix width "
+        "overflows the band: '$441mn' is ~45px; band at width=500 with 10 x-values "
+        "is 50px — anchor overflows even though bare '441' fits at ~33px"
+    )
+
+
+def test_strip_numerals_decimal_span_bail_out():
+    """strip_numerals_for_values bails to plain when values span more than one tier.
+
+    A row with values [441e6, 448e6, 441.0] has a shared SI magnitude of 10^8,
+    but 441.0 / 1e8 = 4.41e-6 << 0.1. Dividing by the magnitude would produce
+    "0.000441" for that cell — the guard exits to the author's own spec instead,
+    leaving each cell to format itself at full precision.
+    """
+    from dbt_charts.core.compile.format import resolve_format
+    from dbt_charts.core.render.chart.data_table_attachment import (
+        StripAnchor,
+        strip_numerals_for_values,
+    )
+
+    resolved = resolve_format("currency_compact", None)
+    anchor = StripAnchor.by_drawn_index()
+    result = strip_numerals_for_values([441e6, 448e6, 441.0], resolved, anchor)
+
+    # Bail-out: divisor=1.0 (no division), original digit_spec unchanged.
+    assert result.divisor == 1.0, (
+        f"expected divisor=1.0 (bail-out to plain), got {result.divisor}"
+    )
+    assert result.digit_spec == resolved, (
+        f"expected original spec {resolved!r} preserved, got {result.digit_spec!r}"
+    )
+    # Anchor is preserved so the row still uses the drawn-index pattern;
+    # only the magnitude arithmetic is suppressed.
+    assert result.anchor is anchor

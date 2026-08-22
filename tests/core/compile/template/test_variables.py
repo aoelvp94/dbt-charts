@@ -1,0 +1,205 @@
+"""Tests for runtime variable coercion in compile/template/variables.py.
+
+coerce_variable_values runs at the runtime boundary (query execution): it turns
+string inputs from URL params / CLI / API into the typed Python objects the SQL
+layer needs, so strict engines (Trino, BigQuery) receive DATE '...'/typed params
+instead of varchar. See the "Two validation boundaries" note in the core AGENTS docs.
+"""
+
+from datetime import date, datetime
+from typing import Any
+
+import pytest
+
+from dbt_charts.core.compile.models.variable.authored import Variable
+from dbt_charts.core.compile.template.variables import coerce_variable_values
+from dbt_charts.core.diagnostics.execution import ExecutionError
+
+
+def _registry(**inputs: str) -> dict[str, Variable]:
+    return {name: Variable(input=input_type) for name, input_type in inputs.items()}
+
+
+class TestCoerceDate:
+    def test_iso_string_becomes_date(self) -> None:
+        reg = _registry(d="date")
+        result = coerce_variable_values({"d": "2024-01-01"}, reg)
+        assert result["d"] == date(2024, 1, 1)
+        assert isinstance(result["d"], date)
+
+    def test_datepicker_input_also_coerces(self) -> None:
+        reg = _registry(d="datepicker")
+        assert coerce_variable_values({"d": "2024-06-15"}, reg)["d"] == date(
+            2024, 6, 15
+        )
+
+    def test_already_typed_date_passes_through(self) -> None:
+        reg = _registry(d="date")
+        assert coerce_variable_values({"d": date(2024, 1, 1)}, reg)["d"] == date(
+            2024, 1, 1
+        )
+
+    def test_empty_string_is_unset(self) -> None:
+        reg = _registry(d="date")
+        assert coerce_variable_values({"d": "  "}, reg)["d"] is None
+
+    def test_none_stays_none(self) -> None:
+        reg = _registry(d="date")
+        assert coerce_variable_values({"d": None}, reg)["d"] is None
+
+    def test_invalid_date_raises(self) -> None:
+        reg = _registry(d="date")
+        with pytest.raises(ExecutionError) as exc:
+            coerce_variable_values({"d": "not-a-date"}, reg)
+        assert "d" in str(exc.value)
+        assert "not-a-date" in str(exc.value)
+
+    def test_datetime_rejected(self) -> None:
+        # A datetime would emit TIMESTAMP '...' from _to_sql_literal — the exact
+        # mismatch this coercion prevents. A date variable must be date-only.
+        reg = _registry(d="date")
+        with pytest.raises(ExecutionError) as exc:
+            coerce_variable_values({"d": datetime(2024, 1, 1, 10, 30)}, reg)
+        assert "datetime" in str(exc.value)
+
+    def test_non_str_non_date_rejected(self) -> None:
+        reg = _registry(d="date")
+        with pytest.raises(ExecutionError):
+            coerce_variable_values({"d": 20240101}, reg)
+
+
+class TestCoerceDaterange:
+    def test_pair_of_strings_becomes_dates(self) -> None:
+        reg = _registry(r="daterange")
+        result = coerce_variable_values({"r": ["2024-01-01", "2024-12-31"]}, reg)
+        assert result["r"] == [date(2024, 1, 1), date(2024, 12, 31)]
+
+    def test_none_endpoints_preserved(self) -> None:
+        reg = _registry(r="daterange")
+        assert coerce_variable_values({"r": [None, "2024-12-31"]}, reg)["r"] == [
+            None,
+            date(2024, 12, 31),
+        ]
+
+    def test_wrong_shape_raises(self) -> None:
+        reg = _registry(r="daterange")
+        with pytest.raises(ExecutionError):
+            coerce_variable_values({"r": ["2024-01-01"]}, reg)
+
+    def test_tuple_accepted(self) -> None:
+        reg = _registry(r="daterange")
+        assert coerce_variable_values({"r": ("2024-01-01", "2024-12-31")}, reg)[
+            "r"
+        ] == [date(2024, 1, 1), date(2024, 12, 31)]
+
+    def test_datetime_endpoint_rejected(self) -> None:
+        reg = _registry(r="daterange")
+        with pytest.raises(ExecutionError):
+            coerce_variable_values({"r": [datetime(2024, 1, 1, 9), None]}, reg)
+
+
+class TestCoerceNumber:
+    @pytest.mark.parametrize(
+        ("input_type", "raw", "expected"),
+        [
+            ("number", "5", 5),
+            ("number", "5.5", 5.5),
+            ("slider", "42", 42),
+            ("range", "3.14", 3.14),
+            ("number", 7, 7),
+            ("number", 7.0, 7.0),
+        ],
+    )
+    def test_numeric_coercion(self, input_type: str, raw: Any, expected: Any) -> None:
+        reg = _registry(n=input_type)
+        result = coerce_variable_values({"n": raw}, reg)["n"]
+        assert result == expected
+        assert type(result) is type(expected)
+
+    def test_empty_string_is_unset(self) -> None:
+        reg = _registry(n="number")
+        assert coerce_variable_values({"n": ""}, reg)["n"] is None
+
+    def test_non_numeric_raises(self) -> None:
+        reg = _registry(n="number")
+        with pytest.raises(ExecutionError):
+            coerce_variable_values({"n": "abc"}, reg)
+
+    @pytest.mark.parametrize("raw", ["nan", "inf", "-inf"])
+    def test_non_finite_rejected(self, raw: str) -> None:
+        reg = _registry(n="number")
+        with pytest.raises(ExecutionError):
+            coerce_variable_values({"n": raw}, reg)
+
+    def test_bool_rejected_for_number(self) -> None:
+        # bool is an int subclass; a number input must not silently accept True→1.
+        reg = _registry(n="number")
+        with pytest.raises(ExecutionError):
+            coerce_variable_values({"n": True}, reg)
+
+
+class TestCoerceBool:
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [("true", True), ("True", True), ("1", True), ("false", False), ("0", False)],
+    )
+    def test_string_bool_coercion(self, raw: str, expected: bool) -> None:
+        reg = _registry(b="checkbox")
+        assert coerce_variable_values({"b": raw}, reg)["b"] is expected
+
+    def test_actual_bool_passes_through(self) -> None:
+        reg = _registry(b="checkbox")
+        assert coerce_variable_values({"b": True}, reg)["b"] is True
+        assert coerce_variable_values({"b": False}, reg)["b"] is False
+
+    def test_empty_string_is_unset(self) -> None:
+        # Consistent with date/number: empty means unset, not False.
+        reg = _registry(b="checkbox")
+        assert coerce_variable_values({"b": ""}, reg)["b"] is None
+
+    def test_non_bool_string_raises(self) -> None:
+        reg = _registry(b="checkbox")
+        with pytest.raises(ExecutionError):
+            coerce_variable_values({"b": "maybe"}, reg)
+
+
+class TestPassthrough:
+    def test_text_input_unchanged(self) -> None:
+        reg = _registry(t="text")
+        assert coerce_variable_values({"t": "hello"}, reg)["t"] == "hello"
+
+    def test_select_input_unchanged(self) -> None:
+        reg = _registry(s="select")
+        assert coerce_variable_values({"s": "2024-01-01"}, reg)["s"] == "2024-01-01"
+
+    def test_unknown_name_passes_through(self) -> None:
+        # Builtin / undeclared variables have no type to enforce.
+        assert (
+            coerce_variable_values({"__dir__": "2024-01-01"}, {})["__dir__"]
+            == "2024-01-01"
+        )
+
+
+class TestTypedSqlBinding:
+    """The end-to-end reason this exists: coerced values reach SQL correctly typed."""
+
+    def test_inline_literal_emits_typed_date(self) -> None:
+        from dbt_charts.core.dialects import get_dialect
+        from dbt_charts.core.execute.sql_literals import inline_params
+
+        reg = _registry(d="date")
+        coerced = coerce_variable_values({"d": "2024-01-01"}, reg)
+        sql = inline_params(
+            "SELECT * FROM t WHERE day <= $1", [coerced["d"]], get_dialect("postgres")
+        )
+        assert sql == "SELECT * FROM t WHERE day <= DATE '2024-01-01'"
+
+    def test_parameterized_binds_date_object(self) -> None:
+        from dbt_charts.core.compile.template.parameterized import render_parameterized
+
+        reg = _registry(d="date")
+        coerced = coerce_variable_values({"d": "2024-01-01"}, reg)
+        result = render_parameterized(
+            "SELECT * FROM t WHERE day <= '{{ d }}'", variables=coerced
+        )
+        assert result.params == [date(2024, 1, 1)]

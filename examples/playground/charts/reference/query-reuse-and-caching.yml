@@ -1,0 +1,152 @@
+# Query Reuse & Caching Tutorial
+# Demonstrates referencing one query from another ({{ queries.X }}) and the
+# result cache ({{ queries.X.cache }} + cache: false).
+
+title: Reusing Queries & the Cache
+description: Build queries from other queries, and let the result cache do the repeated work.
+source: examples_db
+
+text: |
+  Queries are **reusable building blocks**. Write the shared logic once, then
+  reference it from other queries with {% raw %}{{ queries.NAME }}{% endraw %}.
+  dbt charts inlines the referenced query as a parenthesized subquery **aliased to
+  its name**, so you refer to its columns as `NAME.column`:
+
+  ```sql
+  SELECT order_facts.region, SUM(order_facts.revenue) AS revenue
+  FROM {{ queries.order_facts }}
+  GROUP BY order_facts.region
+  ```
+
+  No need to wrap it in parentheses or invent an alias yourself — the same
+  authored SQL runs unchanged on the local DuckDB engine and in the cloud.
+
+  Below, one base query — `order_facts` — feeds every chart on the page.
+
+queries:
+  # The building block: prep the fact table once (here, a derived unit_price
+  # column) and reuse it everywhere instead of repeating this in every query.
+  order_facts: |
+    SELECT
+      region,
+      category,
+      product,
+      revenue,
+      units_sold,
+      revenue::DOUBLE / NULLIF(units_sold, 0) AS unit_price
+    FROM ecommerce_orders
+
+  # Three queries, all built from order_facts. Each references it by name.
+  revenue_by_region: |
+    SELECT order_facts.region, SUM(order_facts.revenue) AS revenue
+    FROM {{ queries.order_facts }}
+    GROUP BY order_facts.region
+    ORDER BY revenue DESC
+
+  revenue_by_category: |
+    SELECT order_facts.category, SUM(order_facts.revenue) AS revenue
+    FROM {{ queries.order_facts }}
+    GROUP BY order_facts.category
+    ORDER BY revenue DESC
+
+  # Reuses the derived unit_price column from the base query.
+  avg_price_by_category: |
+    SELECT
+      order_facts.category,
+      ROUND(AVG(order_facts.unit_price), 2) AS avg_unit_price
+    FROM {{ queries.order_facts }}
+    GROUP BY order_facts.category
+    ORDER BY avg_unit_price DESC
+
+  # Chained reference: this query references revenue_by_region, which itself
+  # references order_facts. References resolve in dependency order.
+  top_region: |
+    SELECT revenue_by_region.region, revenue_by_region.revenue
+    FROM {{ queries.revenue_by_region }}
+    ORDER BY revenue_by_region.revenue DESC
+    LIMIT 1
+
+  # Keep composing: another query built on order_facts — share of total revenue
+  # by region. (To compute this from order_facts' *cached* rows instead of
+  # re-running its SQL — e.g. to join across sources — swap the reference for
+  # {{ queries.order_facts.cache }}; see the note below the chart.)
+  region_share: |
+    SELECT
+      order_facts.region,
+      SUM(order_facts.revenue) AS revenue,
+      SUM(order_facts.revenue) * 1.0 / SUM(SUM(order_facts.revenue)) OVER () AS share
+    FROM {{ queries.order_facts }}
+    GROUP BY order_facts.region
+    ORDER BY revenue DESC
+
+charts:
+  top_region_kpi:
+    type: kpi
+    query: top_region
+    value: revenue
+    label: Top region by revenue
+
+  revenue_by_region_bar:
+    type: bar
+    query: revenue_by_region
+    x: region
+    y: revenue
+    title: Revenue by region
+    subtitle: Built from order_facts
+
+  revenue_by_category_bar:
+    type: bar
+    query: revenue_by_category
+    x: category
+    y: revenue
+    title: Revenue by category
+    subtitle: Same base query, different grouping
+
+  avg_price_bar:
+    type: bar
+    query: avg_price_by_category
+    x: category
+    y: avg_unit_price
+    title: Avg unit price by category
+    subtitle: Reuses order_facts' derived unit_price column
+
+  region_share_table:
+    type: table
+    query: region_share
+    title: Region share of revenue
+    subtitle: Another rollup composed from the shared order_facts query
+    style:
+      columns:
+        region:
+          label: Region
+        revenue:
+          label: Revenue
+          format: currency_whole
+        share:
+          label: "% of total"
+          format: percent_whole
+
+rows:
+  - cols:
+      - top_region_kpi
+  - cols:
+      - revenue_by_region_bar
+      - revenue_by_category_bar
+  - cols:
+      - avg_price_bar
+  - text: |
+      ## What the cache saves
+
+      Every query result is **cached** after it runs. When the same query feeds
+      several charts — as `order_facts` does for all the charts above — it
+      executes **once** and the rows are reused, instead of re-querying the source
+      for each chart.
+
+      - {% raw %}{{ queries.X }}{% endraw %} inlines X's SQL as a subquery (same source).
+      - {% raw %}{{ queries.X.cache }}{% endraw %} reads X's **cached rows** and
+        composes in the local cache engine (DuckDB locally, Postgres in the
+        cloud) — which is what lets you **join queries from different sources**.
+      - `cache: false` opts a query out of caching (always live); it
+        then can't be a {% raw %}{{ queries.X.cache }}{% endraw %} upstream.
+  - cols:
+      - region_share_table

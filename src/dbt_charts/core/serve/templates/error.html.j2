@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>
+      {%- if result.board_error -%}
+        [{{ result.board_error.code }}] {{ result.board_error.message | truncate(60) }}
+      {%- elif result.validation_errors -%}
+        {{ result.validation_errors | length }} error{{ 's' if result.validation_errors | length != 1 else '' }} — {{ request_path }}
+      {%- else -%}
+        Render errors — {{ request_path }}
+      {%- endif -%}
+    </title>
+    <style>
+      :root {
+        color-scheme: light;
+        --page-bg: {{ palette.page_bg }};
+        --panel-bg: {{ palette.panel_bg }};
+        --text: {{ palette.text }};
+        --muted: {{ palette.muted }};
+        --border: {{ palette.border }};
+        --accent: {{ palette.accent }};
+        --font-family: {{ palette.font_family | safe }};
+      }
+      body {
+        margin: 0;
+        padding: 40px 20px;
+        background: var(--page-bg);
+        color: var(--text);
+        font-family: var(--font-family);
+      }
+      .panel {
+        max-width: 760px;
+        margin: 0 auto 24px;
+        background: var(--panel-bg);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        padding: 28px 32px;
+        box-shadow: 0 12px 32px rgba(58, 41, 16, 0.08);
+      }
+      h1 {
+        margin: 0 0 8px;
+        color: var(--accent);
+        font-size: 1.8rem;
+        line-height: 1.15;
+      }
+      h2 {
+        margin: 0 0 8px;
+        color: var(--accent);
+        font-size: 1.3rem;
+        line-height: 1.2;
+      }
+      .code-badge {
+        display: inline-block;
+        font: 0.8rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        background: #ede8db;
+        color: var(--accent);
+        border-radius: 6px;
+        padding: 2px 8px;
+        margin-bottom: 12px;
+      }
+      .message {
+        margin: 0 0 14px;
+        color: var(--muted);
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 0.97rem;
+        line-height: 1.5;
+      }
+      .hint {
+        margin: 0 0 14px;
+        padding: 10px 14px;
+        background: #f0ebe0;
+        border-left: 3px solid var(--accent);
+        border-radius: 0 8px 8px 0;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        font-size: 0.93rem;
+        color: var(--text);
+      }
+      .location {
+        font: 0.85rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: var(--muted);
+        margin: 0 0 14px;
+      }
+      .doc-link {
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        font-size: 0.9rem;
+        color: var(--accent);
+      }
+      .footer {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid var(--border);
+        flex-wrap: wrap;
+      }
+    </style>
+  </head>
+  <body>
+
+{%- if result.board_error %}
+    {# --- Layout: single board-error panel --- #}
+    <div class="panel">
+      <div class="code-badge">{{ result.board_error.code }}</div>
+      <h1>{{ result.board_error.message }}</h1>
+      {%- if result.board_error.hint %}
+      <div class="hint">{{ result.board_error.hint }}</div>
+      {%- endif %}
+      {%- if result.board_error.range %}
+      <div class="location">
+        {{ result.board_error.range.file }}:{{ result.board_error.range.start_line }}
+      </div>
+      {%- endif %}
+      <div class="footer">
+        {%- set _doc_url = doc_url(result.board_error.code) %}
+        {%- if _doc_url %}
+        <a class="doc-link" href="{{ _doc_url }}" target="_blank" rel="noopener">Open docs ↗</a>
+        {%- endif %}
+      </div>
+    </div>
+
+{%- elif result.validation_errors %}
+    {# --- Layout: stacked validation-error panels --- #}
+    {%- for err in result.validation_errors %}
+    <div class="panel">
+      <div class="code-badge">{{ err.code }}</div>
+      <h2>{{ err.message }}</h2>
+      {%- if err.hint %}
+      <div class="hint">{{ err.hint }}</div>
+      {%- endif %}
+      {%- if err.range %}
+      <div class="location">
+        {{ err.range.file }}:{{ err.range.start_line }}
+      </div>
+      {%- endif %}
+    </div>
+    {%- endfor %}
+    <div class="panel" style="padding: 16px 32px;">
+      <div class="footer" style="margin: 0; padding: 0; border: none;">
+        <a class="doc-link" href="{{ error_guide_url }}" target="_blank" rel="noopener">Open docs ↗</a>
+      </div>
+    </div>
+
+{%- elif result.chart_errors %}
+    {# --- Layout: board renders as-is; inline SVG callouts carry error info --- #}
+    {{ board_html | safe }}
+
+{%- endif %}
+
+  </body>
+</html>

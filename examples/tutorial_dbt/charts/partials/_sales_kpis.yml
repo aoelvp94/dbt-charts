@@ -1,0 +1,29 @@
+# Partial: Sales KPIs section
+title: "Sales Performance"
+style:
+  background: "#F0FDF4"
+
+queries:
+  sales_totals:
+    metrics: [total_revenue, order_count, avg_order_value]
+
+rows:
+  - title: "Key Sales Metrics"
+    cols:
+      - revenue_kpi:
+          label: "Total Revenue"
+          query: queries.sales_totals
+          type: kpi
+          value: total_revenue
+
+      - orders_kpi:
+          label: "Total Orders"
+          query: queries.sales_totals
+          type: kpi
+          value: order_count
+
+      - aov_kpi:
+          label: "Avg Order Value"
+          query: queries.sales_totals
+          type: kpi
+          value: avg_order_value

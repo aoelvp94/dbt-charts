@@ -1,0 +1,1450 @@
+# dbt charts Error Reference
+
+
+Auto-generated from `dbt_charts.core.diagnostics.REGISTRY`. Every `ERR-*` code dbt charts can raise, grouped by docs topic.
+
+
+## board
+
+
+### ERR-EXTRA-FIELD — Unknown field in board YAML
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Unknown field {field_path!r} in board YAML. Remove it or check the schema for supported keys.
+```
+
+Fired when the board YAML contains a field name that the schema does not recognize. Remove the unknown field or refer to the YAML reference for the supported keys.
+
+### ERR-INVALID-DEFAULT-THEME — Invalid theme name in configuration
+
+- **Level:** error
+- **Domain:** serve
+- **Suppressible:** no
+
+**Message template:**
+
+```
+{source} ({theme!r}) is not a valid theme name. Available built-in themes: {available}.
+```
+
+Fired when the configured default theme name is not a recognized built-in theme. Check the available theme names and correct the configuration.
+
+### ERR-META-SCHEMA — meta.yaml contains an unknown or invalid field
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+meta.yaml schema error: {message}. Check that all keys are valid board fields.
+```
+
+Fired when a meta.yaml file contains a field that is not recognized by the board schema, or a field with an invalid value. Check that all keys match the supported board fields and remove any extras.
+
+### ERR-VALIDATION-FIELD — Board YAML field failed Pydantic validation
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Field {field_path!r}: {pydantic_msg}
+```
+
+Fired when a board YAML field fails Pydantic's type or constraint validation. The message carries the specific validation error from Pydantic. Check the field value against the schema.
+
+### ERR-WRONG-SHAPE — Field expects a mapping but got a scalar
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Field {field_path!r} expects a mapping, not a scalar. Provide a YAML block with keys: {available_keys}.
+```
+
+Fired when a board YAML field that expects a mapping (nested object) receives a plain scalar value instead. Provide a YAML block with the appropriate keys.
+
+## charts
+
+
+### ERR-AREA-ENCODING-SWAPPED — Area chart x/y encoding looks swapped
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} (area): {reason} Area charts always plot x as the dimension and y as the value — there is no orientation knob to rotate an area chart, so a swapped x/y silently bakes a broken axis.
+```
+
+Fired when an area chart's encoding looks incorrect: either y is non-numeric (should be the measure), or x is a numeric measure with stack enabled. Area charts always plot x as the dimension and y as the value — there is no orientation knob.
+
+### ERR-AREA-LOG-SCALE-INDEPENDENT-MULTIPLES — Log-scale area and independent-scale multiples are incompatible
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} (area): axis_y.scale.type: log with multiples scale: independent is not supported — the explicit domain area bakes on a log scale (to avoid Vega-Lite's degenerate log-area rendering) is computed once from every panel's data combined, so it would apply the same domain to every panel regardless of scale: independent. Use multiples scale: shared, or drop the log scale.
+```
+
+Fired when an area chart authors both `axis_y.scale.type: log` and `multiples: {scale: independent}`. Area on a log scale needs an explicit baked domain to avoid Vega-Lite's degenerate rendering (see ERR-AREA-STACKED-LOG-SCALE-NOT-SUPPORTED's sibling note), but that domain is necessarily one shared value — baking it would contradict `scale: independent`'s promise of a per-panel domain, and suppressing it would silently reintroduce the degenerate rendering. Use `scale: shared`, or drop the log scale.
+
+### ERR-AREA-STACKED-LOG-SCALE-NOT-SUPPORTED — Stacked area and log scale are incompatible
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} (area): `style.stack: {stack}` with axis_y.scale.type: log is not supported — a stacked band's top encodes a cumulative sum, which a log scale can't represent (the baked domain would be computed from unstacked values and clip the real stacked extent). Use `stack: none`, or drop the log scale.
+```
+
+Fired when a stacked area chart (`style.stack: zero/normalize/center`) is combined with `axis_y.scale.type: log`. A cumulative stack top is meaningless on a log scale. Use `stack: none`, or drop the log scale.
+
+### ERR-AXIS-COLUMN-REQUIRES-TABULAR-FONT — A column-forming quantitative axis needs a tabular label font
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r}: axis label font {family!r} does not guarantee tabular figures, but its tick ladder compacts to a shared magnitude and forms a column — the digits only stack into a column when every digit shares one advance, which a proportional board does not give, so the column misaligns silently. Set a tabular family (e.g. 'dbt Sans Tabular') on style.axis_y.labels.font.family for this chart, or on charts.axis_quantitative.labels.font.family to cover every chart.
+```
+
+Fired at resolve when a column-forming quantitative axis (a vertical ruler) resolves a shared magnitude scale but its label font is not vendor-registered as tabular. Ticks that carry no magnitude suffix are padded to the width of the one that does, so their digits stack under it; that column only holds when every digit shares a single advance, which is what a tabular board guarantees and a proportional one does not. A horizontal ruler is exempt (its ticks form no column) regardless of font.
+
+### ERR-BAR-DUPLICATE-ROWS — Bar chart data has duplicate rows that require aggregation
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+{chart_type} chart {chart_id!r} requires pre-aggregated data with at most one row per plotted key ({field_list}). Found duplicate rows for {duplicate_preview}. Aggregate in the query before rendering.
+```
+
+Fired when a bar, horizontal-bar, or grouped-bar chart receives data with more than one row per plotted key. These chart types require pre-aggregated data; aggregate in the query before rendering.
+
+### ERR-BAR-LOG-SCALE-NOT-SUPPORTED — Log scale is not supported on bar charts
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} (bar): axis_y.scale.continuous.type: log is not supported — a bar's length encodes magnitude from zero, which a log scale makes meaningless. Use axis_y.scale.continuous.type: symlog on the bar chart, or switch to a line or area chart for a log scale.
+```
+
+Fired when a bar chart's y axis is set to `axis_y.scale.continuous.type: log`. A bar's length encodes magnitude from zero, which a log scale makes meaningless. Use `axis_y.scale.continuous.type: symlog` on the bar chart, or switch to a line or area chart for a log scale.
+
+### ERR-BAR-Y-NOT-NUMERIC — Bar chart y column is not numeric
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} (bar): y column {y_field!r} is not numeric. Bar charts always plot x as the category and y as the measure, regardless of orientation — use a numeric column for y.
+```
+
+Fired when a bar chart's `y:` column contains non-numeric data. Bar charts always use y as the measure axis regardless of orientation — use a numeric column for y.
+
+### ERR-CHART-PAINTED-NO-MARKS — Chart received rows but painted no marks
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} received {row_count} row(s) but every mark it drew has zero width or height — check whether the x/y fields and scale types match the data's actual shape.
+```
+
+Fired when a plotting-family chart's query returns at least one row but the rendered SVG contains no mark with visible extent — every bar, line, area, point, wedge, or shape it drew is degenerate. `WARN-QUERY-RETURNED-ZERO-ROWS` covers the honest empty case (no rows); this covers the dishonest one — rows arrived, the renderer just didn't paint anything visible with them.
+
+### ERR-COLOR-NULL-SERIES — Color column contains NULL values
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+{chart_type} chart {chart_id!r} has {null_rows} row(s) with a NULL value in its color column {color_field!r}. A NULL category cannot be painted or named in the legend, but its rows still occupy stack space — the chart would read as bars floating off the baseline. Give every row a category in the query (e.g. COALESCE({color_field}, 'Unknown')).
+```
+
+Fired when the column bound to a chart's `color` channel contains NULL values. The renderer cannot assign a NULL a palette slot or a legend entry, so the series would consume stack space while being invisible and unattributable. Fix the grain in the query — the most common cause is a `CASE` with no `ELSE`, or an `ELSE` that passes the raw column through unchanged.
+
+### ERR-CONCAT-OVERSHOOT-NONPOSITIVE — Overshoot correction produced a non-positive pane width
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Overshoot correction produced a non-positive pane width ({new_w:.1f}px): pane width {orig_w:.1f}px minus overshoot {overshoot:.1f}px. The chart content (title, subtitle, axis labels, series labels, or legend) is wider than the available canvas ({target_width:.1f}px).
+```
+
+Fired when the overshoot correction algorithm for a concatenated layout produces a non-positive pane width. The chart content (title, subtitle, axis labels, series labels, or legend) is wider than the available canvas. Series labels come from the column bound to `color:`, and are the usual cause when that column holds long text.
+
+### ERR-FORMAT-INVALID — Format spec is not a predefined name, a style.formats alias, or a valid d3-format spec
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Unknown number format {spec!r} at {field_path}. It is not an engine-predefined format name, not a key in `style.formats`, and is not a valid d3-format spec ({reason} at position {position}).
+```
+
+Fired when an authored `format:` string is not one of the engine's predefined format names (e.g. `currency`, `compact`, `percent_number`), not a key defined in `style.formats`, and fails to parse as a d3-format spec. Check for typos against the predefined names or your `style.formats` keys, or use a valid d3-format spec (https://d3js.org/d3-format).
+
+### ERR-FORMAT-NATIVE-IN-VEGA-SLOT — Native formatter used in a Vega-rendered format slot
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Format {spec!r} at {field_path} is a Python-only native formatter and cannot be used in Vega-rendered slots (axis labels, mark value labels, number_format, time_format, data_table). Use it only in KPI or table format fields. Valid alternatives: {available}.
+```
+
+Fired when `percent_number`, `percent_number_delta`, or `percentage_points_delta` appears in a Vega-rendered format slot such as an axis label, mark value-label format, number_format, time_format, or data_table format. These names bypass d3 entirely and are only valid in Python-rendered slots (KPI headline and table cells). For Vega-rendered slots, use a d3 percent spec (e.g. `.1%`) or another predefined name.
+
+### ERR-FORMAT-PREDEFINED-SHADOW — style.formats key shadows an engine-predefined format name
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Cannot define {spec!r} in style.formats at {field_path}: this name is engine-predefined and cannot be overridden. Choose a project-specific name (e.g. 'revenue', 'arr') for custom format aliases.
+```
+
+Fired when a `style.formats` key collides with an engine-owned predefined format name such as `compact`, `currency_compact`, or `date_short`. Predefined names resolve via engine rules and cannot be shadowed. Define your custom alias under a different name.
+
+### ERR-HISTOGRAM-NON-NUMERIC — Histogram x field is not numeric
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Histogram chart {chart_id!r} requires a numeric x field for binning, but {field!r} is {vl_type!r}. Use a quantitative (numeric) column as x.
+```
+
+Fired when a histogram chart's x field is not numeric (quantitative). Histograms bin values into ranges, which requires a numeric column. Use a quantitative column as x.
+
+### ERR-HISTOGRAM-PREAGGREGATED — Histogram data looks pre-aggregated, not raw rows
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Histogram chart {chart_id!r} received data where {field!r} forms a gapless run of whole numbers alongside unused numeric column(s) {count_fields} — this looks like pre-aggregated data (one row per bucket, e.g. `GROUP BY {field}`), not the raw, ungrouped rows a histogram bins itself. Vega-Lite would bin and count these already-counted rows again, silently discarding whatever real measure they carry. Use `type: bar` with `x: {field}` and one of {count_fields} as `y` to chart pre-aggregated data instead.
+```
+
+Fired when a histogram chart receives data where its x field forms a gapless run of whole numbers alongside an unused numeric column — the shape of already-aggregated, one-row-per-bucket data. Histograms rely on Vega-Lite's own binning + counting over raw, ungrouped rows; pre-aggregated data silently produces a wrong, miscounted histogram instead of erroring. Aggregate in the query and use `type: bar` instead.
+
+### ERR-INPUT-INVALID — Invalid render input
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+{message}
+```
+
+Fired when the render layer receives input data that fails a structural check. The message carries the specific validation error.
+
+### ERR-KPI-MULTIROW — KPI query returned more than one row
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+KPI chart {chart_id!r} expects exactly 1 row, got {row_count}. Use a query that returns a single row (e.g. SELECT SUM(...) or LIMIT 1).
+```
+
+Fired when a KPI chart's query returns more than one row. KPI charts display exactly one value; use a query that returns a single row (e.g. SELECT SUM(...) or LIMIT 1).
+
+### ERR-LABEL-VALUES-INVALID-DATE — labels.values entry is not a valid ISO date
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+style.axis_x.labels.values entries must be ISO date or datetime strings (e.g. '2024-01-01') or date/datetime objects; got {value!r}.
+```
+
+Fired when an entry in `style.axis_x.labels.values` cannot be parsed as an ISO date or datetime. Use ISO date strings (e.g. '2024-01-01') or date/datetime objects.
+
+### ERR-LABEL-VALUES-NOT-TEMPORAL — labels.values requires a temporal x-axis
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+style.axis_x.labels.values isn't usable on {field!r}: {cause}. {remedy}
+```
+
+Fired when `style.axis_x.labels.values` is set on an x-axis that can't honor it — either the x-axis values aren't valid ISO dates or datetime objects, or the chart's horizontal-bar categorical axis never applies label filtering regardless of date format.
+
+### ERR-LABELS-FIELD-NOT-FOUND — labels.field names a column not in the query result
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+labels.field {field!r} names a column not present in the data. Available columns: {available}.
+```
+
+Fired when `labels.field` names a column that is not present in the query result. Check the column name against the actual columns returned by the query.
+
+### ERR-LAYERS-AMBIGUOUS-Y-DOMAIN — Chart-level y domain is ambiguous with independent layer scales
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} sets axis_y.scale.domain={domain!r} but the layers use independent y scales (left and right sides differ). A chart-level domain is ambiguous when each side has its own scale — set axis_y.scale.domain on the individual layer instead.
+```
+
+Fired when a chart sets `axis_y.scale.domain` at the chart level but the layers use independent (split) y scales. A chart-level domain is ambiguous when left and right sides have different scales. Set `axis_y.scale.domain` on the individual layer instead.
+
+### ERR-LINE-Y-NOT-NUMERIC — Line chart y column is not numeric
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} (line): y column {y_field!r} is not numeric. Line charts always plot x as the dimension and y as the value — use a numeric column for y.
+```
+
+Fired when a line chart's `y:` column contains non-numeric data. Line charts always use y as the value axis — use a numeric column for y.
+
+### ERR-LOG-SCALE-REQUIRES-POSITIVE-DATA — Log scale requires strictly positive data
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r}: column {y_field!r} has a value <= 0, but axis_y.scale.type: log requires strictly positive data — a log domain is undefined at and below zero. Filter out the non-positive rows, or drop the log scale.
+```
+
+Fired when `axis_y.scale.type: log` is used but the y column contains a value ≤ 0. A log domain is undefined at and below zero. Filter out the non-positive rows, or drop the log scale.
+
+### ERR-MAP-LOOKUP-KEY-MISMATCH — Map chart cannot join on mismatched key format
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Map chart {chart_id!r} cannot join lookup field {lookup_field!r} to geo source {geo_source!r} on key {geo_key!r}: the geo source expects {expected_format} keys like {expected_samples}, but the query returned values like {query_samples}.
+```
+
+Fired when a map chart's lookup field values do not match the format expected by the geo source. Check that the lookup field uses the same key format (e.g. FIPS codes, ISO country codes) as the geo source.
+
+### ERR-MIRROR-ENDPOINT-LABELS — axis_y.mirror cannot be combined with endpoint labels
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r}: axis_y.mirror is not supported together with endpoint labels — the endpoint-label rail occupies the opposite edge. Use one or the other on this chart.
+```
+
+Fired when a chart authors (or its theme sets) `style.axis_y.mirror` while its endpoint-label rail is also visible. Both want the opposite edge from the chart's primary y-axis — the mirrored scale and the label rail can't share it. Distinct from ERR-MULTIPLES-ENDPOINT-LABELS: this code fires when the chart has no `multiples:` at all, so `axis_y.mirror` is the field actually responsible for the collision; a `multiples:` grid's collision (even one that also happens to auto-derive a both-edge axis internally) is reported as ERR-MULTIPLES-ENDPOINT-LABELS instead, since `multiples:` is the field the author wrote.
+
+### ERR-MIRROR-MULTI-SERIES — axis_y.mirror requires a single y field
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r}: axis_y.mirror is not supported on multi-series charts (y = {y}) — a mirrored axis restates one shared y-scale, and folded measures have no single scale to restate. Collapse `y:` to one field, or drop `style.axis_y.mirror`.
+```
+
+Fired when a chart carries a list-valued `y:` while `style.axis_y.mirror` is on. Mirror draws the same y-scale on both edges of a wide chart, which only means something when there is exactly one measure scale to draw. Reported at render rather than by `dct validate` because mirror is cascade-resolved: a theme layer can turn it on for a chart that never authored it, so the combination is not visible on the authored chart alone.
+
+### ERR-MULTI-Y-COLOR-CONFLICT — Multi-y chart cannot also have color:
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} ({chart_type}): y: [...] folds measures into a color series automatically -- adding color: {color_field!r} on top is not supported. Use a long-form query with a single y field and a color: column instead.
+```
+
+Fired when a bar, area, or line chart authors both y: [a, b] and color: at the same time. The multi-y fold generates its own color encoding; a second authored color: would conflict.
+
+### ERR-MULTI-Y-LAYERS-CONFLICT — Multi-y chart cannot also have layers:
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} ({chart_type}): y: [...] folds measures into a color series automatically -- overlay layers: are not supported with multi-y charts. Use a long-form query with a single y field instead.
+```
+
+Fired when a bar, area, or line chart authors both y: [a, b] and layers: at the same time.
+
+### ERR-MULTI-Y-UNSUPPORTED-CHART-TYPE — y: [...] is not supported for this chart type
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} ({chart_type}): y: [...] (multi-metric) is not supported for {chart_type} charts. Use a long-form query with a single y field and a color: column instead.
+```
+
+Fired when a chart type with no wide-measure fold implementation (currently scatter) authors y: [a, b]. Bar, area, and line fold list-y into a synthetic color series; other cartesian families have no equivalent render path yet.
+
+### ERR-MULTIPLES-DATA-TABLE — multiples cannot be combined with a chart data_table
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r}: multiples is not supported together with a chart data_table — the attached table has no meaning per panel. Use one or the other on this chart.
+```
+
+Fired when a chart authors both `multiples:` and a `data_table:`. The attached table is a single per-chart element; once the chart is faceted into a small-multiples grid it has no per-panel meaning. Remove one or the other.
+
+### ERR-MULTIPLES-ENDPOINT-LABELS — multiples cannot be combined with endpoint labels
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r}: multiples cannot be combined with endpoint labels — the endpoint-label rail names series for a single panel, and a faceted chart has no single panel for it to sit beside. Set style.endpoint_labels.visible: false on this chart to keep the small multiples, or remove multiples to keep the labels.
+```
+
+Fired when a chart authors `multiples:` while its endpoint-label rail is explicitly switched on. The rail names series for one panel; a faceted chart has no single panel for it to sit beside. The shipped default switches the rail off wherever `multiples:` is set — a legend above the panels names the series instead — so this fires only where the rail was asked for by name. Turn off `style.endpoint_labels.visible` to keep the small multiples, or remove `multiples:` to keep the labels.
+
+### ERR-MULTIPLES-FIELD-NOT-FOUND — multiples partition field not found in the query result
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+multiples field(s) {fields} not found in the query result. Available columns: {available}.
+```
+
+Fired when `multiples.rows` or `multiples.columns` names a column that is not present in the chart's query result. Check for a typo, or add the column to the query.
+
+### ERR-MULTIPLES-INDEPENDENT-SCALE-MIRROR — multiples with scale: independent cannot use a both-edge mirror axis
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r}: multiples with scale: independent cannot use a both-edge (mirror) y-axis — mirroring a shared scale to both edges is meaningless when each panel has its own scale. Use scale: shared, or set style.axis_y.mirror: false.
+```
+
+Fired when a chart authors `multiples: {scale: independent}` together with `style.axis_y.mirror` (bool true or an AxisMirrorStyle format/expr override). Mirroring reflects one shared scale to both edges — meaningless once every panel has its own independent scale. Use `scale: shared`, or turn mirror off.
+
+### ERR-MULTIPLES-LAYER-PARTITION — multiples cannot be combined with an own-query layer that returns the partition field
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r}: multiples cannot be combined with an own-query overlay layer whose query returns the partition field(s) {fields} — Vega-Lite cannot split one inline layer dataset per panel. Remove the partition column(s) from the layer's query to repeat the layer in every panel, or drop multiples.
+```
+
+Fired when a chart authors both `multiples:` and a `layers:` entry with its own `query:` whose result includes the partition column(s). Vega-Lite's facet operator only partitions the root dataset, never a layer's own inline dataset, so per-panel layer data cannot be represented. A layer whose query does not return the partition column is unaffected — it repeats identically in every panel, which is correct for a global reference line.
+
+### ERR-MULTIPLES-RESOLVED-WITHOUT-DATA — a faceted chart resolved without data is being rendered with real rows
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r}: multiples is set but this chart was resolved against no data (panel_axes is empty) and is now being rendered against real rows. Re-resolve the chart against its actual data before rendering.
+```
+
+Fired when a chart authors `multiples:`, was resolved with an empty query result (baking `panel_axes == ()`, the same N=1 state a non-faceted chart gets), and is then rendered against non-empty rows. Silently falling through would render the chart unfaceted instead of raising on data resolve never saw. Re-resolve the chart against its actual data before rendering.
+
+### ERR-MULTIPLES-ROW-MISSING-PARTITION-FIELD — row is missing a multiples partition field entirely
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Row is missing the multiples partition field {field!r} entirely (it carries: {available}) — every row must carry every partition field, even one whose value is null.
+```
+
+Fired when a chart is rendered against a row that does not carry a partition column at all, as distinct from carrying it with a null value (a legitimate panel `resolve()` may have baked). A ragged row silently defaulting the missing field to `None` could misroute into that legitimate null panel by accident, so this is checked and raised separately.
+
+### ERR-MULTIPLES-ROW-OUTSIDE-PANEL-AXES — row's multiples value is not among the resolved panel_axes
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Row's {field!r} value {value!r} is not among the resolved panel_axes values {allowed} for this chart's multiples partition.
+```
+
+Fired when a chart is rendered against rows whose partition column carries a value `resolve()` never saw — the row-truncated render path can only ever hold a subset of the axis values baked at resolve, never one the axes lack, so this firing means the chart is being rendered against data resolve never saw. Re-resolve the chart against its actual data before rendering.
+
+### ERR-MULTIPLES-VALUE-COLLISION — two distinct multiples values stringify to the same panel key
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+multiples field {field!r}: values {previous!r} and {value!r} both stringify to {canonical!r}; rename one to disambiguate.
+```
+
+Fired when `multiples.rows` or `multiples.columns` names a column whose distinct values collide once canonicalized to a string panel key (e.g. the string `'1'` and the integer `1`). Merging them into one panel would silently combine two genuinely distinct groups. Rename one value so the two panel keys stay distinct.
+
+### ERR-PALETTE-UNKNOWN — Palette name is not a theme palette role or a shipped palette
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Unknown palette {name!r} at {field_path}. Palette roles are theme-scoped, resolved only from a theme's `palettes:` block; this name is not a role the active theme binds, and not a shipped Dataface palette.
+```
+
+Fired when an authored `palette:` string names neither a role in the theme's `palettes:` block (`category`, `sequence`) nor a shipped Dataface palette (`editorial-10`). Roles are theme-scoped — board- and chart-level `style:` cannot author one, only a palette name. Checked in two places: once the theme cascade is complete (a theme's own `palettes:` binding), and once each board/chart is normalized (every other palette field) — both are the first point a role name can be told apart from a typo at that scope.
+
+### ERR-PERCENT-RANGE — Percent format received a 0-100-shaped value instead of a ratio
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Value {value!r} passed to percent format {format_spec!r} looks 0-100-shaped, but percent formats expect a 0-1 ratio (0.182, not 18.2). To fix: divide by 100 in SQL so the value is a ratio, or switch to the `percent_number`/`percent_number_delta` formats if the value is already in the 0-100 scale (e.g. 18.2 means 18.2%).
+```
+
+Fired when a percent format receives a value that looks like it is already in the 0-100 scale rather than the 0-1 ratio scale that percent formats expect. Divide by 100 in SQL so the value is a ratio, or switch to a `percent_number` format.
+
+### ERR-PIE-NEGATIVE-THETA — Pie chart theta column contains a negative value
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Pie chart {chart_id!r} has {negative_rows} row(s) with a negative value in its theta column {theta_field!r}. A pie slice can't represent a negative share of the whole. Filter or transform the value in the query.
+```
+
+Fired when the column bound to a pie or donut chart's `theta` channel contains a negative value. A pie's slices are angles summing to a full circle; a negative theta has no geometric meaning, so it must be filtered or transformed in the query.
+
+### ERR-PIE-NULL-THETA — Pie chart theta column contains NULL values
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Pie chart {chart_id!r} has {null_rows} row(s) with a NULL value in its theta column {theta_field!r}. A pie slice can't represent a missing value. Filter the null rows or give them a real number in the query (e.g. COALESCE({theta_field}, 0)).
+```
+
+Fired when the column bound to a pie or donut chart's `theta` channel contains NULL values. A pie slice's angle comes directly from theta, so a NULL cannot be drawn or labeled — fix the grain in the query instead of letting the renderer guess a value.
+
+### ERR-RESOLVED-PIE-DATA-MISMATCH — Resolved pie rows do not match its recording
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Resolved pie {chart_id!r} was finalized from different query rows. Resolve the chart and record its data in the same emission.
+```
+
+Fired when replay data differs from the rows used to finalize pie label and attached-table policy. Resolved board artifacts and recordings must come from the same emission.
+
+### ERR-RESOLVED-PIE-WIDTH-MISMATCH — Resolved pie width does not match its render slot
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Resolved pie {chart_id!r} was finalized at width {resolved_width}, not {render_width}. Resolve the chart again for the target slot.
+```
+
+Fired when a resolved pie is rendered at a different width from the one used to finalize its label and attached-table layout. Resolve the chart again with the actual target width before rendering.
+
+### ERR-SCALE-DOMAIN-REQUIRES-CONTINUOUS-X — axis_x.scale.domain requires a continuous x-axis scale
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r}: axis_x.scale.domain is set, but the x-axis resolved to a {vl_type!r} (categorical) scale, not a continuous one. An explicit [low, high] domain only extends a continuous scale — on a categorical scale Vega-Lite reads it as exactly two category values, collapsing every mark onto the first one. If the x field is a date, add `axis_x.scale.type: temporal` to force a continuous temporal scale.
+```
+
+Fired when `axis_x.scale.domain` is set but the x-axis resolves to a categorical (ordinal/nominal) scale rather than a continuous one. An explicit [low, high] domain only extends a continuous scale; on a categorical scale Vega-Lite reads it as exactly two category values. Add `axis_x.scale.type: temporal` to force a continuous temporal scale if needed.
+
+### ERR-STACKED-MIDDLE-ALIGNED-LABELS — labels.position: middle_aligned is not meaningful on a stacked bar
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+labels.position 'middle_aligned' aligns every bar's label to one shared height, which has no meaning for the segments of a stacked bar. Use 'middle' to center each label in its own segment, or 'top'/'bottom' to pin it to a segment edge.
+```
+
+Fired when `labels.position: middle_aligned` is set on a stacked bar. `middle_aligned` places every label at a single common height (the mean bar height, halved) so a row of labels reads as one line — a whole-bar idea with no per-segment reading. Stacked segments each need their own center: use `middle`.
+
+### ERR-TICKS-COUNT-REQUIRES-NON-LOG-SCALE — ticks.count is not supported with log scale
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r}: axis_y.ticks.count is not supported with scale.type: log — a target tick count on a log axis is nonsense; Vega-Lite computes log-decade ticks natively. Remove ticks.count.
+```
+
+Fired when `axis_y.ticks.count` is combined with `axis_y.scale.type: log`. A target tick count on a log axis is meaningless because Vega-Lite computes log-decade ticks natively. Remove `ticks.count`.
+
+### ERR-TICKS-INTERVAL-MEASURE-AXIS — ticks.time_unit is not supported on the measure axis
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+style.axis_y.ticks.time_unit/step is not supported — the measure axis (axis_y) is never temporal in Dataface's cartesian model, and its tick ladder is computed from ticks.count. Use axis_y.ticks.count here; ticks.time_unit/step apply to axis_x.
+```
+
+Fired when `style.axis_y.ticks.time_unit` or `step` is set. The measure axis (axis_y) is never temporal in Dataface's cartesian model, and its tick ladder is computed from `ticks.count`. Use `axis_y.ticks.count` here; `ticks.time_unit/step` apply to `axis_x`.
+
+### ERR-TICKS-INTERVAL-NOT-TEMPORAL — ticks.time_unit requires a continuous temporal x-axis
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+style.axis_x.ticks.time_unit requires a continuous temporal x-axis, but {field!r} resolved to a {vl_type!r} scale. Force a continuous scale with axis_x.type: temporal (or axis_x.time_unit: none), or remove ticks.time_unit.
+```
+
+Fired when `style.axis_x.ticks.time_unit` is set but the x-axis does not resolve to a continuous temporal scale. Force a continuous scale with `axis_x.type: temporal` (or `axis_x.time_unit: none`), or remove `ticks.time_unit`.
+
+### ERR-TICKS-STEP-NOT-QUANTITATIVE — a bare ticks.step requires a quantitative x-axis
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+style.axis_x.ticks.step without ticks.time_unit is a numeric tick interval, but {field!r} resolved to a {vl_type!r} scale. {remedy}
+```
+
+Fired when `style.axis_x.ticks.step` is set without `ticks.time_unit` on an x-axis that does not resolve to a quantitative scale. A bare `step` is the numeric cadence lever (it emits Vega-Lite's `tickMinStep`) and only a quantitative scale has a numeric tick interval. On a temporal axis, author `ticks.time_unit` alongside `step` to name a calendar cadence. On a discrete axis (ordinal or nominal) there is no tick interval to set — remove `ticks.step`. A horizontal bar is the case worth calling out: its `axis_x` is the categorical axis and its measure is `axis_y`, so `orientation: vertical` is usually what the author wanted.
+
+### ERR-VEGA-LITE-UNSUPPORTED-TYPE — Chart type does not render to a Vega-Lite spec
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart type {chart_type!r} does not render to a Vega-Lite spec.
+```
+
+Fired when a chart type is asked to render a Vega-Lite spec but does not support that output format. Use a Vega-Lite-compatible chart type or choose a different output format.
+
+## errors
+
+
+### ERR-BOARD-ARTIFACT-INVALID — Resolved-board artifact does not match the expected schema
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Board artifact is invalid: {detail}. It may have been produced by an incompatible dct version, hand-edited, or truncated. Re-emit it with `dct artifact emit`.
+```
+
+Fired when a resolved-board artifact fails to validate against `ResolvedBoard` while loading it for replay. The artifact is the published, versioned contract a resolved board serializes to — this means the file is not a valid instance of that contract.
+
+### ERR-BOARD-RECORDING-INVALID — Board recording sidecar does not match the expected schema
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Board recording is invalid: {detail}. It may have been produced by an incompatible dct version, hand-edited, or truncated. Re-emit it with `dct artifact emit`.
+```
+
+Fired when a board recording sidecar fails to validate against `BoardRecording` while loading it for replay.
+
+### ERR-BOARD-RECORDING-MISMATCH — Board recording does not match the artifact it was replayed against
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Board recording does not match this artifact: {detail} The artifact and its recording must come from the same `dct artifact emit` run.
+```
+
+Fired when replaying a resolved-board artifact against a recording that either lacks rows for one of the artifact's queries, or recorded them under different variable values. Both mean the artifact and recording came from different emits (or a truncated one) — replaying anyway would render an empty or wrong chart that looks like real data.
+
+### ERR-DUPLICATE-CHART-ID — Two charts share an id across nested boards
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Two charts share the id {chart_id!r} across nested boards, which the flat {format!r} format cannot represent without dropping one. Rename one of them, or use --format json, which keeps the layout nesting.
+```
+
+Chart ids are unique within a board but not across a board tree: two imported partials, including the same partial imported twice, can declare the same id. The flat output formats key charts by id, so a collision would silently drop every chart but the last. Rename the colliding chart, or render with a format that preserves the layout.
+
+### ERR-EMITTER-NOT-FOUND — No emitter registered for the resolved chart type
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+No emitter registered for resolved chart type {resolved_type!r}. This indicates an engine bug — the normalizer should have rejected this chart before it reached render.
+```
+
+Fired when the render engine cannot find an emitter for the resolved chart type. This indicates an engine bug; the normalizer should have rejected this chart before it reached render.
+
+### ERR-FILE-NOT-FOUND — File not found
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+File not found: {path}
+```
+
+Fired when a file path given to a dataface verb does not exist on the filesystem. Check for typos in the path and ensure the file exists.
+
+### ERR-FORMAT-UNSUPPORTED — Unknown render format
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Unknown format: {format!r}
+```
+
+Fired when a render verb is called with an output format that is not supported. Check the supported formats in the CLI reference.
+
+### ERR-INTERNAL — Internal error
+
+- **Level:** error
+- **Domain:** unknown
+- **Suppressible:** no
+
+**Message template:**
+
+```
+{message}
+```
+
+Fired when an unclassified internal failure occurs that does not map to a more specific error code. Check the full traceback for details. If this appears in normal usage, file a bug report.
+
+### ERR-NUMERAL-EXPR-EMPTY-SPEC — Empty format spec cannot build a numeral Vega expression
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+numeral_vega_expr() requires a non-empty format_spec. format_d3 treats an empty spec as a distinct 'no d3 formatting' path (the bare Python value) that a Vega expression cannot reproduce byte-for-byte.
+```
+
+Fired when numeral_vega_expr() is called with an empty format_spec. format_d3 short-circuits an empty spec to the bare Python value, bypassing d3 entirely — a Vega expression cannot reproduce that byte-for-byte (Python and JS do not stringify numbers identically), so building the expression is rejected rather than silently diverging. This indicates an engine bug: callers should always resolve a concrete d3 spec before reaching this emitter.
+
+### ERR-STARTUP-FAILED — Server failed to start
+
+- **Level:** error
+- **Domain:** serve
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Server failed to start: {detail}.
+```
+
+Fired when the uvicorn server process fails to start. The detail carries the inner error message from uvicorn.
+
+## layout
+
+
+### ERR-NO-LAYOUT — Board defines charts but has no layout
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Board defines charts ({charts}) but no layout — would render with no visible charts. Add a `rows:`/`cols:`/`grid:`/`tabs:` block that references them.
+```
+
+Fired when a board defines charts but no layout block (rows/cols/grid/tabs). Without a layout, the board would render with no visible charts. Add a layout block that references the charts.
+
+## queries
+
+
+### ERR-ADAPTER-RELATIVE-PATH-NO-DATA-DIR — Relative source path needs a data directory to resolve against
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Relative {adapter} path {path!r} requires a data_dir to resolve against; none was configured for this adapter. Use an absolute path or configure a data directory.
+```
+
+Fired when a file-backed source (DuckDB, SQLite) declares a relative `path:` but the adapter has no data directory to resolve it against. Resolving against the process working directory would make the source depend on where `dct` was invoked from, so Dataface refuses. Use an absolute path or configure a data directory for the project.
+
+### ERR-BINDER-TYPE-MISMATCH — Warehouse rejected the query due to a type mismatch
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Warehouse rejected the query due to a type mismatch: {detail}. Add explicit type casts to resolve ambiguity.
+```
+
+Fired when the warehouse reports a type mismatch during query binding. Add explicit type casts to resolve the ambiguity.
+
+### ERR-BINDER-UNKNOWN-COLUMN — Warehouse rejected an unknown column or table reference
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Warehouse could not resolve a column or table reference: {detail}. Check that all referenced columns and tables exist in the source.
+```
+
+Fired when the warehouse reports that a column or table reference could not be resolved during query binding. Check that all referenced columns and tables exist in the source.
+
+### ERR-CHART-COLUMN-NOT-IN-RESULT — Chart channel references a column absent from the query result
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart '{chart}' channel '{channel}' references column '{column}' which is not in the result of query '{name}'. Available columns: {columns}
+```
+
+Fired during `dct validate --warehouse` when a chart's channel (x, y, color, value, etc.) names a column that the backing query does not return. Rename the channel to match a returned column, or update the query to return the expected column.
+
+### ERR-DBT-CALL-UNSUPPORTED — dbt call form this engine cannot resolve
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Could not resolve {call!r} against the dbt manifest — Dataface reads the relation name from the call itself, so each argument must be a plain quoted string: {{{{ ref('model') }}}} or {{{{ source('source', 'table') }}}}.
+```
+
+**Fix:** Package-qualified `ref('package', 'model')`, versioned `ref('model', v=2)`, and macro-computed arguments are not supported: each needs information the manifest lookup does not use, so resolving one would mean guessing which relation you meant. Name the model directly, or write the relation out.
+
+Fired when a query's SQL calls dbt's `ref()` or `source()` in a form Dataface cannot resolve to a single relation. Dataface rewrites these calls textually against the manifest rather than executing dbt's Jinja, so it reads the names straight out of the call and every argument must be a plain quoted string. Rather than let an unrecognized call through to the warehouse — where it fails as a SQL syntax error naming `{{`, far from the cause — Dataface reports it here.
+
+### ERR-DBT-MANIFEST-INCOMPATIBLE — dbt manifest cannot be parsed by this version of dbt-core
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+The dbt manifest at {relpath!r} could not be parsed: {detail}. Rebuild the manifest with the installed dbt-core version.
+```
+
+Fired when the manifest cannot be read or parsed: the file is missing or unreadable (OSError), the JSON is malformed, the schema version is newer than the installed dbt-core supports, or dbt's upgrade_schema_version raises on a structurally invalid dict. Rebuild with `dbt parse`.
+
+### ERR-DBT-MANIFEST-MISSING — SQL uses a dbt macro but no manifest is available
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+SQL uses {kind} but no dbt manifest was found (looked for {paths}). Build one with `dbt parse`.
+```
+
+Fired when a query's SQL calls `ref()` or `source()` but the project has no dbt manifest to resolve the call against. The manifest is what maps a model name to its warehouse relation, so without it Dataface cannot know which table the query means. Run `dbt parse` (or any command that writes `target/manifest.json`) in the dbt project.
+
+### ERR-DBT-REF-UNKNOWN-NODE — ref() names a node that isn't in the dbt manifest
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+SQL references {{{{ ref({ref_name!r}) }}}}, but no model, seed, or snapshot named {ref_name!r} exists in the dbt manifest. Available: {available}.
+```
+
+Fired when a query's SQL calls the dbt `ref()` Jinja function with a name that is not present in the loaded manifest. `ref()` addresses models, seeds, and snapshots — not data tests or sources (use `source()` for those). Check for a typo, or refresh the manifest (`dbt parse`) if the node was added recently.
+
+### ERR-DBT-SOURCE-UNKNOWN-TABLE — source() names a table that isn't in the dbt manifest
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+SQL references {{{{ source({source_name!r}, {table_name!r}) }}}}, but no matching source table exists in the dbt manifest. Available sources: {available}.
+```
+
+Fired when a query's SQL calls the dbt `source()` Jinja function with a source/table pair that is not present in the loaded manifest. Check for a typo, or refresh the manifest (`dbt parse`) if the source was added recently.
+
+### ERR-GLOB-EMPTY — Glob pattern in file source matched no files
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+File source {source_name!r}, table {table_name!r}: glob pattern {pattern!r} matched no files. Provide at least one matching file or fix the pattern.
+```
+
+Fired when a glob pattern in a file source's `files:` mapping expands to zero files. Every glob must match at least one file — an empty match is always a configuration error. Check the pattern for typos, verify the files exist at the expected paths, and confirm the path is relative to the project root.
+
+### ERR-GLOB-SCHEMA-MISMATCH — Glob-matched files have inconsistent column schemas
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+File source {source_name!r}, table {table_name!r}: {path!r} has different columns than {first_path!r}. {detail}All files matched by a glob must share the same column schema.
+```
+
+Fired when a glob pattern in a file source's `files:` mapping expands to files with different column schemas. All matched files must share the same column names. Align the column schemas across all files, or split the source into separate entries with non-overlapping patterns.
+
+### ERR-GLOB-TOO-MANY — Glob pattern in file source exceeded the file-count cap
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+File source {source_name!r}, table {table_name!r}: glob pattern {pattern!r} matched {count} files, exceeding the {cap}-file cap. Increase execution.max_glob_file_count in dbt_charts.yml if needed.
+```
+
+Fired when a glob pattern in a file source's `files:` mapping matches more files than the configured `execution.max_glob_file_count` limit. Narrow the pattern, or raise the cap in `dbt_charts.yml` under `execution: max_glob_file_count: <N>`.
+
+### ERR-JINJA-ERROR — Jinja template in a query failed to render
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Jinja template error: {message}
+```
+
+Fired when a Jinja template in a query or pre-query raises a rendering error. Check the template syntax and ensure all referenced values and filters are available.
+
+### ERR-MUTATING-SQL — Non-read-only SQL is not allowed
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+dct refuses to execute non-read-only SQL. Statement: {rejected_node_kind}. Preview: {fragment_preview}.
+```
+
+Fired when Dataface detects a non-SELECT statement (INSERT, UPDATE, DELETE, DROP, etc.) in a query. Dataface only executes read-only SQL to prevent accidental data modification.
+
+### ERR-NO-DEFAULT-SOURCE — Source name required but none specified
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Source name required: {available}. Name a source for the query.
+```
+
+Fired when a query reaches execution without a source name and there is no default source configured. Specify a source name on the query or configure a default source.
+
+### ERR-QUERY-DURATION-EXCEEDED — Query exceeded the maximum allowed duration
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Query exceeded max_query_duration_seconds={seconds}s on source {source!r}.
+```
+
+Fired when a query runs longer than the configured `max_query_duration_seconds` limit on a source. Optimize the query, raise the limit, or add a WHERE clause to reduce the result set.
+
+### ERR-REPO-FILE-TOO-LARGE — Repository file exceeds the 100 MB size limit
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Repo file too large: {file_path} is {size_mb:.1f} MB (limit: 100 MB per file in a connected repo). Use a database connection for data this size.
+```
+
+Fired when a file in a connected repository exceeds 100 MB. Dataface imposes this limit because large files are better served by a direct database connection rather than loading the entire file into memory.
+
+### ERR-SOURCE-CONFIG-INVALID — Source configuration fails validation
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Source {source_name!r} in {filename}: {detail}
+```
+
+Fired when a `sources:` entry in dbt_charts.yml fails typed SourceConfig validation. Check the source definition for missing required fields or invalid values, and refer to the sources reference for the expected schema.
+
+### ERR-SOURCE-CREDENTIAL-LITERAL — Source contains a raw credential literal
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Source {source_name!r}: field {field!r} holds a raw credential literal. dbt_charts.yml is committed to git, so inline secrets leak on push. Reference the secret instead (e.g. {field}: {{{{ env_var('SECRET_NAME') }}}}), or use a `type: dbt_profile` source that delegates to an out-of-repo profiles.yml.
+```
+
+Fired when a `sources:` entry in the committed dbt_charts.yml contains a raw secret literal (password, API key, etc.). Since dbt_charts.yml is committed to git, inline secrets would be leaked on push. Reference the secret via `env_var()` or use a `dbt_profile` source type that delegates to an out-of-repo profiles.yml.
+
+### ERR-SOURCE-CROSS-FILE-FORBIDDEN — Cross-file source reference is not allowed
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Cross-file source reference (`#` anchor form) is not allowed: {offending_value!r}.
+```
+
+Fired when a source reference uses the YAML anchor cross-file form (`#`). Cross-file source references are not allowed; use a named source from the project allowlist instead.
+
+### ERR-SOURCE-INLINE-FORBIDDEN — Inline source definition is not allowed
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Query {query_name!r}: inline source definitions are not allowed. Reference a source by name (`source: my_db`) instead. Got: {offending_value}
+```
+
+**Fix:** Use a named source declared under `sources:` in your dbt_charts.yml instead of inline connection parameters.
+
+Fired when a query's `source:` is set to an inline dictionary instead of a named source reference. Inline source definitions are forbidden for security reasons — connection parameters in the committed YAML would leak credentials. Use a named source declared under `sources:`.
+
+### ERR-SOURCE-INVALID-TYPE — Unknown source type
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Unknown source type {offending_value!r}. Valid types: {available}.
+```
+
+Fired when a source's `type:` field names a source type that is not registered. Check for typos and refer to the documentation for the supported source types.
+
+### ERR-SOURCE-MISSING-TYPE — Source is missing the required type field
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Source is missing the required `type` field: {offending_value!r}.
+```
+
+Fired when a source definition omits the required `type:` field. Add a `type:` field naming the source adapter to use.
+
+### ERR-SOURCE-NOT-FOUND — Query references an unknown source
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Query {query_name!r} references unknown source {source!r}. Available sources: {available}. dct sources are declared under `sources:` in your dbt_charts.yml — the source name is not the dbt project name.
+```
+
+Fired when a query's `source:` names a source that is not declared in the sources registry. Check for typos and ensure the source is declared under `sources:` in your dbt_charts.yml. Also includes the execute-side failure of the same name (source lookup at query time).
+
+### ERR-SOURCE-NOT-FOUND-EMPTY — No source profiles are configured
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Source {source!r} not found. No source profiles are configured. Declare sources under `sources:` in your dbt_charts.yml.
+```
+
+Fired when a query references a source but no source profiles are configured at all. Declare sources under `sources:` in your dbt_charts.yml.
+
+### ERR-SOURCE-REQUIRED — Query has no source configured
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Query {query_name!r}: SQL queries must have a source. Set it on the query (`source: my_db`), or at the board or folder meta.yaml level (`source: my_db`).
+```
+
+Fired when a SQL query has no `source:` set at the query, board, or folder meta.yaml level and no default source is configured. Set `source: my_db` on the query or as a default at a higher level.
+
+### ERR-SQL-LITERAL-NEWLINES — SQL contains literal backslash-n from single-quoted YAML
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Query {query_name!r} {field_label} contains literal \n (backslash + n). Use YAML block scalar `{field_label}: |` to write multiline SQL:
+
+  queries:
+    my_query:
+      {field_label}: |
+        SELECT
+          col
+        FROM t
+```
+
+Fired when a query's SQL or pre-query string contains a literal backslash followed by 'n', which typically means YAML single-quote escaping swallowed an intended newline. Use a YAML block scalar (`field: |`) for multiline SQL to avoid this.
+
+### ERR-UNKNOWN-QUERY — Chart references an unknown query
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_name!r} references unknown query {query_name!r}. Declare the query under `queries:` or fix the typo in `query:`.
+```
+
+Fired when a chart's `query:` names a query that is not declared under `queries:` in the board or any included meta.yaml. Check for typos and ensure the query is declared.
+
+### ERR-UNPARSEABLE-SQL — SQL could not be parsed for static checks
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Could not parse this SQL: {cause}
+```
+
+**Fix:** If the warehouse accepts this query, the SQL is fine — the parser just does not model that dialect or macro yet, and only Dataface's static checks (read-only enforcement, fanout and reaggregation lint) are skipped for it. If the warehouse rejects it too, fix the syntax at the reported position.
+
+Fired when Dataface's static SQL parser cannot parse a query. The query is still sent to the warehouse; what is lost is the static read-only check and the semantic lint that run on parseable SQL. It is not necessarily an error in the SQL itself — unmodelled dialect syntax and dbt macros land here too.
+
+### ERR-UNRESOLVED-REFERENCE — Reference points to an unknown name
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Reference {ref!r} not found{context}.
+```
+
+Fired when a chart or layout reference names a target that cannot be found in the current board or any included files. Check for typos and ensure the referenced chart, query, or layout item is declared.
+
+### ERR-WAREHOUSE-CONNECTION — Could not open the warehouse
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Could not open the warehouse: {detail}.
+```
+
+Fired when opening the connection fails — a database file that is missing, unreadable, or lock-held by another process. Distinct from ERR-WAREHOUSE-RUNTIME because nothing ever read the SQL: the query may be perfectly good, so callers that judge queries (`dct validate --warehouse`) must not report it as a query defect.
+
+### ERR-WAREHOUSE-QUERY-INVALID — Query failed warehouse validation
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Query '{name}' failed warehouse validation ({mechanism}): {warehouse_message}
+```
+
+Fired when a query's SQL is rejected by the warehouse during `dct validate --warehouse`. The warehouse message carries the specific failure reason (unknown column, syntax error, etc.). Fix the SQL or re-run `dbt parse` if a referenced model was recently renamed.
+
+### ERR-WAREHOUSE-RUNTIME — Warehouse rejected the query at runtime
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Warehouse rejected the query: {detail}.
+```
+
+Fired when the warehouse rejects a query for an unclassified runtime error. The detail carries the warehouse's original error message.
+
+## variables
+
+
+### ERR-UNKNOWN-VARIABLE — Unknown variable referenced in template
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+{surface} {owner_name!r} references unknown variable {var_name!r}. Declare it under `variables:` or fix the typo.
+```
+
+Fired when a Jinja template references a variable name that is not declared under `variables:`. Check for typos and ensure the variable is declared before the template that uses it.

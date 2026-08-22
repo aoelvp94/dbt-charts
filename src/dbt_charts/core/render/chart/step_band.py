@@ -1,0 +1,120 @@
+"""The band-aware ``step`` curve transform for line/area marks.
+
+On a categorical (nominal/ordinal) x-axis, ``curve: step`` draws a full-band-
+width plateau per x-value — a target overlay that visually spans the bars it
+compares against — instead of VL's native ``step``, which anchors points at
+band centers. On a continuous (temporal/quantitative) x-axis, ``step`` is NOT
+band-aware: it falls straight through to VL's own ``step`` interpolate.
+
+Vega-Lite has no per-row ``bandPosition``: it is a per-channel constant, and a
+field-valued ``bandPosition`` is silently dropped. So band-spanning is done with
+an ``xOffset`` point scale bound to a synthetic edge column: each row is
+doubled to ``0`` (band left edge) and ``1`` (band right edge). VL itself only
+ever sees ``step-after`` over the doubled rows, so the categorical x-domain is
+never expanded — the axis stays clean. ``step-after`` (not centered ``step``)
+puts each vertical jump on the RIGHT edge of a doubled pair — i.e. on the band
+boundary shared with the next band's first row — which is what the
+band-doubled geometry expects. Centered ``step`` would insert a mid-vertex at
+the segment midpoint that renders visible mid-band jumps on non-monotonic y.
+
+``connect: false`` adds a ``detail`` channel keyed on the x field so each band
+becomes its own path (disconnected plateaus, no vertical bridges between
+bands) and insets the xOffset range so adjacent plateaus at a similar y don't
+optically weld into one bar. This grouping assumes a single series (the
+target-overlay idiom); a data-driven multi-series color encoding is rejected
+with a clear error.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from dbt_charts.core.compile.config import get_chart_rendering
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
+
+BAND_STEP_CURVE = "step"
+
+# The VL interpolate forced onto every mark drawing the band-doubled rows.
+BAND_STEP_INTERPOLATE = "step-after"
+
+# Synthetic per-row column the xOffset point scale binds to (0 = band left edge,
+# 1 = band right edge). Not a user-meaningful field — added by the transform,
+# never present in source data.
+STEP_BAND_EDGE_FIELD = "__step_band_pos__"
+
+# A band scale is the categorical case; "temporal"/"quantitative" are continuous.
+_BAND_SCALE_TYPES = ("nominal", "ordinal")
+
+
+def is_band_step(curve: str | None, x_type: str | None) -> bool:
+    """Whether ``curve`` triggers the full-band-width plateau on this x-axis.
+
+    Band mode fires only for the literal ``step`` curve on a categorical
+    (nominal/ordinal) x-scale. On a continuous (temporal/quantitative) x-scale
+    ``step`` is a plain passthrough to VL's own native step interpolate.
+    """
+    return curve == BAND_STEP_CURVE and x_type in _BAND_SCALE_TYPES
+
+
+def apply_step_band(
+    rows: list[dict[str, Any]],
+    encoding: dict[str, Any],
+    *,
+    chart_id: str,
+    connect: bool,
+) -> list[dict[str, Any]]:
+    """Double each row to the band's edges and add the xOffset point scale.
+
+    Mutates ``encoding`` in place: adds the ``xOffset`` channel, and (when
+    ``connect`` is False) a ``detail`` channel that breaks the path per band,
+    with the xOffset range inset so disconnected plateaus don't optically weld
+    into their neighbours. Returns the doubled rows. Callers must only invoke
+    this when ``is_band_step`` is True (band x-axis already confirmed); raises
+    ``ChartDataError`` only for a data-driven (multi-series) color encoding,
+    which the per-band grouping can't honor.
+    """
+    x_enc = encoding.get("x")
+    assert isinstance(x_enc, dict)  # narrowed: callers only invoke in band mode
+
+    # step is a single-series target-overlay idiom in band mode: its per-band
+    # xOffset / detail grouping assumes one series. A data-driven color channel
+    # ("field") splits into multiple series the grouping can't honor — fail
+    # fast rather than render mis-grouped silhouettes. A single-series label
+    # (``datum``) or constant (``value``) color is fine.
+    color_enc = encoding.get("color")
+    if isinstance(color_enc, dict) and color_enc.get("field"):
+        raise ChartDataError(
+            f"curve: step does not support a multi-series color encoding on a "
+            f"band x-axis (chart '{chart_id}'). It is a single-series "
+            f"target-overlay idiom; drop the color split or pick a different curve.",
+            chart_id=chart_id,
+        )
+
+    doubled: list[dict[str, Any]] = []
+    for row in rows:
+        doubled.append({**row, STEP_BAND_EDGE_FIELD: 0})
+        doubled.append({**row, STEP_BAND_EDGE_FIELD: 1})
+
+    if connect:
+        offset_range: list[int | dict[str, str]] = [0, {"expr": "bandwidth('x')"}]
+    else:
+        width = get_chart_rendering().step_band.disconnected_width
+        lo = (1 - width) / 2
+        offset_range = [
+            {"expr": f"bandwidth('x')*{lo}"},
+            {"expr": f"bandwidth('x')*{1 - lo}"},
+        ]
+
+    encoding["xOffset"] = {
+        "field": STEP_BAND_EDGE_FIELD,
+        "type": "ordinal",
+        "scale": {
+            "type": "point",
+            "padding": 0,
+            "range": offset_range,
+        },
+    }
+    if not connect:
+        encoding["detail"] = {"field": x_enc["field"], "type": "nominal"}
+
+    return doubled

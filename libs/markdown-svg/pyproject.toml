@@ -1,0 +1,59 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "network: marks tests as requiring network access (deselect with '-m \"not network\"')",
+]
+
+[tool.mypy]
+python_version = "3.10"
+disallow_untyped_defs = true
+ignore_missing_imports = true
+no_implicit_optional = true
+strict_equality = true
+warn_unused_ignores = true
+extra_checks = true
+disallow_untyped_calls = true
+warn_unused_configs = true
+warn_unreachable = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disable_error_code = ["import-untyped"]
+enable_error_code = [
+    "truthy-bool",
+    "redundant-expr",
+    "possibly-undefined",
+    "redundant-self",
+    "unused-awaitable",
+    "narrowed-type-not-subtype",
+    "deprecated",
+    "unimported-reveal",
+    "exhaustive-match",
+    "ignore-without-code",
+]
+exclude = '''(?x)(
+    (^|.*/)tests/.*$
+  | (^|.*/)conftest\.py$
+)'''
+
+# line-length is load-bearing for emitted source now that ruff formats as well
+# as lints, so it matches the root config — these files were always formatted at
+# 88 from the repo root, and a 100-wide island here would be a silent reflow.
+# (target-version stays py39: formatter-neutral above 3.9, and raising it turns
+# on B905, whose fix is a runtime `strict=` decision, not a formatting one.)
+[tool.ruff]
+target-version = "py39"
+line-length = 88
+
+[tool.ruff.format]
+# Self-contained config (no extend): mirror the root's Markdown-fence exclusion.
+exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "B", "C4", "SIM"]
+ignore = [
+    "E501",  # Line too long - handled by formatter
+    "E402",  # Module level import not at top - needed for sys.path manipulation
+    "N802",  # Function name should be lowercase - HTTP handler methods (do_GET, etc.)
+    "B017",  # pytest.raises(Exception) - acceptable in tests
+]

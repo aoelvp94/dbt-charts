@@ -1,0 +1,2 @@
+- this file is intentionally a YAML list instead of a dashboard mapping
+- it passes repository YAML validation but still fails dbt charts parsing early

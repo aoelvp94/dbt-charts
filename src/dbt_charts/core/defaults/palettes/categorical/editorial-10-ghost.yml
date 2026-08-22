@@ -1,0 +1,37 @@
+# Categorical palette — editorial-10-ghost
+#
+# Extreme de-emphasis companion to editorial-10. Each stop is the very
+# light, desaturated counterpart of the same slot in `editorial-10.yml` —
+# used for fading out-of-focus members of a series so the highlighted
+# member (rendered in its base color) reads forward.
+#
+# Pairing is positional: stop N here is the ghost companion of stop N in
+# editorial-10. Reviewers edit the variant set (`editorial-10`,
+# `editorial-10-dark`, `editorial-10-light`, `editorial-10-ghost`)
+# together when the editorial palette changes.
+#
+# Derivation mirrors `category-10-ghost`: uniform OKLCH lift to L=0.86
+# with chroma multiplied by 0.32, preserving each source hue. Slot 10
+# (charcoal) is held at L=0.80 — lifted toward the ghost band but kept a
+# notch below it so it stays visibly distinct from gray-ghost (L≈0.86).
+
+name: editorial-10-ghost
+extends: editorial-10
+description: |
+  Extreme de-emphasis companion to editorial-10. Ten slots, each much
+  lighter and more desaturated than the matching editorial-10 stop. Designed
+  for ghosting out-of-focus members of a series while preserving positional
+  hue identity. Pairing is positional: slot N here pairs with slot N in
+  editorial-10.
+
+colors:
+  - "#c1d3e9"    # 1  — denim     (companion to #3164a3)
+  - "#c6d2e2"    # 2  — sky       (companion to #779bc9)
+  - "#d6d0c7"    # 3  — sand      (companion to #ad9c7f)
+  - "#cdd2d6"    # 4  — gray      (companion to #7a8895)
+  - "#decbd3"    # 5  — plum      (companion to #8a576f)
+  - "#cad4c9"    # 6  — green     (companion to #5c7b5c)
+  - "#e2cdb9"    # 7  — gold      (companion to #d49656)
+  - "#e6cac1"    # 8  — rust      (companion to #ae6349)
+  - "#c2d6d5"    # 9  — teal      (companion to #609f9e)
+  - "#babec3"    # 10 — charcoal  (companion to #232f3a)

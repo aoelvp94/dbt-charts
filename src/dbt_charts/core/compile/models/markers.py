@@ -1,0 +1,187 @@
+"""Field markers for Dataface model annotations.
+
+Markers are attached to Pydantic fields via Annotated[T, Marker()] and
+are picked up by introspection.py to enrich the schema IR.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+from enum import Enum
+
+
+@dataclasses.dataclass(frozen=True)
+class Inherit:
+    """Single parent link for a leaf field in the compiled style tree.
+
+    Attached via ``Annotated[T, Inherit(from_path="...")]`` on a leaf field.
+    ``build_inherit_graph()`` reads these to populate the ``InheritGraph``.
+
+    Args:
+        from_path: Absolute dot-path of the direct parent to inherit from when
+                   this leaf has no authored value.  Must exist in the model's
+                   path trie; validation occurs at graph-build time.
+                   Example: ``"charts.font.color"``.
+    """
+
+    from_path: str
+
+
+@dataclasses.dataclass(frozen=True)
+class InheritSlot:
+    """Marks that an entire nested slot mirrors another subtree.
+
+    Attached via ``Annotated[T, InheritSlot(from_path="...")]`` on a nested
+    model field.  ``build_inherit_graph()`` expands this to per-leaf
+    ``Inherit`` chains: every leaf under the annotated field gets a fallback
+    to the corresponding leaf under ``from_path``.
+
+    Args:
+        from_path: Absolute dot-path of the source subtree.  Must resolve to a
+                   subtree with the same leaf structure as the annotated field's
+                   type.  Validation occurs at graph-build time.
+                   Example: ``"charts.axis"`` on an ``axis_x`` field.
+        exclude: Bare field names to omit from the per-leaf expansion, even
+                 though the rest of the nested field still inherits. Matched
+                 by name at every depth of the annotated field's subtree (not
+                 just its direct fields), so a same-named leaf nested deeper
+                 is excluded too. Each name must be a real field on the
+                 annotated field's type — validated at graph-build time like
+                 ``from_path``. The excluded leaf stays a genuine
+                 cascade-managed sentinel (``None`` unless some tier's raw
+                 YAML sets it) instead of being unconditionally backfilled
+                 from ``from_path``. Example: ``SliceLabelsStyle.font``
+                 inherits ``family``/``size``/``weight`` from ``charts.font``
+                 but excludes ``color`` so an author's explicit override (or
+                 its absence) survives the cascade. Only takes effect where
+                 this ``InheritSlot`` establishes a *new* slot context (its
+                 ``from_path`` is used); at a derived slot position that
+                 preserves an outer slot (e.g. ``axis_x`` reusing ``axis``'s
+                 inner ``InheritSlot``), the outer slot's ``exclude`` applies
+                 instead — an inner exclude there would break the tier chain
+                 that lets a further-out tier's authored value flow through.
+    """
+
+    from_path: str
+    exclude: frozenset[str] = frozenset()
+
+
+class Strategy(str, Enum):
+    """Valid merge strategies for the Merge marker."""
+
+    OVERRIDE = "override"
+    DEEP = "deep"
+    BY_KEY = "by_key"
+    APPEND = "append"
+    CHILD = "child"
+
+
+@dataclasses.dataclass(frozen=True)
+class Merge:
+    """Merge strategy marker for the board-resolution engine.
+
+    Declares how a field is combined when two board fragments are merged:
+    ``file`` for file-relation merges (meta.yaml, extends) and ``nested``
+    for nested-board-relation merges (child board inside rows/cols/grid/tabs).
+
+    When ``nested`` is None the file strategy is used for both relations.
+
+    Attached via ``Annotated[T, Merge(Strategy.X)]`` or
+    ``Annotated[T, Merge(Strategy.X, nested=Strategy.Y)]``.
+
+    - ``override`` — upper's explicitly-set non-None value replaces lower's.
+                     When upper has not set the field, lower is preserved.
+    - ``deep``     — recurse into the nested patch model.
+    - ``by_key``   — dict union; upper wins per key.
+    - ``append``   — list concatenation (lower first).
+    - ``child``    — upper's value is unconditionally authoritative: lower is
+                     discarded regardless of whether upper has set the field
+                     (``getattr`` returns the model default, usually ``None``).
+                     Contrast with ``override``, which preserves lower when
+                     upper is unset.  Typically declared via
+                     ``Merge(nested=Strategy.CHILD)`` so it fires only for
+                     child-board merges (``nested=True``), not for file-relation
+                     merges (extends / meta).
+    """
+
+    file: Strategy
+    nested: Strategy | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class SkipInheritSlots:
+    """Suppresses InheritSlot expansion for a field and its entire subtree.
+
+    Attached via ``Annotated[T, SkipInheritSlots()]`` on any field.
+
+    **On a nested model field**: ``build_inherit_graph()`` recurses into the
+    field's type without activating any ``InheritSlot`` markers inside it, and
+    without propagating the outer slot context into the subtree.  Use when a
+    shared model contains ``InheritSlot`` annotations that are correct in one
+    context but must not apply at this field path.  Example: ``TitleStyle``
+    defines ``font: Annotated[FontStyle, InheritSlot(from_path="font")]`` for the
+    root ``style.title`` path, but the per-chart title override field in
+    ``_ChartStyleBase`` must not inherit from the root cascade.
+
+    **On a leaf scalar field**: prevents the leaf from being added to the graph
+    via slot expansion.  Use on axis style fields that the style resolver does
+    not cascade — e.g. ``grid.dash``, ``ticks.count``, ``scale``, ``position`` —
+    so the inherit graph only declares what the resolver actually does.
+
+    ``cascade=True`` — for optional nested-model fields that the resolver
+    cascades at container granularity (copies the whole object when the child is
+    None, rather than filling individual leaf fields).  When set, the graph
+    emits a *container-level* link ``child_path → parent_path`` instead of
+    suppressing the field entirely.  Leaf writes through a ``None`` intermediate
+    are not viable (``_set`` skips them), so container links are the only
+    mechanism.  Only applicable on ``T | None`` nested-model fields inside an
+    active slot context.
+    """
+
+    cascade: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
+class Facet:
+    """Base for semantic facets — what a field *means*, beyond what it holds.
+
+    The schema records a field's type and its prose description. Neither
+    distinguishes ``font.color`` ("Text color as a CSS color string",
+    ``str | None``) from ``font.family`` ("Font family name", ``str | None``),
+    so every consumer that needs the difference has had to keep its own list of
+    key names, out of reach of the type system and free to drift.
+
+    A facet travels with its field through renames and moves, and reaches the IR
+    as ``SchemaField.facets``. Attached via ``Annotated[T, Color()]``.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
+class Color(Facet):
+    """The value is a CSS colour, so an editor can offer a swatch."""
+
+
+@dataclasses.dataclass(frozen=True)
+class Format(Facet):
+    """The value is a number or time format: a predefined name, or a d3 spec.
+
+    The engine's own names reach the schema as `FormatAlias`, but a board's
+    `style.formats` map adds aliases of its own, and `formats` merges key-wise
+    down the cascade — so the legal names on a chart depend on the board it
+    sits in, which no wheel-shipped Literal can hold. The facet is what lets a
+    surface holding a board widen the offer to the aliases that board defines,
+    without matching field names or comparing values against the built-in set.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
+class Channel(Facet):
+    """The value names a column of the chart's query, not an appearance.
+
+    `x` and `font.family` are both `str | None` with prose descriptions, and
+    nothing in the schema distinguishes "the column this chart plots" from "how
+    the chart looks". The difference is not cosmetic: a wrong channel is a
+    render that fails on a column that does not exist, a wrong font size is a
+    chart that looks slightly off. They want different validation and different
+    input — a picker over the query's columns rather than a text box.
+    """

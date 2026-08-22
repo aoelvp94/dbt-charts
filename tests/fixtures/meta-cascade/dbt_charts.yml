@@ -1,0 +1,4 @@
+sources:
+  db:
+    type: duckdb
+    path: ":memory:"

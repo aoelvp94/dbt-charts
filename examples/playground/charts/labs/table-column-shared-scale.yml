@@ -1,0 +1,53 @@
+title: "Table columns on the shared-scale ruler machinery"
+description: >
+  An SI/compact-formatted table column (number_default, or any inline `~s`
+  spec) whose rows share one majority SI tier declares that magnitude once —
+  like an axis ruler's tick ladder — instead of each row independently
+  picking its own suffix. `revenue_anchors` deliberately spans a wide range
+  within the M tier (3.46M .. 876.54M) and leads with a zero row: decimal
+  precision is picked from the column's smallest value so "3.46" never
+  truncates to "3", and the magnitude suffix lands on the first row that can
+  actually carry it (HQ's zero can't). `revenue_all` shows the identical
+  shared-scale bake under `symbol_mode: all` (every row still shows its own
+  magnitude suffix, since symbol_mode only governs currency-prefix /
+  unit-suffix anchoring, not the shared magnitude itself).
+extends: editorial
+rows:
+  - cols: [revenue_anchors]
+  - cols: [revenue_all]
+charts:
+  revenue_anchors:
+    type: table
+    title: "symbol_mode: anchors — magnitude suffix declared once"
+    query:
+      sql: >
+        SELECT region, revenue::DECIMAL(18,2) AS revenue FROM (
+          VALUES ('HQ (no revenue yet)', 0.00), ('North', 3456789.00),
+                 ('South', 8765432.00), ('East', 87654321.00),
+                 ('West', 876543210.00)
+        ) AS t(region, revenue)
+      source: duckdb_local
+    style:
+      symbol_mode: anchors
+      columns:
+        region:
+          label: Region
+        revenue:
+          label: Revenue
+  revenue_all:
+    type: table
+    title: "symbol_mode: all — same shared magnitude, every row labeled"
+    query:
+      sql: >
+        SELECT region, revenue::DECIMAL(18,2) AS revenue FROM (
+          VALUES ('North', 3456789.00), ('South', 8765432.00),
+                 ('East', 87654321.00), ('West', 876543210.00)
+        ) AS t(region, revenue)
+      source: duckdb_local
+    style:
+      symbol_mode: all
+      columns:
+        region:
+          label: Region
+        revenue:
+          label: Revenue

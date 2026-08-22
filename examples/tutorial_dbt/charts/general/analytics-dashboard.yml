@@ -1,0 +1,275 @@
+title: Sales Analytics Dashboard
+description: Comprehensive view of sales performance across regions, products, and time
+source: duckdb_local
+text: |
+  This dashboard provides a **comprehensive view** of sales analytics with interactive filtering.
+
+  Use the controls below to filter by region, category, and date range.
+  All charts update in real-time based on your selections.
+
+variables:
+  region:
+    options:
+      static:
+        - North
+        - South
+        - East
+        - West
+  category:
+    options:
+      static:
+        - Widgets
+        - Gadgets
+  product:
+    options:
+      static:
+        - Widget A
+        - Widget B
+        - Gadget X
+        - Gadget Y
+  start_date:
+    input: date
+    default: 2023-01-01
+  end_date:
+    input: date
+    default: 2023-12-31
+  min_revenue:
+    label: Min Revenue ($)
+    input: number
+    min: 0
+    max: 500
+    step: 10
+    default: 0
+queries:
+  orders_filtered: |
+    SELECT
+      o.order_id,
+      o.order_date,
+      o.quantity,
+      o.revenue,
+      o.region,
+      p.product_name,
+      p.category,
+      p.price
+    FROM main.orders o
+    JOIN main.products p ON o.product_id = p.product_id
+    WHERE o.order_date >= '{{ start_date }}'
+      AND o.order_date <= '{{ end_date }}'
+      AND {{ filter('o.region', region) }}
+      AND {{ filter('p.category', category) }}
+      AND {{ filter('p.product_name', product) }}
+      AND {{ filter('o.revenue', min_revenue, '>=') }}
+    ORDER BY o.order_date
+
+  daily_revenue: |
+    SELECT
+      o.order_date,
+      SUM(o.revenue) as total_revenue,
+      COUNT(*) as order_count
+    FROM main.orders o
+    JOIN main.products p ON o.product_id = p.product_id
+    WHERE o.order_date >= '{{ start_date }}'
+      AND o.order_date <= '{{ end_date }}'
+      AND {{ filter('o.region', region) }}
+      AND {{ filter('p.category', category) }}
+      AND {{ filter('p.product_name', product) }}
+    GROUP BY o.order_date
+    ORDER BY o.order_date
+
+  monthly_revenue: |
+    SELECT
+      strftime(o.order_date, '%Y-%m') as month,
+      SUM(o.revenue) as total_revenue,
+      COUNT(*) as order_count,
+      SUM(o.quantity) as total_quantity
+    FROM main.orders o
+    JOIN main.products p ON o.product_id = p.product_id
+    WHERE o.order_date >= '{{ start_date }}'
+      AND o.order_date <= '{{ end_date }}'
+      AND {{ filter('o.region', region) }}
+      AND {{ filter('p.category', category) }}
+      AND {{ filter('p.product_name', product) }}
+    GROUP BY strftime(o.order_date, '%Y-%m')
+    ORDER BY month
+
+  revenue_by_region: |
+    SELECT
+      o.region,
+      SUM(o.revenue) as total_revenue,
+      COUNT(*) as order_count,
+      AVG(o.revenue) as avg_order_value
+    FROM main.orders o
+    JOIN main.products p ON o.product_id = p.product_id
+    WHERE o.order_date >= '{{ start_date }}'
+      AND o.order_date <= '{{ end_date }}'
+      AND {{ filter('p.category', category) }}
+    GROUP BY o.region
+    ORDER BY total_revenue DESC
+
+  revenue_by_product: |
+    SELECT
+      p.product_name,
+      p.category,
+      SUM(o.revenue) as total_revenue,
+      SUM(o.quantity) as total_quantity,
+      COUNT(*) as order_count
+    FROM main.orders o
+    JOIN main.products p ON o.product_id = p.product_id
+    WHERE o.order_date >= '{{ start_date }}'
+      AND o.order_date <= '{{ end_date }}'
+      AND {{ filter('o.region', region) }}
+    GROUP BY p.product_name, p.category
+    ORDER BY total_revenue DESC
+
+  revenue_by_category: |
+    SELECT
+      p.category,
+      SUM(o.revenue) as total_revenue,
+      SUM(o.quantity) as total_quantity
+    FROM main.orders o
+    JOIN main.products p ON o.product_id = p.product_id
+    WHERE o.order_date >= '{{ start_date }}'
+      AND o.order_date <= '{{ end_date }}'
+      AND {{ filter('o.region', region) }}
+    GROUP BY p.category
+
+  top_customers: |
+    SELECT
+      c.customer_name,
+      c.region as customer_region,
+      SUM(o.revenue) as total_spent,
+      COUNT(*) as order_count
+    FROM main.orders o
+    JOIN main.customers c ON o.customer_id = c.customer_id
+    JOIN main.products p ON o.product_id = p.product_id
+    WHERE o.order_date >= '{{ start_date }}'
+      AND o.order_date <= '{{ end_date }}'
+      AND {{ filter('o.region', region) }}
+      AND {{ filter('p.category', category) }}
+      AND {{ filter('p.product_name', product) }}
+    GROUP BY c.customer_id, c.customer_name, c.region
+    ORDER BY total_spent DESC
+    LIMIT 10
+
+  order_distribution: |
+    SELECT
+      o.revenue,
+      o.quantity,
+      p.category
+    FROM main.orders o
+    JOIN main.products p ON o.product_id = p.product_id
+    WHERE o.order_date >= '{{ start_date }}'
+      AND o.order_date <= '{{ end_date }}'
+      AND {{ filter('o.region', region) }}
+
+  region_category_matrix: |
+    SELECT
+      o.region,
+      p.category,
+      SUM(o.revenue) as total_revenue
+    FROM main.orders o
+    JOIN main.products p ON o.product_id = p.product_id
+    WHERE o.order_date >= '{{ start_date }}'
+      AND o.order_date <= '{{ end_date }}'
+    GROUP BY o.region, p.category
+
+  kpi_metrics: |
+    SELECT
+      SUM(o.revenue) as total_revenue,
+      COUNT(*) as total_orders,
+      AVG(o.revenue) as avg_order_value,
+      SUM(o.quantity) as total_units
+    FROM main.orders o
+    JOIN main.products p ON o.product_id = p.product_id
+    WHERE o.order_date >= '{{ start_date }}'
+      AND o.order_date <= '{{ end_date }}'
+      AND {{ filter('o.region', region) }}
+      AND {{ filter('p.category', category) }}
+      AND {{ filter('p.product_name', product) }}
+
+charts:
+  total_revenue_kpi:
+    label: Total Revenue
+    query: kpi_metrics
+    type: kpi
+    value: total_revenue
+    style:
+      value:
+        format: currency_whole
+  total_orders_kpi:
+    label: Total Orders
+    query: kpi_metrics
+    type: kpi
+    value: total_orders
+  avg_order_kpi:
+    label: Avg Order Value
+    query: kpi_metrics
+    type: kpi
+    value: avg_order_value
+    style:
+      value:
+        format: currency
+  daily_trend:
+    title: Daily Revenue Trend
+    query: daily_revenue
+    type: line
+    x: order_date
+    y: total_revenue
+    color: None
+  monthly_bars:
+    title: Monthly Revenue
+    query: monthly_revenue
+    type: bar
+    x: month
+    y: total_revenue
+  region_bars:
+    title: Revenue by Region{% if category %} - {{ category }}{% endif %}
+    query: revenue_by_region
+    type: bar
+    x: region
+    y: total_revenue
+    color: region
+    style:
+      stack: zero
+  product_bars:
+    title: Revenue by Product{% if region %} - {{ region }}{% endif %}
+    query: revenue_by_product
+    type: bar
+    x: product_name
+    y: total_revenue
+    color: category
+    style:
+      stack: zero
+  category_pie:
+    style:
+      marks:
+        slice:
+          labels:
+            template: "{{ '{:.0%}'.format(percent) }} {{ category }}"
+    title: Revenue by Category
+    query: revenue_by_category
+    type: pie
+    theta: total_revenue
+    color: category
+  top_customers_chart:
+    title: Top 10 Customers by Revenue
+    query: top_customers
+    type: bar
+    x: customer_name
+    y: total_spent
+    color: customer_region
+    style:
+      stack: zero
+  region_category_heatmap:
+    title: "Revenue: Region × Category"
+    query: region_category_matrix
+    type: heatmap
+    x: region
+    y: category
+    color: total_revenue
+rows:
+  - {'title': 'Key Metrics', 'height': 120, 'cols': ['total_revenue_kpi', 'total_orders_kpi', 'avg_order_kpi']}
+  - {'title': 'Revenue Over Time', 'cols': ['daily_trend', 'monthly_bars']}
+  - {'title': 'Regional & Product Analysis', 'cols': ['region_bars', 'product_bars']}
+  - {'title': 'Category & Customer Insights', 'cols': ['category_pie', 'top_customers_chart']}
+  - {'title': 'Cross-Dimensional Analysis', 'cols': ['region_category_heatmap']}

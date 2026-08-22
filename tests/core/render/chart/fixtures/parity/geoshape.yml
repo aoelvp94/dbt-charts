@@ -1,0 +1,14 @@
+chart_id: chart1
+chart:
+  type: geoshape
+  query: q
+  geo_source: us-states
+  lookup: state_id
+  color: population
+queries:
+  q:
+    columns: [state_id, population]
+    values:
+      - [6, 39538223]
+      - [48, 29145505]
+      - [36, 20201249]

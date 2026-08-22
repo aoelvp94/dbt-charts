@@ -1,0 +1,22 @@
+# Sequential palette — dbt-seq-rust-dark (dark-canvas fork)
+#
+
+name: dbt-seq-rust-dark
+family: sequential
+description: "Single-hue rust (cream-peach \u2192 terracotta \u2192 deep rust). Renamed from dbt-seq-orange;\
+  \ mid-stops read as rust/terracotta rather than vivid orange. Dark-canvas fork."
+design_notes: "Dark-canvas fork of dbt-seq-rust. Luminance-monotonic recede\u2192pop; recede end is a\
+  \ low-chroma dark neutral above canvas void, pop end high-chroma with capped lightness so it glows on\
+  \ dark. Hue 18\xB0 from source.\n"
+colors:
+- '#302621'
+- '#4b2d20'
+- '#633521'
+- '#7d3d21'
+- '#974421'
+- '#b24b1f'
+- '#cf521c'
+- '#e8591c'
+- '#ef682e'
+- '#f67741'
+- '#fb8756'

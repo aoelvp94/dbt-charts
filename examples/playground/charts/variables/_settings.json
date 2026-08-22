@@ -1,0 +1,4 @@
+{
+  "default_format": "svg",
+  "description": "Interactive boards driven by user variables (dropdowns, date ranges, multi-select)."
+}

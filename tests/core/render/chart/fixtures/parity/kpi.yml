@@ -1,0 +1,10 @@
+chart_id: chart1
+chart:
+  type: kpi
+  query: q
+  value: metric
+queries:
+  q:
+    columns: [metric]
+    values:
+      - [42000]

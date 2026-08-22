@@ -1,0 +1,36 @@
+title: Sales Overview
+source: duckdb_local
+text: |
+  **Monthly Revenue Analysis**
+
+  This dashboard provides a comprehensive view of sales performance across regions.
+  Use this data to identify trends, compare regional performance, and track revenue growth.
+
+  Key insights to look for:
+  - Which regions are driving the most revenue?
+  - How does revenue change month-over-month?
+  - Are there seasonal patterns in sales?
+
+queries:
+  sales: |
+    SELECT
+      DATE_TRUNC('month', order_date)::VARCHAR AS month,
+      region,
+      SUM(revenue) AS total_revenue,
+      COUNT(*) AS order_count
+    FROM {{ ref('fct_orders') }}
+    GROUP BY 1, 2
+    ORDER BY 1 DESC
+
+charts:
+  revenue_chart:
+    title: Revenue by Month
+    query: sales
+    type: bar
+    x: month
+    y: total_revenue
+    color: region
+    style:
+      stack: zero
+rows:
+  - {'title': 'Revenue Trends', 'cols': ['revenue_chart']}

@@ -1,0 +1,22 @@
+# Sequential palette — gray
+#
+# Hand-authored 11-stop spine. Downsamples drive seq palette resolution.
+
+name: dbt-seq-gray
+family: sequential
+description: Pure gray — magnitude without hue connotation. Renamed from dbt-seq-neutral; hexes unchanged.
+design_notes: |
+  Monotonic L* from 0.95 → 0.25, chroma=0 (pure achromatic). Use when data magnitude must not imply hue meaning. Renamed from dbt-seq-neutral in Session 8; hexes unchanged.
+
+colors:
+  - "#eeeeee"    # step 1 — lightest
+  - "#d7d7d7"
+  - "#c1c1c1"
+  - "#ababab"
+  - "#959595"
+  - "#808080"    # step 6 — mid
+  - "#6c6c6c"
+  - "#585858"
+  - "#454545"
+  - "#333333"
+  - "#222222"    # step 11 — darkest

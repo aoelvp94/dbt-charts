@@ -1,0 +1,117 @@
+# Themed Dashboard Example
+# Demonstrates using built-in themes for consistent styling
+#
+# Try changing `theme:` to any of these values:
+#   - editorial (default)
+#   - cream
+#   - stark
+#   - plain
+#   - vivid
+#   - neon (dark)
+
+title: "Sales Analytics"
+theme: neon
+source: duckdb_local
+
+queries:
+  monthly_sales: |
+    SELECT
+      month,
+      revenue,
+      region
+    FROM (VALUES
+      ('Jan', 45000, 'North'),
+      ('Feb', 52000, 'North'),
+      ('Mar', 48000, 'North'),
+      ('Apr', 61000, 'North'),
+      ('May', 55000, 'North'),
+      ('Jun', 67000, 'North'),
+      ('Jan', 38000, 'South'),
+      ('Feb', 42000, 'South'),
+      ('Mar', 51000, 'South'),
+      ('Apr', 47000, 'South'),
+      ('May', 59000, 'South'),
+      ('Jun', 63000, 'South')
+    ) AS t(month, revenue, region)
+
+  category_breakdown: |
+    SELECT category, amount FROM (VALUES
+      ('Electronics', 125000),
+      ('Clothing', 89000),
+      ('Food & Beverage', 67000),
+      ('Home & Garden', 54000),
+      ('Sports', 43000)
+    ) AS t(category, amount)
+
+  kpi_data: |
+    SELECT
+      324500 as total_revenue,
+      2847 as total_orders,
+      114.00 as avg_order_value
+
+charts:
+  revenue_trend:
+    title: "Monthly Revenue by Region"
+    type: line
+    query: monthly_sales
+    x: month
+    y: revenue
+    color: region
+
+  category_pie:
+    style:
+      marks:
+        slice:
+          labels:
+            template: "{{ '{:.0%}'.format(percent) }} {{ category }}"
+    title: "Sales by Category"
+    type: pie
+    query: category_breakdown
+    theta: amount
+    color: category
+
+  revenue_bar:
+    title: "Revenue Breakdown"
+    type: bar
+    query: category_breakdown
+    x: category
+    y: amount
+
+  total_revenue:
+    label: "Total Revenue"
+    type: kpi
+    query: kpi_data
+    value: total_revenue
+    style:
+      value:
+        format: currency
+
+  total_orders:
+    label: "Orders"
+    type: kpi
+    query: kpi_data
+    value: total_orders
+    style:
+      value:
+        format: number
+
+  avg_order:
+    label: "Avg Order Value"
+    type: kpi
+    query: kpi_data
+    value: avg_order_value
+    style:
+      value:
+        format: currency
+
+rows:
+  - cols:
+      - total_revenue
+      - total_orders
+      - avg_order
+
+  - cols:
+      - revenue_trend
+      - category_pie
+
+  - revenue_bar

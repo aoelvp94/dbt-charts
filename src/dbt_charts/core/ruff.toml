@@ -1,0 +1,42 @@
+extend = "../../../ruff.toml"
+
+[lint]
+extend-select = ["TID251"]
+
+[lint.flake8-tidy-imports.banned-api]
+"os.getcwd"  = { msg = "dbt_charts/core does not read cwd — pass project_root in." }
+"os.environ" = { msg = "dbt_charts/core does not read env — pass values in at the composition root." }
+"os.getenv"  = { msg = "dbt_charts/core does not read env — pass values in at the composition root." }
+
+# Project-file access goes through Project, never raw Path (core/AGENTS.md).
+# pathlib.Path is the local-filesystem type; PurePosixPath is the sanctioned
+# type for lexical path math (joins, .name/.parent/.suffix, comparison).
+"pathlib.Path" = { msg = "dbt_charts/core does not read/write local disk — use PurePosixPath for lexical math or go through Project. See core/AGENTS.md." }
+
+# Disk mutation/probe/traverse/temp sinks — real filesystem I/O, not lexical math.
+"os.walk"                     = { msg = "dbt_charts/core does not traverse local disk — go through Project.iter_files()." }
+"os.listdir"                  = { msg = "dbt_charts/core does not traverse local disk — go through Project.iter_files()." }
+"os.scandir"                  = { msg = "dbt_charts/core does not traverse local disk — go through Project.iter_files()." }
+"glob.glob"                   = { msg = "dbt_charts/core does not traverse local disk — go through Project.iter_files()." }
+"glob.iglob"                  = { msg = "dbt_charts/core does not traverse local disk — go through Project.iter_files()." }
+"io.open"                     = { msg = "dbt_charts/core does not open local files — go through Project." }
+"codecs.open"                 = { msg = "dbt_charts/core does not open local files — go through Project." }
+"os.stat"                     = { msg = "dbt_charts/core does not probe local disk — go through Project.exists()." }
+"os.access"                   = { msg = "dbt_charts/core does not probe local disk — go through Project.exists()." }
+"os.path.exists"              = { msg = "dbt_charts/core does not probe local disk — go through Project.exists()." }
+"os.path.isfile"              = { msg = "dbt_charts/core does not probe local disk — go through Project.exists()." }
+"os.path.isdir"               = { msg = "dbt_charts/core does not probe local disk — go through Project.exists()." }
+"os.remove"                   = { msg = "dbt_charts/core does not mutate local disk — go through Project." }
+"os.unlink"                   = { msg = "dbt_charts/core does not mutate local disk — go through Project." }
+"os.mkdir"                    = { msg = "dbt_charts/core does not mutate local disk — go through Project." }
+"os.makedirs"                 = { msg = "dbt_charts/core does not mutate local disk — go through Project." }
+"os.rename"                   = { msg = "dbt_charts/core does not mutate local disk — go through Project." }
+"os.replace"                  = { msg = "dbt_charts/core does not mutate local disk — go through Project." }
+"shutil.copy"                 = { msg = "dbt_charts/core does not mutate local disk — go through Project." }
+"shutil.copytree"             = { msg = "dbt_charts/core does not mutate local disk — go through Project." }
+"shutil.move"                 = { msg = "dbt_charts/core does not mutate local disk — go through Project." }
+"shutil.rmtree"               = { msg = "dbt_charts/core does not mutate local disk — go through Project." }
+"tempfile.mkstemp"            = { msg = "dbt_charts/core does not create local temp files/dirs — that's an embedding-host concern." }
+"tempfile.mkdtemp"            = { msg = "dbt_charts/core does not create local temp files/dirs — that's an embedding-host concern." }
+"tempfile.NamedTemporaryFile" = { msg = "dbt_charts/core does not create local temp files/dirs — that's an embedding-host concern." }
+"tempfile.TemporaryDirectory" = { msg = "dbt_charts/core does not create local temp files/dirs — that's an embedding-host concern." }

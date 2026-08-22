@@ -1,0 +1,93 @@
+name: Bug report
+description: Report a problem with dbt-charts or dbt-charts-playground
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Pull requests are not accepted on this repository (see
+        [CONTRIBUTING.md](https://github.com/dbt-labs/dbt-charts/blob/main/CONTRIBUTING.md)), so please include enough
+        detail here for us to reproduce and fix the issue without a
+        follow-up round trip.
+
+  - type: input
+    id: package-version
+    attributes:
+      label: Package and version
+      description: e.g. dbt-charts 0.4.1, dbt-charts-playground 0.1.0
+      placeholder: dbt-charts 0.4.1
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Python version, OS, dbt version/adapter if relevant
+      placeholder: |
+        Python 3.11, macOS 14
+        dbt-core 1.8, dbt-snowflake
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Standalone reproduction (face YAML)
+      description: |
+        dbt-charts is a visual, YAML-driven tool — we can't reproduce a
+        rendering bug without seeing the actual face. Use inline `values:`
+        data instead of a live database connection so this runs with
+        `dct render` on its own, no warehouse access needed. Replace the
+        data/chart below with whatever reproduces the bug.
+      render: yaml
+      value: |
+        queries:
+          revenue_by_month:
+            columns: [month, revenue]
+            values:
+              - [Jan, 100]
+              - [Feb, 140]
+              - [Mar, 180]
+
+        title: Bug repro
+        charts:
+          revenue_chart:
+            query: revenue_by_month
+            type: bar
+            x: month
+            y: revenue
+        rows:
+          - revenue_chart
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-visual
+    attributes:
+      label: Expected vs. actual rendering
+      description: |
+        What should the chart look like, and what does it actually look
+        like? A screenshot or the rendered SVG/HTML output is the fastest
+        way to show this.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: dct output
+      description: |
+        Output of `dct validate` or `dct render` against the YAML above,
+        including any ERR-* / WARN-* diagnostic codes.
+      render: shell
+    validations:
+      required: false

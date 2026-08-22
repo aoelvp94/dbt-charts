@@ -1,0 +1,18 @@
+chart_id: chart1
+chart:
+  type: histogram
+  query: q
+  x: price
+  color: kind
+queries:
+  q:
+    columns: [price, kind]
+    values:
+      - [10, A]
+      - [12, A]
+      - [11, B]
+      - [15, A]
+      - [18, B]
+      - [22, B]
+      - [25, A]
+      - [28, B]

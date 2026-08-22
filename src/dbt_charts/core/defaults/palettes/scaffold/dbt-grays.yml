@@ -1,0 +1,61 @@
+# Scaffold palette — dbt-grays (neutral gray UI chrome)
+#
+# Scaffolds are UI structural framing, NOT data encoding. They live in
+# their own directory to make the taxonomy honest:
+#   palettes/sequential/  — data, ordered magnitude
+#   palettes/diverging/   — data, signed/around midpoint
+#   palettes/categorical/ — data, unordered categories
+#   palettes/scaffold/    — UI structure (canvas/borders/text/stripes)
+#   palettes/tone/        — UI roles (info/negative/warning/positive)
+#
+# Theme role: chrome. Address form: chrome.ink, chrome.canvas, etc.
+
+name: dbt-grays
+description: |
+  Neutral gray scaffold — UI chrome. Twelve named steps from
+  near-white (canvas) to near-black (void). Applied to canvas backgrounds,
+  borders, dividers, axis labels, table stripes, and secondary text.
+  Pairs with dbt-creams for warm-canvas themes. The darkest step, void, is
+  the near-black canvas for dark themes (neon), one tier below ink.
+
+colors:
+  - "#FAFAFA"    # 1  canvas
+  - "#F7F8FA"    # 2  surface-subtle
+  - "#EDEFF2"    # 3  grid
+  - "#DFE1E5"    # 4  border
+  - "#D0D3D9"    # 5  grid-emphasis
+  - "#B0B2B8"    # 6  disabled
+  - "#8A8C8F"    # 7  subtitle
+  - "#626366"    # 8  muted
+  - "#494A4C"    # 9  inactive
+  - "#313233"    # 10 heading
+  - "#222222"    # 11 ink
+  - "#161616"    # 12 void  (dark-theme canvas; neutral near-black, not #000000)
+
+aliases:
+  # UI ladder aliases — use these in new authoring
+  canvas: 1
+  surface-subtle: 2
+  grid: 3
+  border: 4
+  grid-emphasis: 5
+  disabled: 6
+  subtitle: 7
+  muted: 8
+  inactive: 9
+  heading: 10
+  ink: 11
+  void: 12
+
+  # Pure endpoints — the two essential colors, named so themes never reach
+  # for raw hex. Distinct from void (#161616) / ink (#222222), which are
+  # neutral near-blacks; black is the true #000000 endpoint.
+  white: "#FFFFFF"
+  black: "#000000"
+
+  # Extended UI aliases — terminal hex (themes themselves contain no hex)
+  fill-muted: "#e5e7eb"
+  separator: "#e0e0e0"
+  spark-empty: "#d1d5db"
+  accent: "#3b82f6"
+  placeholder: "#666666"

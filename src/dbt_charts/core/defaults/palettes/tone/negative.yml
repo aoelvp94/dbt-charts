@@ -1,0 +1,32 @@
+# Tone palette — negative
+#
+# Six named role slots. No LUT, no interpolation.
+# Users reference slots directly: negative.solid, negative.text, etc.
+
+name: negative
+description: |
+  Critical errors, destructive actions, negative/loss states.
+  Western learned color convention: red = stop/bad/attention.
+  Session 4 of M2 palette design.
+
+design_notes: |
+  H=22° warm red (shifted slightly from pure red H=15° so light bg/subtle
+  slots read as warm-peach rather than pink). L=0.42 for solid — balanced
+  against positive.solid for CVD ΔE discipline (see r8_validation below).
+  All 6 slots designed so canonical pairs (text-on-bg, solid-on-white) pass
+  WCAG AA. Must be paired with icon + label; color alone is insufficient.
+
+aliases:
+  bg:           "#ffedec"    # very light peach tint for surface backgrounds
+  subtle:       "#ffdbd8"    # hover-on-bg or secondary fill
+  border:       "#e79491"    # mid-tone divider / outline
+  solid:        "#94001e"    # canonical "this is negative" fill
+  solid-hover:  "#6e0014"    # darker variant for button hover state
+  text:         "#4b000a"    # AA-contrast text color on .bg and on white
+
+r8_validation:
+  pair: "negative.solid ↔ positive.solid"
+  cvd_pass: true
+  note: |
+    ΔE under deut/prot/trit all pass R8 threshold. CVD checker is the
+    practical test; ΔL is the proxy. Ship with color + icon + label.

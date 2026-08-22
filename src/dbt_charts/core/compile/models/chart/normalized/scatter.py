@@ -1,0 +1,26 @@
+"""Normalized scatter chart."""
+
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import Field
+
+from dbt_charts.core.compile.models.chart.authored._layer import CartesianLayer
+from dbt_charts.core.compile.models.style.authored import ScatterChartStylePatch
+
+from ._base import _CartesianChartFields
+
+
+class ScatterChart(_CartesianChartFields):
+    """Normalized scatter chart."""
+
+    type: Literal["scatter"]
+    size: str | None = Field(default=None, description="Field mapped to point size.")
+    shape: str | None = Field(default=None, description="Field mapped to point shape.")
+    style: ScatterChartStylePatch | None = Field(
+        default=None, description="Chart-local style overrides."
+    )
+    layers: list[CartesianLayer] = Field(
+        default_factory=list, description="Typed overlay layers on this chart."
+    )

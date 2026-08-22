@@ -1,0 +1,185 @@
+# Categorical Column Profile Template
+#
+# Analysis of a categorical column with low cardinality. Schema panel
+# pulls from the LayeredSchemaResolver; live aggregations stay on
+# warehouse SQL.
+#
+# URL: /inspect/categorical_column/?model=<table>&column=<col>
+#
+# Required variables:
+#   - model: Table/model name
+#   - column: Column name to analyze
+
+title: "Categorical: {{ model }}.{{ column }}"
+
+text: |
+  [Back to {{ model }}](/inspect/model/?model={{ model }}&source_name={{ source_name }})
+
+variables:
+  model:
+    input: text
+    visible: false
+    default: ""
+  column:
+    input: text
+    visible: false
+    default: ""
+  source_name:
+    input: text
+    visible: false
+    default: ""
+  schema_name:
+    input: text
+    visible: false
+    default: ""
+
+queries:
+  column_schema:
+    type: schema
+    source: "{{ source_name }}"
+    schema: "{{ schema_name }}"
+    table: "{{ model }}"
+    column: "{{ column }}"
+
+  # Basic category stats
+  stats:
+    source: "{{ source_name }}"
+    sql: |
+      SELECT
+        COUNT(*) as total_count,
+        COUNT({{ column }}) as non_null_count,
+        COUNT(*) - COUNT({{ column }}) as null_count,
+        ROUND(100.0 * (COUNT(*) - COUNT({{ column }})) / COUNT(*), 2) as null_pct,
+        COUNT(DISTINCT {{ column }}) as category_count
+      FROM {{ model }}
+
+  # Category distribution
+  categories:
+    source: "{{ source_name }}"
+    sql: |
+      SELECT
+        COALESCE(CAST({{ column }} AS VARCHAR), '(null)') as category,
+        COUNT(*) as count,
+        ROUND(100.0 * COUNT(*) / (SELECT COUNT(*) FROM {{ model }}), 2) as pct
+      FROM {{ model }}
+      GROUP BY {{ column }}
+      ORDER BY COUNT(*) DESC
+
+  # Category distribution for pie chart (top 10 + other)
+  categories_pie:
+    source: "{{ source_name }}"
+    sql: |
+      WITH ranked AS (
+        SELECT
+          COALESCE(CAST({{ column }} AS VARCHAR), '(null)') as category,
+          COUNT(*) as count,
+          ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) as rn
+        FROM {{ model }}
+        GROUP BY {{ column }}
+      )
+      SELECT
+        CASE WHEN rn <= 10 THEN category ELSE 'Other' END as category,
+        SUM(count) as count
+      FROM ranked
+      GROUP BY CASE WHEN rn <= 10 THEN category ELSE 'Other' END
+      ORDER BY SUM(count) DESC
+
+charts:
+  schema_panel:
+    title: Schema
+    type: table
+    query: column_schema
+    style:
+      columns:
+        name:
+          label: Column
+        actual_type:
+          label: Type
+        role:
+          label: Role
+        semantic_type:
+          label: Semantic
+        description:
+          label: Description
+
+  # Stats KPIs
+  total:
+    label: Total Records
+    type: kpi
+    query: stats
+    value: total_count
+    style:
+      value:
+        format: ",.0f"
+
+  categories:
+    label: Categories
+    type: kpi
+    query: stats
+    value: category_count
+    style:
+      value:
+        format: ",.0f"
+
+  null_pct:
+    label: "Null %"
+    type: kpi
+    query: stats
+    value: null_pct
+    style:
+      value:
+        format: ".1f"
+
+  # Pie chart
+  pie_chart:
+    title: Category Distribution
+    type: pie
+    query: categories_pie
+    theta: count
+    color: category
+
+  # Spark bar (compact distribution for profiler cards)
+  spark_bar_chart:
+    title: Distribution
+    type: spark_bar
+    query: categories
+    x: count
+    y: category
+
+  # Bar chart
+  bar_chart:
+    title: Category Counts
+    type: bar
+    query: categories
+    x: category
+    y: count
+    style:
+      orientation: horizontal
+
+  # Category table
+  category_table:
+    title: All Categories
+    type: table
+    query: categories
+    style:
+      columns:
+        category:
+          label: Category
+        count:
+          label: Count
+          format: ",.0f"
+        pct:
+          label: "%"
+          format: ".1f"
+
+rows:
+  - schema_panel
+  - cols:
+      - total
+      - categories
+      - null_pct
+  - cols:
+      - pie_chart
+      - spark_bar_chart
+  - bar_chart
+  - category_table

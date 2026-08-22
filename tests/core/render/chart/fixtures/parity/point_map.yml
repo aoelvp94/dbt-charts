@@ -1,0 +1,13 @@
+chart_id: chart1
+chart:
+  type: point_map
+  query: q
+  latitude: lat
+  longitude: lon
+queries:
+  q:
+    columns: [name, lat, lon]
+    values:
+      - [NYC, 40.7, -74.0]
+      - [LA, 34.0, -118.2]
+      - [CHI, 41.8, -87.6]

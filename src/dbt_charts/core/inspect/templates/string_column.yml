@@ -1,0 +1,252 @@
+# String Column Profile Template
+#
+# Analysis of a string/text column. Schema panel pulls from the
+# LayeredSchemaResolver; live aggregations stay on warehouse SQL.
+#
+# URL: /inspect/string_column/?model=<table>&column=<col>
+#
+# Required variables:
+#   - model: Table/model name
+#   - column: Column name to analyze
+
+title: "String Column: {{ model }}.{{ column }}"
+
+text: |
+  [Back to {{ model }}](/inspect/model/?model={{ model }}&source_name={{ source_name }})
+
+variables:
+  model:
+    input: text
+    visible: false
+    default: ""
+  column:
+    input: text
+    visible: false
+    default: ""
+  source_name:
+    input: text
+    visible: false
+    default: ""
+  schema_name:
+    input: text
+    visible: false
+    default: ""
+
+queries:
+  column_schema:
+    type: schema
+    source: "{{ source_name }}"
+    schema: "{{ schema_name }}"
+    table: "{{ model }}"
+    column: "{{ column }}"
+
+  # Basic string stats
+  stats:
+    source: "{{ source_name }}"
+    sql: |
+      SELECT
+        COUNT(*) as total_count,
+        COUNT({{ column }}) as non_null_count,
+        COUNT(*) - COUNT({{ column }}) as null_count,
+        ROUND(100.0 * (COUNT(*) - COUNT({{ column }})) / COUNT(*), 2) as null_pct,
+        COUNT(DISTINCT {{ column }}) as distinct_count,
+        COUNT(CASE WHEN TRIM({{ column }}) = '' THEN 1 END) as empty_count,
+        MIN(LENGTH({{ column }})) as min_length,
+        MAX(LENGTH({{ column }})) as max_length,
+        ROUND(AVG(LENGTH({{ column }})), 1) as avg_length
+      FROM {{ model }}
+
+  # Top values by frequency
+  top_values:
+    source: "{{ source_name }}"
+    sql: |
+      SELECT
+        COALESCE({{ column }}, '(null)') as value,
+        COUNT(*) as count,
+        ROUND(100.0 * COUNT(*) / (SELECT COUNT(*) FROM {{ model }}), 2) as pct
+      FROM {{ model }}
+      GROUP BY {{ column }}
+      ORDER BY COUNT(*) DESC
+      LIMIT 20
+
+  # Length distribution
+  length_distribution:
+    source: "{{ source_name }}"
+    sql: |
+      SELECT
+        LENGTH({{ column }}) as length,
+        COUNT(*) as count
+      FROM {{ model }}
+      WHERE {{ column }} IS NOT NULL
+      GROUP BY LENGTH({{ column }})
+      ORDER BY length
+
+  # Pattern analysis (first character distribution)
+  first_char:
+    source: "{{ source_name }}"
+    sql: |
+      SELECT
+        UPPER(SUBSTRING({{ column }}, 1, 1)) as first_char,
+        COUNT(*) as count
+      FROM {{ model }}
+      WHERE {{ column }} IS NOT NULL AND LENGTH({{ column }}) > 0
+      GROUP BY UPPER(SUBSTRING({{ column }}, 1, 1))
+      ORDER BY COUNT(*) DESC
+      LIMIT 26
+
+  # Sample values
+  samples:
+    source: "{{ source_name }}"
+    sql: |
+      SELECT DISTINCT {{ column }} as value
+      FROM {{ model }}
+      WHERE {{ column }} IS NOT NULL
+      LIMIT 20
+
+charts:
+  schema_panel:
+    title: Schema
+    type: table
+    query: column_schema
+    style:
+      columns:
+        name:
+          label: Column
+        actual_type:
+          label: Type
+        role:
+          label: Role
+        semantic_type:
+          label: Semantic
+        description:
+          label: Description
+
+  # Stats KPIs
+  distinct:
+    label: Distinct Values
+    type: kpi
+    query: stats
+    value: distinct_count
+    style:
+      value:
+        format: ",.0f"
+
+  null_pct:
+    label: "Null %"
+    type: kpi
+    query: stats
+    value: null_pct
+    style:
+      value:
+        format: ".1f"
+
+  empty_count:
+    label: Empty Strings
+    type: kpi
+    query: stats
+    value: empty_count
+    style:
+      value:
+        format: ",.0f"
+
+  min_len:
+    label: Min Length
+    type: kpi
+    query: stats
+    value: min_length
+    style:
+      value:
+        format: ",.0f"
+
+  max_len:
+    label: Max Length
+    type: kpi
+    query: stats
+    value: max_length
+    style:
+      value:
+        format: ",.0f"
+
+  avg_len:
+    label: Avg Length
+    type: kpi
+    query: stats
+    value: avg_length
+    style:
+      value:
+        format: ".1f"
+
+  # Spark bar (compact top values for profiler cards)
+  top_values_spark:
+    title: Top Values
+    type: spark_bar
+    query: top_values
+    x: count
+    y: value
+
+  # Top values chart (full-size)
+  top_values_chart:
+    title: Top Values (Full)
+    type: bar
+    query: top_values
+    x: value
+    y: count
+    style:
+      orientation: horizontal
+
+  # Top values table
+  top_values_table:
+    title: Value Frequency
+    type: table
+    query: top_values
+    style:
+      columns:
+        value:
+          label: Value
+        count:
+          label: Count
+          format: ",.0f"
+        pct:
+          label: "%"
+          format: ".1f"
+
+  # Length distribution
+  length_chart:
+    title: Length Distribution
+    type: bar
+    query: length_distribution
+    x: length
+    y: count
+    x_label: String Length
+    y_label: Count
+
+  # First character distribution
+  first_char_chart:
+    title: First Character
+    type: bar
+    query: first_char
+    x: first_char
+    y: count
+
+  # Sample values
+  samples_table:
+    title: Sample Values
+    type: table
+    query: samples
+
+rows:
+  - schema_panel
+  - cols:
+      - distinct
+      - null_pct
+      - empty_count
+      - min_len
+      - max_len
+      - avg_len
+  - cols:
+      - top_values_spark
+      - top_values_table
+  - cols:
+      - length_chart
+      - first_char_chart
+  - samples_table

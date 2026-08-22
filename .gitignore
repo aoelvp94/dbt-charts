@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+.uv-cache/
+uv.lock.bak
+.DS_Store
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+# just demo's scratch project (justfile's demo_dir)
+.demo/
+.mypy_cache/

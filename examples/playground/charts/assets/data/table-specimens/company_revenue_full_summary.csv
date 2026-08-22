@@ -1,0 +1,10 @@
+company,quarterly_revenue,growth_rate,margin,revenue_share,row_role
+Apex Technologies,24730000,0.125,0.382,0.128,value
+Bright Solutions,8460000,0.089,0.296,0.044,value
+Cascade Systems,41290000,-0.023,0.410,0.213,value
+Delta Analytics,3890000,0.216,0.185,0.020,value
+Echo Networks,67120000,0.057,0.329,0.347,value
+Focal Point Inc,12550000,-0.081,0.257,0.065,value
+Granite Data,29850000,0.163,0.371,0.154,value
+Horizon Labs,5630000,0.304,0.192,0.029,value
+Total,193520000,0.1063,0.3028,1.000,total

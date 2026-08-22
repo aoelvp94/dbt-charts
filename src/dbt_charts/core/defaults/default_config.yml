@@ -1,0 +1,294 @@
+# Default Dataface Configuration
+# ==============================
+#
+# STRUCTURE:
+#   [everything here] Engine internals — not per-board authorable
+#
+# All visual/authorable config (style, theme, board layout) belongs in the
+# Board cascade via charts/meta.yaml — NOT here. A stray style:/theme: key
+# in dbt_charts.yml raises a ValidationError pointing at charts/meta.yaml.
+# See: themes/stark.yaml for the structural root style; themes/editorial.yaml
+# is the shipped default.
+
+
+# ============================================================================
+# EXPORT
+# ============================================================================
+# public_url: canonical origin prepended to links in dct render exports.
+# Set this to your deployment URL (e.g. "https://dashboards.example.com") so
+# exported HTML/SVG/PDF files carry fully-qualified links that open standalone.
+# Leave empty (the default) for local use — links stay root-relative.
+
+public_url: ""
+
+# ============================================================================
+# VEGA-LITE
+# ============================================================================
+# Engine internals for the Vega-Lite output channel. The schema URL is a
+# Python constant (dbt_charts.core.compile.vega_lite.VEGA_LITE_SCHEMA_URL) —
+# bumping it requires code changes, so it is not authorable here.
+# Presentation fields (default_theme, default_palette) have moved to the
+# Board/style cascade.
+
+vega:
+  config: {}
+
+
+# ============================================================================
+# QUERY-RESULT CACHE
+# ============================================================================
+# The cascade root that every source, board, and query inherits (field-by-
+# field, nearest scope wins). There is no separate backend switch: the store is
+# provisioned lazily when any resolved query policy is enabled. Omitting `path`
+# = ephemeral in-memory cache auto-provisioned by the engine; setting it
+# (`cache: {path: .dft-cache.duckdb}` in dbt_charts.yml) selects a persistent
+# cache file, created if absent.
+#
+# Written as a block, not the `cache: 24h` scalar every other scope prefers,
+# because this is the one layer a project merges *into* rather than over:
+# `deep_merge_dict` recurses only where both sides are mappings, so a scalar
+# here would be replaced wholesale by a project `cache: {path: ...}` — silently
+# dropping the ttl and caching forever. A project scalar (`cache: 12h`,
+# `cache: false`) still replaces this block outright, which is what it means.
+#
+# The 24h default ttl is a lazy backstop: cost scales with post-expiry reads,
+# and it matches the daily-pipeline reality — dashboards needing tighter
+# freshness override per source/board/query. ttl uses short-duration strings
+# (s/m/h/d/w, m = minutes, compound like 1h30m) or the keyword `forever`.
+
+cache:
+  ttl: 24h
+
+
+# ============================================================================
+# EXECUTION
+# ============================================================================
+# Controls query execution parallelism. DuckDB-backed projects serialize
+# access via an internal lock, so raising max_workers only helps external
+# warehouse executors (BigQuery, Snowflake, etc.).
+#
+# max_query_duration_seconds is a safety ceiling on a single query's run time,
+# enforced as a server-side statement timeout on network warehouses (DuckDB/
+# SQLite have no server to enforce it). Shipped generous — comfortably above
+# normal query times, well below the gunicorn request-worker backstop.
+# Override per source with sources.<name>.max_query_duration_seconds.
+
+execution:
+  max_workers: 8
+  max_query_duration_seconds: 120
+  # Hard cap on matched files per glob pattern in file sources. Prevents
+  # runaway fan-out when a wildcard accidentally matches thousands of files.
+  # Override in dbt_charts.yml under execution.max_glob_file_count.
+  max_glob_file_count: 1000
+  # Safety ceiling on rows returned by a single query. Exceeding it truncates
+  # the result (with a warning), it never fails the query. Override in
+  # dbt_charts.yml under execution.max_rows.
+  max_rows: 1000000
+  # Safety ceiling on the serialized byte size of a single query result (50MB).
+  # Exceeding it truncates the result (with a warning), it never fails the
+  # query. Override in dbt_charts.yml under execution.max_result_bytes.
+  max_result_bytes: 52428800
+  dialect_aliases:
+    sqlserver: tsql
+    mssql: tsql
+    mariadb: mysql
+
+
+# Project ceiling for board html_policy.  DCT_HTML_POLICY_CEILING env var
+# overrides this and cannot be raised by any project or board setting.
+# Default (trusted-raw) is permissive — no ceiling — for local development.
+# Cloud hard-pins DCT_HTML_POLICY_CEILING=safe-subset at the deployment level.
+html_policy_ceiling: trusted-raw
+
+
+# ============================================================================
+# SERVER
+# ============================================================================
+# Serve-only runtime controls. Project-level dbt_charts.yml may override these
+# under the same server: namespace.
+
+server:
+  debug: true
+  nav: true
+  port: null
+  markdown_metadata_table: false
+
+
+# ============================================================================
+# CHART RENDERING CONSTANTS
+# ============================================================================
+# Algorithm constants for chart layout. Not per-board authorable — these
+# control axis label sizing, tooltip formatting, and rendering heuristics.
+# Note: preferred_width lives at style.charts.preferred_width in the theme cascade.
+
+chart_rendering:
+  axis:
+    label_gap_spaces: 1
+    label_gap_spaces_numeric: 2
+  kpi:
+    # Spacing between value baseline and the title block. Title and support
+    # form a fixed 3-line block at one consistent rhythm — see
+    # ``_resolve_kpi_layout`` in ``core/render/chart/kpi.py``. Inner edge
+    # padding (top/bottom/left/right) all derive from
+    # ``style.charts.kpi.content_padding`` for a unified inset.
+    minimum_title_value_gap: 14.0
+  spark_bar:
+    title_height: 24.0
+    title_baseline_y: 16.0
+    more_rows_font_size: 10.0
+    more_rows_offset_y: 12.0
+    more_rows_bottom_padding: 8.0
+    text_baseline_offset: 4.0
+    side_padding: 4.0
+    avg_char_width_px: 7.0
+  step_band:
+    # Fraction of the full band width the xOffset range insets to when a
+    # band-aware `curve: step` is disconnected (`connect: false`), so adjacent
+    # plateaus at a similar y don't optically weld into one bar. Connected
+    # lines/area keep the full [0, bandwidth('x')] range. See
+    # render/chart/step_band.py:apply_step_band.
+    disconnected_width: 0.9
+  endpoint_labels:
+    # Largest share of the chart's slot the right-hand series-label rail may
+    # claim. Series names measuring wider are ellipsized by Vega at the pane's
+    # mark limit — uncapped, a long name makes the rail wider than the whole
+    # canvas and the concat overshoot correction has no width left to give.
+    max_width_fraction: 0.33
+    # Target separation between adjacent endpoint labels, as a multiple of the
+    # label font size. 1.3: bounding rects kiss at 1.0x but descenders touch
+    # caps; 1.3 reads cleanly. A rendering constant, not a theme value — it does
+    # not vary by theme and never differed per width tier, so it lives here with
+    # max_width_fraction rather than on the authored style surface.
+    line_height_multiplier: 1.3
+  facet:
+    # Small-multiples per-panel sizing. vl-convert does not reflow facet panels
+    # under autosize:fit, so the render bridge divides the slot into per-panel
+    # dimensions itself (see render/chart/vega_lite.py _apply_facet_layout).
+    # chrome_px reserves a gutter for the left row-header label plus the measure
+    # axis; min_panel_px is the per-panel width below which
+    # WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM fires — it is advisory, not a floor,
+    # because the card boundary always wins and panels shrink past it rather
+    # than paint outside the card; mirror_axis_px is the extra right-edge gutter when the measure
+    # axis is mirrored to the far edge (both-edge grid) so it is not clipped.
+    chrome_px: 120.0
+    min_panel_px: 120.0
+    mirror_axis_px: 80.0
+  stroke:
+    # Density-adaptive line/area stroke clamp bounds (compile/resolve/
+    # adaptive_stroke.py). min_width is the hairline floor below which a dense
+    # line stops reading as a trace; max_width is the ceiling above which a
+    # sparse line dominates the data it draws. Calibrated against the density
+    # lab — retune by re-running that calibration, not casually.
+    min_width: 1.5
+    max_width: 4.0
+  pie:
+    # Wedges with share at or below this value get no direct label — the wedge
+    # still renders, hover tooltip carries the value. 8% is the observed danger
+    # floor: 5-6% wedges next to each other vertically stack their labels at
+    # near-cardinal angles; 8% gives an honest buffer.
+    wedge_label_min_share: 0.08
+    # Wedges below this share are physically unreliable: arc gap/stroke can
+    # erase the colored sliver, leaving the source row with no visible mark or
+    # hover target.
+    invisible_slice_share: 0.02
+    # Below this fraction of the label-free disk, direct labels are starving
+    # the wheel badly enough to prefer the table. Locked against the
+    # calibration sweep (see the wheel-first-pie-donut-labeling initiative).
+    wheel_dominance_min_ratio: 0.6
+    # Calibration and composition constants shared by final pie resolution
+    # and the mechanical SVG/Vega emitters.
+    label_reach_coefficient: 0.85
+    outer_fraction: 0.9
+    attached_table_gap_px: 12.0
+    hybrid_heading_gap_px: 6.0
+    # Placement thresholds (right-of-wheel vs below): the table goes to the
+    # RIGHT when the wheel region left over after reserving the table's
+    # measured width stays comfortably dominant — at least this fraction of
+    # the card width, AND at least this many px absolute (guards tiny-but-
+    # proportionally-fine regions on very narrow cards). Otherwise "below".
+    right_placement_min_width_fraction: 0.5
+    right_placement_min_width_px: 280.0
+    # Right-placement wheel diameter cap: without it, a very wide card leaves
+    # an oversized wheel region, inflating the donut and stranding the table
+    # way out at the card's far edge. Comfortable-viewing ceiling.
+    right_placement_max_wheel_px: 480.0
+  bar:
+    # Band-scale padding for grouped bars (xOffset mode). paddingInner = gap
+    # between groups; paddingOuter = margin at both plot edges. Set by
+    # apply_grouped_bar_spacing on the outer categorical axis scale.
+    grouped_bar_padding_inner: 0.2
+    grouped_bar_padding_outer: 0.2
+    # Estimated legend-row and title+padding chrome height, used to decide
+    # whether a stacked bar's legend must yield to the plot (see
+    # _stack_legend_should_yield in compile/resolve/chart/bar.py). Vega-Lite divides
+    # a card's total height between the legend and the plot; past some entry
+    # count the legend's demand leaves nothing for the marks to draw into
+    # (ERR-CHART-PAINTED-NO-MARKS). Row count divides entries across the
+    # legend's compact_columns, since the legend that actually renders at the
+    # tiny width tier is multi-column.
+    #
+    # Calibrated by binary-searching the true collapse height directly (available
+    # card height, independent of the width-derived aspect-ratio estimate — a
+    # sweep over width conflates two nonlinear functions: aspect_ratio_height's
+    # own min-height clamp, and this row math), at row counts 6-10 (12/13-14/
+    # 15-16/17-18/19-20 series): required height was 143/159/175/191/207px, an
+    # exact 16.0px/row fit with 47.0px fixed chrome. Verified width-independent
+    # (150/200/450px card widths reproduce the same per-row thresholds where the
+    # legend is top/compact) and against a 253-case sweep (widths 150-380px,
+    # series 3-25) with zero false negatives — every real collapse the old
+    # 18.5/20.0 constants missed (13-14 series at width <= 232px, 15-18 at
+    # 250-282px) is now caught. A card's own title/subtitle chrome (drawn inside
+    # the same Vega-Lite height budget) further tightens this in a titled chart;
+    # left unaccounted for here — see the task's Decision section.
+    stack_legend_row_height_px: 16.0
+    stack_legend_chrome_height_px: 47.0
+    hover_band_trigger_fraction: 0.02
+    hover_band_extend_fraction: 0.05
+    # Vertical room one value label needs inside its bar segment, as a multiple
+    # of the label font size. 1.15: the glyph box plus enough air that a label
+    # kept at the threshold still reads as inside its band rather than welded to
+    # the segment boundary. The fit test that uses it is deliberately
+    # conservative (it bounds the segment against the whole slot height, not the
+    # smaller plot rectangle), so this only ever governs labels that provably
+    # cannot fit.
+    label_fit_line_height_multiplier: 1.15
+  type_inference:
+    # Maximum ordinal bucket count before treating temporal data as continuous.
+    # An ordinal bar chart becomes an indistinguishable comb of gridlines well
+    # before decades of buckets pile up. 60 buckets (5 years of monthly ticks)
+    # is the point where individual bars stop being resolvable at typical chart
+    # widths — past it, fall back to a continuous temporal scale and let
+    # Vega-Lite pick its own sparse "nice" ticks.
+    max_ordinal_buckets: 60
+  frame:
+    # Vertical gap between the page footer text and the hairline rule above it.
+    # Used by both the height-reservation math and the rule-position math so
+    # the two never drift.
+    footer_rule_gap_px: 2
+    # Horizontal gap between footer-baseline timestamp and footer attribution
+    # text.
+    footer_timestamp_gap_px: 12
+  data_table:
+    # Vertical gap between divider rule and first row of the attached data
+    # table strip.
+    divider_gap: 4.0
+    # For temporal/quantitative x axes with more than this many ticks,
+    # sample every Nth column so the header row stays legible.
+    chart_data_table_max_x_ticks: 40
+  gradient:
+    # Nice-tick target count for a data-derived gradient legend domain
+    # (heatmap's themed color scale — geoshape never reaches this, since
+    # its domain is read back client-side), matching the example in
+    # nice_tick_values's own docstring. Axis ticks don't hardcode a
+    # convention (ay.ticks.count is author-set, default None = no baked
+    # ticks) — this constant is specific to the gradient-legend seam.
+    nice_tick_count: 6
+
+
+# ============================================================================
+# RENDERING / EXPORT DEFAULTS
+# ============================================================================
+
+rendering:
+  png:
+    scale: 1.0

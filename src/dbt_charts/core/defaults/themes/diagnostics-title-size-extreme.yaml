@@ -1,0 +1,24 @@
+# Unified theme: diagnostics-title-size-extreme
+
+extends: stark
+style:
+  charts:
+    axis:
+      labels:
+        font:
+          color: dbt-grays.muted
+      title:
+        font:
+          color: dbt-grays.heading
+    legend:
+      label:
+        font:
+          color: dbt-grays.muted
+      title:
+        font:
+          color: dbt-grays.heading
+  title:
+    font:
+      color: dbt-grays.ink
+      weight: 400
+      size: 22

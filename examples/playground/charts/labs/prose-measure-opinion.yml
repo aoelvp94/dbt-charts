@@ -1,0 +1,203 @@
+title: "Prose measure — one opinion, applied at every width"
+description: >
+  The renderer now decides column count and column width together, from the measure.
+  Every specimen states what it should deliver, so the render can be judged without
+  reading chat. The target is 66 characters in multiple columns and up to 80 in one;
+  45 is the floor.
+source: examples_db
+
+rows:
+  - text: |
+      ## The rule being demonstrated
+
+      **Measure fixes the column width. The amount of text only fixes the count.**
+
+      Bringhurst gives 66 characters as the ideal measure and 45–75 as satisfactory;
+      WCAG 1.4.8 caps line length at 80. Multiple columns aim at 66 — they exist
+      because there is a lot of text, and the cost of a long measure is the return
+      sweep, which accumulates with depth. A passage held to one column makes few
+      sweeps, so it may run to 80 and keep more of the slot.
+
+      Where no whole number of columns is readable, the measure wins and the slot
+      keeps the remainder as white space.
+
+  - text: |
+      ### A · Three short passages, full-width slot
+
+      **EXPECT:** each stays in a **single narrow column** with white space to the
+      right — *not* stretched to the full 1128-unit card, which is 172 characters.
+      Compare against this very paragraph, which is uncolumned and therefore
+      uncapped: it runs the full width. Length is no excuse for line length.
+
+      Delivered below: **62, 67 and 79 characters** — all inside the 80 ceiling.
+
+  - style:
+      background: "#fbfbfa"
+      text:
+        column:
+          max_number: 3
+    text: |
+      Revenue grew 12% against a plan of 9%, carried almost entirely by renewals.
+
+  - style:
+      background: "#fbfbfa"
+      text:
+        column:
+          max_number: 3
+    text: |
+      Net retention held at 114%, unchanged from the prior quarter. Gross churn rose
+      slightly in the mid-market segment.
+
+  - style:
+      background: "#fbfbfa"
+      text:
+        column:
+          max_number: 3
+    text: |
+      Two of the four regions missed plan. Both misses trace to pipeline created in
+      the prior quarter rather than to close rates in this one, so the recovery is a
+      two-quarter problem, not a one-quarter one.
+
+  - text: |
+      ### B · The same passage, long enough to fill columns
+
+      **EXPECT:** three columns, each landing at **54 characters** — inside the band.
+      Watch the paragraph flow *continuously* across the boundary, and check that no
+      paragraph leaves a single line stranded at a column bottom or carries a lone
+      last line to the next column top. Column heights are non-increasing: the
+      leftover goes in the earlier column, never the later one.
+
+  - style:
+      background: "#fbfbfa"
+      text:
+        column:
+          max_number: 3
+          rule:
+            width: 1
+            color: "#e4e2dd"
+    text: |
+      North America's primary issue is insufficient MQL supply, not a regional Stage 0
+      target miss or a broad loss of selling capacity. Event sources explain most of the
+      decline, while target-aligned Stage 0 remained above target and the funnel table
+      stays the single source for the period-over-period counts.
+
+      Paid search held its conversion rate within a point of plan across the quarter, so
+      the shortfall is concentrated upstream rather than in the closing motion. Field
+      events, which carried roughly a third of pipeline a year ago, produced materially
+      fewer registrations and a lower show rate against a comparable invitation list.
+
+      Capacity does not explain the Stage 0 decline either. Productive selling capacity
+      was flat period over period, and the small movements in mapped and fully ramped
+      reps are far smaller than the decline in Stage 0 creation they would have to
+      account for.
+
+      The recommendation is to rebalance spend toward the two channels that held their
+      rate, and to hold headcount flat until Stage 0 recovers for two consecutive
+      months rather than one.
+
+  - text: |
+      ### B2 · The same card, held to two columns
+
+      **EXPECT:** two columns of **62 characters**, with roughly 280 units of white
+      space left at the right edge. Two columns filling this card would be 89
+      characters — past the ceiling — so the measure wins and the slot keeps the
+      remainder. This is the rule doing something visible: it declines to fill.
+
+  - style:
+      background: "#fbfbfa"
+      text:
+        column:
+          max_number: 2
+          rule:
+            width: 1
+            color: "#e4e2dd"
+    text: |
+      North America's primary issue is insufficient MQL supply, not a regional Stage 0
+      target miss or a broad loss of selling capacity. Event sources explain most of the
+      decline, while target-aligned Stage 0 remained above target and the funnel table
+      stays the single source for the period-over-period counts.
+
+      Paid search held its conversion rate within a point of plan across the quarter, so
+      the shortfall is concentrated upstream rather than in the closing motion. Field
+      events, which carried roughly a third of pipeline a year ago, produced materially
+      fewer registrations and a lower show rate against a comparable invitation list.
+
+      The recommendation is to rebalance spend toward the two channels that held their
+      rate, and to hold headcount flat until Stage 0 recovers for two consecutive
+      months rather than one.
+
+  - text: |
+      ### C · Narrower slots, same opinion
+
+      **EXPECT:** both cards are **564 units**. Two columns there would be 43
+      characters — below the 45 floor — so each sets **one column of 74 characters**
+      instead. The count drops, the measure stays in band, and neither card stretches
+      a line to fill the space.
+
+  - cols:
+      - style:
+          background: "#fbfbfa"
+          text:
+            column:
+              max_number: 3
+              rule:
+                width: 1
+                color: "#e4e2dd"
+        text: |
+          **564 units → 1 column, 74 characters.** Two columns here would be 43
+          characters each — under the floor — so the renderer declines to set them.
+
+          Paid search held its conversion rate within a point of plan across the quarter,
+          so the shortfall is concentrated upstream rather than in the closing motion.
+          Field events produced materially fewer registrations and a lower show rate.
+
+          The recommendation is to rebalance spend toward the channels that held rate.
+      - style:
+          background: "#fbfbfa"
+          text:
+            column:
+              max_number: 3
+        text: |
+          **564 units → 1 column, 74 characters.** The same verdict as its neighbour,
+          reached the same way. A single column may run to 80; this text lands at 74.
+
+          Paid search held its conversion rate within a point of plan across the quarter,
+          so the shortfall is concentrated upstream rather than in the closing motion.
+          Field events produced materially fewer registrations and a lower show rate.
+
+  - text: |
+      ### D · The author overriding the opinion
+
+      **EXPECT:** both cards ignore the shipped 66 and use the width the author asked
+      for. `max_chars` is a measure, not a hint — the count follows from it.
+
+  - cols:
+      - style:
+          background: "#fbfbfa"
+          text:
+            column:
+              max_chars: 38
+              rule:
+                width: 1
+                color: "#e4e2dd"
+        text: |
+          **`max_chars: 38`** — deliberately tight. The author's measure is used exactly
+          and the count follows from it, so this card sets **two columns of 37
+          characters**. The shipped 66 is not consulted.
+
+          Paid search held its conversion rate within a point of plan across the quarter,
+          so the shortfall is concentrated upstream rather than in the closing motion.
+          Field events produced materially fewer registrations and a lower show rate.
+      - style:
+          background: "#fbfbfa"
+          text:
+            column:
+              max_chars: 80
+        text: |
+          **`max_chars: 80`** — the WCAG ceiling, chosen deliberately. One column, up to
+          80 characters; this text lands at **75**. Longer than the shipped default
+          would ever pick for a multi-column block.
+
+          Paid search held its conversion rate within a point of plan across the quarter,
+          so the shortfall is concentrated upstream rather than in the closing motion.
+          Field events produced materially fewer registrations and a lower show rate.

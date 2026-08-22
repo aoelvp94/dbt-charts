@@ -1,0 +1,17 @@
+# Categorical palette — hero-6
+#
+# Migrated from dbt_charts/core/defaults/chart_defaults.yml > palettes > hero-6
+# Hero blue-led 6-color palette for marketing/report cover surfaces.
+
+name: hero-6
+description: |
+  Hero blue-led 6-color palette. Single dominant blue followed by warm
+  neutral accents. Pre-M2 palette, retained unchanged.
+
+colors:
+  - "#2768a3"    # 1 — hero blue
+  - "#acb7c2"    # 2 — cool neutral
+  - "#929aa6"    # 3 — deeper cool neutral
+  - "#a68d72"    # 4 — warm neutral
+  - "#b8a593"    # 5 — light warm neutral
+  - "#c7a987"    # 6 — tan

@@ -1,0 +1,124 @@
+# Model Profile Template
+#
+# Overview of a table/model with column inventory, classification,
+# detailed stats, and sample data.
+#
+# URL: /inspect/model/?model=<table_name>
+#
+# Required variables:
+#   - model: Table/model name to profile
+
+title: "{{ model }}"
+
+text: |
+  **{{ model }}** | [Quality](/inspect/quality/?model={{ model }}&source_name={{ source_name }})
+
+variables:
+  model:
+    input: text
+    visible: false
+    default: ""
+  source_name:
+    input: text
+    visible: false
+    default: ""
+  schema_name:
+    input: text
+    visible: false
+    default: ""
+
+queries:
+  column_profile:
+    type: schema
+    source: "{{ source_name }}"
+    schema: "{{ schema_name }}"
+    table: "{{ model }}"
+
+  sample_data:
+    source: "{{ source_name }}"
+    sql: |
+      SELECT * FROM {{ model }} LIMIT 100
+
+charts:
+  column_inventory:
+    title: Inspector Overview
+    type: table
+    query: column_profile
+    style:
+      columns:
+        name:
+          label: Column
+        actual_type:
+          label: Type
+        role:
+          label: Role
+        semantic_type:
+          label: Semantic
+        null_percentage:
+          label: "Null %"
+          format: ".1f"
+        uniqueness_ratio:
+          label: Distinct
+          format: ".0%"
+
+  column_classification:
+    title: Classification
+    type: table
+    query: column_profile
+    style:
+      columns:
+        name:
+          label: Column
+        role:
+          label: Role
+        distribution:
+          label: Distribution
+        completeness:
+          label: Completeness
+        key_role:
+          label: Key
+        semantic_type:
+          label: Semantic Type
+
+  column_stats:
+    title: Profile
+    type: table
+    query: column_profile
+    style:
+      columns:
+        name:
+          label: Column
+        actual_type:
+          label: Type
+        distinct_count:
+          label: Distinct
+          format: ",.0f"
+        min_value:
+          label: Min
+        max_value:
+          label: Max
+        mean_value:
+          label: Mean
+          format: ",.4g"
+        median_value:
+          label: Median
+          format: ",.4g"
+        stddev_value:
+          label: Std Dev
+          format: ",.4g"
+
+  model_data:
+    title: "Sample Data"
+    type: table
+    query: sample_data
+
+rows:
+  - column_inventory
+  - details:
+      summary: "Details"
+      expanded_title: "Details"
+      expanded: false
+    rows:
+      - column_classification
+      - column_stats
+  - model_data

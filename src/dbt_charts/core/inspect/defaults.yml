@@ -1,0 +1,41 @@
+inspector:
+  # Depth limit for directory tree rendering. Directories deeper than this
+  # are skipped — prevents pathological trees from consuming unbounded
+  # memory/time.
+  tree_max_depth: 4
+  sample_size: 100
+  collect_top_values: true
+  top_values_limit: 10
+  top_values_max_cardinality: 1000
+  top_values_skip_types:
+    - INTEGER
+    - INT
+    - BIGINT
+    - SMALLINT
+    - TINYINT
+    - FLOAT
+    - DOUBLE
+    - REAL
+    - DECIMAL
+    - NUMERIC
+    - NUMBER
+    - DATE
+    - TIME
+    - TIMESTAMP
+    - DATETIME
+    - INTERVAL
+    - BOOLEAN
+    - BOOL
+    - UUID
+    - BLOB
+    - BINARY
+    - BYTEA
+    - VARBINARY
+    - BIT
+  deep_profile: false
+  collect_histogram_bins: false
+  collect_date_distribution: false
+  collect_enum_values: false
+  enum_cardinality_threshold: 20
+  bigquery_exact_threshold_bytes: 1073741824
+  fk_range_slack_percent: 2

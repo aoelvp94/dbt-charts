@@ -1,0 +1,11 @@
+opportunity,account,stage,amount,close_date,probability
+Enterprise License,Acme Corp,Negotiation,125000,2024-03-15,0.75
+Platform Upgrade,TechStart Inc,Discovery,45000,2024-04-01,0.25
+Annual Renewal,GlobalFin,Closed Won,89000,2024-02-28,1.00
+Expansion Deal,DataFlow LLC,Proposal,210000,2024-03-30,0.50
+New Business,CloudFirst,Qualification,67000,2024-05-15,0.15
+Integration Add-on,MegaCorp,Negotiation,34000,2024-03-20,0.80
+Pilot Program,StartupXYZ,Discovery,18000,2024-06-01,0.10
+Enterprise Suite,BankSecure,Proposal,450000,2024-04-15,0.40
+Support Tier Upgrade,RetailMax,Closed Won,28000,2024-02-15,1.00
+Custom Integration,HealthTech,Qualification,95000,2024-05-30,0.20

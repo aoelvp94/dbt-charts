@@ -1,0 +1,214 @@
+# Product Performance Dashboard
+# Analyzes product sales, pricing, and regional performance
+
+title: "Product Performance"
+description: "Product sales analysis with regional breakdown"
+source: dbt_charts_examples
+
+variables:
+  category:
+    options:
+      query: |
+        SELECT DISTINCT product_category as value
+        FROM {{ ref('fct_orders') }}
+        WHERE product_category IS NOT NULL
+        ORDER BY 1
+    default: null
+
+queries:
+  # Product summary metrics
+  product_summary: |
+    SELECT
+      COUNT(DISTINCT product_id) as total_products,
+      SUM(quantity) as units_sold,
+      ROUND(SUM(revenue), 2) as total_revenue,
+      ROUND(AVG(product_price), 2) as avg_price
+    FROM {{ ref('fct_orders') }}
+    WHERE {{ filter('product_category', category) }}
+
+  # Sales by product category
+  sales_by_category: |
+    SELECT
+      product_category,
+      SUM(quantity) as units_sold,
+      ROUND(SUM(revenue), 2) as revenue,
+      COUNT(DISTINCT order_id) as orders
+    FROM {{ ref('fct_orders') }}
+    WHERE product_category IS NOT NULL
+    GROUP BY 1
+    ORDER BY revenue DESC
+
+  # Top products
+  top_products: |
+    SELECT
+      product_name,
+      product_category,
+      SUM(quantity) as units_sold,
+      ROUND(SUM(revenue), 2) as revenue,
+      ROUND(AVG(product_price), 2) as price,
+      COUNT(DISTINCT customer_id) as unique_buyers
+    FROM {{ ref('fct_orders') }}
+    WHERE product_name IS NOT NULL
+      AND {{ filter('product_category', category) }}
+    GROUP BY 1, 2
+    ORDER BY revenue DESC
+    LIMIT 10
+
+  # Regional product performance
+  regional_performance: |
+    SELECT
+      region,
+      product_category,
+      SUM(quantity) as units_sold,
+      ROUND(SUM(revenue), 2) as revenue
+    FROM {{ ref('fct_orders') }}
+    WHERE region IS NOT NULL
+      AND product_category IS NOT NULL
+      AND {{ filter('product_category', category) }}
+    GROUP BY 1, 2
+    ORDER BY 1, revenue DESC
+
+  # Monthly product trends
+  monthly_trends: |
+    SELECT
+      DATE_TRUNC('month', order_date) as month,
+      product_category,
+      SUM(quantity) as units_sold,
+      ROUND(SUM(revenue), 2) as revenue
+    FROM {{ ref('fct_orders') }}
+    WHERE product_category IS NOT NULL
+      AND {{ filter('product_category', category) }}
+    GROUP BY 1, 2
+    ORDER BY 1, 2
+
+  # Price vs volume analysis
+  price_volume: |
+    SELECT
+      product_name,
+      product_price as price,
+      SUM(quantity) as quantity_sold,
+      ROUND(SUM(revenue), 2) as revenue
+    FROM {{ ref('fct_orders') }}
+    WHERE product_name IS NOT NULL
+      AND {{ filter('product_category', category) }}
+    GROUP BY 1, 2
+
+charts:
+  total_products:
+    label: "Products"
+    type: kpi
+    query: product_summary
+    value: total_products
+
+  units_sold:
+    label: "Units Sold"
+    type: kpi
+    query: product_summary
+    value: units_sold
+    style:
+      value:
+        format: integer
+
+  total_revenue:
+    label: "Total Revenue"
+    type: kpi
+    query: product_summary
+    value: total_revenue
+    style:
+      value:
+        format: currency
+
+  avg_price:
+    label: "Avg Price"
+    type: kpi
+    query: product_summary
+    value: avg_price
+    style:
+      value:
+        format: currency
+
+  category_revenue:
+    style:
+      marks:
+        slice:
+          labels:
+            template: "{{ '{:.0%}'.format(percent) }} {{ product_category }}"
+    title: "Revenue by Category"
+    type: pie
+    query: sales_by_category
+    theta: revenue
+    color: product_category
+
+  category_units:
+    title: "Units by Category"
+    type: bar
+    query: sales_by_category
+    x: product_category
+    y: units_sold
+
+  monthly_revenue:
+    title: "Monthly Revenue Trend"
+    type: line
+    query: monthly_trends
+    x: month
+    y: revenue
+    color: product_category
+
+  regional_heatmap:
+    title: "Regional Performance"
+    type: bar
+    query: regional_performance
+    x: region
+    y: revenue
+    color: product_category
+    style:
+      stack: zero
+
+  price_scatter:
+    title: "Price vs Volume"
+    type: scatter
+    query: price_volume
+    x: price
+    y: quantity_sold
+    size: revenue
+
+  top_products_table:
+    title: "Top 10 Products"
+    type: table
+    query: top_products
+    style:
+      columns:
+        product_name:
+          label: Product
+        product_category:
+          label: Category
+        units_sold:
+          label: Units
+          format: integer
+        revenue:
+          label: Revenue
+          format: currency
+        price:
+          label: Price
+          format: currency
+        unique_buyers:
+          label: Buyers
+
+rows:
+  - cols:
+      - total_products
+      - units_sold
+      - total_revenue
+      - avg_price
+
+  - cols:
+      - category_revenue
+      - category_units
+
+  - cols:
+      - monthly_revenue
+      - regional_heatmap
+
+  - cols:
+      - price_scatter
+      - top_products_table

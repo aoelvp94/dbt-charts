@@ -1,0 +1,73 @@
+# Data Quality Profile Template
+#
+# Focus on data quality metrics: null rates, distinct counts, schema-derived
+# warnings. Pulls column rows from the LayeredSchemaResolver — no live
+# warehouse SQL — so the page renders for every dialect the resolver
+# supports as soon as the table has been profiled at least once.
+#
+# URL: /inspect/quality/?model=<table_name>
+#
+# Required variables:
+#   - model: Table/model name to profile
+
+title: "Data Quality: {{ model }}"
+
+text: |
+  [Back to {{ model }}](/inspect/model/?model={{ model }}&source_name={{ source_name }})
+
+variables:
+  model:
+    input: text
+    visible: false
+    default: ""
+  source_name:
+    input: text
+    visible: false
+    default: ""
+  schema_name:
+    input: text
+    visible: false
+    default: ""
+
+queries:
+  column_profile:
+    type: schema
+    source: "{{ source_name }}"
+    schema: "{{ schema_name }}"
+    table: "{{ model }}"
+
+charts:
+  null_chart:
+    title: Null percentage by column
+    type: bar
+    query: column_profile
+    x: name
+    y: null_percentage
+    style:
+      orientation: horizontal
+
+  issues_table:
+    title: Column quality
+    type: table
+    query: column_profile
+    style:
+      columns:
+        name:
+          label: Column
+        actual_type:
+          label: Type
+        null_percentage:
+          label: "Null %"
+          format: ".1f"
+        distinct_count:
+          label: Distinct
+          format: ",.0f"
+        completeness:
+          label: Completeness
+        distribution:
+          label: Distribution
+
+rows:
+  - cols:
+      - null_chart
+      - issues_table

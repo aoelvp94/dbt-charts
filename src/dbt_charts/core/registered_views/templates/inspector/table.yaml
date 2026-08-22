@@ -1,0 +1,71 @@
+[#- Transpose the column profiles into a describe-style overview: one table row
+    per characteristic, one table column per data column. Built from the `columns`
+    pre-template schema query so the pivot happens in the view layer. -#]
+[%- set cols = (queries.columns.rows if (queries is defined and queries.columns is defined and queries.columns.rows is defined) else []) -%]
+[%- set names = [] -%]
+[%- for c in cols -%][%- set _ = names.append(c.get('name')) -%][%- endfor -%]
+[#- Concise describe overview — the 5 core characteristics. Numeric min/max/mean
+    are column-specific and live on the column page as KPIs, not here. -#]
+[%- set characteristics = [['Type', 'actual_type'], ['Role', 'role'], ['Semantic', 'semantic_type'], ['Null %', 'null_percentage'], ['Distinct', 'distinct_count']] -%]
+[%- set pivot = [] -%]
+[%- for label, field in characteristics -%]
+[%-   set row = [label] -%]
+[%-   for c in cols -%][%- set _ = row.append(c.get(field)) -%][%- endfor -%]
+[%-   set _ = pivot.append(row) -%]
+[%- endfor -%]
+[#- style.columns is an allowlist and fixes column order, so list the label
+    column first, then one styled column per data column (header links to its
+    column page). -#]
+[%- set colstyle = {"Attribute": {"align": "right"}} -%]
+[%- for n in names -%][%- set _ = colstyle.update({n: {"header_link": "/inspector/" ~ path.source ~ "/" ~ path.schema ~ "/" ~ path.table ~ "/" ~ n ~ "/"}}) -%][%- endfor -%]
+extends: neon
+title: [[ ("Inspector: " ~ path.source ~ "/" ~ path.schema ~ "/" ~ path.table) | tojson ]]
+
+text: [[ ("[← " ~ path.schema ~ "](/inspector/" ~ path.source ~ "/" ~ path.schema ~ "/)") | tojson ]]
+
+queries:
+  row_count:
+    type: sql
+    source: [[ path.source | tojson ]]
+    sql: >-
+      SELECT COUNT(*) AS row_count
+      FROM [[ sql_identifier(path.schema) ]].[[ sql_identifier(path.table) ]]
+
+  profile:
+    type: values
+    columns: [[ (['Attribute'] + names) | tojson ]]
+    values: [[ pivot | tojson ]]
+
+  sample_data:
+    type: sql
+    source: [[ path.source | tojson ]]
+    sql: >-
+      SELECT * FROM [[ sql_identifier(path.schema) ]].[[ sql_identifier(path.table) ]]
+      LIMIT 100
+
+charts:
+  rows_kpi:
+    label: Rows
+    type: kpi
+    query: row_count
+    value: row_count
+    style:
+      value:
+        format: ",.0f"
+
+  column_profiles:
+    title: Columns
+    type: table
+    query: profile
+    # Compact describe overview — always show all characteristic rows at once.
+    style: [[ {"columns": colstyle, "pagination": {"enabled": false}} | tojson ]]
+
+  sample_rows:
+    title: "Sample Data"
+    type: table
+    query: sample_data
+
+rows:
+  - rows_kpi
+  - column_profiles
+  - sample_rows

@@ -1,0 +1,87 @@
+title: Log Scale Axis
+description: |
+  Genuinely log-shaped data (world population, a Falcon 9 payload-mass
+  comparison) side by side on a linear vs. a log measure axis. Linear
+  compresses the small values into an unreadable sliver near zero; log
+  spaces every order of magnitude evenly.
+theme: cream
+source: examples_db
+
+text: |
+  Same dataset, two axis scales.
+
+  - **Linear** (default) — small values are unreadable against the largest one.
+  - **Log** (`axis_y.scale.type: log`) — every order of magnitude gets equal
+    visual space; Vega-Lite computes the log-decade ticks natively. A target
+    tick count (`axis_y.ticks.count`) is rejected on a log axis — a fixed
+    count is meaningless when Vega-Lite owns log-decade placement.
+
+queries:
+  world_population:
+    type: values
+    columns: [year, population]
+    values:
+      - ["1800", 990000000]
+      - ["1900", 1650000000]
+      - ["1950", 2536000000]
+      - ["2000", 6127000000]
+      - ["2025", 8200000000]
+
+  payload_mass_kg:
+    type: values
+    columns: [mission, mass_kg]
+    values:
+      - ["CubeSat rideshare", 5]
+      - ["Starlink satellite", 260]
+      - ["Dragon cargo", 3300]
+      - ["GPS III", 4400]
+      - ["Dragon crew + cargo", 12500]
+
+charts:
+  population_linear:
+    query: world_population
+    type: line
+    title: World Population — Linear
+    x: year
+    y: population
+
+  population_log:
+    query: world_population
+    type: line
+    title: World Population — Log
+    x: year
+    y: population
+    style:
+      axis_y:
+        scale:
+          continuous:
+            type: log
+
+  payload_linear:
+    query: payload_mass_kg
+    type: area
+    title: Payload Mass — Linear
+    x: mission
+    y: mass_kg
+
+  payload_log:
+    query: payload_mass_kg
+    type: area
+    title: Payload Mass — Log
+    x: mission
+    y: mass_kg
+    style:
+      axis_y:
+        scale:
+          continuous:
+            type: log
+            log:
+              base: 10
+
+rows:
+- cols:
+  - population_linear
+  - population_log
+- cols:
+  - payload_linear
+  - payload_log

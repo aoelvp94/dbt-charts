@@ -1,0 +1,62 @@
+        /* No @font-face here on purpose. The board SVG below is inline in this
+           document, so the @font-face rules in its own <style> are document-level
+           and serve this stylesheet too. Declaring them twice would embed a second
+           copy of every font's bytes in an export. */
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: {{ font_family }};
+            {{ bg_style }}
+        }
+        .dataface-wrapper {
+            width: 100%;
+            margin: 0 auto;
+        }
+        .dataface-svg-container {
+            width: 100%;
+        }
+        /* The control layer is absolutely positioned over the anchor box the
+           board SVG reserves for its variables strip, so the board is its
+           containing block. */
+        .dataface-board {
+            position: relative;
+        }
+        /* Fit width. The board is a fixed-viewBox SVG carrying its intrinsic
+           content width as a presentation attribute; a stylesheet width
+           outranks that attribute, so width:100% + height:auto scales the whole
+           board to the window and reflows on resize with zero JS. The SVG stays
+           intrinsically sized as an artifact — only this HTML host stretches it.
+           Child combinator on purpose: a descendant selector would also hit the
+           nested per-row/per-chart svg viewports, whose CSS-overridden height
+           (auto → 100%) re-centers their viewBox content and breaks row layout. */
+        .dataface-svg-container > svg {
+            width: 100%;
+            height: auto;
+        }
+        /* View modes, set by the nav's view control on <html>. Fit width is the
+           default above, so it needs no class — picking it just removes these.
+           Both alternates release the width and let the SVG's own viewBox ratio
+           size it, then center what is left over. */
+        .dbt-view-fit-height .dataface-svg-container > svg {
+            width: auto;
+            height: calc(100vh - var(--dbt-view-chrome, 0px));
+            max-width: 100%;
+        }
+        .dbt-view-actual .dataface-svg-container > svg {
+            width: auto;
+            height: auto;
+            max-width: none;
+        }
+        /* The board is display:block (set inline by the artifact), so it centers
+           with auto margins — text-align on the container would do nothing. */
+        .dbt-view-fit-height .dataface-svg-container > svg,
+        .dbt-view-actual .dataface-svg-container > svg {
+            margin-inline: auto;
+        }
+        /* 100% on a board wider than the window still has to be reachable. */
+        .dbt-view-actual .dataface-svg-container {
+            overflow-x: auto;
+        }

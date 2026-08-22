@@ -1,0 +1,57 @@
+theme: stark
+title: "Callout Charts: tone palette roles"
+description: >
+  Authored callout cards for status messages. Use `type: callout` with
+  `style.tone` to communicate pipeline health, migration warnings, or
+  required actions.
+
+text: |
+  `type: callout` is a query-free SVG card for short status messages.
+
+  - **`message`** (required) — body text; wraps inside the tile.
+  - **`title`** (optional) — heading above the message.
+  - **`style.tone`** (optional) — `info`, `positive`, `negative`, or `warning`; selects palette role colors. Defaults to `info`.
+
+charts:
+  positive_callout:
+    type: callout
+    style:
+      tone: positive
+    title: "**Checks passed** — pipeline healthy"
+    message: |
+      All validation rules passed. Markdown is supported:
+
+      - **Bold** for emphasis
+      - `inline code` for field names
+      - [Links](https://example.com) for references
+
+  warning_callout:
+    type: callout
+    style:
+      tone: warning
+    title: Migration warning
+    message: >
+      Three tiles were skipped during import. Review the source dashboard
+      before publishing this board.
+
+  negative_callout:
+    type: callout
+    style:
+      tone: negative
+    title: Action required
+    message: >
+      Revenue target is below plan for two consecutive quarters. Escalate to
+      the finance owner before the board review.
+
+  default_tone_callout:
+    type: callout
+    title: Default tone
+    message: >
+      When tone is omitted, authored callouts use the informational palette.
+
+rows:
+  - cols:
+      - positive_callout
+      - warning_callout
+      - negative_callout
+  - default_tone_callout

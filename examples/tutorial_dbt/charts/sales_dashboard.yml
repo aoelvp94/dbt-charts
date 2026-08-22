@@ -1,0 +1,77 @@
+title: "Sales Dashboard (dbt Example)"
+description: "Example dashboard using dbt models via SQL adapter"
+source: dbt_charts_examples
+
+variables:
+  region:
+    options:
+      static: ["North", "South", "East", "West", "All"]
+    default: "All"
+
+queries:
+  sales_by_month: |
+    SELECT
+      DATE_TRUNC('month', order_date) AS month,
+      region,
+      SUM(revenue) AS total_revenue,
+      COUNT(*) AS order_count,
+      AVG(revenue) AS avg_order_value
+    FROM {{ ref('fct_orders') }}
+    WHERE {{ filter('region', region if region != 'All' else None) }}
+    GROUP BY 1, 2
+    ORDER BY 1 DESC, 2
+
+  sales_by_product: |
+    SELECT
+      product_category,
+      SUM(revenue) AS total_revenue,
+      COUNT(*) AS order_count
+    FROM {{ ref('fct_orders') }}
+    WHERE {{ filter('region', region if region != 'All' else None) }}
+    GROUP BY 1
+    ORDER BY 2 DESC
+
+  total_revenue: |
+    SELECT
+      SUM(revenue) AS total_revenue,
+      COUNT(*) AS total_orders,
+      COUNT(DISTINCT customer_id) AS unique_customers
+    FROM {{ ref('fct_orders') }}
+    WHERE {{ filter('region', region if region != 'All' else None) }}
+
+charts:
+  revenue_trend:
+    title: "Revenue Trend by Month"
+    query: queries.sales_by_month
+    type: line
+    x: month
+    y: total_revenue
+    color: region
+
+  revenue_by_product:
+    title: "Revenue by Product Category"
+    query: queries.sales_by_product
+    type: bar
+    x: product_category
+    y: total_revenue
+
+  total_revenue_kpi:
+    label: "Total Revenue"
+    query: queries.total_revenue
+    type: kpi
+    value: total_revenue
+
+  total_orders_kpi:
+    label: "Total Orders"
+    query: queries.total_revenue
+    type: kpi
+    value: total_orders
+
+rows:
+  - cols:
+      - total_revenue_kpi
+      - total_orders_kpi
+
+  - cols:
+      - revenue_trend
+      - revenue_by_product

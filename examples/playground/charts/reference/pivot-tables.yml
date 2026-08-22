@@ -1,0 +1,142 @@
+# Pivot Tables Reference
+# Demonstrates the table pivot / cross-tab channels: rows, columns, values.
+
+title: Pivot Tables
+description: Cross-tabulate a long query into a wide table with rows / columns / values.
+source: examples_db
+
+text: |
+  A `type: table` chart becomes a **pivot** (cross-tab) when you add the
+  `rows`, `columns`, and `values` channels. The engine reshapes the long query
+  result into a wide grid:
+
+  - **`rows`** — fields whose distinct values form the row dimension.
+  - **`columns`** — fields whose distinct values become the column headers.
+    Listing more than one field nests them (outer → inner).
+  - **`values`** — the measure(s) that fill the cells. List more than one for a
+    grouped multi-measure header.
+
+  The four tables below walk through each variant against the
+  `ecommerce_orders` sample (region, product, category, revenue, units).
+
+queries:
+  region_category: |
+    SELECT region, category, SUM(revenue) AS revenue
+    FROM ecommerce_orders
+    GROUP BY region, category
+    ORDER BY region
+
+  region_category_measures: |
+    SELECT
+      region,
+      category,
+      SUM(revenue) AS revenue,
+      SUM(units_sold) AS units
+    FROM ecommerce_orders
+    GROUP BY region, category
+    ORDER BY region
+
+  region_category_period: |
+    SELECT
+      region,
+      category,
+      CASE WHEN day(date) <= 15 THEN 'Early' ELSE 'Late' END AS period,
+      SUM(revenue) AS revenue
+    FROM ecommerce_orders
+    GROUP BY region, category, period
+    ORDER BY category, period, region
+
+  product_region: |
+    SELECT product, region, SUM(units_sold) AS units
+    FROM ecommerce_orders
+    GROUP BY product, region
+    ORDER BY product, region
+
+charts:
+  # 1 — Single-measure cross-tab. Leaf columns are the distinct `category`
+  # values, so number formats key by col-value (Electronics / Accessories / Tools).
+  # In single-measure mode style.columns is also the column allowlist, so the
+  # row-dimension field (region) must be listed too or it would be dropped.
+  revenue_cross_tab:
+    type: table
+    query: region_category
+    title: Revenue by region × category
+    subtitle: One measure — leaf columns are the distinct category values
+    rows:
+      - region
+    columns:
+      - category
+    values:
+      - revenue
+    style:
+      columns:
+        region:
+          label: Region
+        Electronics:
+          format: currency_whole
+        Accessories:
+          format: currency_whole
+        Tools:
+          format: currency_whole
+
+  # 2 — Multi-measure pivot. Two `values` produce a grouped header: a span per
+  # category with revenue / units sub-columns. Formats key by measure name.
+  revenue_units_cross_tab:
+    type: table
+    query: region_category_measures
+    title: Revenue & units by region × category
+    subtitle: Two measures — each category spans a revenue + units pair
+    rows:
+      - region
+    columns:
+      - category
+    values:
+      - revenue
+      - units
+    style:
+      columns:
+        revenue:
+          label: Revenue
+          format: currency_whole
+        units:
+          label: Units
+          format: integer
+
+  # 3 — Nested column dimensions. Two `columns` fields stack into a two-row
+  # header: category (outer) over period (inner, the half of the month).
+  nested_columns:
+    type: table
+    query: region_category_period
+    title: Revenue by region, split by category × month-half
+    subtitle: Nested columns — category groups over an Early / Late split
+    rows:
+      - region
+    columns:
+      - category
+      - period
+    values:
+      - revenue
+
+  # 4 — A second plain cross-tab for contrast: products down the side, regions
+  # across the top, unit counts in the cells.
+  product_region_units:
+    type: table
+    query: product_region
+    title: Units sold by product × region
+    subtitle: Products as rows, regions as columns, unit counts in the cells
+    rows:
+      - product
+    columns:
+      - region
+    values:
+      - units
+
+rows:
+  - cols:
+      - revenue_cross_tab
+  - cols:
+      - revenue_units_cross_tab
+  - cols:
+      - nested_columns
+  - cols:
+      - product_region_units

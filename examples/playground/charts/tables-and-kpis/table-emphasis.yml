@@ -1,0 +1,488 @@
+title: Table Emphasis
+description: 'Conditional formatting, background scales, colored text, and threshold
+  alerts. Design evaluation surface for table emphasis — heatmap fills, diverging
+  palettes with auto-hinge, semantic text color, and the interaction between emphasis
+  and row typing.
+
+  '
+source: examples_db
+style:
+  charts:
+    table:
+      title_row:
+        height: 52
+        font:
+          color: '#222222'
+      header:
+        font:
+          size: 11
+          weight: '600'
+          color: '#313233'
+text: 'Tests the emphasis layer: rule-driven backgrounds and font, sequential and
+  diverging color scales (with hinge-based interpolation), threshold alerts, and how
+  scale fills interact with total/summary rows.
+
+  '
+queries:
+  company_revenue:
+    type: sql
+    sql: SELECT * FROM company_revenue
+    source: table_specimens
+  company_revenue_total:
+    type: sql
+    sql: SELECT * FROM company_revenue_with_total
+    source: table_specimens
+  us_states:
+    type: sql
+    sql: SELECT * FROM us_states_top8
+    source: table_specimens
+  growth_rates:
+    type: sql
+    sql: SELECT * FROM growth_rates
+    source: table_specimens
+charts:
+  m1_seq_income:
+    type: table
+    query: us_states
+    title: US States — Median Household Income
+    subtitle: M1a — Sequential blue scale on income (named palette)
+    style:
+      pagination:
+        enabled: false
+      columns:
+        state:
+          label: State
+          width: 22%
+        median_income:
+          label: Median Income
+          format: currency_whole
+          scale:
+            background:
+              palette: dbt-seq-blue
+  m1_seq_population:
+    type: table
+    query: us_states
+    title: US States — Population
+    subtitle: M1b — Sequential green scale on population
+    style:
+      pagination:
+        enabled: false
+      columns:
+        state:
+          label: State
+          width: 22%
+        population:
+          label: Population
+          format: compact
+          scale:
+            background:
+              palette: dbt-seq-green
+  m1_seq_two_cols:
+    type: table
+    query: us_states
+    title: US States — Income and Poverty
+    subtitle: M1c — Two sequential scales, independent domains
+    style:
+      pagination:
+        enabled: false
+      columns:
+        state:
+          label: State
+          width: 22%
+        median_income:
+          label: Median Income
+          format: currency_whole
+          scale:
+            background:
+              palette: dbt-seq-blue
+        poverty_rate:
+          label: Poverty
+          format: percent
+          scale:
+            background:
+              palette: dbt-seq-rust
+  m2_div_growth:
+    type: table
+    query: company_revenue
+    title: Company Revenue
+    subtitle: M2a — Diverging crimson-green on growth (auto-hinge → 0)
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+          scale:
+            background:
+              palette: dbt-div-crimson-green
+              hinge: auto
+        margin:
+          label: Margin
+          format: percent
+  m2_div_asymmetric:
+    type: table
+    query: company_revenue
+    title: Company Revenue — Asymmetric Mode
+    subtitle: 'M2b — Diverging asymmetric (default): per-unit intensity consistent'
+    style:
+      columns:
+        company:
+          label: Company
+        growth_rate:
+          label: Growth
+          format: percent
+          scale:
+            background:
+              palette: dbt-div-crimson-green
+              hinge: auto
+              arm_mode: asymmetric
+        margin:
+          label: Margin
+          format: percent
+  m2_div_symmetric:
+    type: table
+    query: company_revenue
+    title: Company Revenue — Symmetric Mode
+    subtitle: 'M2c — Diverging symmetric: both arms stretch to palette extreme'
+    style:
+      columns:
+        company:
+          label: Company
+        growth_rate:
+          label: Growth
+          format: percent
+          scale:
+            background:
+              palette: dbt-div-crimson-green
+              hinge: auto
+              arm_mode: symmetric
+        margin:
+          label: Margin
+          format: percent
+  m2_div_country_gdp:
+    type: table
+    query: growth_rates
+    title: GDP Annual Growth Rate
+    subtitle: M2d — Cross-year diverging; auto-hinge on all-positive data → midpoint
+    style:
+      columns:
+        country:
+          label: Country
+        '2021':
+          label: '2021'
+          format: percent
+          scale:
+            background:
+              palette: dbt-div-crimson-green
+              hinge: auto
+        '2022':
+          label: '2022'
+          format: percent
+          scale:
+            background:
+              palette: dbt-div-crimson-green
+              hinge: auto
+        '2023':
+          label: '2023'
+          format: percent
+          scale:
+            background:
+              palette: dbt-div-crimson-green
+              hinge: auto
+      symbol_mode: anchors
+  m3_text_color_growth:
+    type: table
+    query: company_revenue
+    title: Company Revenue
+    subtitle: M3a — Text color only (no background fill)
+    conditional_formatting:
+      growth_rate:
+        when:
+        - gt: 0
+          font:
+            color: '#16a34a'
+        - lt: 0
+          font:
+            color: '#dc2626'
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+  m3_text_bold_negative:
+    type: table
+    query: company_revenue
+    title: Company Revenue
+    subtitle: M3b — Bold + red on negative growth
+    conditional_formatting:
+      growth_rate:
+        when:
+        - lt: 0
+          font:
+            color: '#dc2626'
+            weight: '600'
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+  m3_bg_vs_text:
+    type: table
+    query: company_revenue
+    title: Company Revenue
+    subtitle: M3c — Background scale (M2a) vs text color (M3a) side-note
+    conditional_formatting:
+      growth_rate:
+        when:
+        - gt: 0
+          font:
+            color: '#16a34a'
+        - lt: 0
+          font:
+            color: '#dc2626'
+    style:
+      columns:
+        company:
+          label: Company
+        growth_rate:
+          label: Text color
+          format: percent
+  m4_threshold_margin:
+    type: table
+    query: company_revenue
+    title: Company Revenue
+    subtitle: M4a — Threshold alert on margin (amber < 30%, red < 20%)
+    conditional_formatting:
+      margin:
+        when:
+        - lt: 0.3
+          background: '#fffbeb'
+          font:
+            color: '#d97706'
+        - lt: 0.2
+          background: '#fef2f2'
+          font:
+            color: '#dc2626'
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+  m4_threshold_growth:
+    type: table
+    query: company_revenue
+    title: Company Revenue
+    subtitle: M4b — Threshold highlights on growth rate
+    conditional_formatting:
+      growth_rate:
+        when:
+        - lt: 0
+          background: '#fef2f2'
+        - gte: 0.15
+          background: '#f0fdf4'
+    style:
+      columns:
+        company:
+          label: Company
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+  m5_glyph_trend_arrows:
+    type: table
+    query: company_revenue
+    title: Company Revenue
+    subtitle: M5a — Trend arrows on growth (▲ positive, ▼ negative)
+    conditional_formatting:
+      growth_rate:
+        when:
+        - gt: 0
+          glyph: ▲
+          glyph_color: '#16a34a'
+        - lt: 0
+          glyph: ▼
+          glyph_color: '#dc2626'
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+  m5_glyph_warning_threshold:
+    type: table
+    query: company_revenue
+    title: Company Revenue
+    subtitle: M5b — Warning triangle on low margin (< 30%)
+    conditional_formatting:
+      margin:
+        when:
+        - lt: 0.3
+          glyph: ⚠
+          glyph_color: '#d97706'
+    style:
+      columns:
+        company:
+          label: Company
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+  m5_glyph_static_dot:
+    type: table
+    query: company_revenue
+    title: Company Revenue
+    subtitle: M5c — Static status dot in every revenue cell
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+          glyph: ●
+          glyph_color: '#64748b'
+        growth_rate:
+          label: Growth
+          format: percent
+  m6_scale_with_total:
+    type: table
+    query: company_revenue_total
+    title: Company Revenue
+    subtitle: M6a — Sequential scale on revenue + total row (total suppresses fill)
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+          scale:
+            background:
+              palette: dbt-seq-purple
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      row:
+        role: row_role
+        rule:
+          width: 0.5
+      header:
+        rule:
+          width: 1
+  m6_threshold_with_total:
+    type: table
+    query: company_revenue_total
+    title: Company Revenue
+    subtitle: M6b — Threshold alert + total row (total row is uncolored)
+    conditional_formatting:
+      growth_rate:
+        when:
+        - lt: 0
+          background: '#fef2f2'
+          font:
+            color: '#dc2626'
+        - gte: 0.15
+          background: '#f0fdf4'
+          font:
+            color: '#16a34a'
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      row:
+        role: row_role
+        rule:
+          width: 0.5
+      header:
+        rule:
+          width: 1
+rows:
+- title: 'M1: Sequential Scale'
+  cols:
+  - m1_seq_income
+  - m1_seq_population
+- title: 'M1: Sequential Scale — Two Columns'
+  cols:
+  - m1_seq_two_cols
+- title: 'M2: Diverging Scale'
+  cols:
+  - m2_div_growth
+  - m2_div_country_gdp
+- title: 'M2: Asymmetric vs Symmetric Mode'
+  cols:
+  - m2_div_asymmetric
+  - m2_div_symmetric
+- title: 'M3: Colored Text'
+  cols:
+  - m3_text_color_growth
+  - m3_text_bold_negative
+- title: 'M3: Background Scale vs Text Color'
+  cols:
+  - m3_bg_vs_text
+  - m3_text_color_growth
+- title: 'M4: Threshold Alerts'
+  cols:
+  - m4_threshold_margin
+  - m4_threshold_growth
+- title: 'M5: Glyph Indicators'
+  cols:
+  - m5_glyph_trend_arrows
+  - m5_glyph_warning_threshold
+- title: ''
+  cols:
+  - m5_glyph_static_dot
+- title: 'M6: Row Typing + Scale (total row suppresses fill)'
+  cols:
+  - m6_scale_with_total
+  - m6_threshold_with_total

@@ -1,0 +1,17 @@
+# Hidden board: a reusable dark-brand style layer.
+#
+# The underscore prefix makes this board non-listable — it will not appear
+# in board listings or search results, but visible boards can extend it.
+# It sets the dark theme and a brand accent colour.
+
+title: Dark Brand (hidden base)
+description: >
+  Non-listable base board for dark-brand-style dashboards.
+  Sets the dark theme and brand accent. Not a standalone dashboard.
+
+extends: neon
+
+style:
+  accent: "#4f90d9"
+
+rows: []

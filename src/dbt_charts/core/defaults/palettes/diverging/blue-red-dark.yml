@@ -1,0 +1,22 @@
+# Diverging palette — dbt-div-blue-red-dark (dark-canvas fork)
+#
+
+name: dbt-div-blue-red-dark
+family: diverging
+description: Default CVD-safe diverging. Blue (low) to red (high), light midpoint. Dark-canvas fork.
+design_notes: 'Dark-canvas fork of dbt-div-blue-red. Dark near-neutral midpoint (#322f2f) recedes toward
+  canvas; poles brighten+saturate outward. Source pole hues preserved.
+
+  '
+colors:
+- '#5ab1f6'
+- '#3c9cea'
+- '#2787d4'
+- '#2d6ea3'
+- '#325674'
+- '#322f2f'
+- '#743632'
+- '#a3362d'
+- '#d43327'
+- '#ea493c'
+- '#f6655a'

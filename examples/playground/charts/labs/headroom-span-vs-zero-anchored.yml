@@ -1,0 +1,62 @@
+title: "Headroom: anchored-floor fix — line, scatter, bar, zoomed"
+description: >
+  Visual proof of the zero-anchor regression fix (PR #5610).
+  Row 1: anchored line + anchored scatter (revenue 6k–33k, ratio≈0.18 < 0.25)
+  — floor MUST be at 0, NOT below 6k.
+  Row 2: zoomed line + zoomed scatter (tight 9800–10000, ratio≈0.98 > 0.25)
+  — symmetric span-relative headroom on both edges (still correct).
+extends: editorial
+rows:
+  - cols: [anchored_line, anchored_scatter]
+  - cols: [zoomed_line, zoomed_scatter]
+charts:
+  anchored_line:
+    type: line
+    title: "Anchored line: revenue 6k–33k (ratio 0.18)"
+    subtitle: "Floor must be at 0, not pushed below 6k by span-relative"
+    x: month
+    y: revenue
+    query:
+      sql: >
+        SELECT month, revenue FROM (
+          VALUES ('Jan', 6000), ('Feb', 15000), ('Mar', 22000),
+                 ('Apr', 28000), ('May', 33000)
+        ) AS t(month, revenue)
+      source: duckdb_local
+  anchored_scatter:
+    type: scatter
+    title: "Anchored scatter: same data (ratio 0.18)"
+    subtitle: "Floor must be at 0 — no domain_min below 6k"
+    x: month
+    y: revenue
+    query:
+      sql: >
+        SELECT month, revenue FROM (
+          VALUES ('Jan', 6000), ('Feb', 15000), ('Mar', 22000),
+                 ('Apr', 28000), ('May', 33000)
+        ) AS t(month, revenue)
+      source: duckdb_local
+  zoomed_line:
+    type: line
+    title: "Zoomed line: tight 9800–10000 (ratio 0.98)"
+    subtitle: "Symmetric span-relative: domainMax=10016, domainMin=9784"
+    x: period
+    y: value
+    query:
+      sql: >
+        SELECT period, value FROM (
+          VALUES ('Jan', 9800), ('Feb', 9900), ('Mar', 9950), ('Apr', 10000)
+        ) AS t(period, value)
+      source: duckdb_local
+  zoomed_scatter:
+    type: scatter
+    title: "Zoomed scatter: same tight data"
+    subtitle: "Symmetric span-relative still correct after fix"
+    x: period
+    y: value
+    query:
+      sql: >
+        SELECT period, value FROM (
+          VALUES ('Jan', 9800), ('Feb', 9900), ('Mar', 9950), ('Apr', 10000)
+        ) AS t(period, value)
+      source: duckdb_local

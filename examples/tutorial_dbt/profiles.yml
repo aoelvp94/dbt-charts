@@ -1,0 +1,9 @@
+dbt_charts_examples:
+  outputs:
+    dev:
+      path: data/sample.duckdb
+      schema: main
+      type: duckdb
+      config_options:
+        enable_external_access: true
+  target: dev

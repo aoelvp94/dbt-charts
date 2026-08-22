@@ -1,0 +1,200 @@
+# Unified theme: vivid
+# Loud-systematic sans, light canvas. FOUR coarse chrome tiers from dbt-grays
+# (no opacity — every gray is a real scaffold stop). "Values pop": numeric
+# readouts get the max-contrast tier, above titles — TradingView's philosophy,
+# the opposite of editorial's soft mid-anchored ramp.
+#   VALUE #222222 (ink)           — quant-axis numbers, data labels, values, zero-baseline (max)
+#   HIGH  #313233 (heading)       — titles, legend, table headers
+#   MID   #626366 (muted)         — category labels, axis titles, support text
+#   FAINT #D0D3D9 (grid-emphasis) — measure gridlines + their ticks, domain, borders
+#   +     #EDEFF2 (grid)          — category/time gridlines + their ticks, one step fainter
+# The fifth stop exists because gridlines are not one job: at hairline width the
+# only way to sit the category grid behind the measure grid is contrast, so the
+# two split across rungs. Every other chrome role stays on the four tiers above.
+# All color comes from vivid-10 marks only. Confident marks, flat fills.
+# stark = 1 chrome tier · vivid = 4 coarse/extreme tiers (+1 grid split) · editorial = 9 soft tiers.
+extends: stark
+style:
+  palettes:
+    sequence: dbt-seq-blue
+  background: dbt-grays.white
+  page:
+    background: dbt-grays.white
+  accent: &high dbt-grays.heading   # grayscale accent (no hue)
+  muted: &mid dbt-grays.muted
+  font:
+    color: *high                   # body prose = content
+  border:
+    color: &faint dbt-grays.grid-emphasis
+  title:
+    font:
+      color: *high
+      weight: 600
+    subtitle:
+      font:
+        color: *mid
+  text:
+    font:
+      color: *high
+  charts:
+    color:
+      categorical:
+        single_series_palette: ['vivid-10.1']   # brand-blue single series
+    axis:
+      line:
+        color: *faint
+      grid:
+        # Category/time grid. Every gridline here is a hairline, so contrast
+        # carries the axis hierarchy that width cannot: this sits two rungs
+        # closer to the canvas than the measure grid on axis_y below.
+        color: dbt-grays.grid
+        width: 1
+      ticks:
+        # A tick and its gridline mark the same value; they read as one mark
+        # crossing the axis line, so the tick takes the grid's rung above.
+        color: dbt-grays.grid
+      labels:
+        font:
+          color: *mid              # category/time labels = MID
+      title:
+        font:
+          color: *mid
+    axis_y:
+      grid:
+        color: *faint              # measure grid reads above the vertical one
+        zero:
+          color: &value dbt-grays.ink  # baseline anchors at max contrast
+      ticks:
+        color: *faint              # tracks the measure grid above
+        width: 1                   # the hairline this theme's grid is drawn at
+    # Numeric axis readouts POP at the max VALUE tier (TradingView scale-text).
+    axis_quantitative:
+      grid:
+        color: *faint              # a quantitative x (scatter) is a measure too
+      labels:
+        font:
+          color: *value
+      ticks:
+        color: *faint              # tracks the quantitative grid above
+        width: 1                   # the hairline this theme's grid is drawn at
+        count: 6                   # sparse, like editorial
+    legend:
+      visible: false               # direct-labeling by default (editorial posture)
+      label:
+        font:
+          color: *high
+      title:
+        font:
+          color: *high
+    line:
+      endpoint_labels:
+        visible: true
+    area:
+      endpoint_labels:
+        visible: true
+    bar:
+      legend:
+        # A bar that direct-labels has this suppressed again by resolve. It is
+        # load-bearing for the bars that cannot — grouped, or stacked but
+        # disqualified by `multiples:`, a negative measure, or a series absent
+        # from the last column — which would otherwise carry no series key at
+        # all, since the theme hides legends globally.
+        visible: true
+      axis_x:                      # inward-align horizontal-bar row labels (resolve scopes to left/right edge)
+        labels:
+          align: inward
+    heatmap:                       # inward-align heatmap row labels (y is always nominal)
+      axis_y:
+        labels:
+          align: inward
+      color:
+        gradient:
+          palette: sequence    # brand-blue, extended to sequential color
+    geoshape:
+      color:
+        gradient:
+          palette: sequence
+    scatter:
+      legend:
+        visible: true              # scatter encodes color/size → needs legend
+      # Quant×quant keeps even grid weight. `_base` states that as its own 1.5
+      # measure width, which stops tracking once a theme goes hairline — restate
+      # it against this theme's width so both axes stay matched.
+      axis_x:
+        grid:
+          width: 1
+    marks:
+      bar:
+        border:
+          radius: 2
+      text:
+        font:
+          color: *value            # direct data labels = values = max
+      rule:
+        stroke:
+          color: *high
+      geoshape:
+        fill: dbt-grays.grid-emphasis   # unjoined regions = neutral, recede
+    table:
+      border:
+        color: *faint
+      header:
+        font:
+          color: *high
+      row:
+        stripe:
+          color: dbt-grays.surface-subtle   # subtle cool zebra (one step off white)
+      spark:
+        # Light progress-bar track on the FAINT chrome tier so the fill pops.
+        # Track fills are theme-pinned (stark pins dbt-grays.fill-muted); this
+        # override keeps vivid's track on its own 4-tier ladder instead
+        # (cream sets its track the same way, under table.spark).
+        bar:
+          background: dbt-grays.grid-emphasis
+    data_table:
+      font:
+        color: *value              # cell values = max
+      label:
+        font:
+          color: *mid
+      divider:
+        color: *faint
+    pie:
+      total:
+        value:
+          font:
+            color: *value
+        label:
+          font:
+            color: *mid
+    # Resets border.width / shadow.visible / swatch.radius / active_marker --
+    # stark (the structural root) sets 1.5 / false / 0 / triangle for its own
+    # utilitarian look; those values would otherwise leak into vivid, which
+    # extends stark directly and keeps its own soft tooltip look unchanged.
+    tooltip:
+      background: dbt-grays.white
+      label:
+        font:
+          color: *mid
+      value:
+        font:
+          color: *value
+      border:
+        color: *faint
+        # No border on shadowed themes: the shadow separates the card, so the
+        # outline is redundant (kept only on stark — see editorial.yaml).
+        width: 0.0
+        radius: 4.0
+      shadow:
+        visible: true
+      swatch:
+        radius: 3.0
+      active_marker: fill
+  variables:
+    font:
+      color: *mid
+    border:
+      color: *faint
+    input:
+      border:
+        color: *faint

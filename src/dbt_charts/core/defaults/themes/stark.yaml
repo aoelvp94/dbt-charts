@@ -1,0 +1,264 @@
+# Unified theme: stark
+# Structural root for the built-in theme cascade — every other built-in theme
+# transitively extends this file (`editorial` extends `stark`; `cream` via
+# `editorial`; `plain`/`vivid`/`neon`/`solid` directly).
+# Stark itself is opt-in for users: "stripped-back / utilitarian / sans-only"
+# — pick it when you want the pre-editorial bones without the refined
+# hierarchy that the shipped `editorial` theme adds on top.
+
+extends: _base
+style:
+  # ── Colors ─────────────────────────────────────────────────────────────────
+  # Stark's sequential identity is achromatic: magnitude without hue, matching
+  # its utilitarian voice. Bound as a role so the heatmap/geoshape gradients
+  # below and any `sequence[N]` token read the same palette.
+  palettes:
+    sequence: dbt-seq-gray
+  background: dbt-grays.white
+  accent: dbt-grays.accent
+  # Secondary text (KPI support rows, table more-rows/empty-state lines —
+  # table subtitles read title.subtitle.font.color instead, the same source
+  # chart-family subtitles use). Stark is single-tier — every text slot is
+  # the same ink, muted included; multi-tier descendants (editorial, cream,
+  # plain, dark) rebind it to a rung of their own ladders. The fill-grade
+  # gray the old value carried lives on the bar-track pins below
+  # (spark_bar.bar.background, table.spark.bar.background), which no longer
+  # borrow this token.
+  muted: dbt-grays.heading
+
+  font:
+    family: &font_sans '''Inter Variable'', Inter, system-ui, sans-serif'
+    color: &color_ink dbt-grays.heading
+
+  border:
+    color: *color_ink
+
+  title:
+    font:
+      family: *font_sans
+      color: *color_ink
+    subtitle:
+      font:
+        family: *font_sans
+        color: *color_ink
+
+  charts:
+    color:
+      categorical:
+        # Single-series ink palette. Today: one element; every single-series
+        # chart on the board uses slot 0. Follow-up rhythm pass cycles through
+        # multiple slots per chart-id in reading order.
+        # Stark commits to pure black; light-canvas children (light/bi/looker)
+        # inherit. dark/editorial/cream override.
+        single_series_palette: [dbt-grays.black]
+    axis:
+      line:
+        color: *color_ink
+      ticks:
+        color: *color_ink
+      grid:
+        color: *color_ink
+      labels:
+        font:
+          color: *color_ink
+      title:
+        font:
+          color: *color_ink
+    axis_y:
+      grid:
+        zero:
+          color: *color_ink
+
+    legend:
+      visible: false               # direct-labeling by default (editorial posture)
+      label:
+        font:
+          color: *color_ink
+        max_width: 200
+      title:
+        font:
+          color: *color_ink
+
+    table:
+      border:
+        color: dbt-grays.separator
+      paginator:
+        color_active: dbt-grays.ink
+        color_inactive: dbt-grays.inactive
+        color_disabled: dbt-grays.disabled
+      header:
+        font:
+          color: *color_ink
+      spark:
+        empty:
+          stroke:
+            color: dbt-grays.spark-empty
+        bar:
+          background: dbt-grays.fill-muted
+
+    spark_bar:
+      bar:
+        background: dbt-grays.fill-muted
+
+    marks:
+      bar:
+        labels:
+          visible: false
+          position: top
+      line:
+        labels:
+          visible: false
+          position: top
+      point:
+        labels:
+          visible: false
+          position: top
+      text:
+        font:
+          family: *font_sans
+          color: *color_ink
+      rule:
+        stroke:
+          color: *color_ink
+      geoshape:
+        # Neutral fill for geography without joined data; keeps unjoined
+        # countries/regions visible without entering the data color scale.
+        fill: dbt-grays.grid-emphasis
+
+    # Themed sequential default for heatmap/geoshape gradient color — see
+    # cream.yaml for the contrast-floor rationale (blues' light end fails
+    # WCAG on a light canvas too, just less severely than on cream).
+    geoshape:
+      color:
+        gradient:
+          palette: sequence
+    heatmap:
+      color:
+        gradient:
+          palette: sequence
+
+    # Tooltip tracks the board's own light ground (was black on a white board --
+    # a mismatched ground). Sharp corners + thick black outline + no shadow +
+    # square swatch read as stark's utilitarian voice; the triangle active_marker
+    # (vs. every other theme's background fill) is stark's other tooltip signature.
+    tooltip:
+      background: dbt-grays.white
+      label:
+        font:
+          color: *color_ink
+      value:
+        font:
+          color: *color_ink
+      border:
+        color: dbt-grays.black
+        width: 1.5
+        radius: 0.0
+      shadow:
+        visible: false
+      swatch:
+        radius: 0.0
+      active_marker: triangle
+
+    kpi:
+      font:
+        family: '''dbt Sans Tabular'', Inter, system-ui, sans-serif'
+
+    data_table:
+      font:
+        family: '''dbt Sans Tabular'', Inter, system-ui, sans-serif'
+        color: *color_ink
+      divider:
+        color: *color_ink
+      label:
+        font:
+          color: *color_ink
+
+    axis_quantitative:
+      labels:
+        font:
+          family: '''dbt Sans Tabular'', Inter, system-ui, sans-serif'
+
+    # Direct-label multi-series lines/areas/bars at their endpoints rather
+    # than leaning on a side legend. Set on the structural root so the plain
+    # theme inherits it; the crafted themes (editorial/vivid/neon) already
+    # set their own true.
+    line:
+      endpoint_labels:
+        visible: true
+    area:
+      endpoint_labels:
+        visible: true
+    # A vertical bar's labels anchor to the last column's per-series stack
+    # midpoints; a horizontal bar's take the top-row rail instead. Resolve
+    # turns this back off wherever the rail cannot name every series — see
+    # _bar_endpoint_labels_for_stack.
+    bar:
+      endpoint_labels:
+        visible: true
+      legend:
+        # A bar that direct-labels has this suppressed again by resolve. It is
+        # load-bearing for the bars that cannot — grouped, a negative measure,
+        # or a series absent from the last column — which would otherwise
+        # carry no series key at all, since the theme hides legends globally.
+        # A bar disqualified by `multiples:` instead gets its legend from
+        # `_multiples_wants_top_legend` (compile/resolve/chart/_axes.py), which
+        # this override no longer needs to cover.
+        visible: true
+
+    pie:
+      total:
+        value:
+          font:
+            family: '''dbt Sans Tabular'', Inter, system-ui, sans-serif'
+            color: *color_ink
+        label:
+          font:
+            color: *color_ink
+
+  text:
+    font:
+      family: *font_sans
+      color: *color_ink
+
+    code:
+      highlight: true
+      theme: default
+      font:
+        family: '''Source Code Pro'', ''ui-monospace'', ''SFMono-Regular'', Menlo, Consolas, monospace'
+        color: *color_ink
+        # No size: code is sized as a fraction of the text it sits in (mdsvg's
+        # code_font_scale), so it tracks prose and headings instead of pinning a
+        # px value that silently desyncs the next time body prose is retuned.
+      background: dbt-grays.surface-subtle
+      border:
+        color: dbt-grays.border
+        width: 1
+        radius: 4
+
+    blockquote:
+      font:
+        color: dbt-grays.muted
+        style: italic
+      background: ''
+      border:
+        color: dbt-grays.border
+        width: 2
+        radius: 0
+
+  variables:
+    font:
+      color: *color_ink
+    border:
+      color: *color_ink
+    input:
+      border:
+        color: *color_ink
+
+  page:
+    background: dbt-grays.white
+
+  placeholder:
+    overlay:
+      background: 'rgba(255, 255, 255, 0.5)'
+      font:
+        color: dbt-grays.placeholder

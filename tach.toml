@@ -1,0 +1,325 @@
+# Dataface architectural boundaries — single source of truth.
+#
+# Class B (direction/layering) — enforced by `tach check` via layers +
+# cannot_depend_on.
+# Class A (wheel-outbound bans) — enforced by `tach check-external` as an
+# allowlist: only deps declared in dbt-charts/pyproject.toml [project]
+# dependencies plus the `external.exclude` carve-outs below may be imported.
+
+source_roots = ["src", "tests"]
+layers = ["surface", "agent_api", "core"]
+forbid_circular_dependencies = true
+exclude = ["**/__pycache__", "**/*.egg-info"]
+
+# Packages excluded from the allowlist check. Three categories:
+#
+# 1. Peer packages: shipped inside the wheel via
+#    [tool.hatch.build.targets.wheel.force-include] in dbt-charts/pyproject.toml,
+#    not declared as deps.
+#
+# 2. Optional-extra deps: declared under [project.optional-dependencies] but
+#    not in [project] dependencies, so tach's allowlist doesn't see them.
+#
+# 3. Test-only dev deps and transitive-required packages: used in dbt-charts/tests/
+#    (scanned for Class B enforcement) or declared in pyproject.toml for
+#    version-floor reasons but never imported directly by dbt_charts source.
+#
+# Drop entries here when the corresponding dep is removed from pyproject.toml
+# or when the import is removed from source.
+[external]
+exclude = [
+    "mdsvg",
+    "d3_format",
+    "mcp",
+    "openai",
+    "anthropic",
+    "pydantic_core",
+    "msgpack",
+    "mashumaro",
+    "fonttools",
+    "click",
+    "pytest",
+    "jsonschema",
+    "dbt_charts",
+    # `dbt-charts.tests.*` — the outer, unrenamed workspace dir's own dotted
+    # namespace (pytest consider_namespace_packages). Not the import package
+    # itself (that's `dbt_charts`, excluded above) — tests reach sibling test
+    # modules via this absolute path (see test_no_path_mutation.py), which
+    # tach's Class A check otherwise reads as an undeclared external dep.
+    "dbt-charts",
+    "check_models",
+    "generate_schema",
+    "nimble",
+    "markdown",
+    # Python-version-dependent stdlib: tomllib is stdlib on 3.11+; the
+    # 3.10 path falls through to `import tomli as tomllib` (declared as
+    # the conditional `tomli; python_version < "3.11"` dep).
+    "tomllib",
+    # Import-name vs PyPI-name skews. The PyPI package is declared in
+    # dbt-charts/pyproject.toml; the importable top-level differs.
+    #   vl-convert-python  → import vl_convert
+    #   dbt-adapters       → import dbt.adapters (namespace package)
+    #   dbt-common         → import dbt_common (transitive dep of dbt-adapters)
+    #   dbt-core           → import dbt.parser/dbt.contracts (same bare `dbt`
+    #                        namespace as dbt-adapters — tach can't tell which
+    #                        of the two declared dists a `dbt.*` import
+    #                        satisfies, so both need this carve-out)
+    "vl_convert",
+    "vl_convert_python",
+    "dbt_adapters",
+    "dbt_common",
+    "dbt_core",
+    # Pillow ships the `PIL` import; declared as a direct dependency in
+    # pyproject.toml (core/compile/sizing uses PIL.ImageFont at compile
+    # time for title-width measurement). Excluded from tach's external
+    # check because tach looks up the import name `PIL`, not the
+    # PyPI-normalized name `pillow`.
+    "pillow",
+    # `dbt-charts-playground` is declared in [project.optional-dependencies]
+    # playground (tach 0.35.0 only reads [project] dependencies, not
+    # optional-deps). Imported lazily by `dct playground`.
+    "dbt_charts_playground",
+    # `google-cloud-bigquery` is declared in [project.optional-dependencies]
+    # bigquery (tach 0.35.0 only reads [project] dependencies, not optional-deps).
+    # Imported lazily in _SourcePool._ensure_connected when type==bigquery.
+    # Tach normalizes the PyPI name: `google-cloud-bigquery` → `google_cloud_bigquery`.
+    "google_cloud_bigquery",
+    # `import databricks.sql` (used in databricks_connection_manager.py) is pulled
+    # via the databricks optional-dep; tach reads only [project] deps. The top-level
+    # `databricks` namespace is owned by `databricks-sdk` (the dist whose top_level
+    # is `databricks`), so tach resolves the import to `databricks_sdk`.
+    "databricks_sdk",
+    # `dbt-charts-super-schema` is the private profiler companion package —
+    # NOT on PyPI, NOT declared as a dep. The boundary is probed once at
+    # startup via `importlib.util.find_spec` in `cache_factory.py`; actual
+    # imports are gated on that probe result. The import direction
+    # (dbt_charts → dbt_charts_super_schema) is intentionally one-way and
+    # optional: the reverse (private → OSS) is the primary relationship.
+    "dbt_charts_super_schema",
+    # `pyarrow` is declared in [project.optional-dependencies] parquet
+    # (tach 0.35.0 only reads [project] dependencies, not optional-deps).
+    # Imported by file_source_materializer.py when parquet sources are used.
+    "pyarrow",
+    # `metricflow` and `metricflow_semantics` are declared in
+    # [project.optional-dependencies] metricflow (tach 0.35.0 only reads
+    # [project] dependencies, not optional-deps). Imported lazily in
+    # _lower_metricflow_query; raises CompilationError if absent.
+    "metricflow",
+    "metricflow_semantics",
+    # `filelock` is a test-only dev dep (declared in root pyproject.toml
+    # dev group). Used by dbt-charts/tests/integration/conftest.py to guard
+    # the xdist TOCTOU race when creating examples/metricflow/warehouse.duckdb.
+    "filelock",
+    # `packaging` is a test-only dev dep (declared in root pyproject.toml dev
+    # group). Used by dbt-charts/tests/core/test_packaging_metadata.py to parse
+    # declared dependency specifiers with PEP 440 semantics rather than
+    # substring-matching them.
+    "packaging",
+    # `nh3` is imported by the peer mdsvg package (built into the wheel via
+    # [tool.hatch.build.targets.wheel.force-include] in dbt-charts/pyproject.toml),
+    # not by dbt-charts/src/dbt_charts/ directly.
+    # Declared in dbt-charts/pyproject.toml so pip-install pulls it as a
+    # direct runtime dep of the bundled mdsvg.
+    "nh3",
+    # `cairosvg` is a test-only dev dep (declared in libs/tasks/pyproject.toml,
+    # imported transitively via the shared workspace venv). Used by
+    # dbt-charts/tests/core/render/test_svg_root_standalone_export.py to
+    # rasterize a standalone SVG export outside a browser, same role as
+    # libs/tasks/tasks/pr/viz_review.py's rasterization step.
+    "cairosvg",
+]
+
+[[modules]]
+path = "dbt_charts.core"
+layer = "core"
+# dbt_charts.core.compile is now its own module (below) with a restricted
+# depends_on that excludes render/execute — everything else under the
+# dbt_charts.core blanket (board.py, __init__.py, connections.py, execute/,
+# render/, serve/, inspect/) legitimately imports compile's resolved types.
+depends_on = [
+    "dbt_charts.core.attribution",
+    "dbt_charts.core.aliases",
+    "dbt_charts.core.colors",
+    "dbt_charts.core.diagnostics",
+    "dbt_charts.core.compile",
+    "dbt_charts.core.dbt_manifest",
+    "dbt_charts.core.font_measure",
+    "dbt_charts.core.fonts",
+    "dbt_charts.core.numeric",
+    "dbt_charts.core.utils",
+    "dbt_charts.core.text",
+    "dbt_charts.core.dialects",
+]
+
+[[modules]]
+path = "dbt_charts.core.diagnostics"
+layer = "core"
+depends_on = []   # leaf node — pins compile/execute/render ↛ diagnostics invariant
+
+[[modules]]
+path = "dbt_charts.core.aliases"
+layer = "core"
+# leaf node — alias-URL normalization shared by serve (AliasIndex) and by a
+# host that resolves claims from its own board index. A claim and a request
+# path are compared as strings, so the rule must be one function; keeping it a
+# leaf is what stops a host importing serve/ (top of the stack, FastAPI app)
+# to get it.
+depends_on = []
+
+[[modules]]
+path = "dbt_charts.core.colors"
+layer = "core"
+# leaf node — CSS/SVG color-string validation shared by compile
+# (pie-attachment table style resolution) and render (KPI/table SVG
+# emission); depends only on diagnostics for InvalidColorError so neither
+# compile nor render reaches into the other's layer to validate a foreign
+# color string.
+depends_on = ["dbt_charts.core.diagnostics"]
+
+[[modules]]
+path = "dbt_charts.core.attribution"
+layer = "core"
+# leaf node — the authored-attribution validator is needed by compile (models/source)
+# and the query header by execute (dbt_adapter_factory); keeping both here avoids a
+# compile -> execute edge for one shared `dft_` namespace.
+depends_on = []
+
+[[modules]]
+path = "dbt_charts.core.fonts"
+layer = "core"
+depends_on = []   # leaf node — shared vendored-font asset lookup
+
+[[modules]]
+path = "dbt_charts.core.font_measure"
+layer = "core"
+depends_on = ["dbt_charts.core.fonts"]   # one strict measurer/cache shared by compile and render
+
+[[modules]]
+path = "dbt_charts.core.text"
+layer = "core"
+depends_on = ["dbt_charts.core.utils"]   # case.py uses slug_to_text; no compile/render/execute deps
+
+[[modules]]
+path = "dbt_charts.core.utils"
+layer = "core"
+depends_on = []   # leaf node — pure cross-cutting helpers (slug_to_text, to_plain_dict, ...)
+
+[[modules]]
+path = "dbt_charts.core.dialects"
+layer = "core"
+# Relocated from dbt_charts.core.execute.dialects (fast-follow to the C1
+# compile/render layering fix): SQLDialect/get_dialect/VALID_OPERATORS are
+# pure runtime/dialect behavior with zero execute-specific dependencies, so
+# they live as a leaf module both compile (template/parameterized.py, filter_injection.py)
+# and execute (executor.py, adapters/) can depend on directly.
+depends_on = []   # leaf node — no compile/execute/render deps
+
+[[modules]]
+path = "dbt_charts.core.numeric"
+layer = "core"
+# Leaf node — the generic d3-style "nice step" tick primitive (nice_tick_values),
+# zero Dataface-specific types. compile/resolve/chart/_domain.py bakes real axis
+# ticks with it; render/chart/emitters/_measured_label_padding.py uses it only to
+# estimate the widest plausible foreign-rendered label width.
+depends_on = []
+
+[[modules]]
+path = "dbt_charts.core.dbt_manifest"
+layer = "core"
+# Leaf node — manifest loading, validation gate, and RefIndex derivation.
+# execute/ and inspect/ import from here; compile/ does not need it.
+# The dbt.contracts import is function-local so dbt_manifest.py itself
+# has no heavy top-level imports, keeping the leaf character.
+depends_on = ["dbt_charts.core.diagnostics"]
+
+[[modules]]
+path = "dbt_charts.core.compile"
+layer = "core"
+# Remaining compile -> {project, project_roots, inspect} edges (and the
+# DbtAdapter/SqlAdapter/_read_target_dict compile->execute edges in sources/detection.py
+# and normalize/queries.py, which are real adapter-class usage, not relocatable
+# leaf behavior) are real, pre-existing accepted debt — not addressed here.
+# Each site carries an inline `# tach-ignore(...)` with its own rationale
+# rather than a depends_on entry, since project/etc. are not carved into their
+# own tach modules yet — doing so risks reintroducing cycles (e.g. project.py
+# already imports compile.config). Tracked separately. `fonts` is NOT accepted
+# debt — it's a leaf module (see core/AGENTS.md's module-dependency-direction
+# section), so it's a real depends_on entry instead of a tach-ignore site.
+depends_on = [
+    "dbt_charts.core.aliases",
+    "dbt_charts.core.attribution",
+    "dbt_charts.core.colors",
+    "dbt_charts.core.diagnostics",
+    "dbt_charts.core.font_measure",
+    "dbt_charts.core.numeric",
+    "dbt_charts.core.fonts",
+    "dbt_charts.core.text",
+    "dbt_charts.core.utils",
+    "dbt_charts.core.dialects",
+]
+
+[[modules]]
+path = "dbt_charts.agent_api"
+layer = "agent_api"
+# FilesystemProject construction is confined to the dbt_charts.cli leaf. agent_api
+# receives a Project and may reference the concrete type only under TYPE_CHECKING;
+# a runtime import (i.e. construction) is a boundary break. The lone exception is
+# the host-type guard in _paths.resolve_face_or_error / _relpath_for_fs_location
+# (carries a # tach-ignore + tracked task). project_session is unchecked, so its
+# ProjectSession.open construction is
+# not caught here — its migration to the edge is the tracked follow-up.
+cannot_depend_on = ["dbt_charts.cli", "dbt_charts.cli.filesystem_project"]
+
+# cli routes through agent_api, never core directly (root AGENTS.md #8).
+# Deliberately UNLAYERED with an explicit depends_on: in tach 0.35, layer
+# ordering implicitly allows a higher layer to skip levels (surface -> core),
+# and `cannot_depend_on` does not fire on layer-permitted downward edges —
+# an explicit depends_on on an unlayered module is the enforcing shape.
+# Existing violations carry inline `# tach-ignore` markers — tracked debt to
+# route the seven CLI verbs through agent_api.
+# dbt_charts.ai is intentionally absent from depends_on (former cannot_depend_on).
+[[modules]]
+path = "dbt_charts.cli"
+depends_on = [
+    "dbt_charts.agent_api",
+    "dbt_charts.cli.filesystem_project",
+]
+
+# FilesystemProject — the concrete local-filesystem Project — lives here at the
+# CLI composition root so construction is confined to dbt_charts.cli: core/agent_api/ai
+# may reference it only under TYPE_CHECKING (tach ignores type-only imports), so a
+# runtime FilesystemProject(...) below the CLI fails `tach check`. This module is the
+# one sanctioned cli->core edge: it builds the fs Project from core's project/compile
+# primitives.
+[[modules]]
+path = "dbt_charts.cli.filesystem_project"
+depends_on = ["dbt_charts.core", "dbt_charts.core.compile"]
+
+# project_session.py holds the ProjectSession runtime object (lifecycle + verb
+# forwarders). `unchecked = true` because dbt-charts/src/dbt_charts/agent_api/__init__.py
+# re-exports ProjectSession directly, so `layer = "surface"` would violate the
+# agent_api ↛ surface layer rule. This is an intentional runtime-shape exception:
+# agent_api will eventually acknowledge typed-entrypoints-that-return-runtime-objects
+# as a normal shape; until then, unchecked is correct here. Only the project_session
+# half of this carve-out remains; the agent_api.chat carve-out went with that command.
+[[modules]]
+path = "dbt_charts.agent_api.project_session"
+unchecked = true
+
+[[modules]]
+path = "dbt_charts.ai"
+layer = "surface"
+# Same rule as agent_api: the AI surface consumes an injected Project, it does not
+# construct FilesystemProject. (dbt_charts.ai.tools is exempted below only until its
+# remaining dashboards_directory-override construction — reached by evals, not just
+# tests — is decoupled; tracked follow-up.)
+cannot_depend_on = ["dbt_charts.cli", "dbt_charts.cli.filesystem_project"]
+
+[[modules]]
+path = "dbt_charts.ai.tools"
+layer = "surface"
+cannot_depend_on = ["dbt_charts.ai.mcp"]   # tools own canonical impls; mcp wraps tools
+
+[[modules]]
+path = "dbt_charts.ai.mcp"
+layer = "surface"

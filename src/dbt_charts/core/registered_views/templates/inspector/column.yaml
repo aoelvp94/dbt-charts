@@ -1,0 +1,297 @@
+[% set colrows = (queries.col.rows if (queries is defined and queries.col is defined and queries.col.rows is defined) else []) %]
+[% set col = (colrows[0] if colrows else {}) %]
+[% set atype = (col.get('actual_type') or '') | upper %]
+[# Coarse substring type dispatch. INTERVAL contains 'INT' but is neither numeric
+   nor a DATE/TIMESTAMP, so it's excluded here and falls to the generic top-values
+   branch rather than getting min/max/histogram or ::DATE treatment. #]
+[% set is_numeric = ('INTERVAL' not in atype) and (('INT' in atype) or ('DEC' in atype) or ('NUMERIC' in atype) or ('DOUBLE' in atype) or ('FLOAT' in atype) or ('REAL' in atype) or ('HUGEINT' in atype)) %]
+[# Only DATE/TIMESTAMP columns get the date branch (::DATE cast + monthly trunc).
+   Bare TIME / TIMETZ (time-of-day) can't be cast to a date, so they fall to the
+   generic top-values branch rather than erroring the whole page. #]
+[% set is_temporal = ('DATE' in atype) or ('TIMESTAMP' in atype) %]
+
+extends: neon
+title: [[ ("Inspector: " ~ path.source ~ "/" ~ path.schema ~ "/" ~ path.table ~ "/" ~ path.column) | tojson ]]
+
+text: [[ ("[← " ~ path.table ~ "](/inspector/" ~ path.source ~ "/" ~ path.schema ~ "/" ~ path.table ~ "/)") | tojson ]]
+
+queries:
+  # Same column profile as the `col` pre-template query above — intentionally
+  # re-run as a board query for the Full-profile table. The pre-template result
+  # isn't reusable as a board query (it drives view-layer branching only). On a
+  # cache-backed host this is a cache hit; on cache-less serve it re-profiles the
+  # one column once more, which is cheap.
+  profile:
+    type: schema
+    source: [[ path.source | tojson ]]
+    schema: [[ path.schema | tojson ]]
+    table: [[ path.table | tojson ]]
+    column: [[ path.column | tojson ]]
+
+  basics:
+    type: sql
+    source: [[ path.source | tojson ]]
+    sql: >-
+      SELECT
+        COUNT(*) AS total,
+        ROUND(100.0 * (COUNT(*) - COUNT([[ sql_identifier(path.column) ]])) / NULLIF(COUNT(*), 0), 2) AS null_pct,
+        COUNT(DISTINCT [[ sql_identifier(path.column) ]]) AS distinct_count
+      FROM [[ sql_identifier(path.schema) ]].[[ sql_identifier(path.table) ]]
+
+[% if is_numeric %]
+  numeric_stats:
+    type: sql
+    source: [[ path.source | tojson ]]
+    sql: >-
+      SELECT
+        MIN([[ sql_identifier(path.column) ]]) AS min_value,
+        MAX([[ sql_identifier(path.column) ]]) AS max_value,
+        AVG([[ sql_identifier(path.column) ]]) AS mean_value,
+        STDDEV([[ sql_identifier(path.column) ]]) AS std_dev
+      FROM [[ sql_identifier(path.schema) ]].[[ sql_identifier(path.table) ]]
+
+  histogram:
+    type: sql
+    source: [[ path.source | tojson ]]
+    sql: >-
+      WITH bounds AS (
+        SELECT MIN([[ sql_identifier(path.column) ]]) AS lo,
+               (MAX([[ sql_identifier(path.column) ]]) - MIN([[ sql_identifier(path.column) ]])) / 10.0 AS w
+        FROM [[ sql_identifier(path.schema) ]].[[ sql_identifier(path.table) ]]
+        WHERE [[ sql_identifier(path.column) ]] IS NOT NULL
+      )
+      SELECT
+        ROUND(b.lo + FLOOR(([[ sql_identifier(path.column) ]] - b.lo) / NULLIF(b.w, 0)) * b.w, 2) AS bucket,
+        COUNT(*) AS count
+      FROM [[ sql_identifier(path.schema) ]].[[ sql_identifier(path.table) ]], bounds b
+      WHERE [[ sql_identifier(path.column) ]] IS NOT NULL
+      GROUP BY 1
+      ORDER BY 1
+[% elif is_temporal %]
+  date_stats:
+    type: sql
+    source: [[ path.source | tojson ]]
+    sql: >-
+      SELECT
+        MIN([[ sql_identifier(path.column) ]])::DATE AS earliest,
+        MAX([[ sql_identifier(path.column) ]])::DATE AS latest,
+        COUNT(DISTINCT [[ sql_identifier(path.column) ]]::DATE) AS distinct_days
+      FROM [[ sql_identifier(path.schema) ]].[[ sql_identifier(path.table) ]]
+
+  monthly:
+    type: sql
+    source: [[ path.source | tojson ]]
+    sql: >-
+      SELECT DATE_TRUNC('month', [[ sql_identifier(path.column) ]])::DATE AS month, COUNT(*) AS count
+      FROM [[ sql_identifier(path.schema) ]].[[ sql_identifier(path.table) ]]
+      WHERE [[ sql_identifier(path.column) ]] IS NOT NULL
+      GROUP BY 1
+      ORDER BY 1
+[% else %]
+  categories:
+    type: sql
+    source: [[ path.source | tojson ]]
+    sql: >-
+      SELECT
+        COALESCE(CAST([[ sql_identifier(path.column) ]] AS VARCHAR), '(null)') AS value,
+        COUNT(*) AS count,
+        ROUND(100.0 * COUNT(*) / (SELECT COUNT(*) FROM [[ sql_identifier(path.schema) ]].[[ sql_identifier(path.table) ]]), 1) AS pct
+      FROM [[ sql_identifier(path.schema) ]].[[ sql_identifier(path.table) ]]
+      GROUP BY 1
+      ORDER BY count DESC
+      LIMIT 20
+
+  categories_top:
+    type: sql
+    source: [[ path.source | tojson ]]
+    sql: >-
+      WITH ranked AS (
+        SELECT COALESCE(CAST([[ sql_identifier(path.column) ]] AS VARCHAR), '(null)') AS value,
+               COUNT(*) AS count,
+               ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) AS rn
+        FROM [[ sql_identifier(path.schema) ]].[[ sql_identifier(path.table) ]]
+        GROUP BY 1
+      )
+      SELECT CASE WHEN rn <= 8 THEN value ELSE 'Other' END AS value, SUM(count) AS count
+      FROM ranked GROUP BY 1 ORDER BY count DESC
+[% endif %]
+
+charts:
+  kpi_total:
+    label: Rows
+    type: kpi
+    query: basics
+    value: total
+    style:
+      value:
+        format: ",.0f"
+
+  kpi_distinct:
+    label: Distinct
+    type: kpi
+    query: basics
+    value: distinct_count
+    style:
+      value:
+        format: ",.0f"
+
+  kpi_null:
+    label: "Null %"
+    type: kpi
+    query: basics
+    value: null_pct
+    style:
+      value:
+        format: ".1f"
+
+[% if is_numeric %]
+  kpi_min:
+    label: Min
+    type: kpi
+    query: numeric_stats
+    value: min_value
+    style:
+      value:
+        format: ",.4g"
+
+  kpi_max:
+    label: Max
+    type: kpi
+    query: numeric_stats
+    value: max_value
+    style:
+      value:
+        format: ",.4g"
+
+  kpi_mean:
+    label: Mean
+    type: kpi
+    query: numeric_stats
+    value: mean_value
+    style:
+      value:
+        format: ",.4g"
+
+  kpi_std:
+    label: Std Dev
+    type: kpi
+    query: numeric_stats
+    value: std_dev
+    style:
+      value:
+        format: ",.4g"
+
+  distribution:
+    title: Distribution
+    type: bar
+    query: histogram
+    x: bucket
+    y: count
+[% elif is_temporal %]
+  kpi_earliest:
+    label: Earliest
+    type: kpi
+    query: date_stats
+    value: earliest
+
+  kpi_latest:
+    label: Latest
+    type: kpi
+    query: date_stats
+    value: latest
+
+  kpi_days:
+    label: Distinct Days
+    type: kpi
+    query: date_stats
+    value: distinct_days
+    style:
+      value:
+        format: ",.0f"
+
+  timeline:
+    title: Records per Month
+    type: bar
+    query: monthly
+    x: month
+    y: count
+[% else %]
+  category_pie:
+    title: Share
+    type: pie
+    query: categories_top
+    theta: count
+    color: value
+
+  category_table:
+    title: Value Frequency
+    type: table
+    query: categories
+    style:
+      columns:
+        value:
+          label: Value
+        count:
+          label: Count
+          format: ",.0f"
+        pct:
+          label: "%"
+          format: ".1f"
+[% endif %]
+
+  profile_detail:
+    title: Full Profile
+    type: table
+    query: profile
+    style:
+      columns:
+        name:
+          label: Column
+        actual_type:
+          label: Type
+        role:
+          label: Role
+        semantic_type:
+          label: Semantic
+        distribution:
+          label: Distribution
+        completeness:
+          label: Completeness
+        key_role:
+          label: Key
+
+rows:
+[% if is_numeric %]
+  - cols:
+      - kpi_total
+      - kpi_distinct
+      - kpi_null
+      - kpi_min
+      - kpi_max
+      - kpi_mean
+      - kpi_std
+  - distribution
+[% elif is_temporal %]
+  - cols:
+      - kpi_total
+      - kpi_distinct
+      - kpi_null
+      - kpi_earliest
+      - kpi_latest
+      - kpi_days
+  - timeline
+[% else %]
+  - cols:
+      - kpi_total
+      - kpi_distinct
+      - kpi_null
+  - cols:
+      - category_pie
+      - category_table
+[% endif %]
+  - details:
+      summary: "Full profile"
+      expanded_title: "Full profile"
+      expanded: false
+    rows:
+      - profile_detail

@@ -1,0 +1,156 @@
+# Every Variable Input Type
+# =========================
+# One board carrying one control of every widget dbt charts draws, so the whole
+# strip can be checked at once — live in a host that re-runs queries, and
+# read-only in a downloaded SVG/PNG/PDF, where the same values are stated as
+# static chrome.
+#
+# Every control here actually filters the data below it; none are decoration.
+
+title: Every Variable Input Type
+description: One control of each widget, all filtering the same orders table.
+source: examples_db
+
+variables:
+  # daterange — chip + calendar popover with a preset rail.
+  ordered:
+    input: daterange
+
+  # multiselect — checkable listbox, commits a list. Unset means "all".
+  regions:
+    input: multiselect
+    options:
+      static: [North, South, East, West]
+    default: [North, East]
+
+  # select — single-choice listbox. No default, so "All" stays reachable.
+  category:
+    input: select
+    options:
+      static: [Electronics, Accessories, Tools]
+
+  # date — single day, calendar popover.
+  since:
+    label: On or after
+    input: date
+
+  # text — free-form, matched with LIKE below.
+  product_like:
+    label: Product name
+    input: text
+    placeholder: e.g. Widget
+
+  # number — stepped numeric field.
+  min_revenue:
+    label: Min revenue
+    input: number
+    min: 0
+    max: 5000
+    step: 250
+    default: 0
+
+  # slider — bounded value with a track and a thumb.
+  top_n:
+    label: Top N products
+    input: slider
+    min: 3
+    max: 8
+    step: 1
+    default: 5
+
+  # checkbox — boolean toggle.
+  units_only:
+    label: Rank by units
+    input: checkbox
+    default: false
+
+queries:
+  # One filtered base every chart reads, so each control's effect is visible
+  # in all of them at once rather than in one tile.
+  filtered_orders:
+    sql: |
+      SELECT *
+      FROM ecommerce_orders
+      WHERE {{ filter_date_range('date', ordered) }}
+        AND {{ filter('region', regions) }}
+        AND {{ filter('category', category) }}
+        AND {{ filter('date', since, '>=') }}
+        AND {{ filter('product', '%' ~ product_like ~ '%' if product_like else none, 'ILIKE') }}
+        AND revenue >= {{ min_revenue }}
+
+  # The checkbox switches what `measure` means, so the chart below stays a
+  # plain two-column bar instead of templating its own encoding.
+  top_products:
+    sql: |
+      SELECT
+        filtered_orders.product,
+        SUM(filtered_orders.{{ 'units_sold' if units_only else 'revenue' }}) AS measure
+      FROM {{ queries.filtered_orders }}
+      GROUP BY filtered_orders.product
+      ORDER BY measure DESC
+      LIMIT {{ top_n }}
+
+  by_region:
+    sql: |
+      SELECT filtered_orders.region, SUM(filtered_orders.revenue) AS revenue
+      FROM {{ queries.filtered_orders }}
+      GROUP BY filtered_orders.region
+      ORDER BY revenue DESC
+
+  totals:
+    sql: |
+      SELECT
+        SUM(filtered_orders.revenue) AS revenue,
+        SUM(filtered_orders.units_sold) AS units_sold,
+        COUNT(*) AS orders
+      FROM {{ queries.filtered_orders }}
+
+charts:
+  kpi_revenue:
+    type: kpi
+    query: totals
+    value: revenue
+    label: Revenue
+  kpi_units:
+    type: kpi
+    query: totals
+    value: units_sold
+    label: Units
+  kpi_orders:
+    type: kpi
+    query: totals
+    value: orders
+    label: Orders
+
+  top_products:
+    title: "Top {{ top_n }} Products by {{ 'Units' if units_only else 'Revenue' }}"
+    type: bar
+    query: top_products
+    style:
+      orientation: horizontal
+    x: product
+    y: measure
+
+  by_region:
+    title: Revenue by Region
+    type: bar
+    query: by_region
+    x: region
+    y: revenue
+    style:
+      axis_y:
+        labels:
+          format: "$,.0f"
+
+rows:
+  - text: |
+      Every widget below is wired to the orders table. Change any control and
+      the three KPIs and both charts re-run together. Download this board to
+      see the same state drawn as read-only chrome.
+  - cols:
+      - kpi_revenue
+      - kpi_units
+      - kpi_orders
+  - cols:
+      - top_products
+      - by_region

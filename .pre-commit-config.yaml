@@ -1,0 +1,29 @@
+# Pre-commit hooks for dbt charts.
+# See https://pre-commit.com for more information.
+
+repos:
+  # Ruff - formatter + linter (replaces black, flake8, isort, etc.).
+  # Lint-with-fix runs before the formatter, per ruff-pre-commit's README:
+  # both hooks rewrite files, and fixes can leave code the formatter then
+  # reflows — the other order leaves a second pass' worth of churn behind.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.2
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # General file hygiene checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--unsafe]  # Allow custom YAML tags
+      - id: check-added-large-files
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-case-conflict
+      - id: check-illegal-windows-names
+      - id: destroyed-symlinks

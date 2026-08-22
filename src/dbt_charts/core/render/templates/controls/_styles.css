@@ -1,0 +1,268 @@
+{# Styles for what a host overlays on a drawn board.
+
+   The controls themselves are SVG the server drew, styled by the theme through
+   the board's own stylesheet — nothing here paints a control. What is left is
+   the chrome that only exists during an interaction: the popover a select
+   opens, and the native input a text field lifts. Both are page-level and
+   native-size, because anything positioned inside a scaled board inherits that
+   scale, popovers included.
+
+   These comments use the templating engine's own comment syntax rather than
+   plain CSS comments, so they're stripped before the stylesheet is served. #}
+
+{# The popover card. Background uses a dedicated --dbt-popover-bg token rather
+   than --dbt-system-input-background: the variables-bar input background is
+   intentionally `transparent` in the `stark` cascade root so it inherits the
+   page canvas, and a popover needs an OPAQUE surface. #}
+.dbt-popover {
+  display: none;
+  position: absolute;
+  background: var(--dbt-popover-bg, #ffffff);
+  border: 1px var(--dbt-system-input-border-style, solid) var(--dbt-system-input-border, #ced4da);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.10);
+  overflow: hidden;
+  z-index: 100;
+  font-family: 'Inter Variable', Inter, system-ui, -apple-system, sans-serif;
+}
+
+.dbt-popover.dbt-popover-open {
+  display: flex;
+}
+
+.dbt-select-popover {
+  flex-direction: column;
+  padding: 4px 0;
+  max-height: 280px;
+  overflow-y: auto;
+  min-width: 140px;
+}
+
+.dbt-select-option {
+  padding: 6px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--dbt-system-text, #333333);
+  font-size: 13px;
+}
+
+.dbt-select-option:hover {
+  background: color-mix(in srgb, var(--dbt-system-muted, #6c757d) 12%, transparent);
+}
+
+{# Selected row — solid accent fill. A multiselect shows several at once. #}
+.dbt-select-option[aria-selected="true"] {
+  background: var(--dbt-system-accent, #667eea);
+  color: white;
+}
+
+{# The transient native input a text, number, date, or daterange control lifts
+   on focus. Sized and positioned inline from the drawn field's client rect, so
+   only appearance is set here — never geometry, which would fight the runtime
+   for where it sits. #}
+.dbt-variable-overlay {
+  background: var(--dbt-popover-bg, #ffffff);
+  border: 1px var(--dbt-system-input-border-style, solid) var(--dbt-system-input-border, #ced4da);
+  border-radius: var(--dbt-system-radius, 4px);
+  color: var(--dbt-system-text, #333333);
+  font-family: 'Inter Variable', Inter, system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  padding: 0 8px;
+  z-index: 100;
+}
+
+{# Daterange popover: rail left, calendar right — hence row direction. #}
+.dbt-daterange-popover {
+  flex-direction: row;
+}
+
+{# Preset rail — left column. Distinct background from the calendar area
+   (subtle surface step) keeps the two panels visually separate. #}
+.dbt-preset-rail {
+  width: 164px;
+  border-right: 1px solid var(--dbt-system-input-border, #ced4da);
+  padding: 10px 0;
+  flex-shrink: 0;
+  background: var(--dbt-popover-rail-bg, #fafafa);
+}
+
+.dbt-preset-rail button {
+  display: block;
+  width: 100%;
+  padding: 7px 16px;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--dbt-system-text, #333333);
+}
+
+.dbt-preset-rail button:hover {
+  background: color-mix(in srgb, var(--dbt-system-muted, #6c757d) 12%, transparent);
+}
+
+.dbt-preset-rail button.dbt-preset-active {
+  background: var(--dbt-system-accent, #667eea);
+  color: white;
+}
+
+.dbt-preset-divider {
+  height: 1px;
+  background: var(--dbt-system-input-border, #ced4da);
+  margin: 6px 12px;
+}
+
+{# Calendar area — right column. Explicit width (not flex:1) so the fixed
+   popover has a real size: position:fixed removes the parent width constraint
+   and flex:1 would stretch it to viewport width. #}
+.dbt-calendar-area {
+  padding: 14px;
+  flex-shrink: 0;
+  width: 272px;
+}
+
+.dbt-cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  padding: 0 4px;
+}
+
+.dbt-cal-nav {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  color: var(--dbt-system-text, #333333);
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+
+.dbt-cal-nav:hover {
+  background: color-mix(in srgb, var(--dbt-system-muted, #6c757d) 12%, transparent);
+}
+
+{# min-width keeps nav arrows stable as month name length varies. #}
+.dbt-cal-month {
+  font-weight: 500;
+  font-size: 14px;
+  min-width: 130px;
+  text-align: center;
+  color: var(--dbt-system-text, #333333);
+}
+
+{# Fixed-width 7-column grid — 34px per cell. Fixed count (42) avoids height
+   jumps as the user pages between months. #}
+.dbt-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 34px);
+  gap: 0;
+}
+
+.dbt-cal-dow {
+  font-size: 11px;
+  color: var(--dbt-system-muted, #6c757d);
+  text-align: center;
+  padding: 6px 0 4px;
+  font-weight: 500;
+}
+
+.dbt-cal-cell {
+  text-align: center;
+  padding: 7px 0;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 3px;
+  background: none;
+  border: none;
+  color: var(--dbt-system-text, #333333);
+  min-height: 18px;
+}
+
+.dbt-cal-cell.dbt-other-month {
+  color: var(--dbt-placeholder-color, var(--dbt-system-muted, #6c757d));
+}
+
+.dbt-cal-cell:hover {
+  background: color-mix(in srgb, var(--dbt-system-muted, #6c757d) 12%, transparent);
+}
+
+{# Range tint — accent at 28% over the card background. #}
+.dbt-cal-cell.dbt-in-range,
+.dbt-cal-cell.dbt-preview-in-range {
+  background: color-mix(in srgb, var(--dbt-system-accent, #667eea) 28%, transparent);
+  color: var(--dbt-system-text, #333333);
+}
+
+{# Selected endpoints — solid accent fill. #}
+.dbt-cal-cell.dbt-selected {
+  background: var(--dbt-system-accent, #667eea);
+  color: white;
+  font-weight: 500;
+}
+
+{# Hover preview of the second endpoint — outlined, not filled. #}
+.dbt-cal-cell.dbt-preview-end {
+  background: transparent;
+  color: var(--dbt-system-accent, #667eea);
+  font-weight: 500;
+  box-shadow: inset 0 0 0 1px var(--dbt-system-accent, #667eea);
+}
+
+{# Radius shaping for range endpoints. #}
+.dbt-cal-cell.dbt-selected.dbt-range-start { border-radius: 3px 0 0 3px; }
+.dbt-cal-cell.dbt-selected.dbt-range-end   { border-radius: 0 3px 3px 0; }
+.dbt-cal-cell.dbt-selected.dbt-range-start.dbt-range-end { border-radius: 3px; }
+
+{# Today marker: weight only — color or ring conflicts with selection visuals. #}
+.dbt-cal-cell.dbt-today:not(.dbt-selected):not(.dbt-preview-end) {
+  font-weight: 700;
+}
+
+{# Footer: shown when range has content; Clear sits left, Apply pins right. #}
+.dbt-cal-footer {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--dbt-system-input-border, #ced4da);
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.dbt-cal-action[data-action="clear"] {
+  margin-right: auto;
+}
+
+.dbt-cal-action {
+  padding: 6px 12px;
+  background: none;
+  border: 1px var(--dbt-system-input-border-style, solid) var(--dbt-system-input-border, #ced4da);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--dbt-system-text, #333333);
+}
+
+.dbt-cal-action:hover {
+  background: color-mix(in srgb, var(--dbt-system-muted, #6c757d) 10%, transparent);
+  border-color: var(--dbt-system-muted, #6c757d);
+}
+
+{# Apply — lingering-popover pattern: commit happens on the second pick,
+   Apply only closes. Accent fill, white ink. #}
+.dbt-cal-action-primary {
+  background: var(--dbt-system-accent, #667eea);
+  color: white;
+  border-color: var(--dbt-system-accent, #667eea);
+}
+
+.dbt-cal-action-primary:hover {
+  background: color-mix(in srgb, var(--dbt-system-accent, #667eea) 85%, black);
+  border-color: color-mix(in srgb, var(--dbt-system-accent, #667eea) 85%, black);
+}

@@ -1,0 +1,93 @@
+geo_sources:
+  us-states:
+    url: "https://vega.github.io/vega-datasets/data/us-10m.json"
+    format: topojson
+    feature: states
+    projection: albersUsa
+    key: id
+    key_format: numeric
+    key_examples: ["6", "48", "36"]
+
+  us-counties:
+    url: "https://vega.github.io/vega-datasets/data/us-10m.json"
+    format: topojson
+    feature: counties
+    projection: albersUsa
+    key: id
+    key_format: numeric
+    key_examples: ["6001", "48201", "36061"]
+
+  world-countries:
+    url: "https://vega.github.io/vega-datasets/data/world-110m.json"
+    format: topojson
+    feature: countries
+    projection: equalEarth
+    key: id
+    key_format: numeric
+    key_examples: ["840", "156", "250"]
+
+  world-50m:
+    url: "https://vega.github.io/vega-datasets/data/world-50m.json"
+    format: topojson
+    feature: countries
+    projection: equalEarth
+    key: id
+    key_format: numeric
+    key_examples: ["840", "156", "250"]
+
+  sf-neighborhoods:
+    # SF Open Data geospatial export (p5b7-5n3h) sends an empty response body.
+    # Use the SF Planning ArcGIS Feature Service instead; same 117 neighborhood
+    # boundaries, CORS-enabled, stable.
+    url: "https://services.arcgis.com/Zs2aNLFN00jrS4gG/arcgis/rest/services/SF_Find_Neighborhoods/FeatureServer/0/query?where=1%3D1&outFields=name&f=geojson"
+    format: json
+    property: features
+    projection:
+      type: mercator
+      center: [-122.4194, 37.7749]
+      scale: 80000
+    key: properties.name
+    key_format: string
+    key_examples: ["Mission", "Chinatown", "Castro"]
+
+  nyc-neighborhoods:
+    # Dataset cpf4-rkhq (2010 NTAs) was retired. Use 9nt8-h7nd (2020 NTAs)
+    # which has the same ntaname field and 262 neighborhood tabulation areas.
+    url: "https://data.cityofnewyork.us/api/geospatial/9nt8-h7nd?method=export&format=GeoJSON"
+    format: json
+    property: features
+    projection:
+      type: mercator
+      center: [-73.9857, 40.7484]
+      scale: 40000
+    key: properties.ntaname
+    key_format: string
+    key_examples: ["Midtown-Times Square", "Williamsburg", "Greenwich Village"]
+
+  chicago-neighborhoods:
+    # Dataset bbvz-uum9 sends an empty export body. Use igwz-8jzy (77 community
+    # areas) which exports cleanly. Community names are uppercase.
+    url: "https://data.cityofchicago.org/api/geospatial/igwz-8jzy?method=export&format=GeoJSON"
+    format: json
+    property: features
+    projection:
+      type: mercator
+      center: [-87.6298, 41.8781]
+      scale: 50000
+    key: properties.community
+    key_format: string
+    key_examples: ["LOOP", "LINCOLN PARK", "HYDE PARK"]
+
+  la-neighborhoods:
+    # LA Data portal dataset r3ta-u4d6 no longer exists. Use the LA City
+    # Community Plan Areas from the LA Hub ArcGIS Feature Service instead.
+    url: "https://services5.arcgis.com/7nsPwEMP38bSkCjy/arcgis/rest/services/Community_Plan_Areas/FeatureServer/0/query?where=1%3D1&outFields=NAME_ALF&f=geojson"
+    format: json
+    property: features
+    projection:
+      type: mercator
+      center: [-118.2437, 34.0522]
+      scale: 35000
+    key: properties.NAME_ALF
+    key_format: string
+    key_examples: ["Hollywood", "Downtown", "Harbor Gateway"]

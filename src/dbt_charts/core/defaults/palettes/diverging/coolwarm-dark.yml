@@ -1,0 +1,23 @@
+# Diverging palette — dbt-div-coolwarm-dark (dark-canvas fork)
+#
+
+name: dbt-div-coolwarm-dark
+family: diverging
+description: "Moreland 2009 coolwarm. Deep blue through light gray to deep red \u2014 canonical scientific\
+  \ diverging. Dark-canvas fork."
+design_notes: 'Dark-canvas fork of dbt-div-coolwarm. Dark near-neutral midpoint (#322f2f) recedes toward
+  canvas; poles brighten+saturate outward. Source pole hues preserved.
+
+  '
+colors:
+- '#5a6ef6'
+- '#3c52ea'
+- '#273dd4'
+- '#2d3ca3'
+- '#323a74'
+- '#322f2f'
+- '#743232'
+- '#a32d2d'
+- '#d42727'
+- '#ea3c3c'
+- '#f65a5a'

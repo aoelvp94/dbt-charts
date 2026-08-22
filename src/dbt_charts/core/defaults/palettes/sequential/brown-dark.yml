@@ -1,0 +1,22 @@
+# Sequential palette — dbt-seq-brown-dark (dark-canvas fork)
+#
+
+name: dbt-seq-brown-dark
+family: sequential
+description: "Low-chroma warm ramp (cream \u2192 tan \u2192 warm-brown). Pairs with the cream theme. Renamed\
+  \ from dbt-seq-warm; hexes unchanged. Dark-canvas fork."
+design_notes: "Dark-canvas fork of dbt-seq-brown. Luminance-monotonic recede\u2192pop; recede end is a\
+  \ low-chroma dark neutral above canvas void, pop end high-chroma with capped lightness so it glows on\
+  \ dark. Hue 37\xB0 from source.\n"
+colors:
+- '#302a21'
+- '#4b3a20'
+- '#634a21'
+- '#7d5921'
+- '#976921'
+- '#b2791f'
+- '#cf891c'
+- '#e8991c'
+- '#efa42e'
+- '#f6b041'
+- '#fbbb56'

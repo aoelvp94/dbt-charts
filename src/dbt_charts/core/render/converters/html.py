@@ -1,0 +1,87 @@
+"""HTML format conversion.
+
+Stage: RENDER
+Purpose: Convert the canonical SVG output to a standalone HTML page.
+"""
+
+import re
+from typing import Any
+
+from dbt_charts.core.diagnostics import ERR_INPUT_INVALID
+from dbt_charts.core.render.errors import RenderError
+
+
+def to_html(
+    svg_content: str,
+    livereload: bool = False,
+    controls: bool = False,
+    **options: Any,
+) -> str:
+    """Wrap a self-describing canonical SVG in a standalone HTML page.
+
+    HTML format wraps the SVG artifact without changing its body. The SVG
+    carries all chart rendering and layout, including the variable controls the
+    server draws — a host adds behaviour to them, not markup.
+
+    Args:
+        svg_content: The SVG content to wrap
+        livereload: When True, embed the ``dct serve`` live-reload script that
+            reloads the tab on a file change. Off for static render / Cloud / MCP.
+        controls: True when the caller is a host that can re-run a board's
+            queries. The page then carries the control runtime and stylesheet,
+            which is what binds the drawn controls. A static export gets
+            neither: a filter that cannot filter is worse than no filter.
+            The runtime is not only for variables — it also intercepts the
+            ``<a href="?...">`` links a tabbed board renders — so a live host
+            ships it even for a board with no variables at all.
+        **options: Additional options; reads ``chrome`` (default ``""``) —
+            a trusted HTML string emitted at the top of ``<body>`` before the
+            board wrapper.  ``dct serve`` passes the nav fragment here;
+            static render / Cloud / MCP omit it.
+    Returns:
+        Complete HTML document as string
+
+    """
+    import html as html_module
+
+    from dbt_charts.core.render.controls import (
+        controls_runtime_source,
+        controls_stylesheet,
+    )
+    from dbt_charts.core.render.template_loader import render_template
+
+    opening_tag = re.match(r"\s*<svg\b([^>]*)>", svg_content)
+    if opening_tag is None:
+        raise RenderError.from_code(
+            ERR_INPUT_INVALID,
+            message="Canonical dashboard artifact must start with an <svg> tag",
+        )
+    metadata: dict[str, str] = {}
+    for name in ("page-title", "font-family", "page-background"):
+        match = re.search(rf'\bdata-dbt-{name}="([^"]*)"', opening_tag.group(1))
+        if match is None:
+            raise RenderError.from_code(
+                ERR_INPUT_INVALID,
+                message=f"Canonical dashboard SVG is missing data-dbt-{name}",
+            )
+        metadata[name] = html_module.unescape(match.group(1))
+
+    page_title = metadata["page-title"]
+    font_family = metadata["font-family"]
+    page_background = metadata["page-background"]
+    escaped_title = html_module.escape(page_title)
+    bg_style = f"background-color: {page_background};"
+
+    chrome = options.get("chrome", "")
+
+    return render_template(
+        "page.html",
+        title=escaped_title,
+        font_family=font_family,
+        bg_style=bg_style,
+        svg=svg_content,
+        chrome=chrome,
+        livereload=livereload,
+        controls_css=controls_stylesheet() if controls else "",
+        controls_runtime=controls_runtime_source() if controls else "",
+    )

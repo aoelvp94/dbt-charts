@@ -1,0 +1,183 @@
+title: KPI Variants
+description: |
+  Layout variants for the KPI card. Three rows, one variant each, four columns
+  per row showing how the variant renders across field configurations (full,
+  label-only, support-only, value-only). Use as the canonical visual surface for
+  the kpi `variant` field.
+source: examples_db
+text: |
+  KPI authors pick a layout via `variant:` — `stacked` (default, three lines),
+  `inline` (single row, baseline-aligned), or `compact` (2-col, bottom-right
+  shares baseline with value). `label` and `support` are each independently
+  optional in every variant. Compact splits a lone `support` block across its
+  two right-column lines.
+queries:
+  q:
+    type: sql
+    sql: SELECT * FROM quarterly_kpis
+    source: kpi_specimens
+charts:
+  # ──────── stacked (default) ────────
+  stacked_full:
+    type: kpi
+    query: q
+    variant: stacked
+    label: Potential savings
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+    support:
+      value: delta_pct
+      label: of Opus spend
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  stacked_label_only:
+    type: kpi
+    query: q
+    variant: stacked
+    label: Potential savings
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+  stacked_support_only:
+    type: kpi
+    query: q
+    variant: stacked
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+    support:
+      value: delta_pct
+      label: of Opus spend
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  stacked_value_only:
+    type: kpi
+    query: q
+    variant: stacked
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+
+  # ──────── inline ────────
+  inline_full:
+    type: kpi
+    query: q
+    variant: inline
+    label: Potential savings
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+    support:
+      value: delta_pct
+      label: of Opus spend
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  inline_label_only:
+    type: kpi
+    query: q
+    variant: inline
+    label: Potential savings
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+  inline_support_only:
+    type: kpi
+    query: q
+    variant: inline
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+    support:
+      value: delta_pct
+      label: of Opus spend
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  inline_value_only:
+    type: kpi
+    query: q
+    variant: inline
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+
+  # ──────── compact ────────
+  compact_full:
+    type: kpi
+    query: q
+    variant: compact
+    label: Potential savings
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+    support:
+      value: delta_pct
+      label: of Opus spend
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  compact_label_only:
+    type: kpi
+    query: q
+    variant: compact
+    label: Potential savings
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+  compact_support_only:
+    type: kpi
+    query: q
+    variant: compact
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+    support:
+      value: delta_pct
+      label: of Opus spend
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  compact_value_only:
+    type: kpi
+    query: q
+    variant: compact
+    value: revenue
+    style:
+      value:
+        format: currency_compact
+rows:
+- title: 'stacked (default) — three lines, fixed slot widths'
+  cols:
+  - stacked_full
+  - stacked_label_only
+  - stacked_support_only
+  - stacked_value_only
+- title: 'inline — value · label · support, baseline-aligned on one row'
+  cols:
+  - inline_full
+  - inline_label_only
+- cols:
+  - inline_support_only
+  - inline_value_only
+- title: 'compact — 2-col, bottom right shares value baseline; support splits when alone'
+  cols:
+  - compact_full
+  - compact_label_only
+- cols:
+  - compact_support_only
+  - compact_value_only

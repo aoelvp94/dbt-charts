@@ -1,0 +1,64 @@
+# Categorical palette — editorial-10
+#
+# Quieter 10-color categorical palette designed for cycling defaults, intended
+# as the default for the shipped `editorial` and `cream` themes (the
+# editorial-voiced cascade). Succeeds the stark default in those themes;
+# vivid-10 is the default for the opt-in `stark` theme.
+#
+# Design posture:
+#   - Modelled on Apache ECharts' cycling discipline, not The Economist's
+#     picking toolbox: every stop muted, lower chroma across the board, no
+#     two adjacent loud hues.
+#   - Blue-led brand identity preserved at slots 1-2.
+#   - Slots 3-4 are paired neutrals (warm tan + cool gray) — a 3- or 4-series
+#     chart on this palette reads as blue + blue + temperature break, with no
+#     hue contrast yet.
+#   - Plum at slot 5 is the first muted second hue; saturated warmth (amber
+#     gold) doesn't enter until slot 7.
+#   - All in-context line-chart adjacencies tuned: warm tan vs amber gold,
+#     amber vs terra, sage vs teal, deep blue vs charcoal all clear under
+#     deuteranopia / protanopia / tritanopia at Leonardo ΔE ≥ 11.
+#   - At N=10 weighted Leonardo this palette outperforms the former category-10
+#     (4.5% vs 6.7%), The Economist (7.2%), and Apache ECharts (7.2%).
+#
+# Companions (positional pairing — slot N of the companion pairs with slot N
+# here; reviewers edit the trio together when the editorial palette changes):
+#   - `editorial-10-dark.yml`  — darker twin, used to ink direct labels.
+#   - `editorial-10-light.yml` — moderate lighter twin, mirroring the -dark
+#     lightness gap in the other direction.
+#   - `editorial-10-ghost.yml` — extreme pale twin, used to ghost
+#     out-of-focus members in highlight-columns / dim-the-chorus emphasis.
+
+name: editorial-10
+description: |
+  Default 10-color categorical palette for the shipped `default` and `cream` themes.
+  Blue-led, muted across the board, designed for cycling (slots are filled
+  by the engine in order — there is no human picking step).
+
+colors:
+  - "#3164a3"    # 1  — denim    (protagonist; saturated dark cool)
+  - "#779bc9"    # 2  — sky      (same hue family, lighter, lower chroma)
+  - "#ad9c7f"    # 3  — sand     (first non-blue, warm neutral)
+  - "#7a8895"    # 4  — gray     (cool neutral, temperature break)
+  - "#8a576f"    # 5  — plum     (first muted second hue)
+  - "#5c7b5c"    # 6  — green    (muted cool green / sage)
+  - "#d49656"    # 7  — gold     (saturated warm anchor)
+  - "#ae6349"    # 8  — rust     (deep terra)
+  - "#609f9e"    # 9  — teal     (cyan-aqua)
+  - "#232f3a"    # 10 — charcoal (deep neutral anchor)
+
+# Named hue roles — the identical vocabulary vivid-10.yml defines, mapped to
+# this palette's own slots so `category.green` etc. stay swap-invariant across
+# a stark ↔ editorial theme change. Values are 1-indexed slot refs. Same role
+# names, same order as vivid-10.yml (values differ); keep the two in lockstep.
+aliases:
+  blue: 1     # denim
+  sky: 2      # sky
+  green: 6    # sage-green
+  brown: 3    # sand
+  gold: 7     # gold
+  purple: 5   # plum
+  orange: 8   # rust
+  sage: 9     # teal
+  gray: 4     # gray
+  charcoal: 10

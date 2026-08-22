@@ -1,0 +1,8 @@
+# Unified theme: diagnostics-title-angle-extreme
+
+extends: stark
+style:
+  title:
+    position:
+      anchor: start
+      angle: -90

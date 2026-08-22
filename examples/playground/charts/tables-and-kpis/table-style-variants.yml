@@ -1,0 +1,141 @@
+title: Table Style Variants
+description: 'Same data rendered under three explicit table style profiles. Each variant
+  applies per-chart style overrides to demonstrate distinct table aesthetics
+  side-by-side in a single board.
+
+  '
+source: examples_db
+style:
+  charts:
+    table:
+      title_row:
+        height: 52
+        font:
+          color: '#222222'
+text: 'Three variants applied to the same Company Revenue table — Minimal (no rules,
+  no header fill, uniform weight), BI (apparatus-tier header, the current default),
+  and Classic (Source Serif, per-column rule gaps, no header fill).
+
+  '
+queries:
+  company_revenue_total:
+    type: sql
+    sql: SELECT * FROM company_revenue_with_total
+    source: table_specimens
+charts:
+  variant_minimal:
+    type: table
+    query: company_revenue_total
+    title: Company Revenue
+    subtitle: Minimal — no rules, no bg, uniform weight
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      symbol_mode: anchors
+      row:
+        role: row_role
+        stripe:
+          color: transparent
+        rule:
+          width: 0
+        roles:
+          summary:
+            rule_width: 0
+            font:
+              weight: '400'
+      header:
+        background: transparent
+        font:
+          color: '#222222'
+          weight: '400'
+        rule:
+          width: 0
+  variant_bi:
+    type: table
+    query: company_revenue_total
+    title: Company Revenue
+    subtitle: BI — apparatus-tier header (11/600/gray)
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      header:
+        font:
+          size: 11
+          weight: '600'
+          color: '#313233'
+      row:
+        role: row_role
+  variant_classic:
+    type: table
+    query: company_revenue_total
+    title: Company Revenue
+    subtitle: Classic — Source Serif, per-column rule gaps, no header fill
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      symbol_mode: anchors
+      font:
+        family: '''Source Serif 4'', Georgia, ''Times New Roman'', serif'
+      header:
+        background: transparent
+        font:
+          weight: '400'
+          color: '#222222'
+        rule:
+          width: 1
+          continuous: false
+      row:
+        role: row_role
+        stripe:
+          color: transparent
+        rule:
+          width: 0
+        roles:
+          summary:
+            rule_width: 1
+            font:
+              weight: '400'
+rows:
+- title: Variants — Minimal / BI / Classic (3-up)
+  cols:
+  - variant_minimal
+  - variant_bi
+  - variant_classic
+- title: Minimal vs BI
+  cols:
+  - variant_minimal
+  - variant_bi
+- title: BI vs Classic
+  cols:
+  - variant_bi
+  - variant_classic

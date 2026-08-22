@@ -1,0 +1,13 @@
+chart_id: chart1
+chart:
+  type: pie
+  query: q
+  theta: revenue
+  color: segment
+queries:
+  q:
+    columns: [segment, revenue]
+    values:
+      - [Widgets, 300]
+      - [Gizmos, 200]
+      - [Thingies, 100]

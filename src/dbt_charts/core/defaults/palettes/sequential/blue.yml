@@ -1,0 +1,22 @@
+# Sequential palette — blue
+#
+# Hand-authored 11-stop spine. Downsamples drive seq palette resolution.
+
+name: dbt-seq-blue
+family: sequential
+description: Single-hue blue — default sequential. Sits between cat-10 blue and editorial-10 denim via chroma alone.
+design_notes: |
+  Monotonic L* from 0.95 → 0.25. Hue anchored on cat-10 blue (H≈248.8°); c_max=0.11 (down from 0.13 to harmonize with editorial-10 themes). Session 8 retune.
+
+colors:
+  - "#e4f0fc"    # step 1 — lightest
+  - "#c1dbf5"
+  - "#9fc5eb"
+  - "#80b0de"
+  - "#649acf"
+  - "#4a85bc"    # step 6 — mid
+  - "#3270a8"
+  - "#1b5b92"
+  - "#04477a"
+  - "#00345d"
+  - "#002341"    # step 11 — darkest

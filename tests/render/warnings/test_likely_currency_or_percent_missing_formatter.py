@@ -1,0 +1,234 @@
+"""Tests for the LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER render-warning detector.
+
+Detection rule:
+  - Chart has a y-encoding field whose name matches currency or percent signals
+    AND the chart's baked y-axis format does not suit that kind (percent format
+    carries '%', currency carries '$'; the SI default '~s' suits neither).
+
+Currency name signals: ends in _usd, _dollars, _revenue, _amount, _price,
+  _cost, _spend, _value, _gmv, _arr, _mrr; contains 'revenue', 'dollars', 'usd'.
+
+Percent name signals: ends in _pct, _percent, _percentage, _rate, _share;
+  contains 'percent'.
+
+Skip: charts whose type implies no y-axis (kpi, table, callout, text, markdown, pivot).
+For layered charts the shared y-axis format is checked once per layer; one warning
+fires per layer whose y field matches a signal and whose format is unfit.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import TypeAdapter
+
+from dbt_charts.core.compile.models.chart.normalized import Chart
+from dbt_charts.core.diagnostics import (
+    WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER,
+    Diagnostic,
+)
+from dbt_charts.core.render.warnings import (
+    WarningContext,
+    likely_currency_or_percent_missing_formatter as detector,
+)
+
+from ...core._board_utils import (
+    make_test_resolved_board,
+    make_test_resolved_chart,
+)
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_CHART_DEFAULTS: dict[str, object] = {
+    "id": "c1",
+    "type": "bar",
+    "query_name": "q",
+    "title": "",
+}
+
+
+def _make_chart(**kwargs: Any) -> Chart:
+    return TypeAdapter(Chart).validate_python(dict(**{**_CHART_DEFAULTS, **kwargs}))
+
+
+def _make_ctx(
+    chart: Chart,
+    rows: list[dict[str, Any]] | None = None,
+    vega_spec: dict[str, Any] | None = None,
+) -> WarningContext:
+    resolved = make_test_resolved_chart(chart)
+    board = make_test_resolved_board(charts={resolved.id: resolved})
+    return WarningContext(
+        board_spec=board,
+        chart_results={resolved.id: rows or []},
+        vega_specs={resolved.id: vega_spec or {"mark": "bar"}},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 1: Bar chart with y: revenue_usd, no format → fires, fix mentions currency
+# ---------------------------------------------------------------------------
+
+
+def test_bar_currency_column_no_format_fires() -> None:
+    """Bar chart with y=revenue_usd and no format must fire with currency fix."""
+    chart = _make_chart(y="revenue_usd")
+    ctx = _make_ctx(chart)
+    warnings = detector.detect(ctx)
+
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert isinstance(w, Diagnostic)
+    assert w.code == WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER.code
+    assert w.chart == "c1"
+    assert w.field == "revenue_usd"
+    assert "currency" in (w.fix or "").lower()
+
+
+# ---------------------------------------------------------------------------
+# Test 2: Bar chart with y: revenue_usd, format: currency → no warning
+# ---------------------------------------------------------------------------
+
+
+def test_bar_currency_column_with_format_no_warning() -> None:
+    """Bar chart with y=revenue_usd and format=currency must not fire."""
+    chart = _make_chart(y="revenue_usd", format="currency")
+    ctx = _make_ctx(chart)
+    assert detector.detect(ctx) == []
+
+
+# ---------------------------------------------------------------------------
+# Test 3: Line chart with y: conversion_rate, no format → fires, fix mentions percent
+# ---------------------------------------------------------------------------
+
+
+def test_line_percent_column_no_format_fires() -> None:
+    """Line chart with y=conversion_rate and no format must fire with percent fix."""
+    chart = _make_chart(type="line", y="conversion_rate")
+    ctx = _make_ctx(chart)
+    warnings = detector.detect(ctx)
+
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert w.code == WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER.code
+    assert w.field == "conversion_rate"
+    assert "percent" in (w.fix or "").lower()
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Test 4: Chart with y: order_count → no warning (not currency or percent)
+# ---------------------------------------------------------------------------
+
+
+def test_non_currency_non_percent_column_no_warning() -> None:
+    """Chart with y=order_count must not fire — count is not currency/percent."""
+    chart = _make_chart(y="order_count")
+    ctx = _make_ctx(chart)
+    assert detector.detect(ctx) == []
+
+
+def test_overlay_layer_currency_fires_when_base_format_absent() -> None:
+    """A currency-looking y on an overlay layer warns when chart format is absent.
+
+    The base y (order_count) is not currency; only the line layer's cost_usd
+    should fire. Regression coverage for per-layer detection on the base+layers
+    surface (replaces the old type: layered per-layer test).
+    """
+    chart = _make_chart(
+        type="bar",
+        y="order_count",
+        layers=[{"type": "line", "y": "cost_usd"}],
+    )
+    ctx = _make_ctx(chart)
+    warnings = detector.detect(ctx)
+    fields = {w.field for w in warnings}
+    assert "cost_usd" in fields
+    assert "order_count" not in fields
+
+
+# ---------------------------------------------------------------------------
+# Test 6: Line chart with a percent y field AND a top-level style.axis_y.format
+#          → no warning. On resolved charts the format lives at style.axis_y.format
+#          (the per-family style.<family> patch is None), so the detector must read
+#          it there. Regression: it previously read style.<family>.axis_y.format and
+#          false-positived on every author who set a correct axis_y format.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_authored(chart_yaml: str, chart_id: str = "c1") -> Any:
+    """Compile authored chart YAML → ResolvedChart, mirroring the render path."""
+    import yaml
+
+    from dbt_charts.core.compile.config import get_theme_style
+    from dbt_charts.core.compile.normalize.charts import normalize_chart
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
+
+    compiled = normalize_chart(chart_id, yaml.safe_load(chart_yaml), {}, sources={})
+    return resolve(compiled, [], resolve_chart_style_context(get_theme_style()))
+
+
+def test_line_percent_column_with_axis_y_format_no_warning() -> None:
+    """Percent y with a top-level style.axis_y.format must not fire (resolved path)."""
+    resolved = _resolve_authored(
+        "type: line\nx: month\ny: win_rate\n"
+        'style:\n  axis_y:\n    labels:\n      format: ".0%"\n'
+    )
+    board = make_test_resolved_board(charts={resolved.id: resolved})
+    ctx = WarningContext(
+        board_spec=board,
+        chart_results={resolved.id: []},
+        vega_specs={resolved.id: {"mark": "line"}},
+    )
+    assert detector.detect(ctx) == []
+
+
+# ---------------------------------------------------------------------------
+# Test 7: Currency field with a *present but unfit* format (a percent format) still
+#          fires. This is the presence→appropriateness distinction: a plain
+#          presence check would suppress on any format, but appropriateness fires
+#          because '.0%' carries no '$'. Locks the behavior the fix is built on —
+#          a regression to `return bool(fmt)` would break this test.
+# ---------------------------------------------------------------------------
+
+
+def test_currency_field_with_unfit_percent_format_still_fires() -> None:
+    """A currency y whose baked format is a percent format must still fire."""
+    resolved = _resolve_authored(
+        "type: bar\nx: month\ny: revenue_usd\n"
+        'style:\n  axis_y:\n    labels:\n      format: ".0%"\n'
+    )
+    board = make_test_resolved_board(charts={resolved.id: resolved})
+    ctx = WarningContext(
+        board_spec=board,
+        chart_results={resolved.id: []},
+        vega_specs={resolved.id: {"mark": "bar"}},
+    )
+    warnings = detector.detect(ctx)
+    assert len(warnings) == 1
+    assert warnings[0].field == "revenue_usd"
+    assert "currency" in (warnings[0].fix or "").lower()
+
+
+# ---------------------------------------------------------------------------
+# Test 8: A currency format supplied via whole-chart style.number_format suppresses
+#          the warning. number_format bakes into the resolved style.axis_y.format,
+#          so the detector sees the '$' — guards the docstring's baking claim.
+# ---------------------------------------------------------------------------
+
+
+def test_currency_field_with_number_format_no_warning() -> None:
+    """A currency y formatted via style.number_format must not fire."""
+    resolved = _resolve_authored(
+        'type: bar\nx: month\ny: revenue_usd\nstyle:\n  number_format: "$.2f"\n'
+    )
+    board = make_test_resolved_board(charts={resolved.id: resolved})
+    ctx = WarningContext(
+        board_spec=board,
+        chart_results={resolved.id: []},
+        vega_specs={resolved.id: {"mark": "bar"}},
+    )
+    assert detector.detect(ctx) == []

@@ -1,0 +1,194 @@
+theme: editorial
+title: X-axis label cadence ladder
+description: |
+  Verification specimen for native temporal label formats with render-local
+  visibility thinning. Width may change which labels show and their angle,
+  never the encoding or label-format time unit.
+
+queries:
+  m17:
+    type: sql
+    source: examples_db
+    sql: >
+      SELECT (DATE '2025-01-01' + to_months(i::INT))::DATE AS month,
+             (60 + (30 * sin(i / 2.0))::INT + i * 2) AS value
+      FROM range(0, 17) AS t(i) ORDER BY 1
+  m8_midyear:
+    type: sql
+    source: examples_db
+    sql: >
+      SELECT (DATE '2025-02-01' + to_months(i::INT))::DATE AS month,
+             (50 + (20 * sin(i / 1.5))::INT) AS value
+      FROM range(0, 8) AS t(i) ORDER BY 1
+  w30:
+    type: sql
+    source: examples_db
+    sql: >
+      SELECT (DATE '2025-01-06' + to_weeks(i::INT))::DATE AS week,
+             (40 + (15 * sin(i / 4.0))::INT + i) AS value
+      FROM range(0, 30) AS t(i) ORDER BY 1
+  d45:
+    type: sql
+    source: examples_db
+    sql: >
+      SELECT (DATE '2025-03-01' + i::INT)::DATE AS day,
+             (40 + (15 * sin(i / 4.0))::INT + i) AS value
+      FROM range(0, 45) AS t(i) ORDER BY 1
+  nov_start:
+    type: sql
+    source: examples_db
+    sql: >
+      SELECT (DATE '2024-11-01' + to_months(i::INT))::DATE AS month,
+             (60 + (25 * sin(i / 2.0))::INT + i) AS value
+      FROM range(0, 16) AS t(i) ORDER BY 1
+  dec_start:
+    type: sql
+    source: examples_db
+    sql: >
+      SELECT (DATE '2024-12-01' + to_months(i::INT))::DATE AS month,
+             (60 + (25 * sin(i / 2.0))::INT + i) AS value
+      FROM range(0, 16) AS t(i) ORDER BY 1
+  feb_start:
+    type: sql
+    source: examples_db
+    sql: >
+      SELECT (DATE '2025-02-01' + to_months(i::INT))::DATE AS month,
+             (60 + (25 * sin(i / 2.0))::INT + i) AS value
+      FROM range(0, 15) AS t(i) ORDER BY 1
+
+charts:
+  full_line:
+    query: m17
+    type: line
+    title: Full width — line
+    subtitle: "Expect: every month labeled, tick + vertical gridline per month, Jan two-line with year."
+    x: month
+    y: value
+
+  half_line:
+    query: m17
+    type: line
+    title: Half width — line
+    subtitle: "Fiscal start Mar: month labels thin to Mar·Jun·Sep·Dec; ticks stay monthly."
+    x: month
+    y: value
+    style:
+      axis_x:
+        fiscal_year_start_month: 3
+
+  half_bar:
+    query: m17
+    type: bar
+    title: Half width — bar
+    subtitle: "Explicit yearquarter format stays Q1·Q2·Q3·Q4; monthly ticks remain."
+    x: month
+    y: value
+    style:
+      axis_x:
+        fiscal_year_start_month: 3
+        labels:
+          time_unit: yearquarter
+
+  third_a:
+    query: m17
+    type: line
+    title: Third width — line
+    subtitle: "Expect: quarter-opener month labels, tilted only if thinning alone cannot fit."
+    x: month
+    y: value
+
+  third_b:
+    query: m17
+    type: bar
+    title: Third width — bar
+    subtitle: "Expect: skip first, then tilt; bar data and monthly ticks are unchanged."
+    x: month
+    y: value
+
+  third_c:
+    query: m17
+    type: area
+    title: Third width — area
+    subtitle: "Expect: same skip→tilt order as the line; gridlines every month."
+    x: month
+    y: value
+
+  week_full:
+    query: w30
+    type: line
+    title: Weekly series — grain generalization
+    subtitle: "Expect: 30 weekly ticks; visible labels retain W-number vocabulary when thinned."
+    x: week
+    y: value
+
+  day_full:
+    query: d45
+    type: line
+    title: Daily series — native vocabulary
+    subtitle: "Expect: daily labels retain day vocabulary; visibility thins to month openers."
+    x: day
+    y: value
+
+  nb_cross:
+    query: m17
+    type: line
+    title: Neighbor A — crosses a year boundary
+    subtitle: "Two-line Jan/year labels. Its baseline lines up with Neighbor B."
+    x: month
+    y: value
+
+  nb_within:
+    query: m8_midyear
+    type: line
+    title: Neighbor B — within one year
+    subtitle: "The first fiscal/year opener carries the year; a mid-period first bucket is not forced."
+    x: month
+    y: value
+
+  nov_line:
+    query: nov_start
+    type: line
+    title: Nov-start (narrow)
+    subtitle: "Expect: Jan·Apr fiscal/calendar openers; Nov is not forced into the thinned set."
+    x: month
+    y: value
+
+  dec_line:
+    query: dec_start
+    type: line
+    title: Dec-start (narrow)
+    subtitle: "Expect: Jan leads; Dec tick stays but its label is blank."
+    x: month
+    y: value
+
+  feb_line:
+    query: feb_start
+    type: line
+    title: Feb-start (narrow)
+    subtitle: "Expect: Apr is the first quarter opener; Feb is not forced to show."
+    x: month
+    y: value
+
+rows:
+  - text: |
+      ## Automatic cadence — same 17 months, three widths
+      Font size and time-unit meaning are constant. Width changes visibility
+      first, then angle.
+  - full_line
+  - cols: [half_line, half_bar]
+  - cols: [third_a, third_b, third_c]
+  - text: |
+      ## Grain generalization
+      Weekly and daily axes preserve native vocabulary while visibility moves
+      to a meaningful coarser opener.
+  - cols: [week_full, day_full]
+  - text: |
+      ## Baseline alignment
+      Year lines follow fiscal/year openers, not an arbitrary first data bucket.
+  - cols: [nb_cross, nb_within]
+  - text: |
+      ## Fiscal-period anchoring (non-January starts)
+      Half-width labels follow quarter openers. The first data bucket remains
+      unlabeled when it is outside that cadence.
+  - cols: [nov_line, dec_line]
+  - feb_line

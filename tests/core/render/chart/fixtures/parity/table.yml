@@ -1,0 +1,16 @@
+chart_id: chart1
+chart:
+  type: table
+  query: q
+  rows:
+    - month
+  values:
+    - revenue
+    - cost
+queries:
+  q:
+    columns: [month, revenue, cost]
+    values:
+      - [Jan, 100, 80]
+      - [Feb, 200, 140]
+      - [Mar, 150, 110]

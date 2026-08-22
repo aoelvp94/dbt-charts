@@ -1,0 +1,55 @@
+version: 2
+
+models:
+  - name: orders
+    description: "Sample orders data"
+    columns:
+      - name: order_id
+        description: "Unique order identifier"
+        tests:
+          - unique
+          - not_null
+      - name: order_date
+        description: "Date of the order"
+        tests:
+          - not_null
+      - name: customer_id
+        description: "Customer identifier"
+      - name: product_id
+        description: "Product identifier"
+      - name: quantity
+        description: "Quantity ordered"
+      - name: revenue
+        description: "Order revenue"
+      - name: region
+        description: "Sales region"
+
+  - name: customers
+    description: "Sample customers data"
+    columns:
+      - name: customer_id
+        description: "Unique customer identifier"
+        tests:
+          - unique
+          - not_null
+      - name: customer_name
+        description: "Customer name"
+      - name: region
+        description: "Customer region"
+      - name: signup_date
+        description: "Customer signup date"
+
+  - name: products
+    description: "Sample products data"
+    columns:
+      - name: product_id
+        description: "Unique product identifier"
+        tests:
+          - unique
+          - not_null
+      - name: product_name
+        description: "Product name"
+      - name: category
+        description: "Product category"
+      - name: price
+        description: "Product price"

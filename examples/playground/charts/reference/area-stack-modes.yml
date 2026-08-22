@@ -1,0 +1,92 @@
+title: Area Stack Modes
+description: |
+  Side-by-side comparison of how dbt charts renders the three area-chart stack
+  modes against the same two-series dataset. This specimen is the iteration
+  surface for the "stacked area gets its own visual recipe" change — overlap
+  keeps the translucent + halo treatment, stacked/streamgraph move to solid
+  fills with a cream hairline separator (analogous to stacked bar's
+  background-color knockout border).
+theme: cream
+source: examples_db
+
+text: |
+  Same dataset, three modes.
+
+  - **Overlap** (`stack: none`) — translucent fills + cream halo on top
+    stroke; the recipe optimized for series crossings.
+  - **Stacked** (`stack: zero`) — solid fills with a 1px cream hairline
+    separator between bands. No halo (no crossings exist).
+  - **Streamgraph** (`stack: center`) — same recipe as stacked, baseline
+    centered, y-axis labels in absolute values so the scale reads as
+    radiating-from-center rather than ±.
+
+queries:
+  area_two_series:
+    type: sql
+    sql: SELECT * FROM three_series
+    source: area_stack_modes
+
+charts:
+
+  area_overlap:
+    query: area_two_series
+    type: area
+    title: Overlap
+    subtitle: 'stack: none — translucent fills + cream halo (unchanged)'
+    x: date
+    y: value
+    color: series
+    style:
+      stack: none
+      axis_y:
+        labels:
+          format: currency_compact
+
+  area_stacked:
+    query: area_two_series
+    type: area
+    title: Stacked
+    subtitle: 'stack: zero — solid fills + cream hairline separator'
+    x: date
+    y: value
+    color: series
+    style:
+      stack: zero
+      axis_y:
+        labels:
+          format: currency_compact
+
+  area_streamgraph:
+    query: area_two_series
+    type: area
+    title: Streamgraph
+    subtitle: 'stack: center — same recipe, y-axis hidden (per NYT/dataviz-inspiration convention)'
+    x: date
+    y: value
+    color: series
+    style:
+      stack: center
+      axis_x:
+        grid:
+          visible: true
+        ticks:
+          visible: false
+      axis_y:
+        labels:
+          visible: false
+        ticks:
+          visible: false
+        title:
+          visible: false
+        grid:
+          visible: false
+          zero:
+            width: 0.0
+        scale:
+          padding: 12.0
+
+rows:
+- cols:
+  - area_overlap
+  - area_stacked
+  - area_streamgraph

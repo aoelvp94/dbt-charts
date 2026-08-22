@@ -1,0 +1,151 @@
+# Surface aliases for skill macro expansion.
+#
+# Authoring convention:
+#
+#   {{ s_<key> }}  renders as the `tool` side on the shared AI tool-call
+#   surface, `dct` side on CLI
+#
+# Common patterns inside a SKILL.md:
+#
+#   "Use `{{ s_validate_board }}` after every edit."
+#     → Tool-call agent reads: `validate_board`
+#     → CLI agent reads: `dct validate`
+#
+#   "{{ s_render_png_example }}"
+#     → Whole code block flips between surfaces.
+#
+# Each top-level key here maps to a `tool:` and `dct:` value. Either side may
+# be an empty string when the content is one-sided.
+#
+# Add a new key here, then reference it as `{{ s_<key> }}` in any wheel
+# SKILL.md. Board-YAML template tokens (`{{ region }}` etc.) are not macros —
+# they have no `s_` prefix and pass through untouched. Test coverage lives in
+# `dbt-charts/tests/agent_api/test_skill_render.py` and the surface fan-out test
+# in `dbt-charts/tests/agent_api/test_skills.py`.
+
+# ---- Inline tool references (one-liners inside prose) ----------------------
+
+validate_board:
+  tool: "validate_board"
+  dct: "dct validate"
+
+execute_query:
+  tool: "execute_query"
+  dct: "dct query SOURCE SQL"
+
+render_board:
+  tool: "render_board"
+  dct: "dct render"
+
+query_board:
+  tool: "query_board"
+  dct: "dct query BOARD.yaml QUERY"
+
+describe_query:
+  tool: "describe_query"
+  dct: "dct query SOURCE SQL --describe"
+
+search_boards:
+  tool: "search_boards"
+  dct: "dct search"
+
+# The project-file primitives belong to the in-process agent loop, not the CLI —
+# there is no `dct read-file`, so the dct side names the capability instead of a
+# command. Note the `tool` side also reaches MCP clients (Claude Code, Cursor),
+# whose file tools are their own and differently named: prose referencing these
+# aliases must read correctly for an agent that has *some* file tool, not assume
+# it answers to ours.
+read_file:
+  tool: "read_file"
+  dct: "your file-read tool"
+
+write_file:
+  tool: "write_file"
+  dct: "your file-write tool"
+
+# ---- Inline skill-pointer references --------------------------------------
+
+docs_color:
+  tool: "docs(topic=\"color\")"
+  dct: "dct docs color"
+
+skill_analyst_runbook:
+  tool: "get_skill('analyst-runbook')"
+  dct: "dct skills analyst-runbook"
+
+skill_build:
+  tool: "get_skill('board-build')"
+  dct: "dct skills board-build"
+
+skill_design_board:
+  tool: "get_skill('board-design')"
+  dct: "dct skills board-design"
+
+skill_design_report:
+  tool: "get_skill('report-design')"
+  dct: "dct skills report-design"
+
+skill_replicate_board:
+  tool: "get_skill('board-replicate')"
+  dct: "dct skills board-replicate"
+
+skill_review:
+  tool: "get_skill('board-review')"
+  dct: "dct skills board-review"
+
+skill_troubleshooting:
+  tool: "get_skill('dct-troubleshooting')"
+  dct: "dct skills dct-troubleshooting"
+
+# ---- Sentence-level shared phrases (same intent, different vocabulary) ----
+
+render_to_verify:
+  tool: "Call `render_board` to see the visual result — queries are cached after first execution, so re-rendering is nearly instant."
+  dct: "Run `dct render <path>` to see the visual result — queries are cached after first execution, so re-rendering is nearly instant."
+
+# ---- Discovery / footer blocks (whole-paragraph, both sides populated) ----
+
+docs_discovery:
+  tool: |
+    YAML field reference lives behind the `docs` tool (overview),
+    `docs(topic=…)` (one section in depth), and `docs(search=…)` (full-text
+    search).
+  dct: |
+    YAML field reference is `dct docs` (overview), `dct docs <topic>` (one
+    section in depth), and `dct docs -s "<query>"` (full-text search).
+
+# ---- Code-block examples (whole fenced block, surface-specific) -----------
+
+render_png_example:
+  tool: |
+    ```text
+    render_board(path="charts/finance/revenue-overview.yml", format="png")
+    ```
+  dct: |
+    ```bash
+    dct render charts/finance/revenue-overview.yml --format png
+    ```
+
+validate_example:
+  tool: |
+    ```text
+    validate_board(path="charts/finance/revenue-overview.yml")
+    ```
+  dct: |
+    ```bash
+    dct validate charts/finance/revenue-overview.yml
+    ```
+
+# ---- Cross-skill pointers (single-line footers) ---------------------------
+
+yaml_reference_footer:
+  tool: "Full YAML reference is the `docs` tool — call `docs` for the overview, `docs(topic=…)` for one section, `docs(search=…)` for full-text search."
+  dct: "Full YAML reference is `dct docs` — `dct docs` for the overview, `dct docs <topic>` for one section, `dct docs -s \"<query>\"` for full-text search."
+
+error_reference_footer:
+  tool: "Full error reference — every `ERR-*` code, message template, and docs pointer — is `docs(topic=\"error-reference\")`."
+  dct: "Full error reference — every `ERR-*` code, message template, and docs pointer — is `dct docs error-reference`."
+
+review_pointer:
+  tool: "Run `get_skill('board-review')` before declaring a board done."
+  dct: "Run `dct skills board-review` before declaring a board done."

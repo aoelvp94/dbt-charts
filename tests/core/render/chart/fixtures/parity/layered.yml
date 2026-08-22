@@ -1,0 +1,16 @@
+chart_id: chart1
+chart:
+  type: bar
+  query: q
+  x: month
+  y: revenue
+  layers:
+    - type: line
+      y: target
+queries:
+  q:
+    columns: [month, revenue, target]
+    values:
+      - [Jan, 100, 110]
+      - [Feb, 200, 190]
+      - [Mar, 150, 160]

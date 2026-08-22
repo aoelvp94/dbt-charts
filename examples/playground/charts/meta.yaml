@@ -1,0 +1,7 @@
+# Default source and board layout for all playground example dashboards.
+# Uses the pre-built DuckDB database with sales, products, users, etc.
+source: examples_db
+
+style:
+  frame:
+    width: 1200.0

@@ -1,0 +1,25 @@
+# Unified theme: diagnostics-title-font-extreme
+
+extends: stark
+style:
+  charts:
+    axis:
+      labels:
+        font:
+          color: dbt-grays.muted
+      title:
+        font:
+          color: dbt-grays.heading
+    legend:
+      label:
+        font:
+          color: dbt-grays.muted
+      title:
+        font:
+          color: dbt-grays.heading
+  title:
+    font:
+      color: dbt-grays.ink
+      family: Courier New
+      weight: 400
+      size: 14

@@ -1,0 +1,22 @@
+# Sequential palette — dbt-seq-green-dark (dark-canvas fork)
+#
+
+name: dbt-seq-green-dark
+family: sequential
+description: Single-hue green. Sits between cat-10 green and editorial-10 sage via chroma alone. Dark-canvas
+  fork.
+design_notes: "Dark-canvas fork of dbt-seq-green. Luminance-monotonic recede\u2192pop; recede end is a\
+  \ low-chroma dark neutral above canvas void, pop end high-chroma with capped lightness so it glows on\
+  \ dark. Hue 159\xB0 from source.\n"
+colors:
+- '#21302b'
+- '#225040'
+- '#256e54'
+- '#268e69'
+- '#26af7f'
+- '#24d194'
+- '#32e3a5'
+- '#4aecb4'
+- '#63f3c1'
+- '#7ff9ce'
+- '#9cfcdb'

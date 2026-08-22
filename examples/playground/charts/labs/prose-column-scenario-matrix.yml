@@ -1,0 +1,440 @@
+title: "Prose columns — the scenario matrix"
+description: >
+  Two variables drive every column decision: how wide the slot is, and how much text
+  is in it. This board sweeps each one independently while holding the other fixed, then
+  exercises the cases where the rule is most likely to break — mixed block types across
+  a gutter, stranded lines, and author overrides. Every specimen sits on a tinted card
+  and is preceded by an uncolumned note stating what it should deliver, so a wrong
+  render is visible without reading the code.
+source: examples_db
+
+rows:
+  - text: |
+      ## How to read this board
+
+      The engine picks a column **count** and a column **width** as one decision. The
+      measure is fixed — 66 characters across several columns, up to 80 in a single one,
+      45 the floor — and the amount of text decides how many columns are worth setting.
+      A column must earn **6 lines** to exist.
+
+      Notes like this one set no column options at all, and are still measured — that
+      is the branch's central change. Before it, this paragraph ran the full
+      172-character width of the card.
+
+  - text: |
+      # 1 · Volume ladder — same slot, growing text
+
+      **HOLDING FIXED:** the full 1128-unit card, `max_number: 4` as a ceiling on every
+      specimen. **VARYING:** the length of the passage.
+
+      **EXPECT:** the count climbs 1 → 2 → 3 on its own as the text grows, never
+      reaching 4 (four columns would be 40 characters, under the floor). The measure
+      stays inside 45–80 at every step. A specimen that jumps straight to the ceiling,
+      or that stretches one line past 80, is a failure.
+
+  - text: "**1a · ~130 characters.** EXPECT one column, well under 80 characters, with the rest of the card left as white space."
+  - style:
+      background: "#fbfbfa"
+      text:
+        column:
+          max_number: 4
+    text: |
+      Revenue grew 12% against a plan of 9%, carried almost entirely by renewals. Net
+      retention held at 114%, unchanged from the prior quarter.
+
+  - text: "**1b · ~340 characters.** EXPECT still one column — two columns cannot each earn their six lines from this much text."
+  - style:
+      background: "#fbfbfa"
+      text:
+        column:
+          max_number: 4
+    text: |
+      Revenue grew 12% against a plan of 9%, carried almost entirely by renewals. Net
+      retention held at 114%, unchanged from the prior quarter, while gross churn rose
+      slightly in the mid-market segment. Two of the four regions missed plan, and both
+      misses trace to pipeline created in the prior quarter rather than to close rates
+      in this one.
+
+  - text: "**1c · ~640 characters.** EXPECT the first flip: two columns near 66 characters, with white space kept at the right rather than stretching the measure to fill."
+  - style:
+      background: "#fbfbfa"
+      text:
+        column:
+          max_number: 4
+          rule:
+            width: 1
+            color: "#e4e2dd"
+    text: |
+      Event sources explain most of the decline this period. The shortfall is concentrated
+      upstream rather than in the closing motion, which is why the regional read misleads
+      on its own. Paid search held its conversion rate within a point of plan across the
+      quarter.
+
+      Field events produced materially fewer registrations against a comparable list, and
+      they converted at a lower rate once they arrived. Productive selling capacity was
+      flat period over period, so the movement cannot be attributed to coverage. Small
+      changes in mapped and fully ramped reps are far smaller than the decline.
+
+  - text: "**1d · ~980 characters.** EXPECT three columns. Check that column heights are non-increasing — any leftover belongs in the earlier column, never the later one."
+  - style:
+      background: "#fbfbfa"
+      text:
+        column:
+          max_number: 4
+          rule:
+            width: 1
+            color: "#e4e2dd"
+    text: |
+      North America's primary issue is insufficient MQL supply, not a regional Stage 0
+      target miss or a broad loss of selling capacity. Event sources explain most of the
+      decline, while target-aligned Stage 0 remained above target and the funnel table
+      stays the single source for the period-over-period counts.
+
+      Paid search held its conversion rate within a point of plan across the quarter, so
+      the shortfall is concentrated upstream rather than in the closing motion. Field
+      events, which carried roughly a third of pipeline a year ago, produced materially
+      fewer registrations and a lower show rate against a comparable invitation list.
+
+      Capacity does not explain the Stage 0 decline either. Productive selling capacity
+      was flat period over period, and the small movements in mapped and fully ramped
+      reps are far smaller than the decline in Stage 0 creation they would account for.
+
+  - text: "**1e · ~2200 characters.** EXPECT three columns still — the ceiling is 4 but the floor forbids it, so extra text makes the card taller, not narrower. This is the check that volume alone never pushes the measure below 45."
+  - style:
+      background: "#fbfbfa"
+      text:
+        column:
+          max_number: 4
+          rule:
+            width: 1
+            color: "#e4e2dd"
+    text: |
+      North America's primary issue is insufficient MQL supply, not a regional Stage 0
+      target miss or a broad loss of selling capacity. Event sources explain most of the
+      decline, while target-aligned Stage 0 remained above target and the funnel table
+      stays the single source for the period-over-period counts.
+
+      Paid search held its conversion rate within a point of plan across the quarter, so
+      the shortfall is concentrated upstream rather than in the closing motion. Field
+      events, which carried roughly a third of pipeline a year ago, produced materially
+      fewer registrations and a lower show rate against a comparable invitation list.
+
+      Capacity does not explain the Stage 0 decline either. Productive selling capacity
+      was flat period over period, and the small movements in mapped and fully ramped
+      reps are far smaller than the decline in Stage 0 creation they would have to
+      account for on their own.
+
+      MQL-to-Stage 0 conversion was 9.5% against 5.4% in the comparison window, based on
+      61 of 644 mature MQLs versus 144 of 2,671. The direction is distinguishable in this
+      snapshot, but the recent cohort is much smaller and may differ in source mix, so it
+      should be confirmed against the next cohort before being called durable.
+
+      Stage 1 was flat overall, but the target-aligned count finished 10% below plan after
+      an 11% shortfall in the prior period. Two consecutive misses on the same measure is
+      the part of this read that generalises; the rest is within the noise the sample
+      supports.
+
+      The recommendation is to rebalance spend toward the two channels that held their
+      rate, and to hold headcount flat until Stage 0 recovers for two consecutive months
+      rather than one. Treat the conversion signal as provisional until the next cohort
+      matures.
+
+  - text: |
+      # 2 · Width ladder — same text, narrowing slot
+
+      **HOLDING FIXED:** the ~980-character passage from 1d, `max_number: 4` on every card.
+      **VARYING:** the slot width — 100%, 50%, 33%, 25% of the card.
+
+      **EXPECT:** the count falls as the slot narrows, and the measure stays in band at
+      every step rather than being squeezed below 45. The failure to watch for is a
+      narrow card that keeps too many columns and sets an unreadable measure.
+
+  - text: "**2a · 100% (1128 units).** EXPECT three columns."
+  - style:
+      background: "#f7f9fb"
+      text:
+        column:
+          max_number: 4
+          rule:
+            width: 1
+            color: "#dfe5ea"
+    text: &wide_passage |
+      North America's primary issue is insufficient MQL supply, not a regional Stage 0
+      target miss or a broad loss of selling capacity. Event sources explain most of the
+      decline, while target-aligned Stage 0 remained above target and the funnel table
+      stays the single source for the period-over-period counts.
+
+      Paid search held its conversion rate within a point of plan across the quarter, so
+      the shortfall is concentrated upstream rather than in the closing motion. Field
+      events, which carried roughly a third of pipeline a year ago, produced materially
+      fewer registrations and a lower show rate against a comparable invitation list.
+
+      Capacity does not explain the Stage 0 decline either. Productive selling capacity
+      was flat period over period, and the small movements in mapped and fully ramped
+      reps are far smaller than the decline in Stage 0 creation they would account for.
+
+  - text: "**2b · 50% (564 units).** EXPECT the count to drop — two columns here would be 43 characters, under the floor, so one column near 74 is the readable answer."
+  - cols:
+      - width: "50%"
+        style:
+          background: "#f7f9fb"
+          text:
+            column:
+              max_number: 4
+              rule:
+                width: 1
+                color: "#dfe5ea"
+        text: *wide_passage
+      - width: "50%"
+        text: |
+          ← The tinted card is the specimen. This column is only here to hold the other
+          half of the row: a col left empty collapses the board's own width, which
+          would change the very variable the ladder is trying to isolate.
+
+  - text: "**2c · 33% (376 units).** EXPECT one column, now around 49 characters — still inside the band but close to the floor. This is the narrowest slot that should still read."
+  - cols:
+      - width: "33%"
+        style:
+          background: "#f7f9fb"
+          text:
+            column:
+              max_number: 4
+              rule:
+                width: 1
+                color: "#dfe5ea"
+        text: *wide_passage
+      - width: "67%"
+        text: |
+          ← Same passage, same ceiling, a third of the width. The count should not climb
+          back up here: there is plenty of text, but no room to set a second readable
+          column beside the first.
+
+  - text: "**2d · 25% (282 units).** EXPECT one column below the 45-character floor. Nothing can satisfy the rule — the slot is narrower than the minimum measure — so the question is whether it degrades quietly or does something surprising."
+  - cols:
+      - width: "25%"
+        style:
+          background: "#fdf7f5"
+          text:
+            column:
+              max_number: 4
+              rule:
+                width: 1
+                color: "#ecdedb"
+        text: *wide_passage
+      - width: "75%"
+        text: |
+          ← The floor cannot be honoured at this width, so this card is the one place in
+          the board where the measure is knowingly violated. Worth agreeing on what
+          *should* happen here: degrade silently, or refuse and raise.
+
+  - text: |
+      # 3 · Block types across a gutter
+
+      **HOLDING FIXED:** a three-column block on the full card. **VARYING:** what kind of
+      markdown is in it.
+
+      **EXPECT:** headings stay attached to the text that follows them — a heading alone
+      at a column foot is the worst break the packer can make. List items should not be
+      split mid-item across the boundary, code blocks should not be broken, and a
+      blockquote should carry its styling into whichever column it lands in. This is the
+      section most likely to expose a bug, because the volume ladder above only ever
+      tested plain paragraphs.
+
+  - text: "**3a · Headings inside the flow.** EXPECT no heading stranded at the bottom of a column with its body in the next one."
+  - style:
+      background: "#f8faf7"
+      text:
+        column:
+          max_number: 3
+          rule:
+            width: 1
+            color: "#e0e6dd"
+    text: |
+      ### Demand
+
+      Event sources explain most of the decline this period, and the shortfall is
+      concentrated upstream rather than in the closing motion.
+
+      ### Conversion
+
+      Paid search held its conversion rate within a point of plan across the quarter.
+      Field events produced materially fewer registrations against a comparable list and
+      converted them at a lower rate once they arrived.
+
+      ### Capacity
+
+      Productive selling capacity was flat period over period, so the movement cannot be
+      attributed to coverage. Mapped and fully ramped reps each moved by a single head.
+
+      ### Recommendation
+
+      Rebalance spend toward the two channels that held their rate, and hold headcount
+      flat until Stage 0 recovers for two consecutive months rather than one.
+
+  - text: "**3b · Lists, quote, code.** EXPECT list items to stay whole, the blockquote to keep its rule and italic in either column, and the fenced block to stay intact."
+  - style:
+      background: "#f8faf7"
+      text:
+        column:
+          max_number: 3
+          rule:
+            width: 1
+            color: "#e0e6dd"
+    text: |
+      Three findings carried the period, and each one survives the obvious objection to
+      it. They are listed in the order the funnel produces them.
+
+      - **Supply, not conversion.** Event sources explain most of the MQL decline, and
+        the regional read misleads when taken on its own.
+      - **Rate held.** Paid search stayed within a point of plan across the quarter, so
+        the shortfall is concentrated upstream of the closing motion.
+      - **Capacity is flat.** Mapped and fully ramped reps each moved by one head, far
+        smaller than the decline they would have to account for.
+
+      > The conversion signal is provisional. The recent cohort is much smaller and may
+      > differ in source mix, so it should be confirmed against the next one.
+
+      The funnel table remains the single source for period-over-period counts:
+
+      ```sql
+      select stage, count(*) as n
+      from funnel
+      where created_at >= date_trunc('month', current_date)
+      group by 1
+      ```
+
+      Everything above reconciles to that query. Numbers quoted anywhere else in the
+      report are derived from it rather than recomputed independently.
+
+  - text: |
+      # 4 · Stranded lines
+
+      **EXPECT:** no paragraph leaves its first line alone at a column foot (an orphan)
+      or carries its last line alone to a column top (a widow), and no paragraph ends on
+      a one-word stub (a runt). The packer prices orphans and widows three orders of
+      magnitude above imbalance, so a **ragged column bottom is the correct trade** — an
+      uneven bottom edge here is the rule working, not a bug.
+
+  - text: "**4a · Many short paragraphs.** The break has somewhere to land at every candidate point, so this is where a greedy fill would strand a line and the packer should not."
+  - style:
+      background: "#fbf9f5"
+      text:
+        column:
+          max_number: 3
+          rule:
+            width: 1
+            color: "#e8e2d6"
+    text: |
+      Revenue grew 12% against a plan of 9%.
+
+      Renewals carried almost the entire beat, with new business flat.
+
+      Net retention held at 114%, unchanged from the prior quarter.
+
+      Gross churn rose slightly in the mid-market segment.
+
+      Two of the four regions missed plan this period.
+
+      Both misses trace to pipeline created in the prior quarter.
+
+      Close rates in the current quarter were within a point of plan.
+
+      The recovery is therefore a two-quarter problem, not a one-quarter one.
+
+      Productive selling capacity was flat period over period across every region tracked.
+
+      Mapped reps moved from 30 to 29 and fully ramped reps from 28 to 27.
+
+  - text: "**4b · One long paragraph, no internal breaks.** EXPECT it to flow continuously across both gutters, splitting mid-sentence. If a whole column sits empty here, continuous flow is not working — that is the exact regression this branch set out to fix."
+  - style:
+      background: "#fbf9f5"
+      text:
+        column:
+          max_number: 3
+          rule:
+            width: 1
+            color: "#e8e2d6"
+    text: |
+      Event sources explain most of the decline this period, and the shortfall is
+      concentrated upstream rather than in the closing motion, which is why the regional
+      read is misleading on its own. Paid search held its conversion rate within a point
+      of plan across the quarter, while field events, which carried roughly a third of
+      pipeline a year ago, produced materially fewer registrations against a comparable
+      invitation list and converted them at a lower rate once they arrived. Productive
+      selling capacity was flat period over period, so the movement cannot be attributed
+      to coverage, and the small changes in mapped and fully ramped reps are far smaller
+      than the decline in Stage 0 creation they would have to account for on their own,
+      which is why the recommendation is to rebalance spend rather than to add headcount.
+
+  - text: "**4c · A passage that ends on a stub.** EXPECT the final line to carry more than one word — the wrapper should pull a word down from the line above."
+  - style:
+      background: "#fbf9f5"
+    text: |
+      Productive selling capacity was flat period over period across every region tracked.
+
+  - text: |
+      # 5 · Author overrides
+
+      **EXPECT:** `max_number` is a **ceiling**, not a fixed count — the renderer may set
+      fewer. `max_chars` is a **measure** and is used exactly, with the count following
+      from it. These two behave differently on purpose, and this section is where that
+      difference should be visible.
+
+  - text: "**5a · `max_number: 6` on short text.** EXPECT one or two columns, not six. This is the change in meaning worth reviewing: on the previous behaviour this rendered exactly six columns of 15 characters."
+  - style:
+      background: "#f6f4fa"
+      text:
+        column:
+          max_number: 6
+          rule:
+            width: 1
+            color: "#e2ddec"
+    text: |
+      Revenue grew 12% against a plan of 9%, carried almost entirely by renewals. Net
+      retention held at 114%, unchanged from the prior quarter.
+
+  - text: "**5b · `max_chars` set explicitly.** EXPECT the author's measure to be used exactly and the shipped 66 ignored in both cards. The *count*, though, is still gated by the six-line rule — which the field's documentation does not mention."
+  - cols:
+      - style:
+          background: "#f6f4fa"
+          text:
+            column:
+              max_chars: 38
+              rule:
+                width: 1
+                color: "#e2ddec"
+        text: |
+          **`max_chars: 38`** — deliberately tight. The measure is honoured exactly, at
+          about 37 characters. This slot has room for two columns that narrow, but eleven
+          lines cannot give each of them six, so the count stays at one and the right half
+          stays white.
+
+          Paid search held its conversion rate within a point of plan across the quarter,
+          so the shortfall is concentrated upstream rather than in the closing motion.
+          Field events produced materially fewer registrations and a lower show rate.
+      - style:
+          background: "#f6f4fa"
+          text:
+            column:
+              max_chars: 80
+        text: |
+          **`max_chars: 80`** — the WCAG ceiling chosen deliberately. One column, longer
+          than the shipped default would ever pick for a multi-column block.
+
+          Paid search held its conversion rate within a point of plan across the quarter,
+          so the shortfall is concentrated upstream rather than in the closing motion.
+          Field events produced materially fewer registrations and a lower show rate.
+
+  - text: "**5c · No column settings at all.** EXPECT the shipped measure to apply anyway — this is the whole point of the branch. Before it, this card ran the full 172-character width of the board."
+  - style:
+      background: "#f6f4fa"
+    text: |
+      North America's primary issue is insufficient MQL supply, not a regional Stage 0
+      target miss or a broad loss of selling capacity. Event sources explain most of the
+      decline, while target-aligned Stage 0 remained above target and the funnel table
+      stays the single source for the period-over-period counts.
+
+      Paid search held its conversion rate within a point of plan across the quarter, so
+      the shortfall is concentrated upstream rather than in the closing motion. Field
+      events, which carried roughly a third of pipeline a year ago, produced materially
+      fewer registrations and a lower show rate against a comparable invitation list.

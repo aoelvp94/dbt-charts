@@ -1,0 +1,15 @@
+chart_id: chart1
+chart:
+  type: heatmap
+  query: q
+  x: month
+  y: category
+  color: value
+queries:
+  q:
+    columns: [category, month, value]
+    values:
+      - [A, Jan, 10]
+      - [A, Feb, 20]
+      - [B, Jan, 30]
+      - [B, Feb, 40]

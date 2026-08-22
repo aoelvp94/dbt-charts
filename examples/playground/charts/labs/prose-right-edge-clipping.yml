@@ -1,0 +1,46 @@
+title: "Prose right edge — measured vs painted"
+description: >
+  Specimen for the font-measurement fix. Every block below runs prose hard against
+  the right edge of a full-width slot, which is where the defect showed: mdsvg
+  measured a static cut of Source Serif while the browser painted the variable
+  woff2, ~6.6% wider, so lines were fitted too full and the nested <svg> viewport
+  clipped the overflow with no error. Each block states what to VERIFY.
+source: examples_db
+
+rows:
+  - title: "1 · Full-width serif prose"
+    text: |
+      **VERIFY:** no line below is cut off at the right edge, and no word is sliced
+      in half. Read the last word of every wrapped line — each must be whole, with a
+      visible gap between it and the right edge of this block. Before the fix a line
+      like this one would run past the box and lose its final characters mid-glyph,
+      which looked like a stray rendering glitch rather than a systematic defect,
+      because whether it happened depended on where the last word boundary happened
+      to fall. This paragraph is deliberately long, with no short lines to hide
+      behind, so several of its wrapped lines land hard against the measure.
+
+  - title: "2 · Bold and italic runs at the edge"
+    text: |
+      **VERIFY:** bold and italic runs wrap at the same measure as upright text, and
+      neither clips. mdsvg used to guess these widths — **bold at +20.8%** and
+      *italic at +8.3%* — while the real faces measure **bold at about +3%** and
+      *serif italic about 14% narrower* than upright. The sign on italic was
+      backwards, so *long italic passages like this one, running on for a while to
+      push the wrap point out toward the right edge*, were wrapped far shorter than
+      they needed to be. **A long bold passage does the same thing in the other
+      direction, over-reserving space that the real bold face does not need.**
+
+  - title: "3 · Unbreakable tokens"
+    text: |
+      **VERIFY:** the long token below breaks at a seam (a slash, dot, or hyphen)
+      and stays inside the block. It must not run past the right edge.
+      https://example.com/a/very/long/path/segment/that/keeps/going/and/going/until/it/must/break
+
+  - title: "4 · Mixed inline code"
+    text: |
+      **VERIFY:** inline code chips such as `color("negative.solid")` and
+      `style.text.column.max_chars` sit inside the block with their background
+      rectangles fully visible, and the prose around them wraps without clipping.
+      Note that code is still measured against vendored Source Code Pro but painted
+      with the reader's own monospace stack, so code widths remain an estimate — a
+      known gap recorded in the font registry, not something this specimen proves.

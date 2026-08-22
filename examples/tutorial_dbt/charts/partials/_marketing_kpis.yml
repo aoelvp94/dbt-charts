@@ -1,0 +1,35 @@
+# Partial: Marketing KPIs section
+title: "Marketing Performance"
+style:
+  background: "#FEF3C7"
+
+queries:
+  marketing_totals:
+    metrics: [total_spend, total_clicks, total_conversions, roi]
+
+rows:
+  - title: "Key Marketing Metrics"
+    cols:
+      - spend_kpi:
+          label: "Total Spend"
+          query: queries.marketing_totals
+          type: kpi
+          value: total_spend
+
+      - clicks_kpi:
+          label: "Total Clicks"
+          query: queries.marketing_totals
+          type: kpi
+          value: total_clicks
+
+      - conversions_kpi:
+          label: "Conversions"
+          query: queries.marketing_totals
+          type: kpi
+          value: total_conversions
+
+      - roi_kpi:
+          label: "ROI"
+          query: queries.marketing_totals
+          type: kpi
+          value: roi

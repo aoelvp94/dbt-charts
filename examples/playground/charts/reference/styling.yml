@@ -1,0 +1,390 @@
+# Styling Reference - CSS Styling Options
+# This example showcases styling properties that work in SVG mode
+
+title: "Styling Reference"
+description: "Test and showcase CSS styling options in dbt charts"
+
+text: |
+  This example demonstrates CSS styling options available in dbt charts.
+  Use the `style` property on any board to apply styles.
+
+  **SVG Mode supports:** `background`, `border`, `border-radius`, `color`
+
+  ---
+
+  ## Backgrounds
+
+rows:
+  # ==========================================================================
+  # BACKGROUNDS
+  # ==========================================================================
+  - title: "Background Colors"
+    style:
+      background: "#f0f4f8"
+      border:
+        width: 1
+        color: "#cbd5e0"
+        radius: 8
+    cols:
+      - text: "**Named color**\n\nlightblue"
+        style:
+          background: "lightblue"
+      - text: "**Hex color**\n\n\\#90EE90"
+        style:
+          background: "#90EE90"
+      - text: "**RGB color**\n\nrgb(255, 182, 193)"
+        style:
+          background: "rgb(255, 182, 193)"
+
+  - text: |
+      ---
+
+      ## Borders
+
+  # ==========================================================================
+  # BORDERS
+  # ==========================================================================
+  - title: "Border Styles"
+    style:
+      background: "#e8f5e9"
+      border:
+        width: 1
+        color: "#a5d6a7"
+        radius: 8
+    cols:
+      - text: "**Solid border**\n\n2px solid green"
+        style:
+          border:
+            width: 2
+            color: "#2e7d32"
+          background: "#fff"
+      - text: "**Thick border**\n\n8px solid blue"
+        style:
+          border:
+            width: 8
+            color: "#1976d2"
+          background: "#fff"
+      - text: "**Colored border**\n\n3px solid purple"
+        style:
+          border:
+            width: 3
+            color: "#7b1fa2"
+          background: "#fff"
+
+  - title: "Border Radius"
+    style:
+      background: "#fff3e0"
+      border:
+        width: 1
+        color: "#ffcc80"
+        radius: 8
+    cols:
+      - text: "**No radius**\n\nborder-radius: 0"
+        style:
+          border:
+            width: 2
+            color: "#e65100"
+            radius: 0
+          background: "#fff"
+      - text: "**8px radius**\n\nborder-radius: 8px"
+        style:
+          border:
+            width: 2
+            color: "#e65100"
+            radius: 8
+          background: "#fff"
+      - text: "**20px radius**\n\nborder-radius: 20px"
+        style:
+          border:
+            width: 2
+            color: "#e65100"
+            radius: 20
+          background: "#fff"
+
+  - text: |
+      ---
+
+      ## Text Color
+
+  # ==========================================================================
+  # TEXT COLOR
+  # ==========================================================================
+  - title: "Text Colors"
+    style:
+      background: "#fce4ec"
+      border:
+        width: 1
+        color: "#f48fb1"
+        radius: 8
+    cols:
+      - text: "**Default color**\n\nNo color specified"
+        style:
+          background: "#fff"
+          border:
+            width: 1
+            color: "#c2185b"
+      - text: "**Red text**\n\ncolor: #c62828"
+        style:
+          color: "#c62828"
+          background: "#fff"
+          border:
+            width: 1
+            color: "#c2185b"
+      - text: "**Blue text**\n\ncolor: #1565c0"
+        style:
+          color: "#1565c0"
+          background: "#fff"
+          border:
+            width: 1
+            color: "#c2185b"
+
+  - text: |
+      ---
+
+      ## Combined Styles
+
+  # ==========================================================================
+  # COMBINED EXAMPLE
+  # ==========================================================================
+  - title: "Styled Cards"
+    cols:
+      - text: |
+          ### Success Card
+
+          This card uses green styling.
+        style:
+          background: "#c8e6c9"
+          border:
+            width: 2
+            color: "#4caf50"
+            radius: 12
+          color: "#1b5e20"
+
+      - text: |
+          ### Warning Card
+
+          This card uses orange styling.
+        style:
+          background: "#fff3e0"
+          border:
+            width: 2
+            color: "#ff9800"
+            radius: 12
+          color: "#e65100"
+
+      - text: |
+          ### Info Card
+
+          This card uses blue styling.
+        style:
+          background: "#e3f2fd"
+          border:
+            width: 2
+            color: "#2196f3"
+            radius: 12
+          color: "#0d47a1"
+
+  - text: |
+      ---
+
+      ## Padding
+
+  # ==========================================================================
+  # PADDING
+  # ==========================================================================
+  - title: "Padding Examples"
+    style:
+      background: "#e8eaf6"
+      border:
+        width: 1
+        color: "#9fa8da"
+        radius: 8
+    cols:
+      - text: "**No padding**\n\nDefault padding"
+        style:
+          background: "#fff"
+          border:
+            width: 2
+            color: "#3f51b5"
+      - text: "**padding: 20px**\n\nMore internal space"
+        style:
+          background: "#fff"
+          border:
+            width: 2
+            color: "#3f51b5"
+          padding: "20px"
+      - text: "**padding: 40px**\n\nEven more space"
+        style:
+          background: "#fff"
+          border:
+            width: 2
+            color: "#3f51b5"
+          padding: "40px"
+
+  - text: |
+      ---
+
+      ## Gap (Layout Spacing)
+
+  # ==========================================================================
+  # GAP
+  # ==========================================================================
+  - title: "Gap Examples"
+    style:
+      background: "#f3e5f5"
+      border:
+        width: 1
+        color: "#ce93d8"
+        radius: 8
+    cols:
+      - title: "Default gap"
+        style:
+          background: "#fff"
+          border:
+            width: 1
+            color: "#9c27b0"
+        rows:
+          - text: "Row 1"
+            style:
+              background: "#f5f5f5"
+          - text: "Row 2"
+            style:
+              background: "#e0e0e0"
+          - text: "Row 3"
+            style:
+              background: "#bdbdbd"
+
+      - title: "gap: 4px"
+        style:
+          background: "#fff"
+          border:
+            width: 1
+            color: "#9c27b0"
+          gap: "4px"
+        rows:
+          - text: "Row 1"
+            style:
+              background: "#f5f5f5"
+          - text: "Row 2"
+            style:
+              background: "#e0e0e0"
+          - text: "Row 3"
+            style:
+              background: "#bdbdbd"
+
+      - title: "gap: 16px"
+        style:
+          background: "#fff"
+          border:
+            width: 1
+            color: "#9c27b0"
+          gap: "16px"
+        rows:
+          - text: "Row 1"
+            style:
+              background: "#f5f5f5"
+          - text: "Row 2"
+            style:
+              background: "#e0e0e0"
+          - text: "Row 3"
+            style:
+              background: "#bdbdbd"
+
+  - text: |
+      ---
+
+      ## Margin
+
+  # ==========================================================================
+  # MARGIN
+  # ==========================================================================
+  - title: "Margin Examples"
+    style:
+      background: "#e0f2f1"
+      border:
+        width: 1
+        color: "#80cbc4"
+        radius: 8
+    cols:
+      - text: "**No margin**\n\nDefault (no outer spacing)"
+        style:
+          background: "#fff"
+          border:
+            width: 2
+            color: "#00897b"
+      - text: "**margin: 10px**\n\nOuter spacing around the card"
+        style:
+          background: "#fff"
+          border:
+            width: 2
+            color: "#00897b"
+          margin: "10px"
+      - text: "**margin: 20px**\n\nMore outer spacing"
+        style:
+          background: "#fff"
+          border:
+            width: 2
+            color: "#00897b"
+          margin: "20px"
+
+  - text: |
+      ---
+
+      ## Text Alignment
+
+  # ==========================================================================
+  # TEXT ALIGNMENT
+  # ==========================================================================
+  - title: "Text Alignment Examples"
+    style:
+      background: "#fff8e1"
+      border:
+        width: 1
+        color: "#ffca28"
+        radius: 8
+    cols:
+      - title: "Left Aligned"
+        text: "Default text alignment (left)"
+        style:
+          background: "#fff"
+          border:
+            width: 1
+            color: "#ffa000"
+          text:
+            align: "left"
+      - title: "Center Aligned"
+        text: "Centered text alignment"
+        style:
+          background: "#fff"
+          border:
+            width: 1
+            color: "#ffa000"
+          text:
+            align: "center"
+      - title: "Right Aligned"
+        text: "Right-aligned text"
+        style:
+          background: "#fff"
+          border:
+            width: 1
+            color: "#ffa000"
+          text:
+            align: "right"
+
+  - text: |
+      ---
+
+      ## Style Property Reference
+
+      | Property | Example | Works in SVG | Works in HTML |
+      |----------|---------|:------------:|:-------------:|
+      | `background` | `"#f5f5f5"` | ✅ | ✅ |
+      | `border` | `"2px solid #ddd"` | ✅ | ✅ |
+      | `border-radius` | `"8px"` | ✅ | ✅ |
+      | `color` | `"#333"` | ✅ | ✅ |
+      | `padding` | `"16px"` | ✅ | ✅ |
+      | `gap` | `"16px"` | ✅ | ✅ |
+      | `margin` | `"16px"` | ✅ | ✅ |
+      | `text.align` | `"center"` | ✅ | ✅ |
+
+      **Note:** CSS gradients (`linear-gradient`) don't work in SVG - use solid colors.

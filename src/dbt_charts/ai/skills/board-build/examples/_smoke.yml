@@ -1,0 +1,15 @@
+title: Smoke Test Dashboard
+queries:
+  revenue:
+    columns: [month, amount]
+    values:
+      - [Jan, 1000]
+      - [Feb, 1200]
+      - [Mar, 900]
+charts:
+  kpi:
+    query: revenue
+    type: kpi
+    value: amount
+rows:
+  - kpi

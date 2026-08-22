@@ -1,0 +1,22 @@
+# Sequential palette — dbt-seq-gray-dark (dark-canvas fork)
+#
+
+name: dbt-seq-gray-dark
+family: sequential
+description: "Pure gray \u2014 magnitude without hue connotation. Renamed from dbt-seq-neutral; hexes\
+  \ unchanged. Dark-canvas fork."
+design_notes: "Dark-canvas fork of dbt-seq-gray. Luminance-monotonic recede\u2192pop; recede end is a\
+  \ low-chroma dark neutral above canvas void, pop end high-chroma with capped lightness so it glows on\
+  \ dark. Hue 0\xB0 from source.\n"
+colors:
+- '#292929'
+- '#363636'
+- '#424242'
+- '#4f4f4f'
+- '#5c5c5c'
+- '#696969'
+- '#757575'
+- '#828282'
+- '#8f8f8f'
+- '#9c9c9c'
+- '#a8a8a8'

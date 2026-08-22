@@ -1,0 +1,13 @@
+# Partial: Shared sales queries
+queries:
+  sales:
+    metrics: [total_revenue, order_count]
+    dimensions: [month, region]
+
+  sales_by_region:
+    metrics: [total_revenue]
+    dimensions: [region]
+
+  sales_trends:
+    metrics: [total_revenue]
+    dimensions: [month]

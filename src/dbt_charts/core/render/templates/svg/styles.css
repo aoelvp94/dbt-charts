@@ -1,0 +1,94 @@
+<style type="text/css">
+{# SVG Chart Styles
+   These styles are embedded in dataface SVGs for interactive features. #}
+
+{{ font_face_css }}
+{% if emoji_mode == "monochrome" %}svg text { font-variant-emoji: text; }{% endif %}
+
+{# Chart base styles #}
+.dbt-chart {
+    position: relative;
+}
+
+{# Chart text is selectable; show the text cursor.
+   pointer-events overrides the inherited none from Vega group elements. #}
+.dbt-chart text {
+    cursor: text;
+    pointer-events: auto;
+}
+
+.dbt-chart text::selection {
+    background: rgba(102, 126, 234, 0.25);
+}
+
+{# Chart loading state #}
+.dbt-chart.loading {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+{# Chart highlight overlay when hovering over dependent variable.
+   Border only, no fill - just outlines the dependent charts. #}
+.dbt-chart-highlight-overlay {
+    fill: none;
+    stroke: #667eea;
+    stroke-width: 3;
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 0.15s ease-in-out;
+}
+
+{# The variable controls are drawn borderless: at rest the strip states the
+   board's filter state, it does not pretend to be a form nobody can submit.
+   The runtime puts .dbt-interactive on the board root once it has bound the
+   controls, and these rules draw the affordances. A stylesheet rule outranks
+   the render's stroke="none" presentation attribute, and stroke takes no part
+   in SVG layout, so the toggle costs no re-render and moves nothing. #}
+.dbt-interactive [data-dbt-field] {
+    stroke: var(--dbt-variable-field-border);
+    stroke-width: 1;
+}
+
+.dbt-interactive [data-dbt-variable] {
+    cursor: pointer;
+}
+
+{# The chevron and calendar glyph ride the same switch as the borders, and for
+   the same reason: they promise an interaction, so they belong to the bound
+   board and not to a downloaded PNG, where they sat on a borderless field and
+   read as stray marks beside the value. Opacity keeps them out of layout, so
+   the width reserved for them is identical either way. #}
+.dbt-interactive [data-dbt-ornament="arrow"],
+.dbt-interactive [data-dbt-ornament="calendar"] {
+    opacity: 1;
+}
+
+{# A gated-off control gets no handlers and no tab stop, so it must not offer a
+   pointer either — the cursor would undercut the dimming and promise a click
+   that does nothing. #}
+.dbt-interactive [data-dbt-variable][data-dbt-enabled="false"] {
+    cursor: not-allowed;
+}
+
+.dbt-interactive [data-dbt-variable]:focus-visible {
+    outline: 2px solid var(--dbt-variable-field-border);
+    outline-offset: 2px;
+}
+
+{# Footer attribution watermark link — deliberately subtle: inherits the muted
+   footer text color (never blue), bold, underline only on hover. #}
+.dbt-footer-link {
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.dbt-footer-link:hover {
+    text-decoration: underline;
+}
+
+
+{# Spinner animation for loading state #}
+@keyframes dbt-spin {
+    to { transform: rotate(360deg); }
+}
+</style>

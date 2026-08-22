@@ -1,0 +1,29 @@
+title: Monthly Recurring Revenue
+description: Single-metric bignum pattern — hero KPI with prior-period delta support row
+
+queries:
+  hero:
+    description: Current MRR and month-over-month growth rate
+    columns: [mrr, delta_pct]
+    values:
+      - [1840000, 0.142]
+
+charts:
+  mrr_kpi:
+    description: Hero MRR metric with month-over-month delta
+    type: kpi
+    query: hero
+    label: Monthly Recurring Revenue
+    value: mrr
+    style:
+      value:
+        format: currency_compact
+    support:
+      value: delta_pct
+      label: vs last month
+      format: percent_delta
+      glyph: "▲"
+      tone: positive
+
+rows:
+  - mrr_kpi

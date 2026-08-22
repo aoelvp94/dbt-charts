@@ -1,0 +1,208 @@
+"""Render-local intermediate chart representation.
+
+``ChartSpec`` is produced by a family emitter and mutated by the ``ChartFeature``
+pipeline before being assembled to Vega-Lite by ``assemble_final_vl()``
+(see ``translate.py``).  Emitters write Vega-Lite encoding and mark names
+directly — ChartSpec is a VL-shaped builder intermediate, not a Dataface-native
+vocabulary.  The two structural dispatch sentinels (``"layered"`` and
+``"geoshape"``) are not VL marks; they drive composition shape detection in the
+assembler.
+
+This is deliberately a mutable ``dataclass``, not a frozen Pydantic model — features
+accumulate mutations (overlay layers, config overrides) before the spec is sealed for
+assembly.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
+    from dbt_charts.core.compile.models.style.theme import TitleStyle
+
+
+@dataclass(frozen=True)
+class RenderBox:
+    """Render-time layout slot geometry for one chart emission.
+
+    Both dimensions are the extent the chart will actually render at. When the
+    caller has no explicit height (``height: null`` — "let Vega auto-size
+    vertically"), it resolves the height Vega-Lite itself will use from the
+    theme before constructing the box, so consumers never have to model the
+    absent case or invent a fallback.
+    """
+
+    width: float
+    height: float
+
+
+@dataclass
+class EndpointLabelData:
+    """Pre-computed endpoint label positions set by ``EndpointLabelFeature``.
+
+    ``positions`` holds one ``(series_name, position_value)`` tuple per series.
+    For ``"right_pane"`` layout ``position_value`` is the y-coordinate of the
+    series' last data point; for ``"top_rail"`` layout it is the x-midpoint of
+    the series' segment in the top categorical row.
+
+    For ``"right_pane"``, ``positions`` carries the RAW, un-cascaded anchor
+    values — the greedy-nudge pass is deferred until the real plot geometry is
+    known (``render/converters/chart.py``'s post-probe re-cascade, which calls
+    ``features/endpoint_labels.recascade_endpoint_labels``), because the
+    pixel<->data conversion the cascade needs depends on the rendered plot
+    height and y-scale, neither of which exists until vl-convert has actually
+    laid the chart out. ``label_gap_px``/``y_domain_min``/``y_domain_max``
+    carry what that later pass needs; they are unused (left at their defaults)
+    on ``"top_rail"``, which has no cascade at all. ``positions`` for
+    ``"top_rail"`` is genuinely final — no later pass revisits it.
+    """
+
+    series_field: str
+    value_alias: str  # column alias for the position field ("__y" or "__x")
+    positions: list[tuple[str, float]]  # (series_name, position_value)
+    color_domain: list[str]  # ordered series names
+    color_range: list[str]  # palette entries in same order
+    # Sourced from the resolved EndpointLabelsConfig — no in-code default. translate.py
+    # can't reach the resolved style directly (it takes only ChartSpec), so the value
+    # must be threaded through here by the feature that has style access.
+    label_offset: float  # gap between main pane and label pane (pixels)
+    height: float  # top_rail pane height (pixels)
+    # "right_pane" only (0.0 = unset on "top_rail"): the intended pixel gap
+    # between adjacent labels, and the raw data-value bounds the post-probe
+    # re-cascade clamps into. See the class docstring.
+    label_gap_px: float = 0.0
+    y_domain_min: float = 0.0
+    y_domain_max: float = 0.0
+    # Dark-companion ink for label text.  When non-empty, translate.py uses this
+    # for the label pane color scale instead of color_range so label text carries
+    # readable contrast against the background (darker ink) rather than the bright
+    # mark colour.  Empty list → fall back to color_range.
+    # Populated by callers that pre-bake dark companion stops at resolve time
+    # (analogous to ResolvedPieChart.dark_companion_stops) — compile.palette is
+    # banned from render/chart/ per the import-boundary test.
+    dark_companion_range: list[str] = field(default_factory=list)
+    # Label pane pixel width measured from series names.  0 = unset (no explicit
+    # pane width — VL auto-sizes, which causes the overshoot corrector to compress
+    # the main pane).  Set by EndpointLabelFeature, already capped there to
+    # chart_rendering.endpoint_labels.max_width_fraction of the chart's width.
+    label_pane_width: float = 0.0
+    # VL text-mark font props {"fontSize", "font", "fontWeight"} for the label pane.
+    # Empty dict → no explicit font (VL uses global config defaults).
+    # Populated by EndpointLabelFeature from chart.style.series_label.font_*.
+    label_mark_font_props: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ChartSpec:
+    """Mutable render-local intermediate produced by an emitter and mutated by features.
+
+    Attributes:
+        mark: VL mark name (``"bar"``, ``"line"``, ``"arc"``, ``"rect"``,
+            ``"circle"``, ``"rule"``, …) OR a structural sentinel
+            (``"layered"`` / ``"geoshape"``) that drives composition shape
+            detection in ``assemble_final_vl``.  Emitters write VL names
+            directly — no Dataface-native mark vocabulary.
+        encoding: Channel name → encoding config (VL keys).
+        layers: Overlay sub-specs appended by features (zero-baseline rule layers,
+            etc.).  Empty for single-layer charts before features run.
+        config: Vega-Lite ``config`` block passthrough.  Only VL ``config``
+            object keys belong here — no hint-bag entries.
+        mark_props: Extra mark-level VL properties merged into the mark object
+            (e.g. ``{"innerRadius": 90}`` for donut charts).  When non-empty,
+            ``assemble_final_vl`` emits ``{"mark": {"type": <vl_mark>, ...}}``
+            instead of a bare mark string.
+        projection: Map projection name; emitted as ``{"projection": {"type": ...}}``
+            by ``assemble_final_vl`` for geoshape/circle families.
+        data_name: Named dataset for secondary data sources (layered sub-layers).
+        endpoint_label_layout: Composition mode set by ``EndpointLabelFeature``.
+            ``"right_pane"`` → hconcat with a right-side text-mark pane (line/area).
+            ``"top_rail"`` → vconcat with a top text-mark rail (horizontal stacked bar).
+            ``None`` → no endpoint label composition.
+        endpoint_label_data: Pre-computed label positions and color data.
+            Required when ``endpoint_label_layout`` is not ``None``.
+        href_link: VL calculate expression string set by ``ClickInteractivityFeature``.
+            ``assemble_final_vl`` injects ``{"calculate": href_link, "as": "__df_href__"}``
+            into transforms and wires an href encoding.  ``None`` → no href.
+        tooltip_description: Per-datum expression string set by
+            ``StructuredTooltipFeature`` (chart-axes LUT-driven header/series/
+            value/total string). ``assemble_final_vl`` wires it to VL's native
+            ``description`` channel as a ``{"value": {"expr": ...}}`` def (NOT
+            a ``{"field": ...}`` reference bound through a ``calculate``
+            transform — the latter corrupts stacked area/line paths; see
+            ``translate.py::_apply_structured_tooltip``). ``description``
+            fully replaces the mark's aria-label (no merge with
+            channel-derived content — see ``emitters/_tooltip.py``).  ``None`` →
+            no structured tooltip (family outside the walking-skeleton scope,
+            or a chart.layers overlay), matching the ``None``-is-unset idiom of
+            the sibling ``href_link`` field.
+        geo_data: Geo data source block ``{"url": ..., "format": {...}}`` for
+            geoshape/map families.  Set by ``GeoshapeEmitter`` on the outer spec
+            (no-data path) or on each layer (choropleth layered path).
+            ``assemble_final_vl`` emits it as the VL ``data`` key.
+        transforms: VL ``transform`` list set by ``GeoshapeEmitter`` on the choropleth
+            overlay layer (lookup join).  Empty list → no transform key emitted.
+        resolve: VL ``resolve`` block for layered specs (e.g. scale independence
+            across layers).  Set by pie emitter as ``{"scale": {"color": "independent"}}``.
+            Empty dict → no resolve key emitted.
+    """
+
+    mark: str
+    encoding: dict[str, Any] = field(default_factory=dict)
+    layers: list[ChartSpec] = field(default_factory=list)
+    config: dict[str, Any] = field(default_factory=dict)
+    mark_props: dict[str, Any] = field(default_factory=dict)
+    # Simple string name ("mercator") or full projection dict ({"type": "conic...", "center": [...]}).
+    projection: str | dict[str, Any] | None = None
+    data_name: str | None = None
+    endpoint_label_layout: Literal["right_pane", "top_rail"] | None = None
+    endpoint_label_data: EndpointLabelData | None = None
+    href_link: str | None = None
+    tooltip_description: str | None = None
+    title: str | None = None
+    subtitle: str | None = None
+    title_font: ResolvedFontStyle | None = None
+    # The base series' legend label on a layered cartesian chart: the y title
+    # as plain text, before display wrapping. `encoding.y.title` is not usable
+    # for this — it becomes a list[str] once wrapped, and VL's color.datum and
+    # scale domain take primitives.
+    base_series_label: str | None = None
+    background: str | None = None
+    title_style: TitleStyle | None = None
+    geo_data: dict[str, Any] | None = None
+    transforms: list[dict[str, Any]] = field(default_factory=list)
+    # Row data for non-geo VL families; set centrally by BoardRenderSession.emit_chart.
+    # assemble_final_vl emits it as {"data": {"values": [...]}} in _base_spec.
+    data: list[dict[str, Any]] | None = None
+    # VL resolve block (e.g. scale independence across layers); emitted by
+    # _translate_layered when non-empty.  Values are VL resolution strings
+    # ("independent", "shared") so the inner dict is str→str.
+    resolve: dict[str, dict[str, str]] = field(default_factory=dict)
+    # Named datasets for per-layer-query layered charts: query_name → rows.
+    # assemble_final_vl emits these as the top-level VL ``"datasets"`` block.
+    # None for single-query charts.
+    datasets: dict[str, list[dict[str, Any]]] | None = None
+    # Encoding channels that belong ONLY on the main mark layer (not shared/outer)
+    # when the spec is promoted to a layered VL spec. Used by _translate_standard
+    # to place these channels on the first layer dict without exposing them to
+    # overlay layers (e.g. scatter bubble size must not reach the text label layer).
+    main_layer_encoding: dict[str, Any] = field(default_factory=dict)
+    # Small-multiples faceting set by FacetFeature. facet_row / facet_column are
+    # the partition fields — either or both may be set (at least one when
+    # faceting): row-only stacks vertically, column-only is a horizontal strip,
+    # both a grid. facet_scale defaults "shared"; "independent" emits a
+    # facet-root resolve.scale. assemble_final_vl wraps the unit in a VL facet
+    # operator when either field is set. Both None → no faceting.
+    facet_row: str | None = None
+    facet_column: str | None = None
+    facet_scale: Literal["shared", "independent"] = "shared"
+    # Which VL positional channel carries the measure: "y", or "x" on a
+    # horizontal bar, whose axes are flipped. Written by FacetFeature and read by
+    # the facet wrap, where "independent" must free the measure scale and not the
+    # category one — so like its facet_* neighbours it only says anything about a
+    # faceted spec, and keeps the default on every other one. Heatmap is the one
+    # faceted family whose measure is neither positional channel (it rides color)
+    # — out of this field's vocabulary, and its independent-scale resolution is
+    # unaddressed.
+    measure_channel: Literal["x", "y"] = "y"

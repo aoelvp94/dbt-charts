@@ -1,0 +1,570 @@
+title: Commercial finance
+description: |
+  Bookings, win rate, and subscription health — a dense above-the-fold board
+  for sales finance. Authored data-honestly against the Dundersign silver
+  layer (no invented dimensions). Theme-swap at the top of the file:
+  cream / editorial / stark all render coherently
+  because no chart pins a color — palettes cycle through the cascade.
+
+theme: cream
+source: dundersign_db
+
+style:
+  frame:
+    width: 1440
+  # First-class title-inline band: board title left, variable controls right
+  # on one horizontal row. Replaces the nested-board workaround from the
+  # company-overview-tight exemplar.
+  variables:
+    position: title-inline
+
+variables:
+  date_range:
+    input: daterange
+  lead_source:
+    placeholder: "All sources"
+    options:
+      query: source_options
+      column: lead_source
+
+queries:
+  source_options:
+    sql: |
+      SELECT lead_source
+      FROM opportunities
+      WHERE lead_source IS NOT NULL
+      GROUP BY 1
+      -- A SUM(amount) tie has no defined order without a tiebreaker.
+      ORDER BY SUM(amount) DESC, lead_source ASC
+
+  # ── The anchor ──────────────────────────────────────────────────────────
+  # Every window on this board derives from this one query, referenced as
+  # `{{ queries.book_period }}`. It is defined once on purpose: the bug this
+  # board shipped with was six windows quietly disagreeing about when "now"
+  # is, and six copies of the fix would let them drift apart again.
+  #
+  # close_at on an OPEN opportunity is a projected close date, running months
+  # past the last real close (fixture: open pipeline reaches 2026-07-31 while
+  # the last closed deal is 2026-05-10). MAX(close_at) over all rows therefore
+  # reads as a "today" the books have not reached: it opens empty trailing
+  # months on every time series and starves the rolling windows behind them.
+  # Filter to is_closed, then truncate to the month boundary so no series ends
+  # on a part-month stub.
+  #
+  # period_end is EXCLUSIVE (first day of the incomplete month); today is the
+  # last day of the last complete month.
+  book_period:
+    sql: |
+      SELECT
+        date_trunc('month', MAX(close_at))::DATE                    AS period_end,
+        (date_trunc('month', MAX(close_at)) - INTERVAL 1 DAY)::DATE AS today
+      FROM opportunities
+      WHERE is_closed
+
+  # ── KPI rail ────────────────────────────────────────────────────────────
+  # Rolling 90-day windows anchored to the last COMPLETE month of closed
+  # business. Date_range filter on the board scopes the rest of the cards;
+  # KPIs stay on a fixed rolling window so deltas are stable and predictable.
+  # lead_source filter applies to bookings; not relevant for
+  # active-subscription count.
+  kpi_data:
+    sql: |
+      WITH bounds AS (SELECT * FROM {{ queries.book_period }}),
+      recent_opps AS (
+        SELECT * FROM opportunities, bounds
+        WHERE close_at >  bounds.today - INTERVAL 90 DAY
+          AND close_at <= bounds.today
+          AND is_closed
+          AND {{ filter('lead_source', lead_source) }}
+      ),
+      prior_opps AS (
+        SELECT * FROM opportunities, bounds
+        WHERE close_at >  bounds.today - INTERVAL 180 DAY
+          AND close_at <= bounds.today - INTERVAL  90 DAY
+          AND is_closed
+          AND {{ filter('lead_source', lead_source) }}
+      )
+      SELECT
+        (SELECT COALESCE(SUM(amount), 0) FROM recent_opps WHERE is_won)        AS bookings,
+        (SELECT COALESCE(SUM(amount), 0) FROM recent_opps WHERE is_won)::FLOAT
+          / NULLIF((SELECT SUM(amount) FROM prior_opps WHERE is_won), 0) - 1   AS bookings_growth_pct,
+
+        (SELECT COUNT(*) FROM subscriptions WHERE status = 'active')           AS active_subs,
+        (SELECT COUNT(*) FROM subscriptions WHERE status = 'active')::FLOAT
+          / NULLIF(
+              (SELECT COUNT(*) FROM subscriptions
+               WHERE status = 'active' AND created_at <= (SELECT today FROM bounds) - INTERVAL 90 DAY)
+              , 0) - 1                                                          AS active_subs_growth_pct
+
+  # ── Hero: monthly bookings stacked by top-5 lead source ────────────────
+  monthly_bookings_by_source:
+    sql: |
+      WITH src AS (
+        SELECT lead_source
+        FROM opportunities
+        WHERE is_won AND lead_source IS NOT NULL
+        GROUP BY 1
+        -- A SUM(amount) tie at this LIMIT 6 boundary can swap which source
+        -- makes the top-6 cut, not just the display order.
+        ORDER BY SUM(amount) DESC, lead_source ASC
+        LIMIT 6
+      ),
+      -- Shared anchor — see kpi_data. Months come from CLOSED rows only and
+      -- stop at the last complete month, so the domain never carries a column
+      -- whose business has not closed yet.
+      bounds AS (SELECT * FROM {{ queries.book_period }}),
+      months AS (
+        SELECT date_trunc('month', close_at)::DATE AS m
+        FROM opportunities, bounds
+        WHERE is_closed
+          AND close_at >= bounds.period_end - INTERVAL 12 MONTH
+          AND close_at <  bounds.period_end
+          AND {{ filter_date_range('close_at', date_range) }}
+        GROUP BY 1
+      ),
+      grid AS (
+        SELECT m, lead_source FROM months CROSS JOIN src
+      )
+      SELECT
+        grid.m AS month,
+        grid.lead_source,
+        COALESCE(SUM(o.amount) FILTER (WHERE o.is_won), 0) AS bookings
+      FROM grid
+      LEFT JOIN opportunities o
+        ON date_trunc('month', o.close_at)::DATE = grid.m
+       AND o.lead_source = grid.lead_source
+       AND o.is_closed
+      WHERE {{ filter('lead_source', lead_source) }}
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+
+  # ── Donut: price-point mix ─────────────────────────────────────────────
+  # Dundersign opportunities are a clean bimodal split across two annual
+  # price points, $144 and $180. Grouping on the amount itself rather than a
+  # threshold keeps the split honest: the dimension IS the price point, so it
+  # cannot silently collapse to one slice the way a CASE cut-off can.
+  # CFOs care about this mix because it is the ARPU story.
+  plan_mix:
+    sql: |
+      -- Shared anchor — see kpi_data. Capping here is what makes the centre
+      -- total equal the cumulative-area chart's final value: both are
+      -- "closed-won $ through the last complete month".
+      WITH bounds AS (SELECT * FROM {{ queries.book_period }}),
+      bands AS (
+        SELECT
+          '$' || amount::INT || ' plan' AS plan,
+          SUM(amount)::INT              AS bookings,
+          COUNT(*)                      AS deals
+        FROM opportunities, bounds
+        WHERE is_won
+          AND close_at < bounds.period_end
+          AND {{ filter('lead_source', lead_source) }}
+          AND {{ filter_date_range('close_at', date_range) }}
+        GROUP BY 1
+      )
+      SELECT
+        plan,
+        bookings,
+        deals,
+        bookings::FLOAT / SUM(bookings) OVER () AS share
+      FROM bands
+      ORDER BY bookings DESC, plan ASC
+
+  # ── Multi-line: win rate by source over time (same top-5 dim as hero) ──
+  win_rate_by_source_monthly:
+    sql: |
+      WITH src AS (
+        SELECT lead_source
+        FROM opportunities
+        WHERE is_won AND lead_source IS NOT NULL
+        GROUP BY 1
+        -- Same tiebreaker as monthly_bookings_by_source's src CTE — keeps the
+        -- top-6 cut and color/legend order stable across runs.
+        ORDER BY SUM(amount) DESC, lead_source ASC
+        LIMIT 6
+      ),
+      -- Shared anchor — see kpi_data. Critical here: a part-month tail carries
+      -- only a handful of closed deals per source, and a 3-month rolling rate
+      -- computed over it collapses every series onto ~100%.
+      bounds AS (SELECT * FROM {{ queries.book_period }}),
+      months AS (
+        SELECT date_trunc('month', close_at)::DATE AS m
+        FROM opportunities, bounds
+        WHERE is_closed
+          AND close_at >= bounds.period_end - INTERVAL 12 MONTH
+          AND close_at <  bounds.period_end
+          AND {{ filter_date_range('close_at', date_range) }}
+        GROUP BY 1
+      ),
+      grid AS (
+        SELECT m, lead_source FROM months CROSS JOIN src
+      ),
+      monthly AS (
+        SELECT
+          grid.m AS month,
+          grid.lead_source,
+          COUNT(*) FILTER (WHERE o.is_won) AS won_n,
+          COUNT(o.id)                       AS total_n
+        FROM grid
+        LEFT JOIN opportunities o
+          ON date_trunc('month', o.close_at)::DATE = grid.m
+         AND o.lead_source = grid.lead_source
+         AND o.is_closed
+        WHERE {{ filter('lead_source', lead_source) }}
+        GROUP BY 1, 2
+      )
+      -- 3-month trailing window smooths the per-source monthly choppiness
+      -- (single-digit deal counts per source per month produce sawtooth
+      -- otherwise). Window is inlined per-aggregate because sqlglot's
+      -- static validator does not yet accept top-level WINDOW clauses
+      -- against DuckDB syntax.
+      SELECT
+        month,
+        lead_source,
+        SUM(won_n) OVER (
+          PARTITION BY lead_source ORDER BY month
+          ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+        )::FLOAT
+        / NULLIF(SUM(total_n) OVER (
+          PARTITION BY lead_source ORDER BY month
+          ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+        ), 0) AS win_rate
+      FROM monthly
+      ORDER BY month, lead_source
+
+  # ── Area: cumulative bookings, single series ───────────────────────────
+  cumulative_bookings:
+    sql: |
+      -- Shared anchor — see kpi_data. Stops the running total at the last
+      -- complete month so the curve does not flatten into a part-month tail.
+      WITH bounds AS (SELECT * FROM {{ queries.book_period }}),
+      monthly AS (
+        SELECT
+          date_trunc('month', close_at)::DATE AS month,
+          SUM(amount) FILTER (WHERE is_won) AS bookings
+        FROM opportunities, bounds
+        WHERE is_closed
+          AND close_at < bounds.period_end
+          AND {{ filter('lead_source', lead_source) }}
+          AND {{ filter_date_range('close_at', date_range) }}
+        GROUP BY 1
+      )
+      SELECT
+        month,
+        SUM(bookings) OVER (ORDER BY month
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative
+      FROM monthly
+      ORDER BY month
+
+  # ── Bottom table: top accounts ─────────────────────────────────────────
+  top_accounts:
+    sql: |
+      -- Shared anchor — see kpi_data. Two things ride on it here. Aging
+      -- measured against an unreached "today" overstates every row by the
+      -- length of the open-pipeline tail; and the row scope has to stop at
+      -- the same period_end as the charts, or a part-month close lands after
+      -- "today" and ages negative.
+      WITH bounds AS (SELECT * FROM {{ queries.book_period }}),
+      scoped AS (
+        SELECT
+          split_part(name, ' - ', 1) AS account,
+          amount,
+          close_at,
+          is_won,
+          '$' || amount::INT AS plan,
+          lead_source
+        FROM opportunities, bounds
+        WHERE is_closed
+          AND close_at < bounds.period_end
+          AND {{ filter('lead_source', lead_source) }}
+          AND {{ filter_date_range('close_at', date_range) }}
+      ),
+      agg AS (
+        SELECT
+          account                                                       AS company,
+          SUM(amount) FILTER (WHERE is_won)::INT                        AS bookings,
+          COUNT(*) FILTER (WHERE is_won)                                AS deals_won,
+          COUNT(*) FILTER (WHERE NOT is_won)                            AS deals_lost,
+          COUNT(*) FILTER (WHERE is_won)::FLOAT
+            / NULLIF(COUNT(*), 0)                                       AS win_rate,
+          ROUND(AVG(amount) FILTER (WHERE is_won), 0)::INT              AS avg_deal,
+          COUNT(DISTINCT lead_source) FILTER (WHERE is_won)             AS sources,
+          strftime(MAX(close_at) FILTER (WHERE is_won), '%-d %B %Y')    AS last_close,
+          (SELECT today FROM bounds) - MAX(close_at)
+            FILTER (WHERE is_won)::DATE                                 AS days_since_close,
+          MODE() WITHIN GROUP (ORDER BY plan)
+            FILTER (WHERE is_won)                                       AS top_plan
+        FROM scoped
+        GROUP BY 1
+        HAVING SUM(amount) FILTER (WHERE is_won) > 0
+      )
+      SELECT
+        company,
+        bookings,
+        bookings              AS bookings_bar,
+        bookings::FLOAT / SUM(bookings) OVER () AS bookings_share,
+        deals_won,
+        deals_lost,
+        win_rate,
+        avg_deal,
+        sources,
+        last_close,
+        days_since_close,
+        top_plan
+      FROM agg
+      -- A bookings tie has no defined order without a tiebreaker.
+      ORDER BY bookings DESC, company ASC
+      LIMIT 25
+
+charts:
+  # ── KPIs ────────────────────────────────────────────────────────────────
+  # KPI tones are hand-pinned per data sign — dbt charts's KPI ToneLiteral is
+  # static (positive|negative|neutral|warning), there is no value-driven
+  # tone today. Both KPIs trend up in the default 90-day window, so both are
+  # pinned positive. This re-pinning after a data refresh is exactly the
+  # defaults-wrong case in the tweaks log: a hand-pinned tone silently
+  # contradicts its own number the moment the underlying data moves.
+  kpi_bookings:
+    type: kpi
+    query: kpi_data
+    label: Bookings (last 90d)
+    value: bookings
+    style:
+      value:
+        format: "$,.0f"
+    support:
+      value: bookings_growth_pct
+      label: vs prior 90 days
+      format: "+.1%"
+      glyph: "▲"
+      tone: positive
+
+  kpi_active_subs:
+    type: kpi
+    query: kpi_data
+    label: Active subscriptions
+    value: active_subs
+    style:
+      value:
+        format: ",.0f"
+    support:
+      value: active_subs_growth_pct
+      label: vs 90 days ago
+      format: "+.1%"
+      glyph: "▲"
+      tone: positive
+
+  # ── Hero: stacked column ───────────────────────────────────────────────
+  # Endpoint labels (segment names on the rightmost column) ink via the
+  # editorial-10-dark companion. Attached data_table dropped this round —
+  # it was rendering as an oversized strip that pushed the chart off-baseline.
+  hero_bookings:
+    query: monthly_bookings_by_source
+    type: bar
+    title: Bookings by source
+    subtitle: Monthly closed-won $, last 12 complete months
+    x: month
+    y: bookings
+    color: lead_source
+    style:
+      stack: zero
+      axis_y:
+        # Tick ladder is derived, not pinned, so it tracks the data.
+        labels:
+          align: right
+          format: currency_compact
+      endpoint_labels:
+        visible: true
+
+  # ── Donut: price-point mix ─────────────────────────────────────────────
+  plan_mix_donut:
+    query: plan_mix
+    type: donut
+    title: Plan mix
+    subtitle: Closed-won $ split by price point
+    theta: bookings
+    color: plan
+    total:
+      label: "Total bookings"
+      format: "$,.0f"
+    style:
+      # Wedge labels carry the legend — hide the auto-rendered one.
+      legend:
+        visible: false
+      # Force sans title — narrow chart override compensating for the
+      # theme-blind chart_title_spec bug (fix prompt in another session).
+      title:
+        font:
+          family: "'Inter Variable', Inter, system-ui, sans-serif"
+      marks:
+        slice:
+          labels:
+            # Two-line label: percentage + name on line 1, nominal $ on line 2.
+            # Uses the theme default block_height: 28 which reserves two lines.
+            template: "{{ '{:.0%}'.format(share) }} {{ plan }}\n${{ '{:,}'.format(bookings) }}"
+            offset: 4
+            font:
+              size: 10
+
+  # ── Multi-line: win rate by source over time ───────────────────────────
+  win_rate_trend:
+    query: win_rate_by_source_monthly
+    type: line
+    title: Win rate by source
+    subtitle: 3-month rolling close rate, top 6 sources
+    x: month
+    y: win_rate
+    color: lead_source
+    style:
+      legend:
+        visible: false
+      # Force sans title (chart_title_spec theme-blind bug compensator).
+      title:
+        font:
+          family: "'Inter Variable', Inter, system-ui, sans-serif"
+      padding:
+        right: 36
+      axis_y:
+        # Tick ladder is derived, not pinned, so it spans the unity rule at 100%.
+        labels:
+          format: ".0%"
+      axis_x:
+        labels:
+          time_unit: yearquarter
+          align: left
+
+  # ── Area: cumulative bookings ──────────────────────────────────────────
+  cumulative_area:
+    query: cumulative_bookings
+    type: area
+    title: Cumulative bookings
+    subtitle: Closed-won $, running total
+    x: month
+    y: cumulative
+    style:
+      title:
+        font:
+          family: "'Inter Variable', Inter, system-ui, sans-serif"
+      padding:
+        right: 36
+      axis_y:
+        labels:
+          format: currency_compact
+      axis_x:
+        labels:
+          time_unit: yearquarter
+          align: left
+
+  # ── Bottom table: top accounts ─────────────────────────────────────────
+  accounts_table:
+    type: table
+    query: top_accounts
+    # Explicit empty title suppresses the normalizer's auto-fill (which
+    # otherwise humanizes chart_id → "Accounts Table"). Hidden until the
+    # chart_title_spec theme-blind bug is fixed in the parallel session.
+    title: ""
+    conditional_formatting:
+      days_since_close:
+        when:
+        - lte: 30
+          glyph: "●"
+          tone: info                # recent — neutral blue
+        - gt: 90
+          glyph: "○"
+          tone: negative             # gone cold
+      deals_lost:
+        when:
+        - gt: 40
+          glyph: "⚠"
+          tone: warning              # leaky
+    style:
+      pagination:
+        enabled: false
+      columns:
+        company:
+          label: Company
+          width: 170
+          link: "/accounts/{{ company }}"
+        bookings:
+          label: Bookings
+          format: "$,.0f"
+          align: right
+        bookings_bar:
+          label: ""
+          spark:
+            type: bar
+        bookings_share:
+          label: Share
+          format: ".1%"
+          align: right
+          scale:
+            background:
+              palette: dbt-seq-amber
+        deals_won:
+          label: Won
+          format: ",.0f"
+          align: right
+        deals_lost:
+          label: Lost
+          format: ",.0f"
+          align: right
+        win_rate:
+          label: Win rate
+          format: ".0%"
+          align: right
+          scale:
+            background:
+              palette: dbt-div-crimson-green
+              # Semantic: a 40% win rate is meaningful independent of this dataset.
+              hinge: 0.40
+        avg_deal:
+          label: Avg deal
+          format: "$,.0f"
+          align: right
+        sources:
+          label: Sources
+          format: ",.0f"
+          align: right
+        last_close:
+          label: Last close
+          align: left
+        days_since_close:
+          label: Aging
+          format:
+            spec: ",.0f"
+            suffix: " d"
+          align: right
+        top_plan:
+          label: Plan
+          width: 80
+
+# ── Layout ────────────────────────────────────────────────────────────────
+# Header band uses the first-class title-inline mode. Main band is one row
+# with three columns. Per-cell heights mostly removed — letting the engine
+# size naturally. Donut keeps an explicit height so its arc doesn't collapse
+# under wedge-label real-estate (logged as defaults-wrong: narrow donuts
+# need width-aware label sizing).
+
+rows:
+- cols:
+  - width: "17%"
+    rows:
+    - kpi_bookings
+    - kpi_active_subs
+          # Donut height capped so the arc plot stays roughly square
+          # (cell width ≈ 237 px, leave ~70 px for title + subtitle + label
+          # band). Without the cap, the cell flexes to fill the hero's
+          # auto-grown height and the arc detaches from its title.
+    - height: 300
+      rows:
+      - plan_mix_donut
+  - width: "55%"
+    rows:
+    - hero_bookings
+  - width: "28%"
+    rows:
+    - win_rate_trend
+    - cumulative_area
+
+- cols:
+  - accounts_table

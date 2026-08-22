@@ -1,0 +1,610 @@
+# Quick Guide - Interactive Tutorial
+# This dashboard IS the tutorial! It demonstrates dbt charts concepts
+# using embedded examples. Notice: this entire guide is a dbt charts dashboard
+# with dashboards embedded inside it!
+
+title: "dbt charts Quick Guide"
+description: "Get up and running with dbt charts in 5 minutes"
+source: examples_db
+
+queries:
+  sales: SELECT * FROM ecommerce_orders
+
+  sales_by_product:
+    columns: [product, category, revenue, units_sold]
+    values:
+      - ["Gadget X", "Accessories", 18350, 583]
+      - ["Gadget Y", "Accessories", 30490, 1033]
+      - ["Tool Z", "Tools", 34900, 1169]
+      - ["Widget A", "Electronics", 66300, 2237]
+      - ["Widget B", "Electronics", 85680, 3099]
+
+  sales_by_category:
+    columns: [category, revenue, units_sold]
+    values:
+      - ["Accessories", 48840, 1616]
+      - ["Electronics", 151980, 5336]
+      - ["Tools", 34900, 1169]
+
+  sales_by_date:
+    columns: [date, revenue, units_sold]
+    values:
+      - ["2024-01-01", 6350, 215]
+      - ["2024-01-02", 6150, 215]
+      - ["2024-01-03", 6400, 220]
+      - ["2024-01-04", 6500, 228]
+      - ["2024-01-05", 5770, 193]
+      - ["2024-01-06", 6280, 219]
+      - ["2024-01-07", 5890, 198]
+      - ["2024-01-08", 6140, 212]
+      - ["2024-01-09", 6600, 228]
+      - ["2024-01-10", 6190, 213]
+      - ["2024-01-11", 5960, 203]
+      - ["2024-01-12", 6600, 232]
+      - ["2024-01-13", 5870, 200]
+      - ["2024-01-14", 6420, 221]
+      - ["2024-01-15", 5940, 205]
+      - ["2024-01-16", 6510, 226]
+      - ["2024-01-17", 6110, 210]
+      - ["2024-01-18", 6200, 212]
+      - ["2024-01-19", 6040, 209]
+      - ["2024-01-20", 6200, 214]
+      - ["2024-01-21", 6220, 215]
+      - ["2024-01-22", 5760, 197]
+      - ["2024-01-23", 6600, 229]
+      - ["2024-01-24", 6350, 219]
+      - ["2024-01-25", 6220, 214]
+      - ["2024-01-26", 5830, 200]
+      - ["2024-01-27", 6100, 211]
+      - ["2024-01-28", 6210, 214]
+      - ["2024-01-29", 6070, 208]
+      - ["2024-01-30", 6540, 226]
+      - ["2024-01-31", 6020, 206]
+      - ["2024-02-01", 6560, 228]
+      - ["2024-02-02", 5870, 202]
+      - ["2024-02-03", 6340, 219]
+      - ["2024-02-04", 5960, 205]
+      - ["2024-02-05", 6570, 228]
+      - ["2024-02-06", 6150, 212]
+      - ["2024-02-07", 6230, 215]
+
+  kpi_summary:
+    columns: [revenue, units_sold]
+    values:
+      - [847291.50, 12847]
+
+charts:
+  revenue_by_product:
+    title: "Revenue by Product"
+    query: sales_by_product
+    type: bar
+    x: product
+    y: revenue
+
+  revenue_bar:
+    title: "Revenue by Product"
+    query: sales_by_product
+    type: bar
+    x: product
+    y: revenue
+
+  category_donut:
+    style:
+      marks:
+        slice:
+          labels:
+            template: "{{ '{:.0%}'.format(percent) }} {{ category }}"
+    title: "Revenue by Category"
+    query: sales_by_category
+    type: donut
+    theta: revenue
+    color: category
+
+  trend_line:
+    title: "Revenue Over Time"
+    query: sales_by_date
+    type: line
+    x: date
+    y: revenue
+
+  revenue_kpi:
+    label: "Total Revenue"
+    query: kpi_summary
+    type: kpi
+    value: revenue
+
+  units_kpi:
+    label: "Units Sold"
+    query: kpi_summary
+    type: kpi
+    value: units_sold
+
+text: |
+  Get up and running with dbt charts in 5 minutes. This guide walks you through the core concepts and builds a dashboard from scratch.
+
+  **🎯 Meta moment:** This entire tutorial is itself a dbt charts dashboard with embedded examples!
+  Each section below is a nested dashboard demonstrating the concept.
+
+  ---
+
+  ## Core Elements
+
+  dbt charts has just four core elements:
+
+  - **boards** — containers that define layout and structure
+  - **queries** — fetch data via SQL, CSV, dbt, MetricFlow, or HTTP
+  - **charts** — visualize data from queries
+  - **variables** — user inputs that filter and update the dashboard
+
+  We'll make combinations of these in one YAML file to declare exactly the dashboard we'd like to be rendered. Let's start by going through each of these.
+
+  ---
+
+  ## Boards of Boards: The Layout System
+
+  Boards are the fundamental building block of dbt charts. They work recursively and by creating and nesting combinations of boards you can make incredibly complex designs. A board uses one of four layout types: **rows**, **cols**, **tabs**, or **grid**.
+
+  Here's a quick example showcasing the different types of boards:
+
+rows:
+  # ==========================================================================
+  # LAYOUT TYPES DEMO
+  # ==========================================================================
+  - title: "Layout Types Demo"
+    style:
+      background: "#f5f5f5"
+      margin: "16px 0"
+      border:
+        width: 1
+        color: "#ddd"
+        radius: 8
+      padding: "16px"
+    rows:
+      - title: "ROWS: Stack items vertically"
+        rows:
+          - text: "**First row item** - full width"
+            style:
+              background: mistyrose
+              padding: "8px"
+          - text: "**Second row item** - stacks below"
+            style:
+              background: pink
+              padding: "8px"
+
+      - title: "COLS: Place items side by side"
+        cols:
+          - text: "**Left column**"
+            style:
+              background: aliceblue
+              padding: "8px"
+          - text: "**Middle column**"
+            style:
+              background: lightblue
+              padding: "8px"
+          - text: "**Right column**"
+            style:
+              background: lightskyblue
+              padding: "8px"
+
+      - title: "NESTED: Unequal widths"
+        cols:
+          - text: "**Wide** (2/3)"
+            style:
+              background: honeydew
+              padding: "8px"
+          - cols:
+              - text: "**Narrow** (1/6)"
+                style:
+                  background: palegreen
+                  padding: "8px"
+              - text: "**Narrow** (1/6)"
+                style:
+                  background: lightgreen
+                  padding: "8px"
+
+      - title: "TABS: Organized views"
+        tabs:
+          items:
+            - title: "Tab A"
+              text: "Content for **Tab A** - click the tabs above!"
+              style:
+                background: lavender
+                padding: "12px"
+            - title: "Tab B"
+              text: "Content for **Tab B** - tabs hide content until needed"
+              style:
+                background: thistle
+                padding: "12px"
+            - title: "Tab C"
+              text: "Content for **Tab C** - great for reducing clutter"
+              style:
+                background: plum
+                padding: "12px"
+
+  - text: |
+      As you can see, you can nest simple boards to create complex layouts. You can even import entire files and use them as board items.
+
+      **Split Screen Imports** - Show two dashboards side by side:
+
+  # ==========================================================================
+  # SPLIT SCREEN DEMO
+  # ==========================================================================
+  - title: "Split Screen View"
+    style:
+      background: "#f5f5f5"
+      margin: "16px 0"
+      border:
+        width: 1
+        color: "#ddd"
+        radius: 8
+      padding: "16px"
+    cols:
+      - title: "Sales Dashboard"
+        rows:
+          - text: "## 📈 Sales Overview"
+            style:
+              background: mistyrose
+              padding: "8px"
+          - text: "Revenue metrics and trends would go here"
+            style:
+              background: pink
+              padding: "8px"
+
+      - title: "Marketing Dashboard"
+        rows:
+          - text: "## 📊 Marketing Overview"
+            style:
+              background: aliceblue
+              padding: "8px"
+          - text: "Campaign metrics and analytics would go here"
+            style:
+              background: lightblue
+              padding: "8px"
+
+  - text: |
+      With imports, this becomes just:
+
+      ```yaml
+      # charts/company_overview.yml
+      cols:
+        - sales_dashboard.yml      # sibling: charts/sales_dashboard.yml
+        - marketing_dashboard.yml  # sibling: charts/marketing_dashboard.yml
+      ```
+
+      Any `.yml` file can be imported as a board item by its path, written
+      relative to the importing file's own directory. The extension is required —
+      it is what marks the item as a file import rather than a chart name.
+
+      In a nutshell, that's the layout system: **boards of boards**.
+
+      ---
+
+      ## Queries: Getting Data
+
+      Queries define where your data comes from. Each query has a name and a source:
+
+      ```yaml
+      queries:
+        sales:
+          sql: |
+            SELECT product, category, revenue, units_sold
+            FROM ecommerce_orders
+            WHERE revenue > 100
+          source: my_postgres
+      ```
+
+      dbt charts supports multiple types of queries: **SQL**, **CSV**, **dbt**, **MetricFlow**, **HTTP APIs**, and more. You can even reference queries from other files.
+
+  # ==========================================================================
+  # QUERIES DEMO
+  # ==========================================================================
+  - title: "Query Types"
+    style:
+      background: "#f5f5f5"
+      margin: "16px 0"
+      border:
+        width: 1
+        color: "#ddd"
+        radius: 8
+      padding: "16px"
+    cols:
+      - text: |
+          ### CSV Query
+
+          ```yaml
+          queries:
+            sales:
+              source: examples_db
+              sql: SELECT * FROM ecommerce_orders
+          ```
+
+          Load data directly from CSV files.
+        style:
+          background: "#e3f2fd"
+          padding: "12px"
+          border:
+            radius: 4
+
+      - text: |
+          ### SQL Query
+
+          ```yaml
+          queries:
+            revenue:
+              sql: |
+                SELECT product, SUM(revenue)
+                FROM orders
+                GROUP BY product
+              source: my_postgres
+          ```
+
+          Query any SQL database.
+        style:
+          background: "#f3e5f5"
+          padding: "12px"
+          border:
+            radius: 4
+
+      - text: |
+          ### Import Query
+
+          ```yaml
+          queries:
+            shared:
+              source: _queries.yml#sales
+          ```
+
+          Reuse queries from other files.
+        style:
+          background: "#e8f5e9"
+          padding: "12px"
+          border:
+            radius: 4
+
+  - text: |
+      ---
+
+      ## Charts: Visualizing Data
+
+      Charts turn query data into visualizations. Reference a query and map fields to chart properties:
+
+  # ==========================================================================
+  # CHARTS DEMO - SINGLE
+  # ==========================================================================
+  - title: "Charts Demo"
+    style:
+      background: "#f5f5f5"
+      margin: "16px 0"
+      border:
+        width: 1
+        color: "#ddd"
+        radius: 8
+      padding: "16px"
+    rows:
+      - revenue_by_product
+
+  - text: |
+      The chart references `query: sales` to pull data, then maps `product` to the x-axis and `revenue` to the y-axis.
+
+      ### Multiple Charts
+
+      Add more charts and arrange them with layouts:
+
+  # ==========================================================================
+  # CHARTS DEMO - MULTIPLE
+  # ==========================================================================
+  - title: "Multiple Charts Demo"
+    style:
+      background: "#f5f5f5"
+      margin: "16px 0"
+      border:
+        width: 1
+        color: "#ddd"
+        radius: 8
+      padding: "16px"
+    rows:
+      - cols:
+          - revenue_bar
+          - category_donut
+      - trend_line
+
+  - text: |
+      dbt charts supports all [Vega-Lite](https://vega.github.io/vega-lite/) chart types: `bar`, `line`, `area`, `pie`, `scatter`, `heatmap`, `table`, `kpi`, and more.
+
+      ---
+
+      ## Variables: Making It Interactive
+
+      Variables add user inputs that dynamically update your dashboard. Let's start with a simple example:
+
+  # ==========================================================================
+  # VARIABLES DEMO - SIMPLE
+  # ==========================================================================
+  - title: "Variables Demo"
+    style:
+      background: "#f5f5f5"
+      margin: "16px 0"
+      border:
+        width: 1
+        color: "#ddd"
+        radius: 8
+      padding: "16px"
+    variables:
+      name:
+        label: "Your Name"
+        input: input
+        default: "World"
+    rows:
+      - text: |
+          # Hello, {{ name }}! 👋
+        style:
+          background: honeydew
+          padding: "20px"
+          text:
+            align: center
+          border:
+            radius: 8
+
+  - text: |
+      Type in the input above and watch the greeting change! The `{{ name }}` syntax inserts the variable value.
+
+      ### Variables in Dashboards
+
+      Variables can appear anywhere — in text, titles, and even query filters. Here's a dashboard with a category selector:
+
+  # ==========================================================================
+  # VARIABLES DEMO - DASHBOARD
+  # ==========================================================================
+  - title: "Interactive Dashboard Demo"
+    style:
+      background: "#f5f5f5"
+      margin: "16px 0"
+      border:
+        width: 1
+        color: "#ddd"
+        radius: 8
+      padding: "16px"
+    variables:
+      demo_category:
+        label: "Category Filter"
+        options:
+          static: [Electronics, Furniture, Clothing]
+        default: Electronics
+    rows:
+      - text: "### Showing: {{ demo_category }}"
+        style:
+          background: azure
+          padding: "12px"
+      - revenue_kpi
+      - revenue_bar
+
+  - text: |
+      The selected category appears in the header. For actual data filtering, variables connect to query filters.
+
+      Variable input types include: `select`, `input`, `number`, `date`, `daterange`, and more.
+
+      ---
+
+      ## Styling: Making It Beautiful
+
+      Boards support `title`, `content` (markdown), and `style` properties to customize appearance:
+
+  # ==========================================================================
+  # STYLING DEMO
+  # ==========================================================================
+  # Note: the nested board below intentionally pairs its `title:` with a
+  # styled H1 in the body — this whole section demonstrates how a *styled*
+  # nested dashboard reads, so the styled body banner is the point.
+  - title: "Styled Dashboard Demo"
+    style:
+      background: "#f5f5f5"
+      margin: "16px 0"
+      border:
+        width: 1
+        color: "#ddd"
+        radius: 8
+      padding: "16px"
+    variables:
+      style_category:
+        label: "Category"
+        options:
+          static: [Electronics, Furniture, Clothing]
+        default: Electronics
+    rows:
+      - text: |
+          # 📊 Sales Dashboard
+
+          Real-time insights into **{{ style_category }}** performance and revenue trends.
+        style:
+          background: "#667eea"
+          color: white
+          padding: "24px"
+          border:
+            radius: 8
+
+      - cols:
+          - revenue_kpi
+          - units_kpi
+        style:
+          gap: "16px"
+
+      - cols:
+          - revenue_bar
+          - category_donut
+        style:
+          gap: "16px"
+
+      - cols:
+          - text: |
+              ✅ **Revenue up 12%** this quarter
+            style:
+              background: "#d4edda"
+              color: "#155724"
+              padding: "12px 16px"
+              border:
+                radius: 8
+              text:
+                align: center
+
+          - text: |
+              📊 **549 units** sold this period
+            style:
+              background: "#cce5ff"
+              color: "#004085"
+              padding: "12px 16px"
+              border:
+                radius: 8
+              text:
+                align: center
+
+          - text: |
+              🎯 **On track** for Q4 goals
+            style:
+              background: "#fff3cd"
+              color: "#856404"
+              padding: "12px 16px"
+              border:
+                radius: 8
+              text:
+                align: center
+        style:
+          gap: "12px"
+          margin: "16px 0 0 0"
+
+  - text: |
+      Style properties accept any CSS: `background`, `padding`, `border`, `color`, `border-radius`, and more. Use `content` for markdown text, headers, and even images.
+
+      ---
+
+      ## Quick Reference
+
+      ```yaml
+      # Complete dashboard structure
+      title: My Dashboard
+
+      variables:
+        filter:
+          input: select
+          options:
+            static: [A, B, C]
+          default: A
+
+      queries:
+        my_data:
+          sql: SELECT * FROM table
+
+      charts:
+        my_chart:
+          query: my_data
+          type: bar
+          x: dimension
+          y: metric
+
+      rows:
+        - text: "# Welcome!"
+        - my_chart
+      ```
+
+      That's it — **boards**, **queries**, **charts**, and **variables**. Start simple, add complexity as needed.
+
+      **Happy building!** 🚀

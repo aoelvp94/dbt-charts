@@ -1,0 +1,10 @@
+# Partial: Header section with company branding
+title: "Company Overview"
+text: |
+  This dashboard provides a comprehensive view of business performance.
+
+  **Last Updated:** {{ now() | date('%Y-%m-%d') }}
+
+style:
+  background: "#F0F9FF"
+  padding: "20px"

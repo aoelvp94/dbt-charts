@@ -1,0 +1,222 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.4.1.json",
+  "autosize": {
+    "contains": "padding",
+    "resize": true,
+    "type": "fit"
+  },
+  "background": "#FAFAFA",
+  "config": {
+    "circle": {
+      "opacity": 1.0
+    },
+    "font": "'Inter Variable', 'Noto Emoji', Inter, system-ui, sans-serif",
+    "range": {
+      "category": [
+        "#3164a3",
+        "#779bc9",
+        "#ad9c7f",
+        "#7a8895",
+        "#8a576f",
+        "#5c7b5c",
+        "#d49656",
+        "#ae6349",
+        "#609f9e",
+        "#232f3a"
+      ]
+    },
+    "rule": {
+      "stroke": "#222222",
+      "strokeWidth": 1.0
+    },
+    "text": {
+      "align": "center",
+      "fill": "#313233",
+      "font": "'Inter Variable', 'Noto Emoji', Inter, system-ui, sans-serif",
+      "fontSize": 11.0,
+      "fontWeight": "400"
+    },
+    "title": {
+      "anchor": "start",
+      "color": "#494A4C",
+      "font": "'Source Serif 4', 'Noto Emoji', Georgia, 'Times New Roman', serif",
+      "fontSize": 18,
+      "fontWeight": 500,
+      "offset": 10.0,
+      "subtitleColor": "#8A8C8F",
+      "subtitleFont": "'Inter Variable', 'Noto Emoji', Inter, system-ui, sans-serif",
+      "subtitleFontSize": 11.0,
+      "subtitleFontWeight": 400.0
+    },
+    "view": {
+      "continuousHeight": 300.0,
+      "continuousWidth": 360.0,
+      "discreteHeight": 360.0,
+      "discreteWidth": 360.0,
+      "stroke": null
+    }
+  },
+  "data": {
+    "values": [
+      {
+        "month": "Jan",
+        "revenue": 100
+      },
+      {
+        "month": "Feb",
+        "revenue": 200
+      },
+      {
+        "month": "Mar",
+        "revenue": 150
+      }
+    ]
+  },
+  "encoding": {
+    "description": {
+      "value": {
+        "expr": "\"\\u2061\" + (datum[\"month\"]) + '; ' + \"Revenue: \" + (format(datum[\"revenue\"], \",.2~f\"))"
+      }
+    },
+    "x": {
+      "axis": {
+        "domain": false,
+        "domainColor": "#EDEFF2",
+        "domainWidth": 1.0,
+        "grid": true,
+        "gridColor": "#EDEFF2",
+        "gridOpacity": 1.0,
+        "gridWidth": 1.0,
+        "labelAngle": 0.0,
+        "labelColor": "#626366",
+        "labelFont": "'Inter Variable', 'Noto Emoji', Inter, system-ui, sans-serif",
+        "labelFontSize": 11.0,
+        "labelFontWeight": "400",
+        "labelOverlap": false,
+        "labelPadding": 6.0,
+        "labelSeparation": 16.0,
+        "offset": 1.0,
+        "tickColor": "#EDEFF2",
+        "tickSize": 6.0,
+        "tickWidth": 1.0,
+        "ticks": true,
+        "title": null
+      },
+      "field": "month",
+      "scale": {
+        "padding": 0.0
+      },
+      "sort": null,
+      "title": "Month",
+      "type": "nominal"
+    },
+    "y": {
+      "axis": {
+        "domain": false,
+        "domainColor": "#EDEFF2",
+        "domainWidth": 1.0,
+        "format": ".3~s",
+        "grid": true,
+        "gridColor": "#D0D3D9",
+        "gridOpacity": 1.0,
+        "gridWidth": 1.5,
+        "labelAlign": "right",
+        "labelColor": "#626366",
+        "labelExpr": "format(datum.value,\",.0~f\")",
+        "labelFont": "'dbt Sans Tabular', 'Noto Emoji', Inter, system-ui, sans-serif",
+        "labelFontSize": 11.0,
+        "labelFontWeight": "400",
+        "labelPadding": 24.58740234375,
+        "labelSeparation": 16.0,
+        "orient": "right",
+        "tickColor": "#D0D3D9",
+        "tickSize": 6.0,
+        "tickWidth": 1.5,
+        "ticks": true,
+        "title": null,
+        "values": [
+          50.0,
+          100.0,
+          150.0,
+          200.0,
+          250.0
+        ]
+      },
+      "field": "revenue",
+      "format": ",.2~f",
+      "scale": {
+        "domainMax": 208.0,
+        "domainMin": 92.0,
+        "zero": false
+      },
+      "stack": null,
+      "title": "Revenue",
+      "type": "quantitative"
+    }
+  },
+  "layer": [
+    {
+      "mark": {
+        "aria": false,
+        "clip": true,
+        "fill": "#FAFAFA",
+        "fillOpacity": 1,
+        "opacity": 1,
+        "strokeOpacity": 0,
+        "tooltip": false,
+        "type": "area"
+      }
+    },
+    {
+      "mark": {
+        "aria": false,
+        "clip": true,
+        "stroke": "#FAFAFA",
+        "strokeCap": "round",
+        "strokeJoin": "round",
+        "strokeWidth": 8.0,
+        "tooltip": false,
+        "type": "line"
+      }
+    },
+    {
+      "mark": {
+        "aria": false,
+        "fill": "#203c65",
+        "fillOpacity": 0.16,
+        "opacity": 1,
+        "strokeOpacity": 0,
+        "tooltip": true,
+        "type": "area"
+      }
+    },
+    {
+      "mark": {
+        "aria": false,
+        "stroke": "#203c65",
+        "strokeCap": "round",
+        "strokeJoin": "round",
+        "strokeWidth": 4.0,
+        "tooltip": true,
+        "type": "line"
+      }
+    },
+    {
+      "mark": {
+        "clip": true,
+        "fill": "#203c65",
+        "filled": true,
+        "opacity": 0,
+        "size": 300,
+        "tooltip": true,
+        "type": "point"
+      }
+    }
+  ],
+  "padding": {
+    "bottom": 0,
+    "left": 0,
+    "right": 0,
+    "top": 0
+  }
+}

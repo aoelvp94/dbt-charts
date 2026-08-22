@@ -1,0 +1,31 @@
+title: Multi Query Board
+
+queries:
+  top_products:
+    type: values
+    rows:
+      - {product: Widget, revenue: 100}
+
+  monthly_trend:
+    type: values
+    rows:
+      - {month: Jan, revenue: 100}
+
+charts:
+  revenue_bar:
+    type: bar
+    query: top_products
+    x: product
+    y: revenue
+
+  monthly_chart:
+    type: bar
+    query: monthly_trend
+    x: month
+    y: revenue
+
+rows:
+  - cols:
+      - revenue_bar
+  - cols:
+      - monthly_chart

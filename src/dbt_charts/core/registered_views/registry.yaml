@@ -1,0 +1,89 @@
+# Registered view registry — built-in system views.
+#
+# Each entry maps a URL route to a YAML template and optional pre-template
+# queries. Python owns route compilation, matching, path-param validation,
+# and template loading. YAML owns the visible template structure.
+#
+# Route grammar: segments are either literals or named params in angle-brackets
+# (<name>). Each param matches exactly one non-empty path segment. No optional
+# segments, no typed converters — use separate explicit entries per depth.
+#
+# experimental: true — view is hidden from production routing unless
+# include_experimental is explicitly requested. Built-in system views ship
+# stable (experimental: false by default).
+
+views:
+  # ─── Data views ───────────────────────────────────────────────────────────
+
+  - name: data_root
+    route: /data/
+    template: data/root.yaml
+
+  - name: data_source
+    route: /data/<source>/
+    template: data/source-index.yaml
+
+  - name: data_schema
+    route: /data/<source>/<schema>/
+    template: data/schema-index.yaml
+
+  - name: data_table
+    route: /data/<source>/<schema>/<table>/
+    template: data/table-index.yaml
+    queries:
+      columns:
+        type: schema
+        source: "{{ path.source }}"
+        schema: "{{ path.schema }}"
+        table: "{{ path.table }}"
+
+  - name: data_table_detail
+    route: /data/<source>/<schema>/<table>/detail/
+    template: data/table-detail.yaml
+    # Row is selected by the table's column variables as query params, e.g.:
+    #   /data/snowflake/analytics/sales/detail/?id=12345
+    #   /data/snowflake/analytics/sales/detail/?order_id=5&line_no=2
+    # The predicate is parameter-bound (never string-interpolated). A well-chosen
+    # key resolves to one row; the SQL uses LIMIT 2 so the table surfaces an empty
+    # (zero) or two-row result, not a silently picked one.
+    queries:
+      columns:
+        type: schema
+        source: "{{ path.source }}"
+        schema: "{{ path.schema }}"
+        table: "{{ path.table }}"
+
+  # ─── Inspector views ───────────────────────────────────────────────────────
+
+  - name: inspector_source
+    route: /inspector/<source>/
+    template: inspector/source.yaml
+
+  - name: inspector_schema
+    route: /inspector/<source>/<schema>/
+    template: inspector/schema.yaml
+
+  - name: inspector_table
+    route: /inspector/<source>/<schema>/<table>/
+    template: inspector/table.yaml
+    # Pre-template column profiles so the template can transpose them into a
+    # describe-style overview (one table column per data column) in the view layer.
+    queries:
+      columns:
+        type: schema
+        source: "{{ path.source }}"
+        schema: "{{ path.schema }}"
+        table: "{{ path.table }}"
+
+  - name: inspector_column
+    route: /inspector/<source>/<schema>/<table>/<column>/
+    template: inspector/column.yaml
+    # Pre-template profile so the template can branch on the column's type
+    # in the view layer (numeric vs temporal vs categorical sections).
+    queries:
+      col:
+        type: schema
+        source: "{{ path.source }}"
+        schema: "{{ path.schema }}"
+        table: "{{ path.table }}"
+        column: "{{ path.column }}"

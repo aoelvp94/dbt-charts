@@ -1,0 +1,1238 @@
+"""Palette resolver — role indirection over typed palette records.
+
+Stage: COMPILE / RENDER
+Purpose: Resolve palette names and color tokens to sRGB hex stops.
+
+Entry points
+------------
+    palette(name, *, surface=None, steps=None, reverse=False) -> list[str]
+    color(token) -> str
+    color_from_theme(token, *, palettes, roles=None) -> str
+    resolve_alias_chain(key, aliases, *, colors) -> str
+    palette_metadata(name) -> dict
+    list_palettes(family=None) -> list[str]
+    select_default_palette(data_shape) -> str
+
+YAML palette data is loaded from ``dbt_charts/core/defaults/palettes/<directory>/``.
+Sequential and diverging palettes use a hand-authored ``<name>.yml`` spine
+with an 11-stop ``colors:`` array. Downsampling operates directly on the spine.
+
+Palette YAML shape (unified):
+    name: str
+    colors: list[str] | None  — ordered hex stops for [N] bracket access
+    aliases: dict[str, str|int] | None — terminal hex, alias chain, or 1-indexed int
+    extends: str | None  — inherit alias graph from a parent palette
+    description: str | None
+
+Role-indirection grammar:
+    chrome.ink         → theme.palettes[chrome] → palette → resolve alias "ink"
+    category[1]        → theme.palettes[category] → palette → colors[0] (1-indexed)
+    ink                → theme.roles[ink] → recurse as role.alias
+
+surface="table" (sequential and diverging only)
+-----------------------------------------------
+    Produces a WCAG AA–safe sub-palette for use as table cell backgrounds.
+    The algorithm:
+      1. Binary-search the OKLCH-interpolated spine for the exact t where
+         contrast vs #222222 crosses 4.5:1 (no dense LUT required).
+      2. Generate ``steps`` stops evenly from the light end of the spine to
+         the boundary t.
+    The boundary is found by evaluating the continuous OKLCH curve, so it
+    does not snap to a spine index.
+"""
+
+from __future__ import annotations
+
+import difflib
+import functools
+import math
+import re
+from collections.abc import Mapping
+from importlib.resources import files
+from typing import Any, Literal
+
+import yaml
+
+from dbt_charts.core.compile.models.palette import Palette
+
+# ============================================================================
+# Exceptions
+# ============================================================================
+
+
+class UnknownPaletteError(ValueError):
+    """Raised when a palette name doesn't match any shipped palette."""
+
+
+class UnknownColorError(ValueError):
+    """Raised when ``color()`` token doesn't resolve."""
+
+
+class CategoricalOverrequestError(ValueError):
+    """Raised when ``steps=N`` exceeds ``len(stops)`` for categorical/scaffold."""
+
+
+class SurfaceUnsupportedError(ValueError):
+    """Raised when ``surface=`` is passed for a family that doesn't carve."""
+
+
+class ToneAsPaletteError(ValueError):
+    """Raised when a tone palette name is passed to ``palette()`` instead
+    of ``color()``."""
+
+
+# ============================================================================
+# Module state
+# ============================================================================
+
+_PALETTES_DIR = files("dbt_charts.core") / "defaults" / "palettes"
+_FAMILIES: tuple[str, ...] = (
+    "sequential",
+    "diverging",
+    "categorical",
+    "scaffold",
+    "tone",
+)
+# Index: {name: {"family": ..., "path": Path}}
+_index: dict[str, dict[str, Any]] | None = None
+
+# Cache for loaded spine YAMLs (keyed by palette name).
+_spine_cache: dict[str, Palette] = {}
+
+
+# Known anti-patterns (§10).
+_HARD_FAIL_NAMES: frozenset[str] = frozenset({"jet", "rainbow", "hsv"})
+
+# RdYlGn/parula resolve (for migration paths) but emit a warning.
+# The mapped substitute is the nearest DFT palette so dashboards don't crash
+# when users encounter these names from prior tools. Warning text names
+# the substitution explicitly.
+_WARN_ALIASES: dict[str, str] = {
+    "RdYlGn": "dbt-div-crimson-green",
+    "parula": "dbt-seq-blue",
+}
+
+
+# ============================================================================
+# OKLCH math + WCAG helpers for surface="table" carving
+# ============================================================================
+
+# DFT body text ink — used as the contrast reference for table cell backgrounds.
+WCAG_TABLE_BODY = "#222222"
+# WCAG AA minimum contrast ratio for normal text.
+_WCAG_TABLE_MIN = 4.5
+
+
+def _srgb_to_linear(c: float) -> float:
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _linear_to_srgb(c: float) -> float:
+    if c <= 0.0:
+        return 0.0
+    return c * 12.92 if c <= 0.0031308 else 1.055 * (c ** (1 / 2.4)) - 0.055
+
+
+def _cbrt(x: float) -> float:
+    return x ** (1 / 3) if x >= 0 else -((-x) ** (1 / 3))
+
+
+def _lrgb_to_oklab(r: float, g: float, b: float) -> tuple[float, float, float]:
+    lo = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b
+    m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b
+    s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b
+    lo, m, s = _cbrt(lo), _cbrt(m), _cbrt(s)
+    return (
+        0.2104542553 * lo + 0.7936177850 * m - 0.0040720468 * s,
+        1.9779984951 * lo - 2.4285922050 * m + 0.4505937099 * s,
+        0.0259040371 * lo + 0.7827717662 * m - 0.8086757660 * s,
+    )
+
+
+def _oklab_to_lrgb(L: float, a: float, b: float) -> tuple[float, float, float]:
+    lo = L + 0.3963377774 * a + 0.2158037573 * b
+    m = L - 0.1055613458 * a - 0.0638541728 * b
+    s = L - 0.0894841775 * a - 1.2914855480 * b
+    lo, m, s = lo**3, m**3, s**3
+    return (
+        +4.0767416621 * lo - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * lo + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * lo - 0.7034186147 * m + 1.7076147010 * s,
+    )
+
+
+def _hex_to_oklch(hex_str: str) -> tuple[float, float, float]:
+    h = hex_str.lstrip("#")
+    r = int(h[0:2], 16) / 255
+    g = int(h[2:4], 16) / 255
+    b = int(h[4:6], 16) / 255
+    rl, gl, bl = _srgb_to_linear(r), _srgb_to_linear(g), _srgb_to_linear(b)
+    L, a, bb = _lrgb_to_oklab(rl, gl, bl)
+    C = math.sqrt(a * a + bb * bb)
+    H = math.degrees(math.atan2(bb, a)) % 360
+    return (L, C, H)
+
+
+def _oklch_to_hex(L: float, C: float, H: float) -> str:
+    """Convert OKLCH to sRGB hex, gamut-clipping via binary search on C."""
+
+    def _try_c(cc: float) -> tuple[float, float, float] | None:
+        a = cc * math.cos(math.radians(H))
+        b = cc * math.sin(math.radians(H))
+        r, g, bb = _oklab_to_lrgb(L, a, b)
+        # Loose bounds tolerate floating-point overshoot; clamp to [0,1] on accept.
+        if -1e-5 <= r <= 1.0001 and -1e-5 <= g <= 1.0001 and -1e-5 <= bb <= 1.0001:
+            return (
+                max(0.0, min(1.0, r)),
+                max(0.0, min(1.0, g)),
+                max(0.0, min(1.0, bb)),
+            )
+        return None
+
+    result = _try_c(C)
+    if result is None:
+        lo, hi = 0.0, C
+        # 30 iterations → precision ~C/2^30 ≈ 1e-9 in C, well below 8-bit rounding.
+        for _ in range(30):
+            mid = (lo + hi) / 2
+            if _try_c(mid):
+                lo = mid
+            else:
+                hi = mid
+        result = _try_c(lo) or (0.0, 0.0, 0.0)
+    r, g, b = result
+    rs = max(0.0, min(1.0, _linear_to_srgb(r)))
+    gs = max(0.0, min(1.0, _linear_to_srgb(g)))
+    bs = max(0.0, min(1.0, _linear_to_srgb(b)))
+    return f"#{int(round(rs * 255)):02x}{int(round(gs * 255)):02x}{int(round(bs * 255)):02x}"
+
+
+def _relative_luminance(hex_str: str) -> float:
+    """WCAG 2.1 relative luminance of an sRGB hex color."""
+    h = hex_str.lstrip("#")
+    r, g, b = int(h[0:2], 16) / 255, int(h[2:4], 16) / 255, int(h[4:6], 16) / 255
+    rl, gl, bl = _srgb_to_linear(r), _srgb_to_linear(g), _srgb_to_linear(b)
+    return 0.2126 * rl + 0.7152 * gl + 0.0722 * bl
+
+
+# A table cell's body text is either clearly dark (light theme) or clearly
+# light (dark theme); this threshold sits safely in the gap between the two.
+_DARK_CANVAS_TEXT_LUMA = 0.5
+
+
+def _is_dark_canvas_text(text_color: str) -> bool:
+    """True when the table body text is light — i.e. it sits on a dark canvas.
+
+    The dark-canvas signal for the table palette swap, read from the same
+    relative luminance the WCAG carve already computes — no ResolvedStyle flag.
+    """
+    return _relative_luminance(text_color) >= _DARK_CANVAS_TEXT_LUMA
+
+
+def _wcag_contrast(hex_a: str, hex_b: str) -> float:
+    """WCAG 2.1 contrast ratio between two sRGB hex colors."""
+    l1, l2 = _relative_luminance(hex_a), _relative_luminance(hex_b)
+    if l1 < l2:
+        l1, l2 = l2, l1
+    return (l1 + 0.05) / (l2 + 0.05)
+
+
+def _interpolate_oklch_at_t(
+    spine_oklch: list[tuple[float, float, float]], t: float
+) -> str:
+    """Evaluate the OKLCH spine at parameter t ∈ [0, 1] and return sRGB hex.
+
+    Uses shortest-arc hue interpolation between each pair of adjacent spine stops.
+    """
+    n = len(spine_oklch)
+    seg_f = t * (n - 1)
+    seg_i = min(n - 2, int(seg_f))
+    seg_t = seg_f - seg_i
+    L0, C0, H0 = spine_oklch[seg_i]
+    L1, C1, H1 = spine_oklch[seg_i + 1]
+    L = L0 + seg_t * (L1 - L0)
+    C = C0 + seg_t * (C1 - C0)
+    d = ((H1 - H0 + 540) % 360) - 180
+    H = (H0 + seg_t * d) % 360
+    return _oklch_to_hex(L, C, H)
+
+
+def _wcag_boundary_t(
+    spine_oklch: list[tuple[float, float, float]],
+    t_pass: float,
+    t_fail: float,
+    text_color: str,
+    iters: int = 50,
+) -> float:
+    """Binary-search for the WCAG-contrast boundary along the OKLCH spine.
+
+    ``t_pass`` must be a position where contrast vs ``text_color`` ≥
+    _WCAG_TABLE_MIN; ``t_fail`` must be a position where it is below.  Returns
+    the last-passing t (precision ~1/2^50 in t, well below any visible colour
+    difference).
+    """
+    for _ in range(iters):
+        t_mid = (t_pass + t_fail) / 2
+        if (
+            _wcag_contrast(text_color, _interpolate_oklch_at_t(spine_oklch, t_mid))
+            >= _WCAG_TABLE_MIN
+        ):
+            t_pass = t_mid
+        else:
+            t_fail = t_mid
+    return t_pass
+
+
+def _table_surface_seq(
+    source: list[str], steps: int, text_color: str = WCAG_TABLE_BODY
+) -> list[str]:
+    """Return a WCAG-safe table palette for a sequential source spine.
+
+    The cell text sits on the fill, so the fills are carved to the sub-range of
+    the spine that contrasts with ``text_color``. Which end is safe depends on
+    the text: dark text (light themes) keeps the light end and truncates the
+    dark end; light text (dark themes) keeps the dark end and truncates the
+    light end — the symmetric mirror. Either way the pop end that can't hold the
+    text is dropped, exactly as light themes already drop their dark stops.
+
+    Output stays in source order (index 0 = domain low). Raises ``ValueError``
+    if neither end of the spine meets the threshold against ``text_color``.
+    """
+    spine_oklch = [_hex_to_oklch(h) for h in source]
+    c0 = _wcag_contrast(text_color, _interpolate_oklch_at_t(spine_oklch, 0.0))
+    c1 = _wcag_contrast(text_color, _interpolate_oklch_at_t(spine_oklch, 1.0))
+    if max(c0, c1) < _WCAG_TABLE_MIN:
+        raise ValueError(
+            f"No stop of sequential palette meets WCAG {_WCAG_TABLE_MIN}:1 "
+            f"against table text {text_color!r}."
+        )
+
+    # Anchor on the higher-contrast end; extend toward the other until it fails.
+    if c0 >= c1:
+        t_lo = 0.0
+        t_hi = (
+            1.0
+            if c1 >= _WCAG_TABLE_MIN
+            else _wcag_boundary_t(spine_oklch, 0.0, 1.0, text_color)
+        )
+    else:
+        t_hi = 1.0
+        t_lo = (
+            0.0
+            if c0 >= _WCAG_TABLE_MIN
+            else _wcag_boundary_t(spine_oklch, 1.0, 0.0, text_color)
+        )
+
+    if steps == 1:
+        return [_interpolate_oklch_at_t(spine_oklch, (t_lo + t_hi) / 2.0)]
+    return [
+        _interpolate_oklch_at_t(spine_oklch, t_lo + i * (t_hi - t_lo) / (steps - 1))
+        for i in range(steps)
+    ]
+
+
+def _table_surface_div(
+    source: list[str], steps: int, text_color: str = WCAG_TABLE_BODY
+) -> list[str]:
+    """Return a WCAG-safe table palette for a diverging source spine.
+
+    Anchored on the neutral midpoint (t=0.5), each arm is truncated toward its
+    pole until the fill can no longer hold ``text_color``. Light themes (dark
+    text) need a light midpoint + truncate the dark poles; dark themes (light
+    text) need a dark midpoint + truncate the bright poles — same algorithm,
+    the text color decides which stops survive.
+
+    For even ``steps`` the midpoint is excluded so stops flank it symmetrically.
+    Raises ``ValueError`` if the midpoint fails the threshold against ``text_color``.
+    """
+    spine_oklch = [_hex_to_oklch(h) for h in source]
+
+    mid_hex = _interpolate_oklch_at_t(spine_oklch, 0.5)
+    if _wcag_contrast(text_color, mid_hex) < _WCAG_TABLE_MIN:
+        raise ValueError(
+            f"Midpoint of diverging palette fails WCAG {_WCAG_TABLE_MIN}:1 "
+            f"against table text {text_color!r}."
+        )
+
+    # Each arm's pole may fail; the midpoint (t=0.5) passes by the guard above.
+    left_hex = _interpolate_oklch_at_t(spine_oklch, 0.0)
+    t_left = (
+        0.0
+        if _wcag_contrast(text_color, left_hex) >= _WCAG_TABLE_MIN
+        else _wcag_boundary_t(spine_oklch, 0.5, 0.0, text_color)
+    )
+
+    right_hex = _interpolate_oklch_at_t(spine_oklch, 1.0)
+    t_right = (
+        1.0
+        if _wcag_contrast(text_color, right_hex) >= _WCAG_TABLE_MIN
+        else _wcag_boundary_t(spine_oklch, 0.5, 1.0, text_color)
+    )
+
+    if steps == 1:
+        return [_interpolate_oklch_at_t(spine_oklch, 0.5)]
+
+    if steps % 2 == 0:
+        # Even: place n//2 stops on each arm, excluding the midpoint.
+        half = steps // 2
+        left_ts = [t_left + i * (0.5 - t_left) / half for i in range(half)]
+        right_ts = [0.5 + (i + 1) * (t_right - 0.5) / half for i in range(half)]
+        ts = left_ts + right_ts
+    else:
+        ts = [t_left + i * (t_right - t_left) / (steps - 1) for i in range(steps)]
+
+    return [_interpolate_oklch_at_t(spine_oklch, t) for t in ts]
+
+
+def _build_index() -> dict[str, dict[str, Any]]:
+    """Scan the palettes directory and build ``name → (family, path)`` map."""
+    idx: dict[str, dict[str, Any]] = {}
+    for family in _FAMILIES:
+        fam_dir = _PALETTES_DIR / family
+        if not fam_dir.is_dir():
+            continue
+        for yml in sorted(
+            (p for p in fam_dir.iterdir() if p.name.endswith(".yml")),
+            key=lambda p: p.name,
+        ):
+            data = yaml.safe_load(yml.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or "name" not in data:
+                continue
+            idx[data["name"]] = {"family": family, "path": yml}
+    return idx
+
+
+def _get_index() -> dict[str, dict[str, Any]]:
+    global _index
+    if _index is None:
+        _index = _build_index()
+    return _index
+
+
+def _load_spine_raw(name: str) -> Palette:
+    """Load and validate the YAML for ``name`` without resolving ``extends:``."""
+    entry = _get_index().get(name)
+    if entry is None:
+        raise UnknownPaletteError(_unknown_palette_message(name))
+    data = yaml.safe_load(entry["path"].read_text(encoding="utf-8"))
+    return Palette.model_validate(data)
+
+
+def _load_spine_merged(name: str, _seen: frozenset[str] | None = None) -> Palette:
+    """Load palette ``name`` with ``extends:`` inheritance applied.
+
+    Merge rules:
+    - ``colors:`` — child replaces parent array wholesale.
+    - ``aliases:`` — deep-merge; child keys override parent keys.
+      Alias values are kept as-is (integers stay integers) so that integer
+      refs resolve against the *child's* colors array at resolve time.
+    - ``name``, ``description``, ``type`` — child wins.
+    - ``extends`` key is stripped from the merged result.
+    - Cycle → ValueError with clear message.
+    - Unknown parent → UnknownPaletteError with clear message.
+    """
+    seen = _seen or frozenset()
+    if name in seen:
+        chain = " → ".join(sorted(seen) + [name])
+        raise ValueError(f"palette extends cycle detected: {chain}")
+
+    child = _load_spine_raw(name)
+    if child.extends is None:
+        return child
+
+    parent_name = child.extends
+    parent = _load_spine_merged(parent_name, seen | {name})
+
+    # Merge: parent aliases as base, child aliases override.
+    merged_aliases: dict[str, str | int] = dict(parent.aliases or {})
+    merged_aliases.update(child.aliases or {})
+
+    # child.colors replaces parent wholesale (or is None if child omits it).
+    merged = Palette(
+        name=child.name,
+        extends=None,  # stripped
+        colors=child.colors if child.colors is not None else parent.colors,
+        aliases=merged_aliases if merged_aliases else None,
+        description=(
+            child.description if child.description is not None else parent.description
+        ),
+        design_notes=(
+            child.design_notes
+            if child.design_notes is not None
+            else parent.design_notes
+        ),
+        r8_validation=child.r8_validation,
+    )
+    return merged
+
+
+def _load_spine(name: str) -> Palette:
+    if name in _spine_cache:
+        return _spine_cache[name]
+    spine = _load_spine_merged(name)
+    _spine_cache[name] = spine
+    return spine
+
+
+def _unknown_palette_message(name: str) -> str:
+    idx = _get_index()
+    candidates = list(idx.keys())
+    suggestions = difflib.get_close_matches(name, candidates, n=1, cutoff=0.6)
+    if suggestions:
+        return f"unknown palette '{name}'. Did you mean '{suggestions[0]}'?"
+    return f"unknown palette '{name}'"
+
+
+# ============================================================================
+# Parsing shorthand — "name:N_r"
+# ============================================================================
+
+
+def _parse_palette_reference(ref: str) -> tuple[str, int | None, bool]:
+    """Parse ``name:N_r`` shorthand into (name, steps, reverse).
+
+    Examples:
+        "dbt-seq-blue"      → ("dbt-seq-blue", None, False)
+        "dbt-seq-blue:5"    → ("dbt-seq-blue", 5, False)
+        "dbt-seq-blue_r"    → ("dbt-seq-blue", None, True)
+        "dbt-seq-blue:5_r"  → ("dbt-seq-blue", 5, True)
+    """
+    if not ref:
+        raise ValueError("palette reference must be a non-empty string")
+    body = ref
+    reverse = False
+    if body.endswith("_r"):
+        reverse = True
+        body = body[:-2]
+    steps: int | None = None
+    if ":" in body:
+        name, _, steps_str = body.rpartition(":")
+        if not steps_str or not steps_str.lstrip("-").isdigit():
+            raise ValueError(
+                f"palette reference steps must be a positive integer, got {ref!r}"
+            )
+        steps = int(steps_str)
+        if steps <= 0:
+            raise ValueError(f"steps must be positive, got {steps}")
+    else:
+        name = body
+    if not name:
+        raise ValueError(f"palette reference is missing name: {ref!r}")
+    return (name, steps, reverse)
+
+
+# ============================================================================
+# Downsample
+# ============================================================================
+
+
+def _downsample(
+    stops: list[str], n: int, skip_midpoint_on_even: bool = False
+) -> list[str]:
+    """Pick ``n`` evenly-spaced stops from the input list.
+
+    For diverging palettes with even ``n`` and ``skip_midpoint_on_even=True``,
+    the midpoint (index ``len/2``) is skipped so stops flank it symmetrically.
+    """
+    if n <= 0:
+        raise ValueError(f"n must be positive, got {n}")
+    L = len(stops)
+    if n >= L:
+        return list(stops)
+    if n == 1:
+        return [stops[L // 2]]
+
+    if skip_midpoint_on_even and n % 2 == 0 and L % 2 == 1:
+        midpoint = L // 2
+        half = n // 2
+        if half == 1:
+            # Only two stops requested — just the endpoints flanking the midpoint.
+            return [stops[0], stops[-1]]
+        # Split range into [0..midpoint-1] and [midpoint+1..L-1]; pick `half`
+        # evenly-spaced from each, preserving endpoints.
+        left = [round(i * (midpoint - 1) / (half - 1)) for i in range(half)]
+        right = [
+            midpoint + 1 + round(i * (L - 1 - midpoint - 1) / (half - 1))
+            for i in range(half)
+        ]
+        return [stops[i] for i in left + right]
+
+    # Even spacing with endpoints preserved.
+    indices = [round(i * (L - 1) / (n - 1)) for i in range(n)]
+    return [stops[i] for i in indices]
+
+
+# ============================================================================
+# Public API — palette()
+# ============================================================================
+
+
+def palette(
+    name: str,
+    *,
+    surface: Literal["default", "table"] | None = None,
+    steps: int | None = None,
+    reverse: bool = False,
+    text_color: str = WCAG_TABLE_BODY,
+) -> list[str]:
+    """Resolve a palette name to a list of sRGB hex stops.
+
+    See module docstring for full parameter reference. Raises
+    ``UnknownPaletteError``, ``CategoricalOverrequestError``,
+    ``SurfaceUnsupportedError``, or ``ToneAsPaletteError`` as appropriate.
+
+    ``text_color`` applies only to ``surface="table"``: the carve keeps stops
+    that hold that body-text color (defaults to the dark ink). It has no effect
+    on chart-fill (``surface`` default) resolution.
+    """
+    # Shorthand parsing from strings.
+    if ":" in name or name.endswith("_r"):
+        parsed_name, parsed_steps, parsed_rev = _parse_palette_reference(name)
+        name = parsed_name
+        if steps is None:
+            steps = parsed_steps
+        reverse = reverse or parsed_rev
+
+    # Anti-patterns.
+    if name in _HARD_FAIL_NAMES:
+        raise UnknownPaletteError(
+            f"palette '{name}' is a known perceptual anti-pattern and is not "
+            "shipped. See docs/guides/palette-resolver.md#anti-patterns"
+        )
+    if name in _WARN_ALIASES:
+        name = _WARN_ALIASES[name]
+
+    entry = _get_index().get(name)
+    if entry is None:
+        raise UnknownPaletteError(_unknown_palette_message(name))
+
+    family = entry["family"]
+
+    if family == "tone":
+        raise ToneAsPaletteError(
+            f"'{name}' is a tone palette. Use color('{name}.solid') etc., "
+            "not palette()."
+        )
+
+    if family in ("categorical", "scaffold"):
+        return _resolve_discrete(name, family, surface, steps, reverse)
+
+    # Dark-canvas table swap: on a dark canvas (light cell text) a pinned
+    # sequential/diverging table palette resolves to its <name>-dark twin, so the
+    # carve has a dark neutral that holds the light text — otherwise the light
+    # palette's near-white neutral fails WCAG and the whole chart drops out.
+    # Mirrors the categorical light/dark <name>-dark convention; the trigger is
+    # the text_color already threaded here, so no dark-canvas flag is needed.
+    # Light themes (dark text) never trigger; scoped to surface="table".
+    if (
+        surface == "table"
+        and not name.endswith("-dark")
+        and _is_dark_canvas_text(text_color)
+        and _has_continuous_dark_companion(name)
+    ):
+        name = f"{name}-dark"
+        family = _get_index()[name]["family"]
+
+    # sequential or diverging.
+    return _resolve_continuous(name, family, surface, steps, reverse, text_color)
+
+
+def resolve_palette_ref(ref: str, palettes: Mapping[str, str]) -> str:
+    """Substitute a leading theme palette role in a palette reference.
+
+    ``palette: category`` follows ``palettes[category]`` to whatever file the
+    active theme binds, so a value tracks a theme switch instead of pinning one
+    palette. The whole-palette counterpart to ``color_from_theme()``'s
+    ``category[2]``, which indirects a single colour through the same map.
+
+    Only the name is substituted; the ``:N``/``_r`` shorthand rides along. A ref
+    naming no role is returned unchanged, so a catalog name still means itself.
+    """
+    name, _, _ = _parse_palette_reference(ref)
+    target = palettes.get(name)
+    if target is None:
+        return ref
+    # `_parse_palette_reference` only strips suffixes, so `name` prefixes `ref`.
+    return target + ref[len(name) :]
+
+
+def resolve_palette_alias(name: str) -> tuple[list[str], str | None]:
+    """Resolve a palette name, reporting the anti-pattern name it replaced.
+
+    ``palette()`` itself resolves anti-pattern aliases (see ``_WARN_ALIASES``)
+    silently — the WARN-PALETTE-UNSUPPORTED nudge is a render-stage detector
+    over the compiled board, not an inline emit. This is the single place
+    that detects the alias so a compile-time model (``CategoricalColorStyle``)
+    can retain the originally-authored name for that detector.
+
+    Returns ``(resolved_stops, requested_name)``: ``requested_name`` is the
+    shorthand-stripped ``name`` when it is a known anti-pattern alias, else
+    ``None``.
+    """
+    parsed_name = name
+    if ":" in parsed_name or parsed_name.endswith("_r"):
+        parsed_name, _, _ = _parse_palette_reference(parsed_name)
+    requested = parsed_name if parsed_name in _WARN_ALIASES else None
+    return palette(name), requested
+
+
+def is_hard_fail_name(name: str) -> bool:
+    """True for a perceptual anti-pattern this resolver refuses outright.
+
+    Public so the authored-model validators can tell "unknown, so possibly a
+    theme role" apart from "known-bad, never a role" — deferring the latter
+    would silently swallow a deliberate gate.
+    """
+    return name in _HARD_FAIL_NAMES
+
+
+def is_warn_alias(name: str) -> bool:
+    """True when ``name`` is a known anti-pattern alias.
+
+    Every value ``resolve_palette_alias`` reports is by construction one of
+    these, so this is what separates provenance the compiler computed from a
+    value a board author fabricated.
+    """
+    return name in _WARN_ALIASES
+
+
+def substitute_for_alias(requested_alias_palette: str) -> str:
+    """Return the palette name substituted for a known anti-pattern alias.
+
+    ``requested_alias_palette`` is one of ``_WARN_ALIASES``'s keys (the name
+    ``resolve_palette_alias`` stripped down to before substitution). Used by
+    the WARN-PALETTE-UNSUPPORTED render detector to name the substitute
+    palette, not its resolved hex stops, in the user-facing message.
+    """
+    return _WARN_ALIASES[requested_alias_palette]
+
+
+def _resolve_discrete(
+    name: str,
+    family: str,
+    surface: str | None,
+    steps: int | None,
+    reverse: bool,
+) -> list[str]:
+    if surface is not None:
+        raise SurfaceUnsupportedError(
+            f"palette '{name}' (family={family}) does not support surface variants"
+        )
+    spine = _load_spine(name)
+
+    if family == "categorical":
+        stops = list(spine.colors)  # type: ignore[arg-type]
+    else:  # scaffold — new format: colors: + aliases:
+        if spine.colors is None:
+            raise UnknownPaletteError(
+                f"scaffold palette '{name}' is missing 'colors:' array. "
+                "Ensure the YAML uses the unified colors:/aliases: shape."
+            )
+        stops = list(spine.colors)
+
+    if steps is not None:
+        if steps > len(stops):
+            raise CategoricalOverrequestError(
+                f"palette '{name}' has {len(stops)} stops; cannot return {steps}. "
+                "Pick a different palette or reduce steps."
+            )
+        stops = stops[:steps]
+
+    if reverse:
+        stops = list(reversed(stops))
+    return stops
+
+
+def _resolve_continuous(
+    name: str,
+    family: str,
+    surface: str | None,
+    steps: int | None,
+    reverse: bool,
+    text_color: str = WCAG_TABLE_BODY,
+) -> list[str]:
+    spine = _load_spine(name)
+
+    if surface not in (None, "default", "table"):
+        raise SurfaceUnsupportedError(
+            f"unknown surface variant '{surface}' for palette '{name}'"
+        )
+
+    if spine.colors is None:
+        raise UnknownPaletteError(
+            f"palette '{name}' (family={family}) is missing 'colors:' array"
+        )
+    source = list(spine.colors)
+
+    if steps is None:
+        steps = 11
+
+    if surface == "table":
+        if family == "sequential":
+            stops = _table_surface_seq(source, steps, text_color)
+        else:  # diverging
+            stops = _table_surface_div(source, steps, text_color)
+    else:
+        skip_mid = family == "diverging"
+        stops = _downsample(source, steps, skip_midpoint_on_even=skip_mid)
+
+    if reverse:
+        stops = list(reversed(stops))
+    return stops
+
+
+# ============================================================================
+# Public API — color()
+# ============================================================================
+
+
+def resolve_alias_chain(
+    key: str,
+    aliases: dict[str, str | int],
+    *,
+    colors: list[str] | None,
+) -> str:
+    """Resolve an alias name through the chain to a terminal hex string.
+
+    Alias values may be:
+    - A hex string (``#rrggbb``) — terminal; return it.
+    - A 1-indexed integer — index into ``colors`` (``colors[n-1]``).
+    - Another alias name — recurse with cycle detection.
+
+    Raises ``UnknownColorError`` on unknown alias, out-of-range index,
+    missing colors array when an integer index is encountered, or cycle.
+    """
+    visited: list[str] = []
+    current = key
+    while True:
+        if current in visited:
+            raise UnknownColorError(
+                f"alias cycle detected: {' → '.join(visited + [current])}"
+            )
+        visited.append(current)
+        if current not in aliases:
+            raise UnknownColorError(
+                f"alias '{key}' → '{current}' not found in palette aliases. "
+                f"Known aliases: {sorted(aliases)}"
+            )
+        value = aliases[current]
+        if isinstance(value, int):
+            if colors is None:
+                raise UnknownColorError(
+                    f"alias '{current}' resolves to slot index {value} "
+                    "but palette has no 'colors:' array"
+                )
+            if value < 1 or value > len(colors):
+                raise UnknownColorError(
+                    f"alias '{current}' slot index {value} out of range "
+                    f"(palette has {len(colors)} stops; 1-indexed)"
+                )
+            return colors[value - 1]
+        if value.startswith("#"):
+            return value
+        # Must be another alias name — continue walking
+        current = value
+
+
+# Families stored as an ordered stop list, addressable by 1-indexed position.
+# Scaffold is here too: it layers named aliases over a stop list, so it answers
+# both forms. Tone is excluded — it has names only, no stops.
+_STOP_LIST_FAMILIES = frozenset({"categorical", "sequential", "diverging", "scaffold"})
+
+
+def color(token: str) -> str:
+    """Resolve a single color token (``palette.slot``) to an sRGB hex string.
+
+    Supports tone and scaffold (aliases: format) plus every stop-list family
+    (categorical, sequential, diverging), which is addressed by 1-indexed
+    position.
+    For role-indirected tokens (``chrome.ink`` where ``chrome`` is a theme
+    palette role), use ``color_from_theme()`` instead.
+    """
+    if "." not in token:
+        raise UnknownColorError(
+            f"color token must be dotted 'palette.slot', got {token!r}"
+        )
+    palette_name, _, slot = token.partition(".")
+    entry = _get_index().get(palette_name)
+    if entry is None:
+        raise UnknownColorError(_unknown_palette_message(palette_name))
+    family = entry["family"]
+    spine = _load_spine(palette_name)
+
+    # Unified resolver: tone and scaffold both use aliases: dict now.
+    if family in ("tone", "scaffold"):
+        aliases = spine.aliases or {}
+        if slot in aliases:
+            return resolve_alias_chain(slot, aliases, colors=spine.colors)
+        # Scaffold palettes are ordered stop lists with names layered on top, so
+        # an integer slot addresses the stop itself — the same meaning it has in
+        # every other stop-list family. Tone has no stop list, only names.
+        if family == "tone" or not slot.lstrip("-").isdigit():
+            raise UnknownColorError(
+                f"palette '{palette_name}' has no alias '{slot}'. "
+                f"Known aliases: {sorted(aliases)}"
+            )
+
+    if family in _STOP_LIST_FAMILIES:
+        # Positional slot by integer, 1-indexed (vivid-10.1 is the first
+        # stop) — matches the bracket form and scaffold/tone alias integers.
+        try:
+            idx = int(slot)
+        except ValueError as e:
+            raise UnknownColorError(
+                f"{family} palette '{palette_name}' indexed by integer; got '{slot}'"
+            ) from e
+        stops = list(spine.colors)  # type: ignore[arg-type]
+        if idx < 1:
+            raise UnknownColorError(
+                f"{family} palette '{palette_name}' slot {idx} must be 1-indexed (≥ 1)"
+            )
+        if idx > len(stops):
+            raise UnknownColorError(
+                f"{family} palette '{palette_name}' index {idx} out of range "
+                f"[1, {len(stops)}]"
+            )
+        return stops[idx - 1]
+
+    raise UnknownColorError(
+        f"palette '{palette_name}' (family={family}) does not support color() access"
+    )
+
+
+# ============================================================================
+# Public API — color_from_theme() role indirection
+# ============================================================================
+
+
+def color_from_theme(
+    token: str,
+    *,
+    palettes: Mapping[str, str],
+    roles: dict[str, str] | None = None,
+    _visited_roles: frozenset[str] | None = None,
+) -> str:
+    """Resolve a role-indirected color token against theme palettes and roles.
+
+    Token grammar:
+        ``chrome.ink``     — role.alias: look up palettes[role], resolve alias
+        ``category[1]``    — role[N]: look up palettes[role], colors[N-1] (1-indexed)
+        ``ink``            — bare name: look up roles[ink], recurse
+
+    Args:
+        token: Color token string in one of the three grammar forms.
+        palettes: Theme ``palettes:`` block — maps role names to palette names.
+        roles: Theme ``roles:`` block — maps bare alias names to role.alias tokens.
+        _visited_roles: Internal cycle-detection set (do not pass from call sites).
+
+    Returns:
+        Resolved sRGB hex string.
+
+    Raises:
+        UnknownColorError: Token is unresolvable (unknown role, missing alias,
+            out-of-range index, cycle, or missing colors array).
+    """
+    # Bracket form: role[N]
+    bracket_match = re.match(r"^([A-Za-z][A-Za-z0-9_-]*)\[(\d+)\]$", token)
+    if bracket_match:
+        role, n_str = bracket_match.group(1), bracket_match.group(2)
+        n = int(n_str)
+        if n < 1:
+            raise UnknownColorError(
+                f"bracket index must be 1-indexed (≥ 1), got {token!r}"
+            )
+        palette_name = palettes.get(role)
+        if palette_name is None:
+            raise UnknownColorError(
+                f"theme has no palette assigned to role '{role}'. "
+                f"Defined roles: {sorted(palettes)}"
+            )
+        entry = _get_index().get(palette_name)
+        if entry is None:
+            raise UnknownColorError(
+                f"palette '{palette_name}' (role '{role}') not found in catalog"
+            )
+        spine = _load_spine(palette_name)
+        if spine.colors is None:
+            raise UnknownColorError(
+                f"palette '{palette_name}' (role '{role}') has no 'colors:' array; "
+                "bracket form requires a colors array"
+            )
+        if n > len(spine.colors):
+            raise UnknownColorError(
+                f"palette '{palette_name}' has {len(spine.colors)} slot(s); "
+                f"requested slot {n} (1-indexed)"
+            )
+        return spine.colors[n - 1]
+
+    # Dotted form: role.alias
+    if "." in token:
+        role, _, alias = token.partition(".")
+        palette_name = palettes.get(role)
+        if palette_name is None:
+            raise UnknownColorError(
+                f"theme has no palette assigned to role '{role}'. "
+                f"Defined roles: {sorted(palettes)}"
+            )
+        entry = _get_index().get(palette_name)
+        if entry is None:
+            raise UnknownColorError(
+                f"palette '{palette_name}' (role '{role}') not found in catalog"
+            )
+        spine = _load_spine(palette_name)
+        aliases_raw = spine.aliases or {}
+        if alias not in aliases_raw:
+            raise UnknownColorError(
+                f"palette '{palette_name}' (role '{role}') has no alias '{alias}'. "
+                f"Known aliases: {sorted(aliases_raw)}"
+            )
+        return resolve_alias_chain(alias, aliases_raw, colors=spine.colors)
+
+    # Bare name: look up in roles
+    effective_roles = roles or {}
+    target = effective_roles.get(token)
+    if target is None:
+        raise UnknownColorError(
+            f"unknown color token '{token}': not a dotted palette address, "
+            "bracket form, or theme role. "
+            f"Defined theme roles: {sorted(effective_roles)}"
+        )
+    # Cycle detection for bare-name role recursion.
+    visited = _visited_roles or frozenset()
+    if token in visited:
+        raise UnknownColorError(f"theme.roles cycle detected involving '{token}'")
+    # Recurse on the resolved target (which must be a dotted or bracket form)
+    return color_from_theme(
+        target,
+        palettes=palettes,
+        roles=effective_roles,
+        _visited_roles=visited | {token},
+    )
+
+
+# ============================================================================
+# Public API — discovery
+# ============================================================================
+
+
+def palette_metadata(name: str) -> dict[str, Any]:
+    """Return palette metadata without loading the full stops."""
+    entry = _get_index().get(name)
+    if entry is None:
+        raise UnknownPaletteError(_unknown_palette_message(name))
+    spine = _load_spine(name)
+    return {
+        "name": spine.name,
+        "family": entry["family"],
+        "description": spine.description or "",
+        "design_notes": spine.design_notes or "",
+    }
+
+
+def list_palettes(
+    family: (
+        Literal["sequential", "diverging", "categorical", "scaffold", "tone"] | None
+    ) = None,
+) -> list[str]:
+    """List palette names, optionally filtered by family."""
+    idx = _get_index()
+    if family is None:
+        return sorted(idx)
+    return sorted(n for n, e in idx.items() if e["family"] == family)
+
+
+# ============================================================================
+# Smart default selection
+# ============================================================================
+
+
+def select_default_palette(
+    data_shape: Literal[
+        "continuous_numeric", "signed_numeric", "discrete_enum", "status_semantic"
+    ],
+) -> str:
+    """Pick a palette name based on inferred data shape. See Session 1 §A4."""
+    if data_shape == "continuous_numeric":
+        return "dbt-seq-blue"
+    if data_shape == "signed_numeric":
+        return "dbt-div-blue-red"
+    if data_shape == "discrete_enum":
+        return "vivid-10"
+    if data_shape == "status_semantic":
+        # Upstream caller looks up the specific role (negative/warning/etc.)
+        # after this returns the tone sentinel. For now, return "negative" as
+        # the canonical default (caller should override based on field value).
+        return "negative"
+    raise ValueError(f"unknown data_shape: {data_shape}")
+
+
+# ── Bright/dark companion pairing for direct-label inking ───────────────────
+#
+# A "dark companion" palette is pair-defined with its bright counterpart: slot
+# N in the bright palette is the same hue as slot N in the dark palette, just
+# at a darker tone. Used for label ink that sits a notch darker than its mark
+# colour (endpoint labels on multi-series line/area charts, ``per_series``
+# strip labels on data_table-bearing charts).
+#
+# Pairs the engine knows about today:
+#   - vivid-10     → vivid-10-dark      (stark theme)
+#   - editorial-10 → editorial-10-dark  (editorial / cream themes)
+#
+# Future palette ``X`` shipped alongside ``X-dark`` works automatically — the
+# resolver looks up ``<bright>-dark`` in the catalog and falls back to the
+# bright colour itself if no dark companion is registered.
+#
+# Both helpers live here (not in render/) because they are pure palette
+# indexing — no rendering, no spec construction. ``compile/resolve/``
+# and ``render/chart/data_table_attachment.py`` both consume the same
+# companion-pairing path; placing the helpers here removes the inverted
+# compile→render dependency that an earlier draft papered over with a
+# deferred import.
+
+
+@functools.lru_cache(maxsize=8)
+def _palette_stops_cached(name: str) -> list[str]:
+    """Memoized palette-stop lookup keyed on palette name.
+
+    Sized for the handful of categorical palettes shipped with the catalog —
+    bright + dark companions for each theme, plus a small headroom. Replaces
+    the earlier hardcoded ``_category_10_bright_stops`` / ``_category_10_dark_stops``
+    helpers; their values fall out of this cache for the same memoization win.
+    """
+    return palette(name)
+
+
+@functools.lru_cache(maxsize=8)
+def _has_dark_companion(bright_palette_name: str) -> bool:
+    """Whether ``<bright_palette_name>-dark`` is registered in the catalog.
+
+    Cached because ``list_palettes`` scans the catalog directory; we call this
+    once per chart-render and want to avoid re-scanning per stop.
+    """
+    dark_name = f"{bright_palette_name}-dark"
+    return dark_name in list_palettes(family="categorical")
+
+
+@functools.lru_cache(maxsize=32)
+def _has_continuous_dark_companion(name: str) -> bool:
+    """Whether ``<name>-dark`` is a registered sequential/diverging palette.
+
+    Sibling to :func:`_has_dark_companion` (categorical); the dark-canvas table
+    swap uses it to decide whether a pinned continuous palette has a -dark twin.
+    """
+    twin = _get_index().get(f"{name}-dark")
+    return twin is not None and twin["family"] in ("sequential", "diverging")
+
+
+@functools.lru_cache(maxsize=1)
+def _categorical_palettes_with_dark_companions() -> tuple[str, ...]:
+    """Names of categorical palettes that ship a ``<name>-dark`` companion.
+
+    Cached for the process lifetime — palette registration is static.
+    Ordering puts ``vivid-10`` first so the default palette takes priority
+    when stops happen to overlap between catalogs.
+    """
+    names = list_palettes(family="categorical")
+    candidates = [n for n in names if not n.endswith("-dark")]
+    paired = [n for n in candidates if f"{n}-dark" in names]
+    # Stable order with vivid-10 first (default), others alphabetic.
+    paired.sort(key=lambda n: (0 if n == "vivid-10" else 1, n))
+    return tuple(paired)
+
+
+def _find_dark_companion(c: str) -> str | None:
+    """Find ``c``'s dark companion by scanning paired palettes for a slot match.
+
+    For each bright palette that has a ``<name>-dark`` registered, checks
+    whether ``c`` appears in its stops. If found, returns the dark companion
+    at the same slot index. Returns ``None`` if ``c`` is not a stop in any
+    paired palette (custom-hex override → fall through to bright color).
+
+    Each emitted color is resolved independently, so author-picked non-slot-0
+    palette stops resolve correctly (e.g. editorial-10[1] → editorial-10-dark[1]).
+
+    Note: if the caller passes wrong input — e.g. the line/area chart off-by-one
+    tracked in chart-series-label-color-binding emits ``palette[1:n+1]`` instead
+    of ``palette[:n]`` — each color is still found at its actual slot index, and
+    the returned companion is at that index. The resolver does its job; the caller
+    passed wrong input.
+    """
+    for bright_name in _categorical_palettes_with_dark_companions():
+        bright_stops = _palette_stops_cached(bright_name)
+        if c in bright_stops:
+            idx = bright_stops.index(c)
+            dark_stops = _palette_stops_cached(f"{bright_name}-dark")
+            if idx < len(dark_stops):
+                return dark_stops[idx]
+    return None
+
+
+def resolve_dark_companion_stops(
+    emitted_colors: list[str],
+    bright_palette_name: str | None = None,
+) -> list[str]:
+    """Map a list of emitted mark colours to their dark-companion ink colours.
+
+    For each colour in ``emitted_colors``:
+
+    - If ``bright_palette_name`` is provided, find the colour's index in that
+      palette and return the corresponding stop from ``<bright_palette_name>-dark``.
+    - If ``bright_palette_name`` is None, scan all registered paired palettes for
+      one whose stops contain the colour (per-color independent lookup). Each
+      colour in the list is resolved independently — author-picked non-slot-0
+      stops resolve correctly without any caller-side palette plumbing.
+    - If no dark companion is found for a colour (custom override not in any
+      palette, or no dark companion registered), fall back to the bright colour
+      itself (label matches the mark without contrast bump).
+
+    ``bright_palette_name`` is optional. When unset, the per-color scan handles
+    theme-cycled stops, author-picked palette slots, and cross-palette mixes
+    automatically. Callers that know the palette name should still pass it
+    for explicit disambiguation (forward-compat for chart-series-label-color-
+    binding plumbing once compiled-style carries the palette name).
+
+    Used by both ``_build_endpoint_label_pane`` (endpoint labels) and the
+    ``per_series`` data-table strip row emitter so the two surfaces share
+    the same palette-companion pairing path.
+
+    Future direction — slot-keyed lookup. This helper is hex-keyed because
+    the compile pipeline already discards the palette name at validation:
+    ``CompiledChartsStyle._expand_palette_name`` expands ``"editorial-10"``
+    into a ``list[str]`` of hex stops, so downstream only hex is visible.
+    Once color tokens become first-class on the authoring surface (the
+    ``dashboard-color-roles`` initiative; tokens like ``palette.editorial-10.2``
+    and role bindings flowing through the cascade), the natural shape is
+    ``dark_companion(palette_name, slot_idx) -> str``: token-aware callers
+    pass ``(palette, slot)`` tuples and bypass the per-color scan. Slot-keyed
+    has three advantages over hex-keyed worth preserving in design memory:
+
+      1. No slot-0 collision risk. Distinct categorical palettes can share
+         the same hex at slot 0 (e.g. ``vivid-10`` and ``hero-6``);
+         hex-keyed picks one by scan order. Token-keyed disambiguates by
+         construction.
+      2. O(1) lookup. Hex-keyed scans the catalog; slot-keyed indexes.
+      3. Robust to palette content edits. A Round-B hex tune silently
+         breaks hex-keyed lookups; slot references survive.
+
+    The migration path: keep this hex-keyed entry point as a fallback, add a
+    slot-keyed entry point once tokens land, and let callers opt into the
+    new path as their inputs become token-aware. The optional
+    ``bright_palette_name`` parameter is the structural seam — callers that
+    know the palette name today (or once the chart-series-label-color-binding
+    plumbing exposes it) already bypass the catalog scan.
+    """
+    if bright_palette_name is not None:
+        if not _has_dark_companion(bright_palette_name):
+            return list(emitted_colors)
+        bright_stops = _palette_stops_cached(bright_palette_name)
+        dark_stops = _palette_stops_cached(f"{bright_palette_name}-dark")
+        result: list[str] = []
+        for c in emitted_colors:
+            try:
+                idx = bright_stops.index(c)
+            except ValueError:
+                idx = -1
+            result.append(dark_stops[idx] if 0 <= idx < len(dark_stops) else c)
+        return result
+
+    return [_find_dark_companion(c) or c for c in emitted_colors]

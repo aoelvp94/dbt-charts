@@ -1,0 +1,22 @@
+# Sequential palette — rust
+#
+# Hand-authored 11-stop spine. Downsamples drive seq palette resolution.
+
+name: dbt-seq-rust
+family: sequential
+description: Single-hue rust (cream-peach → terracotta → deep rust). Renamed from dbt-seq-orange; mid-stops read as rust/terracotta rather than vivid orange.
+design_notes: |
+  Monotonic L* from 0.95 → 0.25. Hue anchored on cat-10 orange (H≈41.0°); c_max=0.12. Session 8 retune + rename from dbt-seq-orange.
+
+colors:
+  - "#fdeae3"    # step 1 — lightest
+  - "#f6cdbe"
+  - "#ebb29d"
+  - "#dd977d"
+  - "#cc7e61"
+  - "#b96648"    # step 6 — mid
+  - "#a45030"
+  - "#8d3c1b"
+  - "#752907"
+  - "#5a1b00"
+  - "#3e1000"    # step 11 — darkest

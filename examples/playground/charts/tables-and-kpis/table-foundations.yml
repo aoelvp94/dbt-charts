@@ -1,0 +1,792 @@
+title: Table Foundations
+description: 'Design evaluation surface for dbt charts table rendering. Each group tests
+  a specific structural decision from the Table Design Handbook against the current
+  renderer. Inspect these as design probes, not finished dashboards.
+
+  '
+source: examples_db
+style:
+  charts:
+    table:
+      title_row:
+        height: 52
+        font:
+          color: '#222222'
+text: 'All specimens use display scale (14/13px, 36px rows) as the baseline. Group
+  G compares display vs. compact (11/11px, 26px rows).
+
+  '
+queries:
+  country_gdp:
+    type: sql
+    sql: SELECT * FROM country_gdp
+    source: table_specimens
+  museum_visitors:
+    type: sql
+    sql: SELECT * FROM museum_visitors
+    source: table_specimens
+  sales_pipeline:
+    type: sql
+    sql: SELECT * FROM sales_pipeline
+    source: table_specimens
+  growth_rates:
+    type: sql
+    sql: SELECT * FROM growth_rates
+    source: table_specimens
+  growth_rates_pct:
+    type: sql
+    sql: SELECT * FROM growth_rates_pct
+    source: table_specimens
+  company_revenue:
+    type: sql
+    sql: SELECT * FROM company_revenue
+    source: table_specimens
+  us_states:
+    type: sql
+    sql: SELECT * FROM state_demographics
+    source: table_specimens
+  company_revenue_total:
+    type: sql
+    sql: SELECT * FROM company_revenue_with_total
+    source: table_specimens
+  company_revenue_avg:
+    type: sql
+    sql: SELECT * FROM company_revenue_with_avg
+    source: table_specimens
+  country_gdp_avg_col:
+    type: sql
+    sql: SELECT * FROM country_gdp_with_avg_col
+    source: table_specimens
+  company_revenue_full:
+    type: sql
+    sql: SELECT * FROM company_revenue_full_summary
+    source: table_specimens
+  events_dates:
+    type: sql
+    sql: SELECT * FROM events_dates
+    source: table_specimens
+  events_dates_full:
+    type: sql
+    sql: SELECT * FROM events_dates_full
+    source: table_specimens
+charts:
+  country_default:
+    type: table
+    query: country_gdp
+    title: GDP Annual Growth Rate
+    subtitle: A1 — Clean (no rules, no stripes, no header fill)
+    style:
+      row:
+        stripe:
+          color: null
+  country_decorated:
+    type: table
+    query: country_gdp
+    title: GDP Annual Growth Rate
+    subtitle: A2 — Rules + stripes + header fill
+    style:
+      border:
+        color: '#e0e0e0'
+      header:
+        background: '#f5f5f5'
+      row:
+        stripe:
+          color: '#fafafa'
+  symbols_anchored:
+    type: table
+    query: company_revenue
+    title: Company Revenue
+    subtitle: B1 — Anchors (default; symbols on first row + summary rows)
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      symbol_mode: anchors
+  symbols_all:
+    type: table
+    query: company_revenue
+    title: Company Revenue
+    subtitle: B2 — All rows carry $ and % (explicit symbol_mode=all)
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      symbol_mode: all
+  leaderboard:
+    type: table
+    query: museum_visitors
+    title: Most Visited Museums
+    subtitle: C1 — Auto-sized, no column config
+  leaderboard_configured:
+    type: table
+    query: museum_visitors
+    title: Most Visited Museums
+    subtitle: C2 — Configured columns, formatted count
+    style:
+      columns:
+        rank:
+          label: '#'
+          width: 50
+          align: center
+        museum:
+          label: Museum
+          width: 40%
+        city:
+          label: City
+        visitors:
+          label: Visitors
+          format: compact
+  pipeline_raw:
+    type: table
+    query: sales_pipeline
+    title: Sales Pipeline
+    subtitle: No formatting, auto defaults
+  pipeline_formatted:
+    type: table
+    query: sales_pipeline
+    title: Sales Pipeline
+    subtitle: Formatted columns
+    style:
+      columns:
+        opportunity:
+          label: Opportunity
+          width: 30%
+        account:
+          label: Account
+        stage:
+          label: Stage
+        amount:
+          label: Amount
+          format: currency_whole
+        close_date:
+          label: Close
+        probability:
+          label: Prob.
+          format: percent_whole
+  units_repeated:
+    type: table
+    query: growth_rates
+    title: GDP Growth Rate
+    subtitle: E1 — Percent symbol in every cell
+    style:
+      columns:
+        country:
+          label: Country
+        '2021':
+          label: '2021'
+          format: percent
+        '2022':
+          label: '2022'
+          format: percent
+        '2023':
+          label: '2023'
+          format: percent
+      symbol_mode: all
+  units_in_header:
+    type: table
+    query: growth_rates_pct
+    title: GDP Growth Rate
+    subtitle: E2 — Units in headers only
+    style:
+      columns:
+        country:
+          label: Country
+        '2021':
+          label: 2021 (%)
+          format: .1f
+        '2022':
+          label: 2022 (%)
+          format: .1f
+        '2023':
+          label: 2023 (%)
+          format: .1f
+  precision_high:
+    type: table
+    query: company_revenue
+    title: Company Performance
+    subtitle: F1 — Full precision (too much?)
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency
+        growth_rate:
+          label: Growth
+          format: .4%
+        margin:
+          label: Margin
+          format: .4%
+  precision_right:
+    type: table
+    query: company_revenue
+    title: Company Performance
+    subtitle: F2 — Moderate precision
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_whole
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+  precision_low:
+    type: table
+    query: company_revenue
+    title: Company Performance
+    subtitle: F3 — Compact / rounded (currency)
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent_whole
+        margin:
+          label: Margin
+          format: percent_whole
+  type_display:
+    type: table
+    query: country_gdp
+    title: GDP Annual Growth Rate
+    subtitle: G1 — Display (14px uniform — board default)
+  type_compact:
+    type: table
+    query: country_gdp
+    title: GDP Annual Growth Rate
+    subtitle: G2 — Compact (11/11px)
+    style:
+      font:
+        size: 11
+      header:
+        font:
+          size: 11
+        height: 22
+      row:
+        height: 18
+  tall_type_display:
+    type: table
+    query: us_states
+    title: US States Overview
+    subtitle: G3 — Display at 30 rows (board default)
+    style:
+      pagination:
+        enabled: false
+      columns:
+        state:
+          label: State
+          width: 22%
+        population:
+          label: Population
+          format: compact
+        median_income:
+          label: Median Income
+          format: currency_whole
+        poverty_rate:
+          label: Poverty
+          format: percent
+        unemployment:
+          label: Unemployment
+          format: percent
+  tall_type_compact:
+    type: table
+    query: us_states
+    title: US States Overview
+    subtitle: G4 — Compact at 30 rows
+    style:
+      pagination:
+        enabled: false
+      columns:
+        state:
+          label: State
+          width: 22%
+        population:
+          label: Population
+          format: compact
+        median_income:
+          label: Median Income
+          format: currency_whole
+        poverty_rate:
+          label: Poverty
+          format: percent
+        unemployment:
+          label: Unemployment
+          format: percent
+      font:
+        size: 11
+      header:
+        font:
+          size: 11
+        height: 22
+      row:
+        height: 18
+  tall_default:
+    type: table
+    query: us_states
+    title: US States Overview
+    subtitle: H1 — 30 rows, default pagination
+    style:
+      columns:
+        state:
+          label: State
+        population:
+          label: Population
+          format: compact
+        median_income:
+          label: Median Income
+          format: currency_whole
+        poverty_rate:
+          label: Poverty
+          format: percent
+        unemployment:
+          label: Unemployment
+          format: percent
+  tall_expanded:
+    type: table
+    query: us_states
+    title: US States Overview
+    subtitle: H2 — All 30 rows shown
+    style:
+      pagination:
+        enabled: true
+        page_rows: 30
+      columns:
+        state:
+          label: State
+        population:
+          label: Population
+          format: compact
+        median_income:
+          label: Median Income
+          format: currency_whole
+        poverty_rate:
+          label: Poverty
+          format: percent
+        unemployment:
+          label: Unemployment
+          format: percent
+  summary_total:
+    type: table
+    query: company_revenue_total
+    title: Company Revenue
+    subtitle: I1 — Total row (double rule above)
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      row:
+        role: row_role
+  summary_avg:
+    type: table
+    query: company_revenue_avg
+    title: Company Revenue
+    subtitle: I2 — Average row (single rule above)
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      row:
+        role: row_role
+  summary_avg_col:
+    type: table
+    query: country_gdp_avg_col
+    title: GDP Annual Growth Rate
+    subtitle: I3 — Average column on right
+  summary_full:
+    type: table
+    query: company_revenue_full
+    title: Company Revenue
+    subtitle: I4 — Total row + share column
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+        revenue_share:
+          label: Share
+          format: percent
+  dates_iso:
+    type: table
+    query: events_dates
+    title: Corporate Events
+    subtitle: J1 — ISO dates
+    style:
+      columns:
+        event:
+          label: Event
+        date_iso:
+          label: Date
+        amount:
+          label: Amount
+          format: currency_whole
+  dates_mixed:
+    type: table
+    query: events_dates
+    title: Corporate Events
+    subtitle: J2 — Multiple date formats side by side
+    style:
+      columns:
+        event:
+          label: Event
+        date_iso:
+          label: ISO
+        date_us:
+          label: US
+        date_short:
+          label: Short
+        year_month:
+          label: Year-Month
+        quarter:
+          label: Quarter
+  dates_full:
+    type: table
+    query: events_dates_full
+    title: Corporate Events — All Date Formats
+    subtitle: J3 — Full width, every common date representation
+    style:
+      columns:
+        event:
+          label: Event
+        iso:
+          label: ISO
+        us:
+          label: US
+        short:
+          label: Short
+        long_us:
+          label: Long US
+        euro:
+          label: Euro
+        year_month:
+          label: Yr-Mo
+        quarter:
+          label: Quarter
+        year:
+          label: Year
+  rules_default:
+    type: table
+    query: company_revenue
+    title: Company Revenue
+    subtitle: K1 — Default (1px continuous header rule)
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+  rules_header_gapped:
+    type: table
+    query: company_revenue
+    title: Company Revenue
+    subtitle: K1b — Per-column header gaps (continuous = false)
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      header:
+        rule:
+          width: 1
+          continuous: false
+  rules_none:
+    type: table
+    query: company_revenue
+    title: Company Revenue
+    subtitle: K1c — No rules at all
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      header:
+        rule:
+          width: 0
+  rules_subtle:
+    type: table
+    query: company_revenue
+    title: Company Revenue
+    subtitle: K2 — Subtle row rules (0.5px), no header
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      header:
+        rule:
+          width: 0
+      row:
+        rule:
+          width: 0.5
+  rules_heavy_header:
+    type: table
+    query: company_revenue
+    title: Company Revenue
+    subtitle: K3 — Heavy header rule (2px), no row rules
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      header:
+        rule:
+          width: 2
+  rules_all:
+    type: table
+    query: company_revenue
+    title: Company Revenue
+    subtitle: K4 — All rules (1px everywhere)
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      header:
+        rule:
+          width: 1
+      row:
+        rule:
+          width: 1
+  row_typing_summary:
+    type: table
+    query: company_revenue_avg
+    title: Company Revenue
+    subtitle: K5a — Average row (role=summary, single rule above)
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      header:
+        rule:
+          width: 1
+      row:
+        role: row_role
+        rule:
+          width: 0.5
+  row_typing_total:
+    type: table
+    query: company_revenue_total
+    title: Company Revenue
+    subtitle: K5b — Total row (role=total, double rule above)
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      header:
+        rule:
+          width: 1
+      row:
+        role: row_role
+        rule:
+          width: 0.5
+  row_typing_anchors:
+    type: table
+    query: company_revenue_total
+    title: Company Revenue
+    subtitle: K5c — Anchors mode + total row (first + total show symbols)
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency_compact
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      symbol_mode: anchors
+      header:
+        rule:
+          width: 1
+      row:
+        role: row_role
+        rule:
+          width: 0.5
+rows:
+- title: 'A: Clean vs. Decorated'
+  cols:
+  - country_default
+  - country_decorated
+- title: 'B: Symbol Anchoring'
+  cols:
+  - symbols_anchored
+  - symbols_all
+- title: 'C: Row Identity'
+  cols:
+  - leaderboard
+  - leaderboard_configured
+- title: 'D: Mixed Types'
+  cols:
+  - pipeline_raw
+  - pipeline_formatted
+- title: 'E: Unit Repetition'
+  cols:
+  - units_repeated
+  - units_in_header
+- title: 'F: Precision Spectrum'
+  cols:
+  - precision_high
+  - precision_right
+  - precision_low
+- title: 'G: Type Scale — Small Table'
+  cols:
+  - type_display
+  - type_compact
+- title: 'G: Type Scale — Tall Table'
+  cols:
+  - tall_type_display
+  - tall_type_compact
+- title: 'H: Pagination'
+  cols:
+  - tall_default
+  - tall_expanded
+- title: 'I: Summary Rows and Columns'
+  cols:
+  - summary_total
+  - summary_avg
+- title: 'I: Summary (continued)'
+  cols:
+  - summary_avg_col
+  - summary_full
+- title: 'J: Date Formats'
+  cols:
+  - dates_iso
+  - dates_mixed
+- title: 'J: Date Formats (full width)'
+  cols:
+  - dates_full
+- title: 'K: Rules'
+  cols:
+  - rules_default
+  - rules_header_gapped
+  - rules_none
+- title: 'K: Rules (continued)'
+  cols:
+  - rules_subtle
+  - rules_heavy_header
+  - rules_all
+- title: 'K5: Row Typing — Summary and Total Rows'
+  cols:
+  - row_typing_summary
+  - row_typing_total
+  - row_typing_anchors

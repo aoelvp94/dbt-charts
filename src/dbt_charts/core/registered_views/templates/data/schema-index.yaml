@@ -1,0 +1,21 @@
+title: [[ (path.source ~ "/" ~ path.schema) | tojson ]]
+
+queries:
+  tables:
+    type: schema
+    source: [[ path.source | tojson ]]
+    schema: [[ path.schema | tojson ]]
+
+charts:
+  table_list:
+    title: Tables
+    type: table
+    query: tables
+    link: [[ ("/data/" ~ path.source ~ "/" ~ path.schema ~ "/{{ name }}/") | tojson ]]
+    style:
+      columns:
+        name:
+          label: Table
+
+rows:
+  - table_list

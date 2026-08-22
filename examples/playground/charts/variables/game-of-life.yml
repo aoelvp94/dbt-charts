@@ -1,0 +1,637 @@
+title: Conway's Game of Life
+description: 'A YAML-only finite Game of Life board. Generation and initial live cells
+  are
+
+  URL variables; SQL simulates the selected generation and table conditional
+
+  formatting paints the 32 x 32 board.
+
+  '
+source: examples_db
+variables:
+  generation:
+    input: number
+    default: 0
+    min: 0
+    max: 200
+    step: 1
+  starter_pattern:
+    input: select
+    default: Random
+    label: Starter pattern
+    options:
+      static:
+      - Random
+      - Glider
+      - Blinker
+      - Toad
+      - Beacon
+      - Pulsar
+      - LWSS
+      - R-pentomino
+      - Diehard
+      - Acorn
+  initial_live_cells:
+    input: text
+    default: '300'
+    label: Starting live cells
+    enabled: '{{ starter_pattern == ''Random'' }}'
+queries:
+  life_grid:
+    sql: |
+      WITH RECURSIVE state AS (
+        SELECT
+          32 AS grid_size,
+          CASE
+            WHEN regexp_matches(CAST('{{ initial_live_cells }}' AS VARCHAR), '^[0-9]+(\.0)?$')
+            THEN CAST(CAST('{{ initial_live_cells }}' AS DOUBLE) AS INTEGER)
+            ELSE error('initial_live_cells must be a non-negative integer')
+          END AS initial_live_cells,
+          CASE
+            WHEN regexp_matches(CAST('{{ generation }}' AS VARCHAR), '^[0-9]+(\.0)?$')
+              AND CAST(CAST('{{ generation }}' AS DOUBLE) AS INTEGER) <= 200
+            THEN CAST(CAST('{{ generation }}' AS DOUBLE) AS INTEGER)
+            ELSE error('generation must be an integer between 0 and 200')
+          END AS generation,
+          CASE
+            WHEN '{{ starter_pattern }}' IN (
+              'Random', 'Glider', 'Blinker', 'Toad', 'Beacon',
+              'Pulsar', 'LWSS', 'R-pentomino', 'Diehard', 'Acorn'
+            )
+            THEN '{{ starter_pattern }}'
+            ELSE error('starter_pattern must be a known starter pattern')
+          END AS starter_pattern
+      ),
+      validated_state AS (
+        SELECT
+          grid_size,
+          CASE
+            WHEN initial_live_cells <= 900 THEN initial_live_cells
+            ELSE error('initial_live_cells must be between 0 and 900')
+          END AS initial_live_cells,
+          generation,
+          starter_pattern,
+          grid_size * grid_size AS cell_count
+        FROM state
+      ),
+      positions AS (
+        SELECT
+          i AS idx,
+          ((i - 1) % grid_size) + 1 AS x,
+          floor((i - 1) / grid_size)::INTEGER + 1 AS y,
+          row_number() OVER (
+            ORDER BY hash(i * 1103515245 + initial_live_cells * 9176)
+          ) AS seed_rank
+        FROM validated_state, range(1, cell_count + 1) AS positions(i)
+      ),
+      neighbor_edges AS (
+        SELECT
+          cell.idx,
+          neighbor.idx AS neighbor_idx
+        FROM positions AS cell
+        JOIN positions AS neighbor
+          ON abs(neighbor.x - cell.x) <= 1
+          AND abs(neighbor.y - cell.y) <= 1
+          AND neighbor.idx != cell.idx
+      ),
+      seed_cells AS (
+        SELECT
+          idx,
+          x,
+          y,
+          CASE
+            WHEN starter_pattern = 'Random'
+              AND seed_rank <= initial_live_cells
+            THEN 1
+            WHEN starter_pattern = 'Glider'
+              AND (
+                (x = 16 AND y = 15)
+                OR (x = 17 AND y = 16)
+                OR (x IN (15, 16, 17) AND y = 17)
+              )
+            THEN 1
+            WHEN starter_pattern = 'Blinker'
+              AND x IN (15, 16, 17)
+              AND y = 16
+            THEN 1
+            WHEN starter_pattern = 'Toad'
+              AND (
+                (x IN (16, 17, 18) AND y = 15)
+                OR (x IN (15, 16, 17) AND y = 16)
+              )
+            THEN 1
+            WHEN starter_pattern = 'Beacon'
+              AND (
+                (x IN (15, 16) AND y IN (15, 16))
+                OR (x IN (17, 18) AND y IN (17, 18))
+              )
+            THEN 1
+            WHEN starter_pattern = 'Pulsar'
+              AND (
+                (
+                  (x BETWEEN 12 AND 14 OR x BETWEEN 18 AND 20)
+                  AND y IN (10, 15, 17, 22)
+                )
+                OR (
+                  x IN (10, 15, 17, 22)
+                  AND (y BETWEEN 12 AND 14 OR y BETWEEN 18 AND 20)
+                )
+              )
+            THEN 1
+            WHEN starter_pattern = 'LWSS'
+              AND (
+                (x IN (15, 18) AND y = 15)
+                OR (x = 14 AND y IN (16, 17, 18))
+                OR (x = 18 AND y = 17)
+                OR (x IN (15, 16, 17) AND y = 18)
+              )
+            THEN 1
+            WHEN starter_pattern = 'R-pentomino'
+              AND (
+                (x IN (16, 17) AND y = 15)
+                OR (x IN (15, 16) AND y = 16)
+                OR (x = 16 AND y = 17)
+              )
+            THEN 1
+            WHEN starter_pattern = 'Diehard'
+              AND (
+                (x = 19 AND y = 15)
+                OR (x IN (13, 14) AND y = 16)
+                OR (x IN (14, 18, 19, 20) AND y = 17)
+              )
+            THEN 1
+            WHEN starter_pattern = 'Acorn'
+              AND (
+                (x = 14 AND y = 15)
+                OR (x = 16 AND y = 16)
+                OR (x IN (13, 14, 17, 18, 19) AND y = 17)
+              )
+            THEN 1
+            ELSE 0
+          END AS alive
+        FROM positions, validated_state
+      ),
+      generations(g, idx, x, y, alive) AS (
+        SELECT
+          0 AS g,
+          idx,
+          x,
+          y,
+          alive
+        FROM seed_cells
+
+        UNION ALL
+
+        SELECT
+          cell.g + 1 AS g,
+          cell.idx,
+          cell.x,
+          cell.y,
+          CASE
+            WHEN cell.alive = 1
+              AND coalesce(sum(neighbor.alive), 0) IN (2, 3)
+            THEN 1
+            WHEN cell.alive = 0
+              AND coalesce(sum(neighbor.alive), 0) = 3
+            THEN 1
+            ELSE 0
+          END AS alive
+        FROM generations AS cell
+        JOIN validated_state ON true
+        LEFT JOIN neighbor_edges AS edge
+          ON edge.idx = cell.idx
+        LEFT JOIN generations AS neighbor
+          ON neighbor.g = cell.g
+          AND neighbor.idx = edge.neighbor_idx
+        WHERE cell.g < generation
+        GROUP BY cell.g, cell.idx, cell.x, cell.y, cell.alive
+      ),
+      current_cells AS (
+        SELECT
+          idx,
+          x,
+          y,
+          alive
+        FROM generations, validated_state
+        WHERE g = validated_state.generation
+      )
+      SELECT
+        y AS row_sort,
+        'c' || x AS cell_column,
+        CASE WHEN alive = 1 THEN '#' ELSE '.' END AS cell_value
+      FROM current_cells
+      ORDER BY y, x
+  life_summary:
+    sql: |
+      WITH RECURSIVE state AS (
+        SELECT
+          32 AS grid_size,
+          CASE
+            WHEN regexp_matches(CAST('{{ initial_live_cells }}' AS VARCHAR), '^[0-9]+(\.0)?$')
+            THEN CAST(CAST('{{ initial_live_cells }}' AS DOUBLE) AS INTEGER)
+            ELSE error('initial_live_cells must be a non-negative integer')
+          END AS initial_live_cells,
+          CASE
+            WHEN regexp_matches(CAST('{{ generation }}' AS VARCHAR), '^[0-9]+(\.0)?$')
+              AND CAST(CAST('{{ generation }}' AS DOUBLE) AS INTEGER) <= 200
+            THEN CAST(CAST('{{ generation }}' AS DOUBLE) AS INTEGER)
+            ELSE error('generation must be an integer between 0 and 200')
+          END AS generation,
+          CASE
+            WHEN '{{ starter_pattern }}' IN (
+              'Random', 'Glider', 'Blinker', 'Toad', 'Beacon',
+              'Pulsar', 'LWSS', 'R-pentomino', 'Diehard', 'Acorn'
+            )
+            THEN '{{ starter_pattern }}'
+            ELSE error('starter_pattern must be a known starter pattern')
+          END AS starter_pattern
+      ),
+      validated_state AS (
+        SELECT
+          grid_size,
+          CASE
+            WHEN initial_live_cells <= 900 THEN initial_live_cells
+            ELSE error('initial_live_cells must be between 0 and 900')
+          END AS initial_live_cells,
+          generation,
+          starter_pattern,
+          grid_size * grid_size AS cell_count
+        FROM state
+      ),
+      positions AS (
+        SELECT
+          i AS idx,
+          ((i - 1) % grid_size) + 1 AS x,
+          floor((i - 1) / grid_size)::INTEGER + 1 AS y,
+          row_number() OVER (
+            ORDER BY hash(i * 1103515245 + initial_live_cells * 9176)
+          ) AS seed_rank
+        FROM validated_state, range(1, cell_count + 1) AS positions(i)
+      ),
+      neighbor_edges AS (
+        SELECT
+          cell.idx,
+          neighbor.idx AS neighbor_idx
+        FROM positions AS cell
+        JOIN positions AS neighbor
+          ON abs(neighbor.x - cell.x) <= 1
+          AND abs(neighbor.y - cell.y) <= 1
+          AND neighbor.idx != cell.idx
+      ),
+      seed_cells AS (
+        SELECT
+          idx,
+          x,
+          y,
+          CASE
+            WHEN starter_pattern = 'Random'
+              AND seed_rank <= initial_live_cells
+            THEN 1
+            WHEN starter_pattern = 'Glider'
+              AND (
+                (x = 16 AND y = 15)
+                OR (x = 17 AND y = 16)
+                OR (x IN (15, 16, 17) AND y = 17)
+              )
+            THEN 1
+            WHEN starter_pattern = 'Blinker'
+              AND x IN (15, 16, 17)
+              AND y = 16
+            THEN 1
+            WHEN starter_pattern = 'Toad'
+              AND (
+                (x IN (16, 17, 18) AND y = 15)
+                OR (x IN (15, 16, 17) AND y = 16)
+              )
+            THEN 1
+            WHEN starter_pattern = 'Beacon'
+              AND (
+                (x IN (15, 16) AND y IN (15, 16))
+                OR (x IN (17, 18) AND y IN (17, 18))
+              )
+            THEN 1
+            WHEN starter_pattern = 'Pulsar'
+              AND (
+                (
+                  (x BETWEEN 12 AND 14 OR x BETWEEN 18 AND 20)
+                  AND y IN (10, 15, 17, 22)
+                )
+                OR (
+                  x IN (10, 15, 17, 22)
+                  AND (y BETWEEN 12 AND 14 OR y BETWEEN 18 AND 20)
+                )
+              )
+            THEN 1
+            WHEN starter_pattern = 'LWSS'
+              AND (
+                (x IN (15, 18) AND y = 15)
+                OR (x = 14 AND y IN (16, 17, 18))
+                OR (x = 18 AND y = 17)
+                OR (x IN (15, 16, 17) AND y = 18)
+              )
+            THEN 1
+            WHEN starter_pattern = 'R-pentomino'
+              AND (
+                (x IN (16, 17) AND y = 15)
+                OR (x IN (15, 16) AND y = 16)
+                OR (x = 16 AND y = 17)
+              )
+            THEN 1
+            WHEN starter_pattern = 'Diehard'
+              AND (
+                (x = 19 AND y = 15)
+                OR (x IN (13, 14) AND y = 16)
+                OR (x IN (14, 18, 19, 20) AND y = 17)
+              )
+            THEN 1
+            WHEN starter_pattern = 'Acorn'
+              AND (
+                (x = 14 AND y = 15)
+                OR (x = 16 AND y = 16)
+                OR (x IN (13, 14, 17, 18, 19) AND y = 17)
+              )
+            THEN 1
+            ELSE 0
+          END AS alive
+        FROM positions, validated_state
+      ),
+      generations(g, idx, x, y, alive) AS (
+        SELECT
+          0 AS g,
+          idx,
+          x,
+          y,
+          alive
+        FROM seed_cells
+
+        UNION ALL
+
+        SELECT
+          cell.g + 1 AS g,
+          cell.idx,
+          cell.x,
+          cell.y,
+          CASE
+            WHEN cell.alive = 1
+              AND coalesce(sum(neighbor.alive), 0) IN (2, 3)
+            THEN 1
+            WHEN cell.alive = 0
+              AND coalesce(sum(neighbor.alive), 0) = 3
+            THEN 1
+            ELSE 0
+          END AS alive
+        FROM generations AS cell
+        JOIN validated_state ON true
+        LEFT JOIN neighbor_edges AS edge
+          ON edge.idx = cell.idx
+        LEFT JOIN generations AS neighbor
+          ON neighbor.g = cell.g
+          AND neighbor.idx = edge.neighbor_idx
+        WHERE cell.g < generation
+        GROUP BY cell.g, cell.idx, cell.x, cell.y, cell.alive
+      ),
+      current_cells AS (
+        SELECT
+          idx,
+          alive
+        FROM generations, validated_state
+        WHERE g = validated_state.generation
+      ),
+      neighbor_counts AS (
+        SELECT
+          cell.idx,
+          cell.alive,
+          coalesce(sum(neighbor.alive), 0) AS live_neighbors
+        FROM current_cells AS cell
+        LEFT JOIN neighbor_edges AS edge
+          ON edge.idx = cell.idx
+        LEFT JOIN current_cells AS neighbor
+          ON neighbor.idx = edge.neighbor_idx
+        GROUP BY cell.idx, cell.alive
+      ),
+      next_cells AS (
+        SELECT
+          idx,
+          alive,
+          CASE
+            WHEN alive = 1
+              AND live_neighbors IN (2, 3)
+            THEN 1
+            WHEN alive = 0
+              AND live_neighbors = 3
+            THEN 1
+            ELSE 0
+          END AS next_alive
+        FROM neighbor_counts
+      ),
+      current_state AS (
+        SELECT
+          sum(alive) AS alive_cells,
+          sum(next_alive) AS next_alive_cells,
+          sum(CASE WHEN alive != next_alive THEN 1 ELSE 0 END) AS changed_cells
+        FROM next_cells
+      )
+      SELECT
+        'Generation ' || generation AS generation_label,
+        'Population ' || alive_cells AS population_label,
+        'Pattern: '
+          || CASE
+            WHEN alive_cells = 0 THEN 'Extinct'
+            WHEN changed_cells = 0 THEN 'Stable'
+            ELSE 'Changing'
+          END
+          AS pattern_label,
+        'Grid ' || grid_size || ' x ' || grid_size AS grid_label,
+        'Next population: ' || next_alive_cells AS next_population_label,
+        '→ Advance to generation ' || (generation + 1) AS action,
+        '?generation=' || (generation + 1)
+          || '&initial_live_cells=' || initial_live_cells
+          || '&starter_pattern=' || starter_pattern AS next_link
+      FROM validated_state, current_state
+charts:
+  generation:
+    query: life_summary
+    type: kpi
+    value: generation_label
+    label: Generation
+  population:
+    query: life_summary
+    type: kpi
+    value: population_label
+    label: Live cells
+  status:
+    query: life_summary
+    type: table
+    title: ''
+    style:
+      pagination:
+        enabled: false
+      columns:
+        pattern_label:
+          label: ' '
+          width: 180
+          background: '#f8fafc'
+          font:
+            weight: 700
+        next_population_label:
+          label: ' '
+          width: 180
+          background: '#f8fafc'
+      font:
+        size: 13
+        weight: 600
+      header:
+        height: 0
+        rule:
+          width: 0
+      row:
+        height: 34
+  grid:
+    query: life_summary
+    type: kpi
+    value: grid_label
+    label: Board
+  advance:
+    query: life_summary
+    type: table
+    title: ''
+    style:
+      pagination:
+        enabled: false
+      columns:
+        action:
+          label: ' '
+          link: next_link
+          width: 300
+          align: center
+          background: '#dbeafe'
+          font:
+            weight: 700
+      symbol_mode: anchors
+      font:
+        size: 18
+        weight: 700
+      header:
+        height: 0
+        rule:
+          width: 0
+      row:
+        height: 56
+  board:
+    query: life_grid
+    type: table
+    rows:
+      - row_sort
+    columns:
+      - cell_column
+    values:
+      - cell_value
+    title: Live cells are dark
+    conditional_formatting:
+      c1: &id001
+        when:
+        - eq: '#'
+          background: '#0f172a'
+          font:
+            color: '#f8fafc'
+            weight: 700
+        - eq: .
+          background: '#f8fafc'
+          font:
+            color: '#94a3b8'
+      c2: *id001
+      c3: *id001
+      c4: *id001
+      c5: *id001
+      c6: *id001
+      c7: *id001
+      c8: *id001
+      c9: *id001
+      c10: *id001
+      c11: *id001
+      c12: *id001
+      c13: *id001
+      c14: *id001
+      c15: *id001
+      c16: *id001
+      c17: *id001
+      c18: *id001
+      c19: *id001
+      c20: *id001
+      c21: *id001
+      c22: *id001
+      c23: *id001
+      c24: *id001
+      c25: *id001
+      c26: *id001
+      c27: *id001
+      c28: *id001
+      c29: *id001
+      c30: *id001
+      c31: *id001
+      c32: *id001
+    style:
+      pagination:
+        enabled: false
+      column_defaults:
+        label: ' '
+        width: 36
+        align: center
+      columns:
+        c1: {}
+        c2: {}
+        c3: {}
+        c4: {}
+        c5: {}
+        c6: {}
+        c7: {}
+        c8: {}
+        c9: {}
+        c10: {}
+        c11: {}
+        c12: {}
+        c13: {}
+        c14: {}
+        c15: {}
+        c16: {}
+        c17: {}
+        c18: {}
+        c19: {}
+        c20: {}
+        c21: {}
+        c22: {}
+        c23: {}
+        c24: {}
+        c25: {}
+        c26: {}
+        c27: {}
+        c28: {}
+        c29: {}
+        c30: {}
+        c31: {}
+        c32: {}
+      symbol_mode: anchors
+      font:
+        size: 9
+        weight: 600
+      row:
+        height: 20
+rows:
+- cols:
+  - generation
+  - grid
+  - population
+  - advance
+- status
+- text: 'Starter pattern chooses either a random seed or a classic Life pattern.
+
+    Starting live cells only applies to Random; the classic patterns use their
+
+    known cell positions. Not precomputed: each selected generation is
+
+    simulated by recursive SQL. Stable means the next board is identical;
+
+    Extinct means no live cells remain.
+
+    '
+- board

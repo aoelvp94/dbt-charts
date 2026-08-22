@@ -1,0 +1,60 @@
+title: Q1 Sales Summary
+description: KPI row pattern — three summary metrics from one aggregated query
+
+queries:
+  kpis:
+    description: Single-row aggregate with current values and prior-period deltas
+    columns: [revenue, orders, avg_order, rev_delta, ord_delta, aov_delta]
+    values:
+      - [248500, 1420, 175, 0.12, 0.08, 0.04]
+
+charts:
+  revenue_kpi:
+    type: kpi
+    query: kpis
+    label: Revenue
+    value: revenue
+    style:
+      value:
+        format: currency_whole
+    support:
+      value: rev_delta
+      label: vs last quarter
+      format: percent_delta
+      glyph: "▲"
+      tone: positive
+
+  orders_kpi:
+    type: kpi
+    query: kpis
+    label: Orders
+    value: orders
+    support:
+      value: ord_delta
+      label: vs last quarter
+      format: percent_delta
+      glyph: "▲"
+      tone: positive
+
+  aov_kpi:
+    type: kpi
+    query: kpis
+    label: Avg Order Value
+    value: avg_order
+    style:
+      value:
+        format: currency
+    support:
+      value: aov_delta
+      label: vs last quarter
+      format: percent_delta
+      glyph: "▲"
+      tone: positive
+
+rows:
+  # Ceiling, not a reservation: the row shrinks to the KPIs if they need less.
+  - height: 120
+    cols:
+      - revenue_kpi
+      - orders_kpi
+      - aov_kpi

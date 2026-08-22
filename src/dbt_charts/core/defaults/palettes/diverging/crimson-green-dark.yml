@@ -1,0 +1,22 @@
+# Diverging palette — dbt-div-crimson-green-dark (dark-canvas fork)
+#
+
+name: dbt-div-crimson-green-dark
+family: diverging
+description: Crimson (low/loss) to green (high/gain). Dark-canvas fork.
+design_notes: 'Dark-canvas fork of dbt-div-crimson-green. Dark near-neutral midpoint (#322f2f) recedes
+  toward canvas; poles brighten+saturate outward. Source pole hues preserved.
+
+  '
+colors:
+- '#f65a74'
+- '#ea3c59'
+- '#d42744'
+- '#a32d41'
+- '#74323d'
+- '#322f2f'
+- '#32744c'
+- '#2da35d'
+- '#27d46d'
+- '#3cea82'
+- '#5af699'

@@ -1,0 +1,607 @@
+"""Jinja template resolution module.
+
+Stage: COMPILE (Part of Step 3: Normalization)
+Purpose: Resolve Jinja templates in queries and SQL strings.
+
+Entry Points:
+    - resolve_jinja_template(template: str, variables: Dict) -> str
+    - extract_variable_dependencies(template: str) -> Set[str]
+
+Inputs:
+    - Template strings with {{ variable }} syntax
+    - Variable values for substitution
+
+Outputs:
+    - Resolved strings with variables substituted
+    - Set of variable names referenced in templates
+
+Dependencies:
+    - jinja2 (Environment, Template, meta)
+
+Errors:
+    - JinjaError: Template syntax or resolution errors
+
+See also:
+    - compile/normalize/dispatch.py: Uses this module
+
+Security Note:
+    When using strict=False (lenient mode), undefined variables are silently
+    converted to empty strings. This mode should ONLY be used in interactive
+    contexts (chart editor) where the user is actively editing and expects
+    partial results. Production rendering should always use strict=True.
+"""
+
+import logging
+import re
+import secrets
+from collections.abc import Callable, Mapping
+from typing import Any
+
+from jinja2 import (
+    Environment,
+    StrictUndefined,
+    TemplateError,
+    TemplateSyntaxError,
+    UndefinedError,
+    meta,
+    nodes as jinja_nodes,
+)
+
+from dbt_charts.core.compile.errors import CompilationError, JinjaError
+from dbt_charts.core.compile.template._helpers import _LenientUndefined, _QueryNamespace
+
+logger = logging.getLogger(__name__)
+
+
+# Jinja environment with strict undefined (errors on missing variables)
+_jinja_env = Environment(undefined=StrictUndefined)
+
+# Lenient Jinja environment (undefined variables become empty/None)
+_jinja_env_lenient = Environment(undefined=_LenientUndefined)
+
+# {{ queries.X }} inline ref and {{ queries.X.cache }} cache-read ref patterns.
+# Shared by dependency detection and inline substitution so the two stay in sync.
+_QUERY_REF_RE = re.compile(r"\{\{\s*queries\.(\w+)\s*\}\}")
+_CACHE_REF_RE = re.compile(r"\{\{\s*queries\.(\w+)\s*\.\s*cache\s*\}\}")
+
+# {{ filter(...) }} / {{ filter_date_range(...) }} call spans, matched non-greedily
+# across newlines so multi-line calls (wrapped arguments) still match in full.
+# Used by resolve_jinja_template's bind_filters mode to protect these spans from
+# the raising compile-time stubs so each one can be bound from its own
+# author-written text after the render.
+# `-` after `{{` / before `}}` is Jinja's whitespace control, not whitespace, so
+# it needs matching explicitly — an unmatched `{{- filter(...) }}` falls through
+# to the raising stub, which is the error this masking exists to avoid.
+_DEFERRED_FILTER_CALL_RE = re.compile(
+    r"\{\{-?\s*filter(?:_date_range)?\s*\(.*?\)\s*-?\}\}", re.DOTALL
+)
+
+# A referenced query name becomes a SQL table alias (`(<sql>) AS <name>`), so it
+# must be a usable identifier on every engine. Reject names that collide with a
+# SQL reserved word at compile time — otherwise the alias emits a cryptic parse
+# error at execution. (ANSI + common Postgres/DuckDB/BigQuery reserved words.)
+_SQL_RESERVED_WORDS: frozenset[str] = frozenset(
+    {
+        "all",
+        "and",
+        "any",
+        "array",
+        "as",
+        "asc",
+        "between",
+        "by",
+        "case",
+        "cast",
+        "check",
+        "collate",
+        "column",
+        "constraint",
+        "create",
+        "cross",
+        "current",
+        "default",
+        "delete",
+        "desc",
+        "distinct",
+        "drop",
+        "else",
+        "end",
+        "except",
+        "exists",
+        "false",
+        "fetch",
+        "for",
+        "foreign",
+        "from",
+        "full",
+        "group",
+        "having",
+        "in",
+        "inner",
+        "insert",
+        "intersect",
+        "into",
+        "is",
+        "join",
+        "left",
+        "like",
+        "limit",
+        "natural",
+        "not",
+        "null",
+        "offset",
+        "on",
+        "or",
+        "order",
+        "outer",
+        "primary",
+        "qualify",
+        "references",
+        "right",
+        "select",
+        "set",
+        "some",
+        "table",
+        "then",
+        "to",
+        "true",
+        "union",
+        "unique",
+        "update",
+        "using",
+        "values",
+        "when",
+        "where",
+        "window",
+        "with",
+    }
+)
+
+
+def _validate_query_ref_name(name: str) -> None:
+    """Reject a referenced query name that can't be a SQL table alias.
+
+    A ``{{ queries.X }}`` / ``{{ queries.X.cache }}`` reference renders as
+    ``(<sql>) AS X``, so X has to be a plain, non-reserved SQL identifier.
+    """
+    if name.lower() in _SQL_RESERVED_WORDS:
+        raise CompilationError(
+            f"Query '{name}' is referenced via {{{{ queries.{name} }}}}, but "
+            f"'{name}' is a SQL reserved word and cannot be used as a table "
+            f"alias. Rename the query to a non-reserved identifier."
+        )
+
+
+# Dataface runtime namespaces/callables — always stripped from dependency analysis.
+# These names conflict with Dataface helper functions injected into the Jinja context
+# at render time. Users must not declare variables with these names.
+RESERVED_VARIABLE_NAMES: frozenset[str] = frozenset(
+    {
+        "filter",
+        "filter_date_range",
+        "queries",
+    }
+)
+
+# dbt SQL Jinja builtins that appear as CALLS in embedded dbt model SQL.
+# Stripped from dependency analysis only when the name appears as a function call
+# (e.g. {{ source('schema', 'table') }}), NOT when referenced bare ({{ source }}).
+# A bare ref means the user declared a variable with that name (e.g. a "source"
+# dropdown filter) — that is valid and should flow through to validation.
+_DBT_BUILTIN_CALLS: frozenset[str] = frozenset(
+    {
+        "ref",
+        "source",
+        "var",
+        "env_var",
+        "config",
+        "is_incremental",
+        # Note: 'this' is omitted — in dbt SQL it is always a bare token, never a call.
+        # {{ this }} in a Dataface board query is an undefined user variable reference.
+    }
+)
+
+
+def extract_variable_dependencies(template_str: str) -> set[str]:
+    """Extract variable names referenced in a Jinja template.
+
+    Uses Jinja's AST parser to find all undeclared variables in the template.
+    Filters out known helper functions and namespaces.
+
+    This is used during normalization to track which variables a query,
+    chart title, or other template depends on.
+
+    Args:
+        template_str: String potentially containing Jinja expressions
+
+    Returns:
+        Set of variable names referenced in the template
+
+    Example:
+        >>> extract_variable_dependencies(
+        ...     "SELECT * FROM orders WHERE region = '{{ region }}'"
+        ... )
+        {'region'}
+
+        >>> extract_variable_dependencies(
+        ...     "SELECT * WHERE {{ filter('region', region) }}"
+        ... )
+        {'region'}
+    """
+    if not template_str:
+        return set()
+
+    # Quick check - no Jinja syntax
+    if "{{" not in template_str and "{%" not in template_str:
+        return set()
+
+    try:
+        env = Environment()
+        ast = env.parse(template_str)
+        undeclared = meta.find_undeclared_variables(ast)
+
+        # Always strip Dataface runtime helpers — never user variables.
+        result = undeclared - RESERVED_VARIABLE_NAMES
+
+        # Strip dbt builtins only when they appear as FUNCTION CALLS, not bare refs.
+        # {{ source('schema','table') }} → call → strip.
+        # {{ source }} → bare Name node → keep (user declared variable named 'source').
+        #
+        # Strategy: collect the object IDs of Name nodes used as call targets, then
+        # find all Name nodes — those whose id is NOT in call_target_ids are bare refs.
+        # Names that appear bare are NOT subtracted even if they are dbt builtins.
+        call_target_ids = {
+            id(node.node)
+            for node in ast.find_all(jinja_nodes.Call)
+            if isinstance(node.node, jinja_nodes.Name)
+        }
+        bare_names = {
+            node.name
+            for node in ast.find_all(jinja_nodes.Name)
+            if id(node) not in call_target_ids
+        }
+        # Subtract only the dbt builtins that are NOT referenced bare.
+        result -= _DBT_BUILTIN_CALLS - bare_names
+
+        return result
+    except TemplateSyntaxError:
+        # Jinja syntax errors are expected here for invalid templates.
+        # Return empty set - the actual render will catch and report the syntax error
+        # with proper context. This is intentionally silent because this function
+        # is only used for dependency detection, not validation.
+        return set()
+
+
+def resolve_jinja_template(
+    template: str,
+    variables: Mapping[str, Any] | None = None,
+    queries: dict[str, Any] | None = None,
+    strict: bool = True,
+    bind_filters: Callable[[str], str] | None = None,
+) -> str:
+    """Resolve a Jinja template string.
+
+    Stage: COMPILE (Step 3: Normalization - Jinja Resolution)
+
+    Resolves {{ variable }} expressions in template strings.
+    Also handles {{ queries.query_name }} references for SQL composition.
+
+    Args:
+        template: String potentially containing Jinja expressions
+        variables: Variable values for substitution
+        queries: Query registry for {{ queries.* }} resolution
+        strict: If True (default), raises error on undefined variables.
+                If False, undefined variables become None/empty (useful for
+                chart editor where variables may not all be set).
+        bind_filters: If given, {{ filter(...) }} / {{ filter_date_range(...) }}
+                spans are protected before rendering — so they never reach the
+                raising compile-time stubs — and each is replaced by this
+                callable's return value afterward. It receives the span's
+                ORIGINAL author-written text, which is what lets a caller bind
+                the helpers without ever re-rendering this function's output:
+                that output holds substituted variable values, and values are
+                data, never template source.
+
+    Returns:
+        Resolved string with variables substituted
+
+    Raises:
+        JinjaError: If template syntax is invalid or (if strict) variable not found
+
+    Example:
+        >>> resolve_jinja_template(
+        ...     "SELECT * FROM users WHERE status = '{{ status }}'",
+        ...     variables={"status": "active"}
+        ... )
+        "SELECT * FROM users WHERE status = 'active'"
+    """
+    if not template:
+        return template
+
+    # Quick check for Jinja syntax
+    if "{{" not in template and "{%" not in template:
+        return template
+
+    variables = variables or {}
+    queries = queries or {}
+
+    # Protect filter()/filter_date_range() spans with sentinel tokens so Jinja
+    # never parses them as calls — the raising stubs below are never reached,
+    # and the original call text (with any nested variables) survives for the
+    # binding step below.
+    deferred: dict[str, str] = {}
+    if bind_filters is not None:
+        # Fresh per invocation: restoring the mask is a string replace over text
+        # that by then holds substituted variable values, and values are user
+        # input. A predictable token lets a value nominate itself as a
+        # replacement site and receive the restored text — SQL code position,
+        # where escaping the value is no help at all.
+        mask_nonce = secrets.token_hex(8)
+
+        def _protect(match: re.Match[str]) -> str:
+            token = f"__DATAFACE_DEFERRED_FILTER_{mask_nonce}_{len(deferred)}__"
+            deferred[token] = match.group(0)
+            return token
+
+        template = _DEFERRED_FILTER_CALL_RE.sub(_protect, template)
+
+    # Build context with variables and query helper
+    context = {**variables}
+
+    # Add queries namespace for {{ queries.query_name }} resolution
+    if queries:
+        context["queries"] = _QueryNamespace(queries)
+
+    # Add helper functions
+    context["filter"] = _filter_helper
+    context["filter_date_range"] = _filter_date_range_helper
+
+    # Use strict or lenient environment
+    jinja_env = _jinja_env if strict else _jinja_env_lenient
+
+    try:
+        jinja_template = jinja_env.from_string(template)
+        result = jinja_template.render(context)
+    except UndefinedError as e:
+        raise JinjaError(f"Undefined variable: {e}", template) from e
+    except TemplateSyntaxError as e:
+        raise JinjaError(f"Template syntax error: {e}", template) from e
+    except TemplateError as e:
+        raise JinjaError(f"Template error: {e}", template) from e
+
+    if bind_filters is None:
+        return result
+
+    # Binding happens here, against the span's original text — never against
+    # `result`, which now holds substituted variable values. The nonce above is
+    # what keeps a value from naming a token; counting occurrences would not,
+    # since a value can forge one while a false branch drops the genuine span.
+    for token, original in deferred.items():
+        # A span the render dropped (false {% if %}, {# comment #}) is not part
+        # of the query, so it must not be bound — binding it would raise on its
+        # own variables for a predicate that was never going to be emitted. A
+        # surviving span may legitimately appear more than once: a {% for %}
+        # emits its body per iteration, and every copy binds the same way.
+        if token not in result:
+            continue
+        result = result.replace(token, bind_filters(original))
+    return result
+
+
+def detect_query_dependencies(queries: dict[str, Any]) -> dict[str, list[str]]:
+    """Detect dependencies between queries for circular reference detection.
+
+    Scans query SQL for {{ queries.* }} references and builds a dependency graph.
+    Raises an error if circular dependencies are detected.
+
+    Args:
+        queries: Dictionary of query definitions
+
+    Returns:
+        Dictionary mapping query name to list of dependencies
+
+    Raises:
+        JinjaError: If circular dependencies detected
+    """
+    dependencies: dict[str, list[str]] = {}
+
+    for name, query in queries.items():
+        deps: list[str] = []
+
+        # Get SQL content
+        sql = None
+        if hasattr(query, "sql"):
+            sql = query.sql
+        elif isinstance(query, dict):
+            sql = query.get("sql")
+
+        if sql:
+            # Find {{ queries.NAME }} inline refs
+            matches = _QUERY_REF_RE.findall(sql)
+            deps.extend(matches)
+            # Find {{ queries.NAME.cache }} cache-read refs — same dependency
+            # semantics: NAME must exist and must be executed before the composer.
+            cache_matches = _CACHE_REF_RE.findall(sql)
+            deps.extend(cache_matches)
+            # Every referenced name becomes a SQL table alias — fail fast on
+            # reserved-word names before they reach the database.
+            for ref_name in deps:
+                _validate_query_ref_name(ref_name)
+
+        dependencies[name] = deps
+
+    # Check for circular dependencies
+    _detect_circular(dependencies)
+
+    return dependencies
+
+
+def _detect_circular(dependencies: dict[str, list[str]]) -> None:
+    """Detect circular dependencies using DFS.
+
+    Args:
+        dependencies: Dependency graph
+
+    Raises:
+        JinjaError: If circular dependency found
+    """
+    visited: set[str] = set()
+    rec_stack: set[str] = set()
+
+    def dfs(node: str, path: list[str]) -> None:
+        if node in rec_stack:
+            cycle = path[path.index(node) :] + [node]
+            raise JinjaError(
+                f"Circular query dependency detected: {' -> '.join(cycle)}"
+            )
+
+        if node in visited:
+            return
+
+        visited.add(node)
+        rec_stack.add(node)
+
+        for dep in dependencies.get(node, []):
+            if dep in dependencies:  # Only follow known queries
+                dfs(dep, path + [node])
+
+        rec_stack.remove(node)
+
+    for query_name in dependencies:
+        dfs(query_name, [])
+
+
+def _topological_sort(dependencies: dict[str, list[str]]) -> list[str]:
+    """Return query names in topological order (dependencies first).
+
+    Args:
+        dependencies: Dependency graph from detect_query_dependencies()
+
+    Returns:
+        List of query names with leaf nodes first
+    """
+    visited: set[str] = set()
+    order: list[str] = []
+
+    def visit(name: str) -> None:
+        if name in visited:
+            return
+        visited.add(name)
+        for dep in dependencies.get(name, []):
+            if dep in dependencies:
+                visit(dep)
+        order.append(name)
+
+    for name in dependencies:
+        visit(name)
+
+    return order
+
+
+def _get_query_sql(query: Any) -> str:
+    """Extract a query's raw SQL body (before any subquery wrapping)."""
+    if hasattr(query, "sql"):
+        sql = query.sql
+        return sql if isinstance(sql, str) else ""
+    elif isinstance(query, dict):
+        sql = query.get("sql", "")
+        return sql if isinstance(sql, str) else ""
+    return str(query)
+
+
+def _substitute_query_refs(sql: str, resolved: dict[str, str]) -> str:
+    """Replace {{ queries.X }} tokens with X's resolved SQL as an aliased subquery.
+
+    Each reference expands to ``(<resolved sql>) AS X`` — parenthesized so it is a
+    valid subquery and aliased to the query name so the same authored SQL runs on
+    both the DuckDB cache engine and Cloud Postgres (which requires the alias).
+    This matches _QueryProxy.__str__. Because the expansion carries an alias, a
+    reference is only valid in **FROM/JOIN (table) position** — using it as a CTE
+    body (``WITH t AS ({{ queries.X }})``) or a scalar subquery emits invalid SQL.
+    Uses regex substitution so that only query references are expanded; variable
+    expressions ({{ var }}) and other Jinja constructs are left untouched for the
+    single parameterized render on the way to the warehouse.
+    """
+
+    def _replacer(m: re.Match[str]) -> str:
+        name = m.group(1)
+        if name in resolved:
+            return f"({resolved[name]}) AS {name}"
+        return m.group(0)  # leave unresolved if not in map
+
+    return _QUERY_REF_RE.sub(_replacer, sql)
+
+
+def expand_query_refs(query_name: str, queries: dict[str, Any]) -> str:
+    """Expand a query's {{ queries.* }} references, recursively, as text.
+
+    Each reference is replaced by its target's own already-expanded SQL, in
+    topological order, so a query composed of a query composed of a query
+    resolves all the way down. Nothing else is touched: ``{{ variable }}``,
+    ``{{ filter(...) }}`` and every other Jinja construct come out exactly as the
+    author wrote them.
+
+    Leaving them is the point. The SQL returned here still goes through the
+    parameterized render on its way to the warehouse, and that render must be the
+    only one — a variable value substituted here would be sitting in template
+    position when the next pass read it, and values come from URL query
+    parameters. Expanding references is the one thing that render cannot do for
+    itself, because the query namespace it resolves against inlines a query's raw
+    SQL without recursing.
+
+    Args:
+        query_name: The target query to expand
+        queries: Full query registry (name -> query object or dict)
+
+    Returns:
+        The target query's SQL with every query reference expanded
+
+    Raises:
+        JinjaError: If circular dependencies are detected.
+        CompilationError: If a referenced query name is a SQL reserved word
+            (both via detect_query_dependencies).
+    """
+    # Build dependency graph (validates no cycles), then walk leaves-first so
+    # each query expands against dependencies that are themselves expanded.
+    deps = detect_query_dependencies(queries)
+
+    expanded: dict[str, str] = {}
+    for name in _topological_sort(deps):
+        if name not in queries:
+            continue
+        raw_sql = _get_query_sql(queries[name])
+        if raw_sql and ("{{ queries." in raw_sql or "{{queries." in raw_sql):
+            expanded[name] = _substitute_query_refs(raw_sql, expanded)
+        else:
+            expanded[name] = raw_sql
+
+    return expanded.get(query_name, _get_query_sql(queries.get(query_name, "")))
+
+
+def _filter_helper(*args: Any, **kwargs: Any) -> str:
+    """Raise CompilationError — the string-interpolation filter() is no longer supported.
+
+    The parameterized {{ filter(...) }} helper (parameterized.py) replaces it.
+    Most templates that reach this stub are not queries at all — chart titles,
+    layout and sizing expressions — so the actionable message is where filter()
+    does work, not a claim about this particular caller.
+    """
+    raise CompilationError(
+        "The 'filter' Jinja helper uses string interpolation and is no longer supported. "
+        "{{ filter(...) }} works only in query SQL; it cannot be used in this "
+        "template."
+    )
+
+
+def _filter_date_range_helper(*args: Any, **kwargs: Any) -> str:
+    """Raise CompilationError — the string-interpolation filter_date_range() is no longer supported.
+
+    Migrate to {{ filter_date_range(...) }} from the parameterized helper in parameterized.py.
+    Same as _filter_helper: name where the helper works rather than describe the
+    caller, since most templates reaching this stub are not queries.
+    """
+    raise CompilationError(
+        "The 'filter_date_range' Jinja helper uses string interpolation and is no longer "
+        "supported. {{ filter_date_range(...) }} works only in query SQL; it cannot "
+        "be used in this template."
+    )

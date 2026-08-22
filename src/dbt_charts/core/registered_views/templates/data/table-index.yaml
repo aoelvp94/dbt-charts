@@ -1,0 +1,34 @@
+title: [[ (path.source ~ "/" ~ path.schema ~ "/" ~ path.table) | tojson ]]
+
+# The auto_link resolver fires at render time and synthesizes the detail-page
+# link for each row using plan_link_keys — no hand-rolled link: needed here.
+auto_link: true
+
+[% set vars = plan_variables(queries.columns.rows) %]
+[% if vars %]
+variables:
+[% for v in vars %]
+  [[ v.name | tojson ]]:
+    input: [[ v.input | tojson ]]
+    visible: true
+[% endfor %]
+[% endif %]
+
+queries:
+  rows:
+    type: sql
+    source: [[ path.source | tojson ]]
+    sql: >-
+      SELECT * FROM [[ sql_identifier(path.schema) ]].[[ sql_identifier(path.table) ]]
+      WHERE 1=1
+      [% for v in vars %]AND {{ filter('[[ v.name ]]', [[ v.name ]]) }}
+      [% endfor %]LIMIT 500
+
+charts:
+  row_data:
+    title: [[ path.table | tojson ]]
+    type: table
+    query: rows
+
+rows:
+  - row_data

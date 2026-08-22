@@ -1,0 +1,20 @@
+# Categorical palette — category-6-tonal-green
+#
+# Single-hue categorical palette anchored on vivid-10 slot 2 (green, H≈161.3°
+# in OKLCH). Same architecture as category-6-tonal-blue.
+
+name: category-6-tonal-green
+description: |
+  Tonal monochromatic green palette. 6 stops at fixed hue (H≈161.3°), all in
+  the green family. Use for editorial / brand-restrained dashboards that want
+  one hue throughout. Strict-safe core: slots 0-3 (Leonardo ΔE ≥ 11 pairwise).
+  Extended: slots 4-5 (require dash, marker, or pattern redundancy past slot 4).
+  See docs/guides/palettes.md#tonal-monochrome-category-6-tonal-.
+
+colors:
+  - "#00875a"    # 0 — dark sea green (anchor)
+  - "#78c09c"    # 1 — pale teal (light tint)
+  - "#005638"    # 2 — spruce (dark saturated)
+  - "#002a19"    # 3 — dark forest green (very dark)
+  - "#6c907d"    # 4 — slate green (extended; form-redundant)
+  - "#c1d7cb"    # 5 — light grey (extended; form-redundant)
