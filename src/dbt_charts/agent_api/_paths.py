@@ -24,7 +24,7 @@ from dbt_charts.core.project import (
     posix_relpath,
 )
 from dbt_charts.core.project_roots import (
-    DFT_ROOT_MARKERS as DFT_ROOT_MARKERS,
+    DCT_ROOT_MARKERS as DCT_ROOT_MARKERS,
     find_dct_root as find_dct_root,
     find_project_root as find_project_root,
     find_repo_root as find_repo_root,
@@ -32,6 +32,29 @@ from dbt_charts.core.project_roots import (
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.config import ProjectSourcesConfig
+
+
+def iter_expanded_board_files(project: Project, under: str) -> list[ProjectPath]:
+    """Board files under ``under``, sorted — the shared directory-walk filter.
+
+    Excludes private (leading-underscore) files, ``meta.yaml``/``meta.yml``
+    cascade fragments, and inspect-manifest-owned directories: none of these
+    are standalone boards. Shared by ``validate_paths`` and ``describe_paths``
+    so the two verbs' expansion can't drift out of sync again.
+    """
+    # WHY: dbt_charts.core.inspect.manifest_utils triggers the inspect package
+    # __init__, which eagerly imports TableInspector + grain/quality/semantic
+    # detectors. Keep this lazy so `dct --help` doesn't pay that startup cost.
+    from dbt_charts.core.inspect.manifest_utils import INSPECT_TEMPLATE_MANIFEST
+
+    return sorted(
+        pf
+        for pf in project.iter_boards(under=under, recursive=True)
+        if pf.is_yaml
+        and not pf.is_private
+        and not pf.is_meta
+        and not (pf.parent / INSPECT_TEMPLATE_MANIFEST).exists()
+    )
 
 
 def resolve_board_relpath(relpath: PurePosixPath, project: Project) -> ProjectPath:

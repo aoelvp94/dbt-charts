@@ -21,6 +21,7 @@ from __future__ import annotations
 import dataclasses
 import math
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 
@@ -242,6 +243,84 @@ def tier_distance(value: float, majority_exponent: int) -> int | None:
     return tiers_ascending.index(majority_exponent) - tiers_ascending.index(value_tier)
 
 
+def _printed_si_suffix(formatted: str) -> str:
+    """The trailing SI magnitude-suffix letters a d3 ``s``-type spec printed
+    (``k``, ``M``, ``m``, the micro sign, ...), or ``""`` when the value
+    printed with no suffix at all.
+
+    Reads the text a spec actually produced, not a raw-value classification
+    over the SI tier (``_natural_tier``): d3's own notation also emits
+    SUB-unit prefixes (``m``, the micro sign, ...) for a value below 1, and
+    rounds a boundary value up across a tier edge at the format's own
+    significant-figure count (``999.96`` at three figures prints ``"1k"``,
+    not ``"1000"``) -- a classifier over the raw, unrounded value alone
+    misses both, so it can call two cells "the same unit" when one printed
+    with a different suffix, or none at all.
+
+    Strips a trailing accounting-sign close-paren first (``"($4.5M)"``) so a
+    negative cell's suffix still compares equal to a positive sibling's --
+    the paren itself carries no unit information, and leaving it in would
+    make whether a column happens to contain a negative value decide whether
+    it decimal-aligns at all.
+    """
+    text = formatted[:-1] if formatted.endswith(")") else formatted
+    end = len(text)
+    while end > 0 and text[end - 1].isalpha():
+        end -= 1
+    return text[end:]
+
+
+def column_shares_one_printed_unit(cells: Iterable[tuple[float, str]]) -> bool:
+    """True when every non-zero, finite value's ACTUAL printed SI suffix
+    agrees -- the question a no-shared-tier decimal-pad bake must answer.
+
+    Distinguishes the two ways ``shared_scale_for_column`` can refuse a
+    shared tier: a real column-wide majority-tier bake can refuse either
+    because there's a genuine magnitude mix (some values >= the smallest
+    tier, some below, or split across different real tiers -- no shared
+    decimal position exists at all, e.g. 12100/900) or merely because the
+    extreme value is too small to clear the compaction-digit threshold even
+    though every value shares one real tier (e.g. 15000/5000/3500, all
+    thousands, extreme below the 6-digit floor). Only the second case has a
+    shared decimal position to pad to -- a bare "900" and a "12.1k" cell
+    share no place value, so padding them together is meaningless, not just
+    imprecise.
+
+    ``cells`` pairs each value with its OWN already-formatted text (the same
+    string the caller measures for fractional depth) so this reads the
+    actual printed suffix rather than reformatting or reclassifying the raw
+    value -- deliberately not built from ``_natural_tier``, which only knows
+    tiers at or above thousands and has no rounding awareness, so it silently
+    disagrees with what a "s"-type spec really prints for a sub-1 value (a
+    milli-prefixed suffix) or a value that rounds up across a tier edge.
+
+    Every caller of this predicate must gate on it before building a
+    no-shared-tier decimal-pad table -- ``_table.py``'s
+    ``_unscaled_decimal_pad_table``, ``support_table_attachment.py``'s
+    ``_unscaled_decimal_pad`` -- not merely on ``shared_scale_for_column``
+    returning ``None``. That includes a caller whose own shared-scale bake
+    is structurally disabled (``_table.py``'s ``allow_shared_scale=False``
+    pie/donut legend path never even calls ``shared_scale_for_column``), so
+    a homogeneous single-real-tier column can reach the fallback there too,
+    not only the "everyone's too small" case.
+
+    Filters non-finite values same as ``shared_scale_for_column``'s own
+    voter list (``_magnitude_numerals``'s ``voters``) -- an ``inf``/``nan``
+    cell has no unit of its own to disagree with the rest of the column
+    about, and must not silently veto every other cell's pad.
+
+    Vacuously True for an empty, all-zero, or all-non-finite set, matching
+    ``shared_scale_for_column``'s own exclusion of zeros from its tally --
+    there is no value with a unit to disagree about.
+    """
+    suffixes = {
+        _printed_si_suffix(text)
+        for value, text in cells
+        if value != 0 and math.isfinite(value)
+    }
+    return len(suffixes) <= 1
+
+
 def shared_scale_for_column(values: list[float]) -> SharedScale | None:
     """Resolve the shared scale for an arbitrary column, or None if it doesn't compact.
 
@@ -337,6 +416,24 @@ def build_decimal_pad_table(
     )
 
 
+def fractional_digit_count(num_str: str) -> int:
+    """Digit-only count of ``num_str``'s fractional part (after the first ".").
+
+    The ONE definition of "how many fractional digits does this formatted
+    string show" every pad-table builder and selector shares --
+    ``decimal_pad_for`` below, and (mirrored) every pad-table builder in
+    ``render/chart/support_table_attachment.py``. Only digit characters
+    count, deliberately: a trailing non-digit character after the dot --
+    accounting-sign format's closing ")" (``"(2.5)"`` -> "5)"), or a
+    significant-figures spec's magnitude suffix letter (``"4.00M"`` -> "00M")
+    -- would otherwise corrupt the depth measurement. Counting only digits
+    is what lets this same function serve a plain fixed-point spec and a
+    significant-figures spec identically, regardless of *why* a value
+    trimmed short.
+    """
+    return sum(1 for c in num_str.partition(".")[2] if c.isdigit())
+
+
 def decimal_pad_for(pad_table: tuple[str, ...], num_str: str) -> str:
     """Select the trailing pad for ``num_str`` from a pre-built ``pad_table``.
 
@@ -347,13 +444,9 @@ def decimal_pad_for(pad_table: tuple[str, ...], num_str: str) -> str:
 
     ``precision = len(pad_table) - 2`` is implicit: the table always has
     ``precision + 2`` entries (indices 0..precision+1).
-
-    Only digit characters are counted in the fractional part so that
-    accounting-sign format's trailing ")" (e.g. "(2.5)" → "5)") does not
-    corrupt the depth measurement.
     """
     precision = len(pad_table) - 2
-    frac = sum(1 for c in num_str.partition(".")[2] if c.isdigit())
+    frac = fractional_digit_count(num_str)
     if frac > precision:
         raise IndexError(
             f"pad_table precision {precision} < formatted value fractional depth {frac}"
@@ -481,7 +574,7 @@ def plain_digit_format(format_spec: str, step: float) -> tuple[str, str, int]:
     anchor tick (the magnitude-extreme), and the currency symbol disambiguates
     nothing when repeated on every tick -- $8,000 / 6,000 / 4,000 ... reads
     the same as $8,000 / $6,000 / $4,000 ..., while the anchor-only form
-    is the established Dataface convention for both modes.
+    is the established dbt charts convention for both modes.
 
     Unlike ``ruler_digit_format`` (precision always 1, for an already-scaled
     value), precision here comes from ``step`` -- a non-compacting ladder writes

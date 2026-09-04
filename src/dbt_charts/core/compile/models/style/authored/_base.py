@@ -5,7 +5,7 @@ and the cross-cutting axis/scale/title/padding/tooltip/legend/mark patches
 that chart-family patch files import.
 
 Some patches here (``BaseAxisStylePatch``, ``AxisXStylePatch``,
-``AxisYStylePatch``, ``DataTableStylePatch``, ``PaddingStylePatch``,
+``AxisYStylePatch``, ``SupportTableStylePatch``, ``PaddingStylePatch``,
 ``TableChartStylePatch``) are built early and injected back into
 ``style.theme``'s module globals so that Pydantic can resolve forward
 references in theme chart-style classes — see the injection block below.
@@ -49,7 +49,6 @@ from dbt_charts.core.compile.models.style.theme import (
     BaseAxisStyle,
     BaseScaleStyle,
     ChartsStyle,
-    DataTableStyle as DataTableStyle,
     DimensionLabelStyle,
     DimensionTicksStyle,
     GeoshapeChartStyle,
@@ -71,12 +70,14 @@ from dbt_charts.core.compile.models.style.theme import (
     ScatterChartStyle,
     ScatterLayerStyle,
     Style,
+    SupportTableStyle as SupportTableStyle,
     TableChartStyle,
     TitleStyle,
     TotalStyle,
     XScaleStyle,
     _CartesianChartStyle,
     _GeoChartStyle,
+    _QuantitativeAxisChartStyleMixin,
     _RadialChartStyle,
     coerce_gap,
 )
@@ -176,11 +177,11 @@ else:
 
 if TYPE_CHECKING:
 
-    class DataTableStylePatch(DataTableStyle):
+    class SupportTableStylePatch(SupportTableStyle):
         pass
 
 else:
-    DataTableStylePatch = build_patch_model(DataTableStyle)
+    SupportTableStylePatch = build_patch_model(SupportTableStyle)
 
 
 # Patch type for padding — generated early so per-family chart-style classes
@@ -196,7 +197,7 @@ else:
 
 
 class EndpointLabelsConfig(BaseModel):
-    """Endpoint label pane config — shared across line, area, and bar.
+    """Endpoint label pane config, shared across line, area, and bar.
 
     When visible, a separate pane is emitted alongside the main chart with one
     text mark per series. For line/area and vertical stacked/grouped bar, the
@@ -242,7 +243,7 @@ for _name, _obj in (
     ("BandAxisStylePatch", BandAxisStylePatch),
     ("BaseScaleStylePatch", BaseScaleStylePatch),
     ("XScaleStylePatch", XScaleStylePatch),
-    ("DataTableStylePatch", DataTableStylePatch),
+    ("SupportTableStylePatch", SupportTableStylePatch),
     ("PaddingStylePatch", PaddingStylePatch),
     ("TableChartStylePatch", TableChartStylePatch),
     ("EndpointLabelsConfig", EndpointLabelsConfig),
@@ -266,7 +267,7 @@ _authored_ns: dict[str, object] = {
     "BandAxisStylePatch": BandAxisStylePatch,
     "BaseScaleStylePatch": BaseScaleStylePatch,
     "XScaleStylePatch": XScaleStylePatch,
-    "DataTableStylePatch": DataTableStylePatch,
+    "SupportTableStylePatch": SupportTableStylePatch,
     "PaddingStylePatch": PaddingStylePatch,
     "TableChartStylePatch": TableChartStylePatch,
     "EndpointLabelsConfig": EndpointLabelsConfig,
@@ -275,6 +276,7 @@ _authored_ns: dict[str, object] = {
     "TableColumnConfig": TableColumnConfig,
 }
 _CartesianChartStyle.model_rebuild(_types_namespace=_authored_ns)
+_QuantitativeAxisChartStyleMixin.model_rebuild(_types_namespace=_authored_ns)
 BarChartStyle.model_rebuild(_types_namespace=_authored_ns)
 LineChartStyle.model_rebuild(_types_namespace=_authored_ns)
 AreaChartStyle.model_rebuild(_types_namespace=_authored_ns)
@@ -314,8 +316,8 @@ else:
     TitleStylePatch = build_patch_model(TitleStyle)
 
 # Style itself under TYPE_CHECKING: the patch carries Style's field names, so a
-# reader typed against Style is checking real ones. Without a face the class has
-# no static fields at all, and reading `style.formats` off it is unresolvable.
+# reader typed against Style is checking real ones. Without this alias the class
+# has no static fields at all, and reading `style.formats` off it is unresolvable.
 if TYPE_CHECKING:
     _StylePatchBase = Style
 else:
@@ -323,7 +325,7 @@ else:
 
 
 class StylePatch(_StylePatchBase):
-    """Authored overlay for Style — all fields optional. Adds CSS shorthand coercers."""
+    """Authored overlay for Style: all fields optional. Adds CSS shorthand coercers."""
 
     @field_validator("gap", mode="before")
     @classmethod

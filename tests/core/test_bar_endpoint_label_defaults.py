@@ -13,8 +13,9 @@ from collections.abc import Iterator
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style, reset_config
-from dbt_charts.core.compile.models.chart.authored._data_table import (
-    ChartDataTablePerSeries,
+from dbt_charts.core.compile.models.chart.authored._support_table import (
+    ChartSupportTable,
+    ChartSupportTablePerSeries,
 )
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.chart.resolved import ResolvedBarChart
@@ -405,9 +406,9 @@ def test_horizontal_rail_steps_aside_when_a_series_misses_its_anchor_row() -> No
     """'Won' appears only in the last row; the horizontal rail anchors on the first.
 
     The vertical rail seats that series on its zero-width seam and lets the
-    label cascade push it clear. The horizontal rail has no cascade in V2, so
-    the seam label would overprint its neighbour — a legend is the honest
-    treatment until the dodge resolver lands. Vertical is unaffected: see
+    label cascade push it clear. The horizontal rail has no cascade, so the
+    seam label would overprint its neighbour — a legend is the honest
+    treatment. Vertical is unaffected: see
     `test_stacked_bar_keeps_its_rail_when_a_series_misses_the_last_column`.
     """
     resolved = _horizontal()
@@ -416,8 +417,54 @@ def test_horizontal_rail_steps_aside_when_a_series_misses_its_anchor_row() -> No
     assert resolved.legend.visible is not False
 
 
-def test_per_series_data_table_already_names_the_series() -> None:
-    """A `data_table` with a `per_series:` entry prints one row per series,
+_CROWDED_LONG_NAMES: list[_Row] = [
+    {"region": "East", "revenue": 10, "stage": name}
+    for name in (
+        "extensions_contrib",
+        "replication_report",
+        "build",
+        "platform",
+        "warehouse_sync",
+        "connector_health",
+        "usage_metering",
+    )
+]
+
+
+def test_horizontal_rail_falls_back_to_legend_when_labels_would_collide() -> None:
+    """Real pixel-width measurement disqualifies a genuinely crowded rail.
+
+    Seven long series names sharing one narrow top row cannot all fit their
+    own label without overlapping a neighbour on a narrow chart — the
+    default steers back to a legend even though every disqualifier above
+    this one (support table, stack shape, multiples, negative values, sort,
+    centre stack, single-series, anchor row) already passed.
+    """
+    chart = BarChart(
+        id="t",
+        query=SqlQuery(sql="SELECT 1", source="t"),
+        query_name="q",
+        type="bar",
+        x="region",
+        y="revenue",
+        color="stage",
+        style=BarChartStylePatch(stack="zero", orientation="horizontal"),
+    )
+    resolved = resolve(
+        chart,
+        _CROWDED_LONG_NAMES,
+        resolve_chart_style_context(get_theme_style()),
+        width=480.0,
+    )
+    assert isinstance(resolved, ResolvedBarChart)
+
+    assert resolved.orientation == "horizontal"
+    assert resolved.style.endpoint_labels.visible is False
+    assert resolved.legend.visible is not False
+
+
+def test_per_series_support_table_already_names_the_series() -> None:
+    """A `support_table` with a `per_series:` entry prints one row per series,
     labelled in that series' own ink. The rail would name them twice — and it
     costs the plot both height and the axis side it needs.
     """
@@ -429,7 +476,9 @@ def test_per_series_data_table_already_names_the_series() -> None:
         x="month",
         y="revenue",
         color="stage",
-        data_table=[ChartDataTablePerSeries(per_series="revenue")],
+        support_table=ChartSupportTable(
+            entries=[ChartSupportTablePerSeries(per_series="revenue")]
+        ),
         style=BarChartStylePatch(stack="zero"),
     )
     resolved = resolve(
@@ -496,3 +545,97 @@ def test_sort_by_a_non_numeric_column_keeps_its_legend() -> None:
 
     assert resolved.style.endpoint_labels.visible is False
     assert resolved.legend.visible is not False
+
+
+def _resolved_wide_by_dimension(
+    data: list[dict[str, object]], measures: list[str], width: float = _WIDTH
+) -> ResolvedBarChart:
+    chart = BarChart(
+        id="wide",
+        query=SqlQuery(sql="SELECT 1", source="t"),
+        query_name="q",
+        type="bar",
+        x="region",
+        y=measures,
+        color="segment",
+        style=BarChartStylePatch(stack="zero"),
+    )
+    resolved = resolve(
+        chart, data, resolve_chart_style_context(get_theme_style()), width=width
+    )
+    assert isinstance(resolved, ResolvedBarChart)
+    return resolved
+
+
+_WIDE_BY_SEGMENT = [
+    {"region": "North", "segment": "SMB", "won": 30, "lost": 12},
+    {"region": "North", "segment": "Ent", "won": 22, "lost": 9},
+    {"region": "South", "segment": "SMB", "won": 18, "lost": 15},
+    {"region": "South", "segment": "Ent", "won": 25, "lost": 6},
+]
+
+
+def test_horizontal_wide_by_dimension_bar_labels_its_composites() -> None:
+    """The rail gates read the composites a wide + `color:` bar paints —
+    two segments x two measures stack four segments per row, every one of
+    them present on the anchor row — so the rail fires."""
+    resolved = _resolved_wide_by_dimension(_WIDE_BY_SEGMENT, ["won", "lost"])
+
+    assert resolved.orientation == "horizontal"
+    assert resolved.style.endpoint_labels.visible is True
+
+
+def test_horizontal_wide_by_dimension_bar_with_one_value_still_stacks() -> None:
+    """One dimension value x two measures still stacks two segments per row;
+    counting the dimension alone would read one series and hand the rail
+    back to a legend."""
+    data = [row for row in _WIDE_BY_SEGMENT if row["segment"] == "SMB"]
+    resolved = _resolved_wide_by_dimension(data, ["won", "lost"])
+
+    assert resolved.style.endpoint_labels.visible is True
+
+
+def test_horizontal_wide_by_dimension_bar_missing_a_measure_at_the_anchor() -> None:
+    """A measure null on every row of one segment leaves that composite
+    unseatable — and, at this width, its labels colliding too, so either
+    gate hands the rail back to a legend (the 1600px case below isolates the
+    anchor gate)."""
+    data = [
+        dict(row, lost=None) if row["segment"] == "Ent" else row
+        for row in _WIDE_BY_SEGMENT
+    ]
+    resolved = _resolved_wide_by_dimension(data, ["won", "lost"])
+
+    assert resolved.style.endpoint_labels.visible is False
+
+
+def test_horizontal_wide_by_dimension_rail_collides_on_composite_names() -> None:
+    """The collision measurement reads the composite labels the rail paints,
+    which run longer than either the measure or the segment name alone:
+    three segments x two measures at 900px overprint, so the rail yields."""
+    data = [
+        {"region": region, "segment": segment, "won": 10 + i, "lost": 4 + i}
+        for i, region in enumerate(("North", "South"))
+        for segment in ("Enterprise accounts", "Mid-market accounts", "Self-serve")
+    ]
+    resolved = _resolved_wide_by_dimension(data, ["won", "lost"])
+
+    assert resolved.style.endpoint_labels.visible is False
+
+
+def test_horizontal_wide_by_dimension_anchor_row_missing_one_composite() -> None:
+    """Short names on a wide plot never collide, so the anchor gate alone
+    decides: a measure null on the anchor row (the first region) for one
+    segment is a composite the rail cannot seat, and it yields."""
+    complete = _resolved_wide_by_dimension(_WIDE_BY_SEGMENT, ["won", "lost"], 1600)
+    assert complete.style.endpoint_labels.visible is True
+
+    data = [
+        dict(row, lost=None)
+        if row["region"] == "North" and row["segment"] == "Ent"
+        else row
+        for row in _WIDE_BY_SEGMENT
+    ]
+    resolved = _resolved_wide_by_dimension(data, ["won", "lost"], 1600)
+
+    assert resolved.style.endpoint_labels.visible is False

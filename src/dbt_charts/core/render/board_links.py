@@ -63,7 +63,7 @@ class LinkContext:
             every slug (dashboard or system view).
         current_board_slug: Author-space slug of the board being rendered
             (e.g. ``"zendesk/tickets/list"``). Used to resolve relative links.
-        origin: When non-empty (e.g. ``"https://cloud.dataface.com"``),
+        origin: When non-empty (e.g. ``"https://dbtcharts.com"``),
             emitted links are fully-qualified. In-app renders leave this
             empty so links stay root-relative. Set for exported artifacts
             (downloaded HTML/PDF/PNG) opened outside the app where no base

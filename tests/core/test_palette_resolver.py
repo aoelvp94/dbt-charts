@@ -163,10 +163,8 @@ class TestPaletteSequential:
 
     def test_surface_table_returns_wcag_safe_stops(self):
         # surface="table" returns WCAG-safe stops via OKLCH interpolation.
-        from dbt_charts.core.compile.resolve.style.palette import (
-            _wcag_contrast,
-            palette,
-        )
+        from dbt_charts.core.colors import wcag_contrast as _wcag_contrast
+        from dbt_charts.core.compile.resolve.style.palette import palette
 
         result = palette("dbt-seq-blue", surface="table")
         assert isinstance(result, list)
@@ -245,11 +243,11 @@ class TestVividTenDark:
         "#005998",
         "#00a1c0",
         "#008055",
-        "#5f3a12",
         "#a07400",
-        "#82568d",
         "#b03e00",
+        "#82568d",
         "#4a6c00",
+        "#5f3a12",
         "#6c7685",
         "#404852",
     ]
@@ -271,11 +269,11 @@ class TestVividTenLight:
         "#628eba",
         "#8cd2e7",
         "#8cccab",
-        "#917459",
         "#e0bf83",
-        "#b698be",
         "#d0896f",
+        "#b698be",
         "#9ab27e",
+        "#917459",
         "#b3b8bf",
         "#686e78",
     ]
@@ -369,11 +367,11 @@ class TestVividTenGhost:
         "#b9d4f0",
         "#b2d9e5",
         "#b6dbc7",
-        "#dccec2",
         "#e2cfad",
-        "#dccae1",
         "#f2c6b6",
+        "#dccae1",
         "#c8d7b8",
+        "#dccec2",
         "#ced1d6",
         "#babec4",
     ]
@@ -419,11 +417,11 @@ class TestVividTenInk:
         "#003761",
         "#004554",
         "#00442b",
-        "#54310b",
         "#503900",
-        "#4d1c5a",
         "#621f00",
+        "#4d1c5a",
         "#2a4000",
+        "#54310b",
         "#2e3641",
         "#252e3d",
     ]
@@ -847,9 +845,8 @@ class TestResolveDarkCompanionStops:
         assert result == [cat10_dark[1], cat10_dark[2], cat10_dark[3]]
 
     def test_author_picked_non_slot_0_editorial_10_slots_resolve_correctly(self):
-        """Author sets style.range.category: ['#779bc9', '#5c7b5c']
-        (editorial-10 indices 1 and 5). Under slot-0 equality the first color
-        fails detection (#779bc9 ≠ editorial-10[0]) and both labels fall
+        """Author picks editorial-10 indices 1 and 5. Under slot-0 equality
+        the first color fails detection and both labels fall
         through to bright. Under per-color lookup each is found at its actual
         index and returns the correct dark companion.
         """
@@ -857,7 +854,8 @@ class TestResolveDarkCompanionStops:
             resolve_dark_companion_stops,
         )
 
-        author_picks = ["#779bc9", "#5c7b5c"]  # editorial-10[1] + editorial-10[5]
+        editorial = palette("editorial-10")
+        author_picks = [editorial[1], editorial[5]]
         result = resolve_dark_companion_stops(author_picks)
         e10_dark = palette("editorial-10-dark")
         assert result == [e10_dark[1], e10_dark[5]]
@@ -870,8 +868,8 @@ class TestResolveDarkCompanionStops:
             resolve_dark_companion_stops,
         )
 
-        cat10_slot3 = palette("vivid-10")[3]  # #7a5531
-        e10_slot1 = palette("editorial-10")[1]  # #779bc9
+        cat10_slot3 = palette("vivid-10")[3]  # #e1a500
+        e10_slot1 = palette("editorial-10")[1]
         result = resolve_dark_companion_stops([cat10_slot3, e10_slot1])
         assert result == [
             palette("vivid-10-dark")[3],

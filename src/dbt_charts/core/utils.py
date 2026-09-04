@@ -11,8 +11,20 @@ import yaml
 import yaml.constructor
 from pydantic import BaseModel
 
+from dbt_charts.core.font_measure import get_font_measurer
+
 # Query result rows, as every core layer passes them around.
 Rows = list[dict[str, Any]]
+
+# Breathing room between the widest label's near edge and the tick — purely
+# cosmetic (avoids the label touching the tick line), not a gutter-sizing
+# input. Small and fixed, like the axis label gap in chart-rendering config.
+_BREATHING_ROOM_PX = 4.0
+
+# Vega-Lite's own default axis.labelLimit when the theme leaves
+# axis.labels.max_width unset — the pixel width VL truncates a rendered label
+# to (with an ellipsis) before this module ever measures it.
+DEFAULT_VL_LABEL_LIMIT: float = 180.0
 
 _MERGE_TAG = "tag:yaml.org,2002:merge"
 
@@ -340,16 +352,10 @@ def domain_sort_aggregates(
 ) -> dict[Hashable, float]:
     """Per-x-category sum of ``sort_field`` for domain ordering.
 
-    Shared by ``stacked_x_domain_order`` (every caller is a genuinely stacked
-    plot, where Vega-Lite's ``EncodingSortField.op`` defaults to ``sum``) and
-    the render layer's ``x_domain._sort_domain_by_field``. The latter is only ever
-    reached with a truthy x-encoding sort, which only the bar emitter's
-    vertical x ever carries — the bar emitter's measure (y) channel never
-    emits ``stack: null`` for a categorical x (stacked bars set an explicit
-    ``stack: "zero"``; grouped bars on a categorical x use ``xOffset``
-    instead, not an unstacked ``y`` — the unstacked case is reserved for a
-    genuinely continuous x, which never reaches this sort-domain path), so
-    ``sum`` is correct there too.
+    ``stacked_x_domain_order`` is the single caller. Its authored field-sort
+    paths are categorical bars, where Vega-Lite's ``EncodingSortField.op``
+    defaults to ``sum``: stacked bars set an explicit stack, while grouped bars
+    use an offset channel rather than ``stack: null``.
 
     Uses ``coerce_numeric_cell`` for type-safe coercion: handles int/float/
     Decimal and numeric strings (the real shape warehouse rows arrive in —
@@ -370,29 +376,193 @@ def domain_sort_aggregates(
 def stacked_x_domain_order(
     rows: Rows, x_field: str, sort_by: str, descending: bool
 ) -> list[Hashable]:
-    """The categorical x domain of a *stacked* plot, in Vega-Lite's render order.
+    """A categorical x domain in Vega-Lite's rendered order.
 
-    Shared by the resolve-time labelling predicate and the render-time label
-    anchors, which must agree on which column is first and last or the labels
-    name a bar the reader is not looking at.
+    Shared by the resolve-time stacked-label predicate and render-time domain
+    consumers, which must agree on which category is first and last.
 
-    An empty ``sort_by`` means no authored sort, and VL orders a discrete
-    domain by its own values. Otherwise VL sorts by the named field, and
+    An empty ``sort_by`` means no authored sort, and VL preserves first-
+    occurrence row order when the encoding carries ``sort: null``. Otherwise
+    VL sorts by the named field, and
     ``EncodingSortField.op`` defaults to ``sum`` — so this totals the field
-    per category. Every caller here is a genuinely stacked path; a caller
-    whose plot sets ``stack: null`` would need Vega-Lite's ``min`` default
-    instead, which this function does not compute.
+    per category. The current field-sort callers are categorical bar paths;
+    see ``domain_sort_aggregates`` for why their aggregate is ``sum``.
 
     A category with no value for the sort field keeps its domain-value
     position at the end, which is where VL puts it.
     """
-    xs = sorted({row[x_field] for row in rows if row.get(x_field) is not None})
+    xs = list(
+        dict.fromkeys(row[x_field] for row in rows if row.get(x_field) is not None)
+    )
     if not sort_by:
         return xs
     totals = domain_sort_aggregates(rows, x_field, sort_by)
     ranked = [x for x in xs if x in totals]
     ranked.sort(key=lambda x: totals[x], reverse=descending)
     return ranked + [x for x in xs if x not in totals]
+
+
+def sorted_series_by_stack_order(
+    series: list[str],
+    data: Rows,
+    series_field: str,
+    stack_order: str | None,
+    *,
+    y_field: str = "",
+) -> list[str]:
+    """Return *series* sorted for stacked chart rendering by stack_order.
+
+    Baseline = cumulative zero (the series placed first paints at the bottom).
+    - None / "value": largest global sum at baseline (matches VL's joinaggregate default).
+      Requires *y_field* to be set.
+    - "alphabetical": alphabetically first series at baseline.
+    - "data": globally first-encountered series at baseline (first-encounter in *data*).
+    """
+    if stack_order == "alphabetical":
+        return sorted(series)
+    if stack_order == "data":
+        encounter: dict[str, int] = {}
+        for row in data:
+            s = row.get(series_field)
+            if s is not None:
+                key = str(s)
+                if key not in encounter:
+                    encounter[key] = len(encounter)
+        unseen_rank = len(encounter)
+
+        def _first_encounter_rank(name: str) -> tuple[int, str]:
+            # Not-yet-seen series sorts last (stable "first encounter"
+            # order) — a ranking tie-break, not a fallback masking bad input.
+            rank = encounter.get(
+                name, unseen_rank
+            )  # type-state: silent_fallback — ranking tie-break, not masked bad input
+            return rank, name
+
+        return sorted(series, key=_first_encounter_rank)
+    # None / "value": sort by descending global sum.
+    global_sums: dict[str, float] = {}
+    for row in data:
+        s = row.get(series_field)
+        y = row.get(y_field)
+        if s is None or y is None:
+            continue
+        key = str(s)
+        # Accumulator init, not a fallback masking bad input.
+        running = global_sums.get(
+            key, 0.0
+        )  # type-state: silent_fallback — accumulator init, not masked bad input
+        global_sums[key] = running + float(y)
+
+    def _global_sum_rank(name: str) -> tuple[float, str]:
+        # Unseen series sorts last (lowest priority) — a ranking default,
+        # not a fallback masking bad input.
+        total = global_sums.get(
+            name, 0.0
+        )  # type-state: silent_fallback — unseen series sorts last, not masked bad input
+        return -total, name
+
+    return sorted(series, key=_global_sum_rank)
+
+
+def cumulative_stack_midpoints(
+    data: Rows,
+    x_field: str,
+    y_field: str,
+    series_field: str,
+    series_names: list[str],
+    sort_by: str,
+    descending: bool,
+    stack_mode: str = "zero",
+    stack_order: str | None = None,
+) -> list[tuple[str, float]]:
+    """Return (series, x_midpoint) for the top categorical row (un-nudged).
+
+    The "top row" is the first categorical value — first in query order, or
+    first under an authored ``sort:``. Midpoint is the cumulative x
+    at the series segment's center, ordered through the same ``stack_order``
+    authority as the emitted segments. These are the exact positions the
+    horizontal rail renders at — no vertical dodge/nudge pass exists for this
+    layout; a colliding rail is disqualified wholesale at resolve time
+    (``_horizontal_rail_labels_would_collide`` in
+    ``compile/resolve/chart/bar.py``) rather than negotiated here.
+
+    A series absent from the top row is zero-width there and anchors on the
+    seam between its neighbours — see ``_stacked_midpoints`` (the vertical
+    rail's own, unrelated anchor helper in render/chart/features/endpoint_labels.py).
+
+    For ``stack_mode == "normalize"``, midpoints are divided by the top-row total
+    so they land on the 0..1 scale that VL renders for normalize stacks.
+    """
+    x_values = stacked_x_domain_order(data, x_field, sort_by, descending)
+    if not x_values:
+        return []
+    top_row_x = x_values[0]
+
+    # Gather y-values per series for the top row.
+    series_y: dict[str, float] = dict.fromkeys(series_names, 0.0)
+    for row in data:
+        s = row.get(series_field)
+        y = row.get(y_field)
+        if s is None or y is None:
+            continue
+        key = str(s)
+        if row.get(x_field) == top_row_x:
+            series_y[key] = float(y)
+
+    if not series_y:
+        return []
+
+    series_order = sorted_series_by_stack_order(
+        series_names, data, series_field, stack_order, y_field=y_field
+    )
+
+    total = sum(series_y[s] for s in series_order)
+    result: list[tuple[str, float]] = []
+    cumulative = 0.0
+    for s in series_order:
+        y = series_y[s]
+        mid = cumulative + y / 2.0
+        if stack_mode == "normalize" and total > 0:
+            mid = mid / total
+        result.append((s, mid))
+        cumulative += y
+    return result
+
+
+def measured_label_padding(labels: list[str], family: str, size: float) -> float:
+    """Gutter width so the widest ``labels`` entry's near edge sits at the tick.
+
+    Returns 0.0 for an empty label list (nothing to reserve for). Does NOT
+    add tick length: Vega-Lite's own ``labelPadding`` is already measured
+    from the tick's outer edge, not the axis line — confirmed empirically
+    (a vl-convert probe varying ``tickSize``/``labelPadding``/``ticks``
+    independently shows the rendered label anchor always lands at
+    ``(tickSize if ticks-visible else 0) + labelPadding``). Adding tick
+    length again here double-counts it whenever ticks are visible, and adds
+    dead space even when they aren't — this is the "labels moved further
+    from the axis than they should" bug. Callers no longer need to resolve
+    or pass a tick size for this calculation.
+    """
+    if not labels:
+        return 0.0
+    measurer = get_font_measurer(family)
+    max_width = max(measurer.measure(label, size) for label in labels)
+    return max_width + _BREATHING_ROOM_PX
+
+
+def cap_padding_to_label_limit(padding: float, label_limit: float) -> float:
+    """Cap a computed gutter at what Vega-Lite will actually render.
+
+    ``measured_label_padding`` sizes the gutter to the widest label's full,
+    untruncated text width. Vega-Lite truncates any rendered label wider than
+    ``labelLimit`` (``axis.labels.max_width``, or its own ``DEFAULT_VL_LABEL_LIMIT``
+    when unset) to that width plus an ellipsis — so reserving more than
+    ``label_limit + breathing_room`` leaves dead gutter space no rendered
+    label ever fills. Capping the final padding value is equivalent to
+    capping each label's width before taking the max (min/max commute here),
+    so this needs no access to the underlying label list.
+    """
+    return min(padding, label_limit + _BREATHING_ROOM_PX)
 
 
 def layered_endpoint_rail_shape(

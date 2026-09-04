@@ -27,7 +27,7 @@ from dbt_charts.core.utils import UniqueKeyLoader
 _CHART_EMBED_RE = re.compile(r"^\s*\{\{\s*chart\s+(\w+)\s*\}\}\s*$", re.MULTILINE)
 
 MARKDOWN_NOT_BOARD_MESSAGE = (
-    "Not a Dataface board file: markdown files outside charts/ must declare a "
+    "Not a dbt charts board file: markdown files outside charts/ must declare a "
     "top-level 'board:' key in their YAML frontmatter"
 )
 
@@ -204,7 +204,7 @@ def markdown_to_yaml(md_text: str, *, metadata_table: bool = False) -> str:
 
 
 def is_markdown_board_content(text: str, *, in_boards: bool) -> bool:
-    """Decide whether markdown *text* is a Dataface board.
+    """Decide whether markdown *text* is a dbt charts board.
 
     Content-only decision — no disk access. Callers pair this with a suffix
     check (``ProjectPath.is_markdown`` / ``suffix in MARKDOWN_SUFFIXES``) and

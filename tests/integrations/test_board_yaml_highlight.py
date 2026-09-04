@@ -1,4 +1,4 @@
-"""Tests for Dataface YAML highlighting with embedded SQL."""
+"""Tests for dbt charts YAML highlighting with embedded SQL."""
 
 import re
 
@@ -121,7 +121,7 @@ class TestHighlightBoardYaml:
         assert '<span class="c"># Segment' not in html
         assert "# Segment" in html
 
-    def test_dataface_scalar_values_are_not_keyword_highlighted(self) -> None:
+    def test_dbt_charts_scalar_values_are_not_keyword_highlighted(self) -> None:
         """YAML scalar values like select/value are plain text outside SQL blocks."""
         html = highlight_board_yaml(SCALAR_VALUES_FIXTURE)
         keyword_values = _keyword_spans(html)
@@ -129,8 +129,8 @@ class TestHighlightBoardYaml:
         assert "select" not in keyword_values
         assert "value" not in keyword_values
 
-    def test_dataface_keys_use_nt_class(self) -> None:
-        """Dataface YAML keys like 'charts', 'queries', 'type' use Name.Tag (nt) class."""
+    def test_dbt_charts_keys_use_nt_class(self) -> None:
+        """dbt charts YAML keys like 'charts', 'queries', 'type' use Name.Tag (nt) class."""
         html = highlight_board_yaml(QUERIES_SQL_FIXTURE)
         assert 'class="nt"' in html, "Expected Name.Tag spans for YAML keys"
 

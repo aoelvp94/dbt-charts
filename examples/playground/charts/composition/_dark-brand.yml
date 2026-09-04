@@ -5,7 +5,7 @@
 # It sets the dark theme and a brand accent colour.
 
 title: Dark Brand (hidden base)
-description: >
+notes: >
   Non-listable base board for dark-brand-style dashboards.
   Sets the dark theme and brand accent. Not a standalone dashboard.
 

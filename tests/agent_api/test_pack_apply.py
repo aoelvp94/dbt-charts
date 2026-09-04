@@ -8,7 +8,7 @@ Covers:
 - Landing files are index.yml (assert no overview.yml emitted)
 - Re-applying without --overwrite skips existing files and records them in ScaffoldResult
 - Generated YAML is block-style (no flow-style objects)
-- Proposal lacking source context (no evidence tables) emits description-only dashboards
+- Proposal lacking source context (no evidence tables) emits notes-only dashboards
 - ScaffoldResult has created_files, skipped_files, errors
 """
 
@@ -327,10 +327,10 @@ def test_apply_overwrite_replaces_existing_files(
 # ---------------------------------------------------------------------------
 
 
-def test_apply_no_evidence_emits_description_only(
+def test_apply_no_evidence_emits_note_only(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """Proposal with no evidence emits boards with title+description+text only, no queries."""
+    """Proposal with no evidence emits boards with title+notes+text only, no queries."""
     (tmp_path / "dbt_charts.yml").write_text("")
 
     apply_proposal(_no_evidence_proposal(), local_project(tmp_path))
@@ -353,10 +353,10 @@ def test_apply_no_evidence_emits_description_only(
 # ---------------------------------------------------------------------------
 
 
-def test_apply_index_yml_has_title_and_description(
+def test_apply_index_yml_has_title_and_notes(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """The index.yml landing file has a title and description."""
+    """The index.yml landing file has a title and notes."""
     (tmp_path / "dbt_charts.yml").write_text("")
 
     apply_proposal(_zendesk_proposal(), local_project(tmp_path))
@@ -364,7 +364,7 @@ def test_apply_index_yml_has_title_and_description(
     index_path = tmp_path / "charts" / "zendesk" / "index.yml"
     data = yaml.safe_load(index_path.read_text())
     assert "title" in data
-    assert "description" in data or "text" in data
+    assert "notes" in data or "text" in data
 
 
 def test_apply_entity_dashboard_has_title(

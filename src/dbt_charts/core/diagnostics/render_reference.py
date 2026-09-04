@@ -75,7 +75,7 @@ def _fence_for(text: str) -> str:
 
 
 def _code_section(dc: DiagnosticCode, *, with_anchors: bool) -> str:
-    heading = f"### {dc.code} — {dc.title}"
+    heading = f"### {dc.code}: {dc.title}"
     if with_anchors:
         heading += f" {{: #{dc.code.lower()} }}"
     fence = _fence_for(dc.message_template)

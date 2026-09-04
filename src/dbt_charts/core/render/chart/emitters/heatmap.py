@@ -6,9 +6,19 @@ from dataclasses import dataclass
 from typing import Any
 
 from dbt_charts.core.compile.models.chart.resolved.heatmap import ResolvedHeatmapChart
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    category_scale_for,
+)
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_render import (
+    ERR_LABEL_FORMAT_AXIS_MISMATCH,
+)
 from dbt_charts.core.render.chart.emitters._cartesian import (
     canonicalize_cartesian_x_data,
+    distinct_series_values,
+    resolve_xy_titles,
+    spatial_color_scale,
 )
 from dbt_charts.core.render.chart.emitters._channels import (
     apply_color_legend,
@@ -19,8 +29,10 @@ from dbt_charts.core.render.chart.emitters._channels import (
 from dbt_charts.core.render.chart.emitters._label_overlap import resolve_axis_x_overlap
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.type_inference import (
+    HEATMAP_FORMAT_REMEDY,
     apply_x_tick_cadence,
     build_cartesian_x_encoding,
+    gate_label_format,
 )
 from dbt_charts.core.render.chart.vl_field_maps import (
     axis_to_vl,
@@ -71,6 +83,35 @@ class HeatmapEmitter:
                 # path below gates the same authored fields. Validate-only,
                 # so a bare ticks.step raises here too instead of vanishing.
                 apply_x_tick_cadence(None, ax, chart.x, "nominal")
+                gate_label_format(
+                    ax.labels.format,
+                    chart.x,
+                    data,
+                    "nominal",
+                    setting="axis_x.labels.format",
+                    remedy=HEATMAP_FORMAT_REMEDY,
+                )
+            # y takes no gate_label_format call: that gate asks whether the
+            # ticks can carry the format, and here nothing can — this branch
+            # builds per-measure layer encodings with no `axis` dict and puts
+            # no y on top_encoding, so an authored axis_y format never reaches
+            # Vega on any shape. Refuse whenever one is authored, rather than
+            # weighing evidence that cannot change the answer; a numeric-tick
+            # exemption here would re-open the silent drop for exactly the
+            # commonest wide shape (y: ["2023", "2024"], whose names read as
+            # numbers).
+            if ay.labels.format is not None:
+                raise ChartDataError.from_code(
+                    ERR_LABEL_FORMAT_AXIS_MISMATCH,
+                    setting="axis_y.labels.format",
+                    field=chart.y,
+                    fmt=ay.labels.format,
+                    remedy=(
+                        "A multi-measure heatmap draws no y axis of its own — "
+                        "each measure becomes a color-coded layer — so no "
+                        "label format can reach it. " + HEATMAP_FORMAT_REMEDY
+                    ),
+                )
             layers: list[ChartSpec] = []
             for y_field in chart.y:
                 layer_enc: dict[str, Any] = {
@@ -86,6 +127,10 @@ class HeatmapEmitter:
             )
 
         encoding: dict[str, Any] = {}
+        # chart.y is narrowed to str | None here: the list[str] case returned above.
+        xy = resolve_xy_titles(
+            chart.x, chart.y, chart.x_label, chart.y_label, ax, ay, box, chart.id
+        )
 
         x_transformed = False
         if chart.x:
@@ -130,17 +175,12 @@ class HeatmapEmitter:
                 format_time_unit=label_layout.format_time_unit,
                 visibility_time_unit=label_layout.visibility_time_unit,
                 label_anchor_index=label_layout.anchor_index,
+                panel_fields=(),  # heatmap returns above the gate
             )
             x_enc: dict[str, Any] = {
                 "field": chart.x,
                 "type": x_type,
-                "title": (
-                    chart.x_label
-                    if chart.x_label
-                    else format_display_text(
-                        chart.x, from_slug=True, font=ax.title.font
-                    )
-                ),
+                "title": xy.x_title,
             }
             if x_axis:
                 x_enc["axis"] = x_axis
@@ -151,6 +191,17 @@ class HeatmapEmitter:
             # Heatmap y is a grid dimension: always nominal (see x_type above)
             # — never a numeric domain to estimate a gutter from, so ().
             y_type = "nominal"
+            # A heatmap has no measure axis, so a currency preset here used
+            # to paint $NaN row labels with no diagnostic — same gate x
+            # already had, now also on y.
+            gate_label_format(
+                ay.labels.format,
+                chart.y,
+                data,
+                y_type,
+                setting="axis_y.labels.format",
+                remedy=HEATMAP_FORMAT_REMEDY,
+            )
             # Row labels are the literal per-row values (no d3 format applies
             # to a nominal field), so an own-side align (resolved from
             # axis_y.labels.align: inward, or an authored left/right) is
@@ -174,13 +225,7 @@ class HeatmapEmitter:
             y_enc: dict[str, Any] = {
                 "field": chart.y,
                 "type": y_type,
-                "title": (
-                    chart.y_label
-                    if chart.y_label
-                    else format_display_text(
-                        chart.y, from_slug=True, font=ay.title.font
-                    )
-                ),
+                "title": xy.y_title,
             }
             if y_axis:
                 y_enc["axis"] = y_axis
@@ -201,6 +246,28 @@ class HeatmapEmitter:
                 # like bar/line/scatter/pie do. VL renders its native continuous
                 # gradient legend for a quantitative field with no extra code.
                 apply_color_legend(enc, chart.legend)
+                # A genuinely categorical color field (string values, e.g. a
+                # heatmap using `color:` to name which category occupies each
+                # cell rather than a quantitative measure) is board-bound like
+                # any other chart's color channel — repro: a heatmap ordered
+                # `category DESC` plus a bar, both `color: category`, used to
+                # come out with SWAPPED colors between the two charts because
+                # this branch never called `category_scale_for`. Gated on
+                # `enc["type"] == "nominal"`, mutually exclusive with the
+                # quantitative gradient branch below.
+                if (
+                    color_ch.mode == "series"
+                    and enc.get("type") == "nominal"
+                    and enc.get("field")
+                    and chart.palette
+                ):
+                    scale = category_scale_for(chart.category_colors, enc["field"])
+                    if scale is not None:
+                        series = distinct_series_values(data, enc["field"])
+                        if series:
+                            enc["scale"] = spatial_color_scale(
+                                series, chart.palette, series, scale
+                            )
                 # color_gradient is the cascade-complete gradient (theme/board
                 # defaults merged with any chart-local style.color.gradient
                 # override) — strictly more complete than a "gradient" mode

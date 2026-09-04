@@ -1,6 +1,6 @@
 """ResolvedChartsStyle.dark_companion_palette — baked once at board-resolve time.
 
-Render (data_table_attachment.py's per_series label ink) used to call
+Render (support_table_attachment.py's per_series label ink) used to call
 compile.palette.resolve_dark_companion_stops itself; that decision is now
 projected onto the resolved contract so render only reads a field.
 """

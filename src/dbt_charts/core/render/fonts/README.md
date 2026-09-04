@@ -1,12 +1,12 @@
 ## Vendored Chart-Lab Fonts
 
 This directory vendors the custom fonts required for the chart-lab import
-review experience in Dataface.
+review experience in dbt charts.
 
 Included assets:
 
 - `InterVariable.ttf`
-  - Existing Dataface default sans variable font (used for SVG measurement
+  - Existing dbt charts default sans variable font (used for SVG measurement
     and ReportLab-backed export paths).
 - `InterVariable-Italic.ttf`
   - Google Fonts Inter variable italic font, used when prose asks for
@@ -30,8 +30,8 @@ Included assets:
     `tnum` substitution is baked across all masters so digits are
     always tabular by default without any OpenType feature toggle.
   - Rebuilt from `InterVariable.ttf` via
-    `design/experiments/chart-lab/tools/build_dataface_sans_tabular.py`
-    (run `just rebuild-dft-sans-tabular` to regenerate).
+    `design/experiments/chart-lab/tools/build_dbt_charts_sans_tabular.py`
+    (run `just rebuild-dbt-sans-tabular` to regenerate).
   - Design rationale: `ai_notes/considerations/DBT_SANS_TABULAR_AS_NUMERIC_COMPANION.md`
 - `DBTSansTabular-Regular.woff2`
   - Served at `/static/fonts/DBTSansTabular-Regular.woff2` so quantitative axis

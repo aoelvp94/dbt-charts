@@ -8,7 +8,7 @@ from pathlib import Path
 import typer
 
 from dbt_charts.agent_api import mcp_install
-from dbt_charts.cli._project import DFT_ROOT_MARKERS, resolve_mcp_project_dir
+from dbt_charts.cli._project import DCT_ROOT_MARKERS, resolve_mcp_project_dir
 
 
 def run_init(
@@ -21,10 +21,10 @@ def run_init(
     cwd = Path.cwd()
     resolution = resolve_mcp_project_dir(project_dir, cwd)
     if resolution.project_dir is None:
-        markers_str = ", ".join(DFT_ROOT_MARKERS)
+        markers_str = ", ".join(DCT_ROOT_MARKERS)
         if project_dir is not None:
             msg = (
-                f"Error: --project-dir {project_dir} does not contain a Dataface "
+                f"Error: --project-dir {project_dir} does not contain a dbt charts "
                 f"or dbt project.\n"
                 f"Looked for: {markers_str}."
             )
@@ -32,9 +32,9 @@ def run_init(
                 msg += f"\nTip: did you mean {resolution.nearest_root}?"
         else:
             msg = (
-                f"Error: No Dataface or dbt project found at or above {cwd}.\n"
+                f"Error: No dbt charts or dbt project found at or above {cwd}.\n"
                 f"Looked for: {markers_str}.\n"
-                f"Re-run from inside your Dataface project, "
+                f"Re-run from inside your dbt charts project, "
                 f"or pass --project-dir <path>."
             )
         typer.echo(msg, err=True)
@@ -97,14 +97,20 @@ def run_init(
             return
 
     configured = []
+    had_error = False
     for c in targets:
-        result = mcp_install.install_for_client(
-            c,
-            dct_executable=dct_executable,
-            server_args=server_args,
-            ai_config_root=ai_config_root,
-            force=force,
-        )
+        try:
+            result = mcp_install.install_for_client(
+                c,
+                dct_executable=dct_executable,
+                server_args=server_args,
+                ai_config_root=ai_config_root,
+                force=force,
+            )
+        except mcp_install.McpConfigReadError as exc:
+            typer.echo(f"  Error: {exc}", err=True)
+            had_error = True
+            continue
         typer.echo(result.message)
         if not result.already_configured:
             configured.append(c.name)
@@ -141,3 +147,6 @@ def run_init(
         typer.echo(
             "  Install workflow skills: dct init skills (separate from MCP wiring)."
         )
+
+    if had_error:
+        raise typer.Exit(1)

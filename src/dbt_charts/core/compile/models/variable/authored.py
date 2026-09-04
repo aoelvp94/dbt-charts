@@ -11,6 +11,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
+from dbt_charts.core.compile.models.markers import DisplayText
 from dbt_charts.core.compile.models.query.authored import AuthoredQuery
 from dbt_charts.core.compile.models.refs import infer_query_type_from_keys
 
@@ -56,7 +57,8 @@ class VariableOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     static: list[str | int | float] | None = Field(
-        default=None, description="List of static option values (strings or numbers)."
+        default=None,
+        description="Option values written out in place, as strings or numbers.",
     )
     query: str | None = Field(
         default=None, description="Query name whose result rows provide option values."
@@ -157,17 +159,19 @@ class Variable(BaseModel):
         json_schema_extra={"internal": True},
         description="Internal: True when input type was resolved from 'auto' to a concrete type.",
     )
-    label: str | None = Field(
-        default=None, description="Display label shown above the input control."
+    label: Annotated[str | None, DisplayText()] = Field(
+        default=None, description="Caption naming what this input sets."
     )
-    description: str | None = Field(
-        default=None, description="Help text shown below the input control."
+    notes: Annotated[str | None, DisplayText()] = Field(
+        default=None,
+        description="Help text for this input, carried to the host rather than drawn on the board.",
     )
     default: Any | None = Field(
-        default=None, description="Default value used when no URL param is set."
+        default=None,
+        description="Value the variable takes when neither a URL param nor --var supplies one.",
     )
     placeholder: str | None = Field(
-        default=None, description="Placeholder text shown in the input when empty."
+        default=None, description="Hint text shown inside the input while it is empty."
     )
     required: bool | None = Field(
         default=False,
@@ -181,7 +185,7 @@ class Variable(BaseModel):
         default=None,
         description=(
             "Enable this control. Accepts: static bool; a variable name or Jinja "
-            "boolean expression string (no {{ }} required — bare names auto-wrap); "
+            "boolean expression string (no {{ }} required, bare names auto-wrap); "
             "or a {query, column} form that reads a single boolean cell from a named "
             "query. None = enabled. Absent variable in a string expression raises (use a default)."
         ),
@@ -204,19 +208,10 @@ class Variable(BaseModel):
             description="Query name or inline query definition for populating options.",
         ),
     ] = None
-    dimension: str | None = Field(
-        default=None, description="MetricFlow dimension name for populating options."
-    )
-    measure: str | None = Field(
-        default=None, description="MetricFlow measure name for populating options."
-    )
-    model: str | None = Field(
-        default=None, description="dbt model name for populating options."
-    )
-
     # Options
     options: VariableOptions | None = Field(
-        default=None, description="Static or query-driven option list configuration."
+        default=None,
+        description="Where the selectable values come from: a written-out list or a query.",
     )
 
     # Migration metadata

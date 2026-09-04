@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, TypeVar
 
-from dbt_charts.core.compile.format import resolve_format, resolve_label_format
+from dbt_charts.core.compile.format import (
+    resolve_format_for_values,
+    resolve_label_format,
+)
 from dbt_charts.core.compile.models.chart.normalized import (
     Chart,
 )
@@ -39,6 +43,8 @@ def _measure_tooltip_format(
     primary: Any,
     chart_style_context: ChartStyleContext,
     y_channel_type: str = "quantitative",
+    *,
+    values: Iterable[float | None],
 ) -> str | None:
     """Resolve the chart-authored measure (y-axis) tooltip format, if any.
 
@@ -48,6 +54,8 @@ def _measure_tooltip_format(
     ``y_channel_type`` matters for scatter, whose y can be nominal (dot plot) —
     chart_authored_axis_format returns None for non-quantitative/temporal
     channels, so a nominal y correctly skips the measure-format fallback.
+    ``values`` is every value this chart's own y measure(s) will paint,
+    passed through to resolve_format_for_values's per-chart sub-$1 vote.
     """
     fmt = chart_authored_axis_format(normalized, y_channel_type)
     if (
@@ -57,7 +65,11 @@ def _measure_tooltip_format(
         and primary.axis_y.labels is not None
     ):
         fmt = primary.axis_y.labels.format
-    return resolve_format(fmt, chart_style_context.formats) if fmt else None
+    return (
+        resolve_format_for_values(fmt, chart_style_context.formats, values)
+        if fmt
+        else None
+    )
 
 
 _LabelsT = TypeVar("_LabelsT", bound=MarkLabelsStyle)

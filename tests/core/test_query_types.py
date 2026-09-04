@@ -39,14 +39,14 @@ class TestSqlQuery:
         query = SqlQuery(sql="SELECT 1", source="test_profile", limit=100)
         assert query.limit == 100
 
-    def test_description_field(self):
-        """Test optional query description metadata field."""
+    def test_note_field(self):
+        """Test optional query notes metadata field."""
         query = SqlQuery(
             sql="SELECT 1",
             source="test_profile",
-            description="Smoke test query",
+            notes="Smoke test query",
         )
-        assert query.description == "Smoke test query"
+        assert query.notes == "Smoke test query"
 
     def test_source_optional_for_ad_hoc(self):
         """A *compiled* SqlQuery always names its source (normalize_query enforces
@@ -153,7 +153,6 @@ class TestValidQueryTypes:
     def test_contains_all_types(self):
         """Test VALID_QUERY_TYPES contains all expected types."""
         assert "sql" in VALID_QUERY_TYPES
-        assert "metricflow" in VALID_QUERY_TYPES
         assert "http" in VALID_QUERY_TYPES
 
     def test_contains_values_type(self):

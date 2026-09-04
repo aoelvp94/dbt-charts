@@ -21,19 +21,22 @@ class AreaChart(_CartesianChartFields, _ConditionalFormattingField):
 
     model_config = ConfigDict(extra="forbid")
 
-    type: Annotated[Literal["area"], Field(description="Area chart type.")]
+    type: Annotated[Literal["area"], Field(description="Selects the chart family.")]
     style: Annotated[
         AreaChartStylePatch | None,
-        Field(default=None, description="Chart-local style overrides."),
+        Field(default=None, description="Appearance overrides for this chart alone."),
     ]
     layers: Annotated[
         list[CartesianLayer] | None,
-        Field(default=None, description="Typed overlay layers on this chart."),
+        Field(
+            default=None,
+            description="Extra marks drawn over this chart, each with its own type and columns.",
+        ),
     ]
 
     @model_validator(mode="after")
     def _validate_multi_series(self) -> AreaChart:
         reject_multi_series_channel_conflicts(
-            "Area", self.y, self.color, self.layers, self.conditional_formatting
+            "Area", self.y, self.layers, self.conditional_formatting
         )
         return self

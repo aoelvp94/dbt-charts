@@ -192,7 +192,7 @@ def _parse_channel_scale(
     scale_dict = dict(scale)
     if channel_name in ("opacity", "stroke_width") and "palette" not in scale_dict:
         scale_dict["palette"] = [0.2, 1.0]
-    # A named Dataface palette resolves to hex stops via bake_scale_target_stops;
+    # A named dbt charts palette resolves to hex stops via bake_scale_target_stops;
     # a Vega scheme name (e.g. "viridis") is left alone and forwarded to VL as
     # `scheme:` directly (gradient_scale_to_vl).
     return bake_scale_target_stops(ScaleTargetConfig.model_validate(scale_dict))

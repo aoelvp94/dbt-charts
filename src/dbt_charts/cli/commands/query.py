@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
 import typer
+from pydantic import TypeAdapter
 from rich.markup import escape
 from rich.table import Table
 
@@ -36,6 +37,27 @@ err_console = dct_console(stderr=True)
 
 _SEVERITY_ICON = {"error": "❌", "warning": "⚠️ ", "info": "ℹ️ "}
 
+_diagnostic_adapter: TypeAdapter[QueryDiagnostic] | None = None
+
+
+def _diagnostic_wire_dict(d: QueryDiagnostic) -> dict[str, Any]:
+    """Serialize a QueryDiagnostic the way ExecuteQueryResult/DescribeQueryResult
+    do via model_dump_json(exclude_none=True), so `--validate --json` matches
+    `--describe --json` / execute_query's wire shape key-for-key instead of the
+    null-filled shape `QueryDiagnostic.to_dict()` used to produce.
+
+    Builds the adapter lazily: `dbt_charts.core.inspect.query_validator`
+    (QueryDiagnostic's module) imports `core.compile.sql_guard`, and
+    `dbt_charts.cli.main` must not eagerly load `dbt_charts.core.compile`
+    (test_lazy_imports.py).
+    """
+    global _diagnostic_adapter
+    if _diagnostic_adapter is None:
+        from dbt_charts.agent_api.validate_query import QueryDiagnostic as _QD
+
+        _diagnostic_adapter = TypeAdapter(_QD)
+    return _diagnostic_adapter.dump_python(d, mode="json", exclude_none=True)
+
 
 def _rows_table(columns: list[str], data: list[dict[str, Any]]) -> Table:
     t = Table(show_header=True, header_style="bold", box=None, padding=(0, 2, 0, 0))
@@ -54,16 +76,16 @@ def _print_rows(
     err_console.print(f"\n{row_count} rows{' (truncated)' if truncated else ''}")
 
 
-def _print_diagnostic(d: dict[str, Any], target: Console = err_console) -> None:
-    icon = _SEVERITY_ICON.get(d.get("severity", ""), "⚠️ ")
-    target.print(f"{icon} [{d['code']}] {d['message']}", markup=False)
-    if d.get("detail"):
-        target.print(f"   {d['detail']}", markup=False)
-    if d.get("recommendation"):
-        target.print(f"   → {d['recommendation']}", markup=False)
-    if d.get("confidence") is not None:
-        target.print(f"   confidence: {d['confidence']:.0%}")
-    for ev in d.get("evidence", []):
+def _print_diagnostic(d: QueryDiagnostic, target: Console = err_console) -> None:
+    icon = _SEVERITY_ICON.get(d.severity, "⚠️ ")
+    target.print(f"{icon} [{d.code}] {d.message}", markup=False)
+    if d.detail:
+        target.print(f"   {d.detail}", markup=False)
+    if d.recommendation:
+        target.print(f"   → {d.recommendation}", markup=False)
+    if d.confidence is not None:
+        target.print(f"   confidence: {d.confidence:.0%}")
+    for ev in d.evidence:
         target.print(f"   evidence: {ev}", markup=False)
 
 
@@ -90,7 +112,8 @@ def _print_query_board_rich(result: QueryBoardResult) -> None:
 
 def _print_execute_query_rich(result: ExecuteQueryResult) -> None:
     if not result.success:
-        err_console.print(f"[red]Error:[/red] {escape(result.error or '')}")
+        for err in result.errors:
+            err_console.print(f"[red]Error:[/red] {escape(err)}")
         raise typer.Exit(1)
     _print_rows(result.columns, result.data, result.row_count, result.truncated)
 
@@ -103,11 +126,11 @@ def _print_validate_result(
     """Print validate result and exit 1 on errors."""
     has_errors = any(d.severity == "error" for d in active)
     if json_output:
-        active_dicts = [d.to_dict() for d in active]
+        active_dicts = [_diagnostic_wire_dict(d) for d in active]
         payload: Any = (
             {
                 "diagnostics": active_dicts,
-                "suppressed": [d.to_dict() for d in suppressed or []],
+                "suppressed": [_diagnostic_wire_dict(d) for d in suppressed or []],
             }
             if suppressed is not None
             else active_dicts
@@ -117,7 +140,7 @@ def _print_validate_result(
         console.print("No issues found.")
     else:
         for d in active:
-            _print_diagnostic(d.to_dict(), target=console)
+            _print_diagnostic(d, target=console)
         if suppressed:
             console.print(f"\nSuppressed ({len(suppressed)}):")
             for d in suppressed:
@@ -361,11 +384,11 @@ def query_command(
                 suppressed = None
             has_errors = any(d.severity == "error" for d in active)
             # Build the validate payload the same way on both error and success paths.
-            active_dicts = [d.to_dict() for d in active]
+            active_dicts = [_diagnostic_wire_dict(d) for d in active]
             validate_payload: Any = (
                 {
                     "diagnostics": active_dicts,
-                    "suppressed": [d.to_dict() for d in suppressed or []],
+                    "suppressed": [_diagnostic_wire_dict(d) for d in suppressed or []],
                 }
                 if suppressed is not None
                 else active_dicts

@@ -111,7 +111,7 @@ def test_tooltip_style_blob_carries_active_marker() -> None:
     assert blob["activeMarker"] == "triangle"
 
 
-def test_multi_chart_board_isolates_shared_x_marks_per_dft_chart() -> None:
+def test_multi_chart_board_isolates_shared_x_marks_per_chart() -> None:
     """Render precondition the ``.dbt-chart`` grouping scope relies on: two
     charts that share an x value render into SEPARATE ``.dbt-chart`` subtrees,
     each carrying its own marks for the shared identity.
@@ -157,7 +157,7 @@ rows: [a, b]
         return [
             label
             for label in re.findall(r'aria-label="([^"]*)"', chunk)
-            if "Revenue" in label and ("Jan" in label or "Feb" in label)
+            if "revenue" in label and ("Jan" in label or "Feb" in label)
         ]
 
     chart_a, chart_b = data_mark_labels(svg[ia:ib]), data_mark_labels(svg[ib:])
@@ -206,4 +206,4 @@ charts:
     # "tiny" relative to it -- BarHoverBandFeature's hover band correctly adds
     # no layer here (see bar_hover_band.py's module docstring). Only the real
     # bar's aria-label is present; this test pins its wire FORMAT.
-    assert header_labels == [f"{ROLE_HEADER}Jan; Revenue: 100"]
+    assert header_labels == [f"{ROLE_HEADER}Jan; revenue: 100"]

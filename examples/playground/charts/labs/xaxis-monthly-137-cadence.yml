@@ -1,0 +1,46 @@
+title: "X-axis cadence: 137 monthly points (Dave's chart)"
+notes: >
+  Regression specimen for the cadence ladder. 137 monthly points is far more
+  than an axis can label per bucket, so the ladder must coarsen past quarter
+  all the way to year rather than rotating quarterly labels to vertical.
+  EXPECT BOTH CHARTS IDENTICAL: flat, horizontal, year-only marks reading
+  2016..2026. Chart 2 authors the cadence explicitly; chart 1 must reach the
+  same answer on its own. Any tilt here, or any label reading "Jan", is the
+  bug returning.
+extends: clarity
+rows:
+  - cols: [default_cadence]
+  - cols: [forced_year]
+charts:
+  default_cadence:
+    type: line
+    title: "Default — expect flat year marks, chosen without authoring"
+    x: month
+    y: total
+    query:
+      sql: >
+        SELECT month, total FROM (
+          SELECT
+            CAST(d AS DATE) AS month,
+            pow(1.032, row_number() OVER (ORDER BY d)) * 1000000 AS total
+          FROM generate_series(DATE '2015-04-01', DATE '2026-08-01', INTERVAL 1 MONTH) AS t(d)
+        )
+      source: duckdb_local
+  forced_year:
+    type: line
+    title: "labels.time_unit: year — the same answer, authored explicitly"
+    x: month
+    y: total
+    style:
+      axis_x:
+        labels:
+          time_unit: year
+    query:
+      sql: >
+        SELECT month, total FROM (
+          SELECT
+            CAST(d AS DATE) AS month,
+            pow(1.032, row_number() OVER (ORDER BY d)) * 1000000 AS total
+          FROM generate_series(DATE '2015-04-01', DATE '2026-08-01', INTERVAL 1 MONTH) AS t(d)
+        )
+      source: duckdb_local

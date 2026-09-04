@@ -70,7 +70,7 @@ rows:
         assert "<!DOCTYPE html>" in html_output
         assert "<svg" in html_output
         wrapper_style = re.search(
-            r"\.dataface-wrapper\s*\{([^}]*)\}", html_output, re.DOTALL
+            r"\.dbt-charts-wrapper\s*\{([^}]*)\}", html_output, re.DOTALL
         )
         assert wrapper_style is not None
         assert "max-width:" not in wrapper_style.group(1)
@@ -382,7 +382,7 @@ rows:
         assert isinstance(svg_output, str)
         expected_content_width = get_theme_style(
             get_default_theme_name()
-        ).frame.width - (2 * get_theme_style().frame.margin)
+        ).frame.max_width - (2 * get_theme_style().frame.margin)
         root = ET.fromstring(svg_output)
         ns = {"svg": "http://www.w3.org/2000/svg"}
         nested_widths: list[float] = []
@@ -406,4 +406,4 @@ rows:
             )
 
         assert expected_content_width in nested_widths
-        assert get_theme_style().frame.width not in nested_widths
+        assert get_theme_style().frame.max_width not in nested_widths

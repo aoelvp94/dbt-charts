@@ -34,12 +34,12 @@ from dbt_charts.core.compile.resolve.style.board import (
 
 def _editorial_cream_charts():
     """Return the cream theme's ChartStyleContext."""
-    return resolve_chart_style_context(get_theme_style("cream"))
+    return resolve_chart_style_context(get_theme_style("paper"))
 
 
 def _editorial_cream_resolved():
     """Return the cream theme's full ResolvedStyle."""
-    return resolve_style(get_theme_style("cream"))
+    return resolve_style(get_theme_style("paper"))
 
 
 class TestChartTitleSpecThemeAware:

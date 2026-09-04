@@ -8,7 +8,10 @@ import pytest
 from pydantic import ValidationError
 
 from dbt_charts.core.compile.config import get_theme_style, list_built_in_themes
-from dbt_charts.core.compile.format import resolve_label_format
+from dbt_charts.core.compile.format import (
+    resolve_format_for_values,
+    resolve_label_format,
+)
 from dbt_charts.core.diagnostics.codes_render import ERR_PERCENT_RANGE
 from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.format_utils import (
@@ -19,8 +22,12 @@ from dbt_charts.core.render.format_utils import (
     get_format_prefix_suffix,
     resolve_format,
 )
+from dbt_charts.core.text.predefined_formats import (
+    PREDEFINED_NUMBER_NAMES,
+    PREDEFINED_SPECS,
+)
 
-_ALIAS_FORMATS = {"compact": "~s", "currency": "$,.2f"}
+_ALIAS_FORMATS = {"tilde": "~s", "money": "$,.2f"}
 
 
 class TestResolveLabelFormat:
@@ -32,11 +39,11 @@ class TestResolveLabelFormat:
     """
 
     def test_alias_si_is_house(self):
-        # "compact" is a predefined name, not a user alias — hits predefined
+        # "number" is a predefined name, not a user alias — hits predefined
         # path regardless of the formats dict; the _ALIAS_FORMATS dict is
         # irrelevant here but kept for API-contract clarity.
-        resolved, is_house = resolve_label_format("compact", _ALIAS_FORMATS)
-        assert resolved == "~s"
+        resolved, is_house = resolve_label_format("number", _ALIAS_FORMATS)
+        assert resolved == ".3~s"
         assert is_house is True
 
     def test_literal_si_is_not_house(self):
@@ -47,7 +54,7 @@ class TestResolveLabelFormat:
         assert is_house is False
 
     def test_non_si_alias_is_not_house(self):
-        resolved, is_house = resolve_label_format("currency", _ALIAS_FORMATS)
+        resolved, is_house = resolve_label_format("money", _ALIAS_FORMATS)
         assert resolved == "$,.2f"
         assert is_house is False
 
@@ -80,19 +87,85 @@ class TestResolveLabelFormat:
             assert is_house is False, key
 
     def test_format_config_object_uses_spec_for_alias_check(self):
-        # "compact" is a predefined name; FormatConfig.spec is the lookup key.
+        # "number" is a predefined name; FormatConfig.spec is the lookup key.
         resolved, is_house = resolve_label_format(
-            FormatConfig(spec="compact"), _ALIAS_FORMATS
+            FormatConfig(spec="number"), _ALIAS_FORMATS
         )
-        assert resolved == "~s"
+        assert resolved == ".3~s"
         assert is_house is True
+
+
+class TestRetiredFormatSuccessors:
+    """The retired-name hint is the entire migration path for this rename.
+
+    A value rename cannot be a schema migration — `value_map` is total over its
+    field's domain and `format:` is an open string — so the diagnostic is all an
+    author gets. Delete the table and CI stays green while every hint regresses
+    to the fuzzy match the module's own comment warns against: the nearest string
+    to `currency_compact` is `currency_whole`, which compiles clean and silently
+    drops compaction.
+    """
+
+    # Literal expectations, not a loop over the table under test: reading the
+    # successor back out of `RETIRED_FORMAT_SUCCESSORS` makes every assertion
+    # true of any table, including an empty one and a corrupted one.
+    EXPECTED = {
+        "currency_compact": "'currency_compact' was renamed to 'currency'.",
+        "compact": "'compact' was renamed to 'number'.",
+        "number_default": "'number_default' was renamed to 'number'.",
+    }
+
+    def test_each_retired_name_names_its_successor(self):
+        from dbt_charts.core.diagnostics.hints import suggest_close_format
+
+        available = sorted(PREDEFINED_NUMBER_NAMES)
+        for retired, expected in self.EXPECTED.items():
+            assert suggest_close_format(retired, available) == expected
+
+    def test_the_table_covers_exactly_the_names_this_release_retired(self):
+        """A deleted or extended table has to move this test, not slip past it."""
+        from dbt_charts.core.diagnostics.hints import RETIRED_FORMAT_SUCCESSORS
+
+        assert set(RETIRED_FORMAT_SUCCESSORS) == set(self.EXPECTED)
+
+    def test_every_successor_still_resolves(self):
+        from dbt_charts.core.diagnostics.hints import RETIRED_FORMAT_SUCCESSORS
+
+        assert RETIRED_FORMAT_SUCCESSORS, "an empty table is a deleted migration path"
+        for retired, successor in RETIRED_FORMAT_SUCCESSORS.items():
+            assert successor in PREDEFINED_NUMBER_NAMES, (
+                f"{retired} points at {successor}, which is not a live name"
+            )
+
+    def test_no_retired_name_survives_in_the_vocabulary(self):
+        from dbt_charts.core.diagnostics.hints import RETIRED_FORMAT_SUCCESSORS
+
+        assert RETIRED_FORMAT_SUCCESSORS, "an empty table is a deleted migration path"
+        assert not (set(RETIRED_FORMAT_SUCCESSORS) & set(PREDEFINED_NUMBER_NAMES))
+
+    def test_a_successor_illegal_in_this_slot_is_not_offered(self):
+        """`available` is scoped to the slot's half of the vocabulary.
+
+        Offering `number` to a `time_format:` slot would trade a fuzzy wrong
+        answer for a confident one.
+        """
+        from dbt_charts.core.diagnostics.hints import suggest_close_format
+
+        hint = suggest_close_format("compact", ["date_short", "time_short"])
+        assert hint is None or "number" not in hint
+
+    def test_a_typo_still_gets_the_fuzzy_match(self):
+        from dbt_charts.core.diagnostics.hints import suggest_close_format
+
+        hint = suggest_close_format("currancy", sorted(PREDEFINED_NUMBER_NAMES))
+        assert hint is not None and "currency" in hint
 
 
 class TestResolveFormatThemeLookup:
     """resolve_format resolves aliases from a caller-supplied formats dict."""
 
     def test_alias_in_formats_dict(self):
-        assert resolve_format("currency", {"currency": "$,.2f"}) == "$,.2f"
+        assert resolve_format("money", {"money": "$,.2f"}) == "$,.2f"
 
     def test_custom_alias_in_formats_dict(self):
         assert resolve_format("revenue", {"revenue": "$~s"}) == "$~s"
@@ -102,11 +175,11 @@ class TestResolveFormatThemeLookup:
 
     def test_no_formats_dict_predefined_resolves(self):
         # Predefined names resolve via the engine spec regardless of formats dict.
-        assert resolve_format("currency", None) == "$,.2f"
+        assert resolve_format("currency_full", None) == "$,.2f"
 
     def test_predefined_resolves_without_formats_dict(self):
-        # "compact" is a predefined member — trim already in spec, round_aware_spec is no-op.
-        assert resolve_format("compact") == "~s"
+        # "number" is a predefined member — trim already in spec, round_aware_spec is no-op.
+        assert resolve_format("number") == ".3~s"
 
     def test_null_format_input_returns_empty(self):
         assert resolve_format(None, {"currency": "$,.2f"}) == ""
@@ -115,15 +188,15 @@ class TestResolveFormatThemeLookup:
         assert resolve_format(None) == ""
 
     def test_format_config_spec_resolved_via_formats(self):
-        config = FormatConfig(spec="currency")
-        assert resolve_format(config, {"currency": "$,.2f"}) == "$,.2f"
+        config = FormatConfig(spec="money")
+        assert resolve_format(config, {"money": "$,.2f"}) == "$,.2f"
 
     def test_format_config_raw_d3_passthrough(self):
         config = FormatConfig(spec="$,.2f")
         assert resolve_format(config, {"currency": "$,.2f"}) == "$,.2f"
 
     def test_dict_format_spec_resolved_via_formats(self):
-        assert resolve_format({"spec": "currency"}, {"currency": "$,.2f"}) == "$,.2f"
+        assert resolve_format({"spec": "money"}, {"money": "$,.2f"}) == "$,.2f"
 
     def test_dict_format_raw_d3_passthrough(self):
         assert resolve_format({"spec": "$,.2f"}, {"currency": "$,.2f"}) == "$,.2f"
@@ -232,11 +305,11 @@ class TestFormatValue:
     """Tests for the main format_value entry point — accepts formats dict."""
 
     def test_alias_formatting_with_formats(self):
-        formats = {"currency": "$,.2f", "percent": ".1%", "compact": ",.2s"}
-        assert format_value(1234567.89, "currency", formats) == "$1,234,567.89"
+        formats = {"money": "$,.2f", "pct": ".1%", "tilde": ",.2s"}
+        assert format_value(1234567.89, "money", formats) == "$1,234,567.89"
         assert format_value(0.123, "percent", formats) == "12.3%"
         # .2s = 2 significant figures via d3_format lib
-        assert format_value(1500000, "compact", formats) == "1.5 M"
+        assert format_value(1500000, "number", formats) == "1.5 M"
 
     def test_d3_formatting_without_formats(self):
         assert format_value(1234.56, "$,.2f") == "$1,234.56"
@@ -275,12 +348,12 @@ class TestNewAliases:
     def test_currency_whole_formats_value(self):
         assert format_value(1234.56, "currency_whole") == "$1,235"
 
-    def test_currency_compact_resolves(self):
-        # Engine spec "$~s" — trim already set; round_aware_spec is a no-op.
-        assert resolve_format("currency_compact") == "$~s"
+    def test_currency_resolves(self):
+        # Engine spec "$.3~s" — trim already set; round_aware_spec is a no-op.
+        assert resolve_format("currency") == "$.3~s"
 
-    def test_currency_compact_formats_value(self):
-        assert format_value(1_500_000, "currency_compact") == "$1.5 M"
+    def test_currency_formats_value(self):
+        assert format_value(1_500_000, "currency") == "$1.5 M"
 
     def test_percent_whole_resolves(self):
         assert resolve_format("percent_whole") == ".0%"
@@ -330,12 +403,15 @@ class TestEdgeCases:
     """Tests for edge cases and boundary conditions."""
 
     def test_zero_value_with_formats(self):
-        formats = {"currency": "$,.2f", "percent": ".1%", "compact": ",.2s"}
-        assert format_value(0, "currency", formats) == "$0.00"
+        formats = {"money": "$,.2f", "pct": ".1%", "tilde": ",.2s"}
+        assert format_value(0, "money", formats) == "$0.00"
         # .1% is not an SI spec, so round-awareness doesn't apply — 0 → "0.0%"
-        assert format_value(0, "percent", formats) == "0.0%"
-        # d3's .2s on 0, round-aware: no SI prefix and no false-precision zero.
-        assert format_value(0, "compact", formats) == "0"
+        assert format_value(0, "pct", formats) == "0.0%"
+        # Round-aware on a predefined SI name: no SI prefix and no
+        # false-precision zero. A raw `,.2s` alias keeps d3's own `0.0` — the
+        # trim is the engine's, not d3's, which is what this pair pins.
+        assert format_value(0, "number", formats) == "0"
+        assert format_value(0, "tilde", formats) == "0.0"
 
     def test_very_large_numbers(self):
         # d3's .2s = 2 significant figures: 999_999_999_999 → 1.0T not 1,000B.
@@ -547,8 +623,8 @@ class TestRoundAwareSignificantFigures:
         assert format_kpi_parts(1_000_000, "$,.2s") == ("$", "1.0", "M")
 
     def test_kpi_parts_predefined_trim_baked(self):
-        # "currency_compact" → resolve_format returns "$~s" (trim already set) → "1M".
-        assert format_kpi_parts(1_000_000, "currency_compact") == ("$", "1", "M")
+        # "currency" → resolve_format returns "$.3~s" (trim already set) → "1M".
+        assert format_kpi_parts(1_000_000, "currency") == ("$", "1", "M")
 
     def test_kpi_parts_real_digit_survives(self):
         assert format_kpi_parts(1_250_000, "$,.3s") == ("$", "1.25", "M")
@@ -740,3 +816,258 @@ class TestJinjaFormatFilter:
         """No house notation — '1.5G' not rewritten to '1.5 B'."""
         result = self._render("{{ value | format('.2s') }}", 1_500_000_000.0)
         assert result == "1.5G", f"expected raw d3 '1.5G', got {result!r}"
+
+
+class TestCompactNamesAreActuallyCompact:
+    """`number`/`currency` must not be less compact than the default.
+
+    d3's `s` type defaults to 6 significant digits and `~` only trims trailing
+    zeros, so a bare `~s` renders 50752.9 as `50.7529 K` — six digits under a
+    name that promises brevity, and wider than the engine's own
+    `number` (`.3~s`). The engine owns what its predefined names mean;
+    a literal authored `$~s` is native d3 and stays six digits.
+    """
+
+    @pytest.mark.parametrize(
+        ("name", "value", "expected"),
+        [
+            ("number", 50_752.9, "50.8 K"),
+            ("currency", 50_752.9, "$50.8 K"),
+            ("number", 1_234_567.89, "1.23 M"),
+            ("currency", 1_234_567.89, "$1.23 M"),
+        ],
+    )
+    def test_compact_name_trims_to_three_significant_digits(
+        self, name: str, value: float, expected: str
+    ) -> None:
+        assert format_value(value, name) == expected, (
+            f"{name} rendered six significant digits; the name promises a short "
+            f"number and must match number's precision"
+        )
+
+    @pytest.mark.parametrize(
+        ("name", "value", "expected"),
+        [
+            ("number", 999, "999"),
+            ("currency", 999, "$999"),
+            ("number", 1_500, "1.5 K"),
+            ("currency", 2_000_000, "$2 M"),
+        ],
+    )
+    def test_already_short_values_are_unchanged(
+        self, name: str, value: float, expected: str
+    ) -> None:
+        """Three digits, not two: `.2~s` would round 999 up to a false `1 K`."""
+        assert format_value(value, name) == expected
+
+    @pytest.mark.parametrize("spec", ["~s", "$~s"])
+    def test_literal_d3_spec_keeps_full_d3_precision(self, spec: str) -> None:
+        """An authored d3 spec is native d3 — rewriting it would be silent magic."""
+        assert "50.7529" in format_d3(50_752.9, spec)
+
+
+class TestSubCentMoneyKeepsSi:
+    """Below half a cent the two-decimal fallback cannot represent the value.
+
+    `$,.2f` renders anything under 0.005 as `$0.00`, so applying the floor
+    there would paint an entire CPC, per-token-pricing or FX column as zero on
+    every row — visually identical to the genuine zeros this same band is
+    careful to leave as `$0`. `$670m` is a misread a reader can catch; `$0.00`
+    is not. The floor is therefore 0.005, not 0.0: it confines the swap to the
+    range the fallback can actually express, and sub-cent money keeps the SI
+    rendering it had before this rule existed.
+    """
+
+    def test_sub_cent_money_keeps_its_si_rendering(self):
+        assert format_value(0.0023, "currency") == "$2.3m"
+        assert format_value(0.0001, "currency") == "$100µ"
+
+    def test_the_floor_engages_where_the_fallback_can_represent_the_value(self):
+        assert format_value(0.0051, "currency") == "$0.01"
+        assert format_value(0.67, "currency") == "$0.67"
+
+    def test_no_money_value_in_the_band_renders_as_a_bare_zero_string(self):
+        """The property that matters, stated directly: only a real zero paints zero."""
+        for cents in range(1, 200):
+            value = cents / 10000.0
+            painted = format_value(value, "currency")
+            assert painted not in ("$0.00", "$0"), (
+                f"{value} painted {painted!r} — indistinguishable from zero"
+            )
+
+    def test_kpi_parts_takes_the_same_floor(self):
+        # Milli stays glued in the number lane — it is not in the house suffix
+        # vocabulary, which is the whole reason this rule exists.
+        assert format_kpi_parts(0.0023, "currency", None) == ("$", "2.3m", "")
+
+
+class TestSiSubUnitFloor:
+    """Money below $1 has no sub-cent unit to name, so it must not take an SI
+    spec — d3's `m` (milli) glues onto the number as e.g. `$670m` for 67
+    cents, colliding case-only with the house million grammar. A plain
+    quantity's fraction reads correctly as milli (`0.671` -> `671m`) and must
+    keep its SI spec unchanged. Money at or above $1 is unchanged too — the
+    `$13` for `$12.99` rounding case is a separate, tracked issue.
+    """
+
+    def test_money_below_one_falls_back_to_currency_full(self) -> None:
+        assert format_value(0.67, "currency") == "$0.67"
+
+    def test_money_pound_prefix_below_one_falls_back(self) -> None:
+        # A "£" board has no "$" in its resolved spec — the affix alone must
+        # be enough to detect money.
+        config = FormatConfig(spec="number", prefix="£")
+        assert format_value(0.67, config) == "£0.67"
+
+    def test_money_usd_suffix_below_one_falls_back(self) -> None:
+        config = FormatConfig(spec="number", suffix=" USD")
+        assert format_value(0.67, config) == "0.67 USD"
+
+    def test_plain_quantity_fraction_keeps_milli_reading(self) -> None:
+        assert format_value(0.671, "number") == "671m"
+
+    def test_money_at_or_above_one_is_unchanged(self) -> None:
+        assert format_value(1.0, "currency") == "$1"
+        assert format_value(12.99, "currency") == "$13"
+
+    def test_format_kpi_parts_money_below_one_falls_back(self) -> None:
+        assert format_kpi_parts(0.67, "currency") == ("$", "0.67", "")
+
+    def test_format_kpi_parts_plain_quantity_keeps_milli(self) -> None:
+        # "m" (milli) is not a house magnitude suffix (_D3_TO_ANALYTIC has no
+        # entry for it), so it stays glued to the number, unaffected by the
+        # money-only floor.
+        assert format_kpi_parts(0.671, "number") == ("", "671m", "")
+
+    def test_negative_money_below_one_falls_back(self) -> None:
+        assert format_value(-0.67, "currency") == "−$0.67"
+
+    def test_kg_suffix_keeps_si_reading(self) -> None:
+        # A non-blank suffix alone must NOT be enough to call this money --
+        # "kg" is a unit, not a currency. Two grams must render as an SI
+        # milli reading, not get zeroed out by the money-only fallback.
+        config = FormatConfig(spec="number", suffix=" kg")
+        assert format_value(0.002, config) == "2m kg"
+
+    def test_ms_suffix_keeps_si_reading(self) -> None:
+        config = FormatConfig(spec="number", suffix=" ms")
+        assert format_value(0.002, config) == "2m ms"
+
+    def test_unrecognised_suffix_keeps_si_reading(self) -> None:
+        config = FormatConfig(spec="number", suffix=" rpm")
+        assert format_value(0.002, config) == "2m rpm"
+
+    def test_euro_prefix_below_one_falls_back(self) -> None:
+        config = FormatConfig(spec="number", prefix="€")
+        assert format_value(0.67, config) == "€0.67"
+
+    def test_zero_currency_is_not_floored_to_two_decimals(self) -> None:
+        # Zero is exactly representable, not "below the minor unit" -- it
+        # must not take the sub-unit fallback. currency(0) and number(0)
+        # must agree in shape (no decimals), same as every other value.
+        assert format_value(0, "currency") == "$0"
+        assert format_value(0, "number") == "0"
+
+    def test_zero_currency_kpi_parts_is_not_floored(self) -> None:
+        assert format_kpi_parts(0, "currency") == ("$", "0", "")
+
+    def test_default_number_table_cell_money_prefix_below_one_falls_back(
+        self,
+    ) -> None:
+        # format: {prefix: "£"} with no spec goes through the default_number
+        # branch, which installs the "number" predefined spec. That branch
+        # must mark _raw as the house name too, or the sub-unit-floor guard
+        # never sees it and a table cell like this renders "£670m" for 67p.
+        assert format_kpi_parts(0.67, {"prefix": "£"}, default_number=True) == (
+            "£",
+            "0.67",
+            "",
+        )
+
+
+class TestSubUnitFloorVote:
+    """resolve_format_for_values: the Vega-painted analogue of TestSiSubUnitFloor.
+
+    Vega paints per-datum inside its own runtime, so the per-value floor
+    format_value/format_kpi_parts apply cannot run there -- this decides the
+    register once, at resolve, from the values a slot will paint. Per-set
+    semantics: any value in the sub-$1 band pulls the whole set to the
+    plain-digit fallback, even members >= $1.
+    """
+
+    def test_all_values_below_one_falls_back_to_currency_full(self) -> None:
+        assert (
+            resolve_format_for_values("currency", None, [0.42, 0.25, 0.67])
+            == PREDEFINED_SPECS["currency_full"]
+        )
+
+    def test_one_value_below_one_pulls_the_whole_set(self) -> None:
+        # Mixed set: any member in the band pulls the register.
+        assert (
+            resolve_format_for_values("currency", None, [0.42, 3.0])
+            == PREDEFINED_SPECS["currency_full"]
+        )
+
+    def test_negative_money_below_one_falls_back(self) -> None:
+        # The band test is on abs(v) -- a negative sub-$1 value must floor
+        # the same as its positive counterpart.
+        assert (
+            resolve_format_for_values("currency", None, [-0.42])
+            == PREDEFINED_SPECS["currency_full"]
+        )
+
+    def test_all_values_at_or_above_one_keeps_si_spec(self) -> None:
+        assert (
+            resolve_format_for_values("currency", None, [12.99, 100.0])
+            == PREDEFINED_SPECS["currency"]
+        )
+
+    def test_all_zero_keeps_si_spec(self) -> None:
+        assert (
+            resolve_format_for_values("currency", None, [0.0, 0.0])
+            == (PREDEFINED_SPECS["currency"])
+        )
+
+    def test_sub_cent_money_keeps_si_spec(self) -> None:
+        # Below MONEY_SUB_UNIT_FLOOR the fallback can't represent the value
+        # either ($,.2f would print $0.00) -- stays on SI, same as the
+        # per-value predicate.
+        assert (
+            resolve_format_for_values("currency", None, [0.0023])
+            == (PREDEFINED_SPECS["currency"])
+        )
+
+    def test_plain_quantity_fraction_keeps_si_spec(self) -> None:
+        # "number" below 1 reads correctly as an SI milli value -- only
+        # money is wrong below the floor.
+        assert (
+            resolve_format_for_values("number", None, [0.671])
+            == (PREDEFINED_SPECS["number"])
+        )
+
+    def test_money_prefix_below_one_falls_back(self) -> None:
+        config = FormatConfig(spec="number", prefix="£")
+        assert (
+            resolve_format_for_values(config, None, [0.67])
+            == PREDEFINED_SPECS["number_full"]
+        )
+
+    def test_inline_d3_spec_never_takes_house_floor(self) -> None:
+        # Native d3 (not a predefined member) is a native-d3 opt-out --
+        # never touched by the house sub-unit-floor vote.
+        assert resolve_format_for_values("$.3~s", None, [0.67]) == "$.3~s"
+
+    def test_style_formats_alias_never_takes_house_floor(self) -> None:
+        assert resolve_format_for_values("money", _ALIAS_FORMATS, [0.67]) == "$,.2f"
+
+    def test_none_values_are_skipped(self) -> None:
+        assert (
+            resolve_format_for_values("currency", None, [None, None])
+            == PREDEFINED_SPECS["currency"]
+        )
+
+    def test_parity_with_format_value_on_a_band_crossing_set(self) -> None:
+        values = [0.42, 0.25, 0.67]
+        result_spec = resolve_format_for_values("currency", None, values)
+        for value in values:
+            assert format_d3(value, result_spec) == format_value(value, "currency")

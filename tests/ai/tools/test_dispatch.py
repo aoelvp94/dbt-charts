@@ -96,7 +96,7 @@ class TestDispatchToolCall:
         boards = tmp_path / "charts"
         boards.mkdir()
         (boards / "sales.yml").write_text(
-            "title: Sales Dashboard\ndescription: zendesk metrics\n"
+            "title: Sales Dashboard\nnotes: zendesk metrics\n"
             "queries:\n  q:\n    sql: SELECT 1\n"
             "charts:\n  c:\n    query: q\n    type: kpi\n    value: v\n"
             "rows:\n  - c\n"
@@ -118,7 +118,7 @@ class TestDispatchToolCall:
         self, context: DbtChartsAIContext
     ) -> None:
         """A host (e.g. Cloud) can supply per-call handlers for tools with no
-        meaning to dft-core, without dispatch_tool_call knowing their name."""
+        meaning to dbt_charts.core, without dispatch_tool_call knowing their name."""
         captured: dict[str, object] = {}
 
         def handle_host_only(
@@ -407,10 +407,10 @@ class TestToolErrorEnvelopes:
     def test_execute_query_missing_sql_returns_error(
         self, context: DbtChartsAIContext
     ) -> None:
-        """execute_query with empty SQL → success=False and non-empty error string."""
+        """execute_query with empty SQL → success=False and non-empty errors list."""
         result = dispatch_tool_call("execute_query", {"sql": ""}, context=context)
         assert result["success"] is False
-        assert isinstance(result.get("error"), str) and result["error"]
+        assert isinstance(result.get("errors"), list) and result["errors"]
 
     def test_render_board_no_args_returns_failure(
         self, context: DbtChartsAIContext
@@ -542,6 +542,49 @@ class TestToolErrorEnvelopes:
         assert result.get("errors"), "expected at least one error"
 
 
+class TestToolCallOutcome:
+    """``tool_call_outcome`` is the single predicate over the three failure
+    envelope conventions this repo's tool results actually use — pinned
+    against every shape that occurs, not just the two ``dispatch_tool_call``
+    constructs itself (a bare ``{"error": ...}`` and ``{"success": False,
+    ...}``)."""
+
+    @pytest.mark.parametrize(
+        ("result", "expected"),
+        [
+            # dispatch_tool_call's own unknown-tool shape.
+            ({"error": "Unknown tool: bogus"}, "error"),
+            # Raised handler / Cloud board_tools.py / skills_tool.py.
+            ({"success": False, "errors": ["boom"]}, "error"),
+            # BoardRenderResult (core/board.py) — failed render.
+            ({"status": "failed", "board_error": {"code": "X"}}, "error"),
+            # BoardRenderResult — a render with chart errors.
+            ({"status": "partial", "chart_errors": [{"code": "Y"}]}, "partial"),
+            ({"success": True, "data": []}, "ok"),
+            ({"status": "ok", "data": {}}, "ok"),
+            # Read-only tools (docs, get_skill) declare neither convention.
+            ({"content": "..."}, "ok"),
+        ],
+    )
+    def test_outcome_matches_envelope(
+        self, result: dict[str, object], expected: str
+    ) -> None:
+        from dbt_charts.ai.tools import tool_call_outcome
+
+        assert tool_call_outcome(result) == expected
+
+    def test_real_dispatch_failed_render_maps_to_error(
+        self, context: DbtChartsAIContext
+    ) -> None:
+        from dbt_charts.ai.tools import tool_call_outcome
+
+        result = dispatch_tool_call(
+            "render_board", {"path": "nope.yml"}, context=context
+        )
+        assert result["status"] == "failed"
+        assert tool_call_outcome(result) == "error"
+
+
 # ---------------------------------------------------------------------------
 # default_source fallback: ctx.default_source used when model omits source
 # ---------------------------------------------------------------------------
@@ -569,7 +612,6 @@ class TestDefaultSourceFallback:
                 data=[],
                 columns=[],
                 errors=[],
-                error=None,
                 row_count=0,
                 truncated=False,
             )
@@ -602,7 +644,6 @@ class TestDefaultSourceFallback:
                 data=[],
                 columns=[],
                 errors=[],
-                error=None,
                 row_count=0,
                 truncated=False,
             )
@@ -637,7 +678,6 @@ class TestDefaultSourceFallback:
                 data=[],
                 columns=[],
                 errors=[],
-                error=None,
                 row_count=0,
                 truncated=False,
             )
@@ -679,7 +719,6 @@ class TestVariableBindingsWireShape:
                 data=[],
                 columns=[],
                 errors=[],
-                error=None,
                 row_count=0,
                 truncated=False,
             )

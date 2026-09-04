@@ -28,6 +28,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_BINDER_UNKNOWN_COLUMN,
     ERR_MUTATING_SQL,
     ERR_UNPARSEABLE_SQL,
+    ERR_WAREHOUSE_CONNECTION,
     ERR_WAREHOUSE_RUNTIME,
 )
 from dbt_charts.core.diagnostics.execution import MutatingSqlError, UnparseableSqlError
@@ -172,10 +173,13 @@ class TestDbtAdapterSurfacesClassifiedErrorCode:
         assert a false cause ("warehouse rejected the query") for a query
         that was never sent.
 
-        No registered code fits a bare profile/config error, and guessing one
-        would violate the same conservative-classification rule this task
-        applies to warehouse errors — so error_code stays None (the existing
-        ERR-INTERNAL fallback) by deliberate choice, not oversight.
+        This is resolving `_get_dbt_adapter()` — reading profiles.yml,
+        picking a target, validating the credentials shape — not opening a
+        connection to the warehouse, so it stays out of scope for
+        ERR-WAREHOUSE-CONNECTION (which is reserved for opening the
+        connection itself, see test_connect_failure_returns_warehouse_connection_code
+        below). error_code stays None (the existing ERR-INTERNAL fallback)
+        by deliberate choice, not oversight.
         """
         adapter = DbtAdapter(
             project=local_project(tmp_path),
@@ -192,6 +196,41 @@ class TestDbtAdapterSurfacesClassifiedErrorCode:
         assert result.error is not None
         assert "Profile 'x' not found in profiles.yml" in result.error
         assert result.error_code is None
+
+    def test_connect_failure_returns_warehouse_connection_code(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A credentials/host failure while opening the actual warehouse
+        connection (adapter.connection_named(...) forcing the lazy handle
+        open) must not be classified ERR-WAREHOUSE-RUNTIME — nothing read
+        the SQL yet. Distinct from test_setup_failure_is_not_mislabeled_as_
+        warehouse_rejection above, which covers profile/target resolution
+        before any connection is attempted.
+        """
+
+        class _FailingHandleConnection:
+            @property
+            def handle(self) -> object:
+                raise RuntimeError("Invalid access token")
+
+        adapter = DbtAdapter(
+            project=local_project(tmp_path),
+            dbt_project_path=tmp_path,
+            target_name="dev",
+        )
+        adapter._adapter = MagicMock()
+        adapter._adapter.connections.get_thread_connection.return_value = (
+            _FailingHandleConnection()
+        )
+        adapter._dialect = "databricks"
+        with patch.object(adapter, "_resolve_dbt_sql", return_value="SELECT 1"):
+            query = SqlQuery(sql="SELECT {{ ref('x') }}", source="my_named_source")
+            result = adapter._execute(query)
+        assert result.error is not None
+        assert "Invalid access token" in result.error
+        assert result.error_code is ERR_WAREHOUSE_CONNECTION
+        # The connect failure must short-circuit before the query is sent.
+        adapter._adapter.execute.assert_not_called()
 
 
 class TestSqlAdapterSurfacesClassifiedErrorCode:
@@ -250,8 +289,8 @@ class TestSqlAdapterSurfacesClassifiedErrorCode:
         cause. This is the real-adapter path (unlike the other tests in this
         class, which stub _get_source_pool): it exercises the actual
         _SourcePool.execute -> _ensure_connected failure, raised as
-        _ConnectionSetupFailed and routed to handle_adapter_error instead of
-        classify_warehouse_error.
+        _ConnectionSetupFailed and routed to connection_failure (typed
+        ERR-WAREHOUSE-CONNECTION) instead of classify_warehouse_error.
         """
         adapter = SqlAdapter(
             project=local_project(tmp_path),
@@ -272,4 +311,4 @@ class TestSqlAdapterSurfacesClassifiedErrorCode:
             adapter.close()  # real _SourcePool spun up a ThreadPoolExecutor
         assert result.error is not None
         assert "Could not automatically determine credentials" in result.error
-        assert result.error_code is None
+        assert result.error_code is ERR_WAREHOUSE_CONNECTION

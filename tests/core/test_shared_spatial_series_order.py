@@ -17,6 +17,7 @@ from __future__ import annotations
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style, reset_config
+from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
     BarChart,
@@ -31,6 +32,7 @@ from dbt_charts.core.compile.models.style.authored import (
     LineChartStylePatch,
 )
 from dbt_charts.core.compile.resolve import resolve
+from dbt_charts.core.compile.resolve.chart._wide_fields import WIDE_LABEL_FIELD
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.render.chart.emitters._cartesian import (
     distinct_series_values,
@@ -207,10 +209,23 @@ def test_stacked_vertical_bar_legend_values_pinned_to_display_order():
     assert chart_pane(spec)["encoding"]["color"]["legend"]["values"] == ["A", "B"]
 
 
-def test_stacked_vertical_bar_legend_range_preserves_original_color():
-    chart = _bar_chart(style=BarChartStylePatch(orientation="vertical", stack="zero"))
+@pytest.mark.parametrize(
+    ("orientation", "stack"),
+    [
+        ("vertical", "zero"),
+        ("vertical", "normalize"),
+        ("vertical", "center"),
+        ("horizontal", "zero"),
+        ("horizontal", "normalize"),
+    ],
+)
+def test_stacked_bar_baseline_series_receives_first_palette_slot(
+    orientation: str,
+    stack: str,
+) -> None:
+    """Stack rank and palette rank share the same baseline-first authority."""
+    chart = _bar_chart(style=BarChartStylePatch(orientation=orientation, stack=stack))
     resolved = resolve(chart, _STACK_VALUE_DATA, chart_style_context=_BOARD_CTX)
-    palette = resolved.palette
     spec = generate_vega_lite_spec(
         chart,
         _STACK_VALUE_DATA,
@@ -218,13 +233,39 @@ def test_stacked_vertical_bar_legend_range_preserves_original_color():
         chart_style_context=_BOARD_CTX,
     )
     color_scale = chart_pane(spec)["encoding"]["color"]["scale"]
-    # Alphabetical ground truth: A -> palette[0], B -> palette[1].
-    expected_color = {"A": palette[0], "B": palette[1]}
-    for series, color in zip(color_scale["domain"], color_scale["range"], strict=True):
-        assert color == expected_color[series], (
-            f"series {series!r} must keep its original color {expected_color[series]!r}, "
-            f"got {color!r} — reordering display must never recolor a series"
-        )
+    color_by_series = dict(
+        zip(color_scale["domain"], color_scale["range"], strict=True)
+    )
+
+    assert color_by_series["B"] == resolved.palette[0]
+    assert color_by_series["A"] == resolved.palette[1]
+
+
+@pytest.mark.parametrize("orientation", ["vertical", "horizontal"])
+def test_one_color_per_category_bar_keeps_alphabetical_palette_slots(
+    orientation: str,
+) -> None:
+    data = [
+        {"cat": "X", "series": "Z", "val": 10},
+        {"cat": "Y", "series": "A", "val": 1},
+    ]
+    chart = _bar_chart(style=BarChartStylePatch(orientation=orientation, stack="zero"))
+    resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
+    spec = generate_vega_lite_spec(
+        chart,
+        data,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CTX,
+    )
+    color_scale = chart_pane(spec)["encoding"]["color"]["scale"]
+    color_by_series = dict(
+        zip(color_scale["domain"], color_scale["range"], strict=True)
+    )
+
+    assert color_by_series == {
+        "A": resolved.palette[0],
+        "Z": resolved.palette[1],
+    }
 
 
 def test_stacked_vertical_bar_legend_agrees_with_direct_labels():
@@ -432,8 +473,7 @@ def test_grouped_bar_legend_has_no_domain_override():
 
 
 # ---------------------------------------------------------------------------
-# Stacked area: legend must follow the SAME native descending-string-sort
-# order area's own (unmodified) stack painting already uses.
+# Stacked area: legend and palette follow the same global-total stack order.
 # ---------------------------------------------------------------------------
 
 
@@ -458,7 +498,7 @@ _AREA_STACK_DATA = [
 ]
 
 
-def test_stacked_area_legend_matches_native_descending_order():
+def test_stacked_area_legend_matches_global_total_order():
     chart = _area_chart(style=AreaChartStylePatch(stack="zero"))
     spec = generate_vega_lite_spec(
         chart,
@@ -467,8 +507,8 @@ def test_stacked_area_legend_matches_native_descending_order():
         chart_style_context=_BOARD_CTX,
     )
     color_scale = _color_scale(spec)
-    # Native stack order: descending string sort -> "zeta" at baseline, so
-    # "alpha" (top-of-stack) is listed first.
+    # Zeta has the largest global total and sits at the baseline, so alpha is
+    # listed first in the top-of-stack-first legend.
     assert color_scale["domain"] == ["alpha", "zeta"]
 
 
@@ -492,8 +532,9 @@ def test_stacked_area_legend_values_pinned_to_display_order():
     assert _color_legend(spec)["values"] == ["alpha", "zeta"]
 
 
-def test_stacked_area_legend_range_preserves_original_color():
-    chart = _area_chart(style=AreaChartStylePatch(stack="zero"))
+@pytest.mark.parametrize("stack", ["zero", "normalize", "center"])
+def test_stacked_area_baseline_series_receives_first_palette_slot(stack: str):
+    chart = _area_chart(style=AreaChartStylePatch(stack=stack))
     resolved = resolve(chart, _AREA_STACK_DATA, chart_style_context=_BOARD_CTX)
     palette = resolved.palette
     spec = generate_vega_lite_spec(
@@ -503,9 +544,146 @@ def test_stacked_area_legend_range_preserves_original_color():
         chart_style_context=_BOARD_CTX,
     )
     color_scale = _color_scale(spec)
-    expected_color = {"alpha": palette[0], "zeta": palette[1]}
+    expected_color = {"zeta": palette[0], "alpha": palette[1]}
     for series, color in zip(color_scale["domain"], color_scale["range"], strict=True):
         assert color == expected_color[series]
+    assert "order" in chart_pane(spec)["encoding"]
+
+
+def test_wide_stacked_area_baseline_measure_receives_first_palette_slot():
+    data = [
+        {"cat": "2024-01-01", "alpha": 2, "zeta": 10},
+        {"cat": "2024-02-01", "alpha": 3, "zeta": 11},
+    ]
+    chart = AreaChart(
+        id="wide_area",
+        query=SqlQuery(sql="SELECT 1", source="t"),
+        query_name="q",
+        type="area",
+        x="cat",
+        y=["alpha", "zeta"],
+        style=AreaChartStylePatch(stack="zero"),
+    )
+    resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
+    spec = generate_vega_lite_spec(
+        chart,
+        data,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CTX,
+    )
+    color_scale = _color_scale(spec)
+    color_by_series = dict(
+        zip(color_scale["domain"], color_scale["range"], strict=True)
+    )
+
+    assert color_by_series == {
+        "zeta": resolved.palette[0],
+        "alpha": resolved.palette[1],
+    }
+    assert set(spec["hconcat"][1]["encoding"]["color"]["scale"]["domain"]) == {
+        "alpha",
+        "zeta",
+    }
+    assert {row[WIDE_LABEL_FIELD] for row in spec["hconcat"][1]["data"]["values"]} == {
+        "alpha",
+        "zeta",
+    }
+    assert "order" in chart_pane(spec)["encoding"]
+
+
+@pytest.mark.parametrize("stack", ["zero", "normalize", "center"])
+def test_wide_stacked_area_keeps_an_all_null_declared_measure(stack: str) -> None:
+    data = [
+        {"cat": "2024-01-01", "alpha": None, "zeta": 10},
+        {"cat": "2024-02-01", "alpha": None, "zeta": 11},
+    ]
+    chart = AreaChart(
+        id="wide_area",
+        query=SqlQuery(sql="SELECT 1", source="t"),
+        query_name="q",
+        type="area",
+        x="cat",
+        y=["alpha", "zeta"],
+        style=AreaChartStylePatch(stack=stack),
+    )
+    resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
+
+    spec = generate_vega_lite_spec(
+        chart,
+        data,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CTX,
+    )
+
+    color_scale = _color_scale(spec)
+    color_by_series = dict(
+        zip(color_scale["domain"], color_scale["range"], strict=True)
+    )
+    assert color_by_series == {
+        "zeta": resolved.palette[0],
+        "alpha": resolved.palette[1],
+    }
+    assert {row[WIDE_LABEL_FIELD] for row in spec["hconcat"][1]["data"]["values"]} == {
+        "alpha",
+        "zeta",
+    }
+
+
+def test_long_stacked_area_series_order_calculate_is_shared_by_all_layers() -> None:
+    chart = _area_chart(style=AreaChartStylePatch(stack="zero"))
+
+    spec = generate_vega_lite_spec(
+        chart,
+        _AREA_STACK_DATA,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CTX,
+    )
+
+    pane = chart_pane(spec)
+    assert any(
+        transform.get("as") == "__df_series_order"
+        for transform in pane.get("transform", [])
+    )
+    assert all(
+        not any(
+            transform.get("as") == "__df_series_order"
+            for transform in layer.get("transform", [])
+        )
+        for layer in pane["layer"]
+    )
+
+
+@pytest.mark.parametrize("stack", ["zero", "normalize", "center"])
+def test_layered_stacked_area_hoists_one_shared_series_order_calculate(
+    stack: str,
+) -> None:
+    data = [{**row, "target": 20} for row in _AREA_STACK_DATA]
+    chart = _area_chart(
+        style=AreaChartStylePatch(stack=stack),
+        layers=[LineLayer(type="line", y="target", label="Target")],
+    )
+
+    spec = generate_vega_lite_spec(
+        chart,
+        data,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CTX,
+    )
+
+    pane = chart_pane(spec)
+    shared_order_calculates = [
+        transform
+        for transform in pane.get("transform", [])
+        if transform.get("as") == "__df_series_order"
+    ]
+    assert len(shared_order_calculates) == 1
+    assert all(
+        not any(
+            transform.get("as") == "__df_series_order"
+            for transform in layer.get("transform", [])
+        )
+        for layer in pane["layer"]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -839,7 +1017,7 @@ def test_pie_legend_and_arc_paint_order_share_one_authority():
     # sort=False: the legend's domain order follows the data's own row order —
     # the SAME order the arc's own "order" encoding paints in.
     assert arc_encoding["color"]["sort"] is False
-    assert arc_encoding["order"]["field"] == "__dft_row_idx"
+    assert arc_encoding["order"]["field"] == "__dbt_row_idx"
 
 
 # ---------------------------------------------------------------------------
@@ -881,13 +1059,13 @@ def test_combo_base_series_legend_order_unaffected_by_overlay():
     # B has the larger sum, so A — on top — is listed first), and the overlay
     # follows them in the now-complete shared scale.
     base_color_scale = layers[0]["encoding"]["color"]["scale"]
-    assert base_color_scale["domain"] == ["A", "B", "Target"]
+    assert base_color_scale["domain"] == ["A", "B", "target"]
 
 
 def test_combo_legend_values_includes_overlay_label():
     """Regression: pin_legend_display_order's explicit legend.values (base
     tiers only) made Vega drop the merged overlay entry entirely -- before
-    that fix the combo legend showed the tiers AND the overlay ("Target").
+    that fix the combo legend showed the tiers AND the overlay ("target").
     The pinned values must include the overlay's own label too, appended
     after the base tiers, so the merged legend still shows every entry."""
     from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
@@ -917,4 +1095,4 @@ def test_combo_legend_values_includes_overlay_label():
         chart_style_context=_BOARD_CTX_NO_ENDPOINT_LABELS,
     )
     base_legend = chart_pane(spec)["layer"][0]["encoding"]["color"]["legend"]
-    assert base_legend["values"] == ["A", "B", "Target"]
+    assert base_legend["values"] == ["A", "B", "target"]

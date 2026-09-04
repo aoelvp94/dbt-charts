@@ -252,7 +252,7 @@ def test_opacity0_symbols_not_excluded_so_line_chart_with_hover_points_passes() 
         '<path d="M0,100L100,50L200,80"/>'
         "</g>"
         '<g class="mark-symbol role-mark layer_1_marks">'
-        '<path opacity="0" d="M8.66,0A8.66,8.66,0,1,1,-8.66,0A8.66,8.66,0,1,1,8.66,0Z"/>'
+        '<path opacity="0" d="M8.94,0A8.94,8.94,0,1,1,-8.94,0A8.94,8.94,0,1,1,8.94,0Z"/>'
         "</g>"
     )
     assert not all_marks_degenerate(svg)

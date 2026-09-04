@@ -12,7 +12,7 @@ from dbt_charts.core.compile.models.markers import (
     Inherit,
 )
 from dbt_charts.core.compile.models.primitives import (
-    BorderStyle,
+    CornerStyle,
     FontStyle,
     SpacingValues,
 )
@@ -46,7 +46,7 @@ class InputStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     height: float = Field(description="Input control height in pixels.")
-    border: BorderStyle = Field(description="Input border style.")
+    border: CornerStyle = Field(description="Corner rounding for input controls.")
     focus_color: Annotated[str | None, Inherit(from_path="Style.accent"), Color()] = (
         Field(
             default=None,
@@ -125,7 +125,7 @@ class TimestampStyle(BaseModel):
         description="strftime format for the data-freshness line, including any "
         "literal label text (e.g. '%H:%M %Z on %-d %b %Y'). The value is always "
         "UTC; a format that prints a clock must disclose the zone (%Z or a literal "
-        "'UTC'), else compile rejects it — an unlabeled clock reads as local."
+        "'UTC'), else compile rejects it: an unlabeled clock reads as local."
     )
     y: float = Field(description="Y-coordinate for top-positioned timestamp in pixels.")
     font: FontStyle = Field(

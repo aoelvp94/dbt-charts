@@ -28,8 +28,10 @@ from dbt_charts.core.execute._duckdb_cache_base import (
     _DuckDBResultCacheBase,
     _infer_type,
     _q,
+    _restore_decimal_columns,
     _result_table_name,
     _rows_from_result,
+    _uniform_decimal_columns,
 )
 from dbt_charts.core.execute.cache_backend import (
     FILE_SOURCE_VARS_HASH,
@@ -115,6 +117,7 @@ class TrivialDuckDBCache(_DuckDBResultCacheBase):
                     rows = _rows_from_result(
                         self.conn.execute(f"SELECT * FROM {_q(tbl)}")
                     )
+                    rows = _restore_decimal_columns(rows, slots.decimal_columns)
                     return CacheHit(
                         rows=rows,
                         written_at=written_at,
@@ -158,10 +161,11 @@ class TrivialDuckDBCache(_DuckDBResultCacheBase):
                     query_name,
                 )
                 return
+            decimal_columns = _uniform_decimal_columns(outcome)
             if outcome:
-                self._ensure_result_table(tbl, outcome)
+                self._ensure_result_table(tbl, outcome, decimal_columns)
                 self.conn.execute(f"DELETE FROM {_q(tbl)}")
-                self._insert_rows(tbl, outcome)
+                self._insert_rows(tbl, outcome, decimal_columns)
             else:
                 # A zero-row success keeps no result table — the outcome row
                 # alone records it, and dropping any prior table is what stops
@@ -175,6 +179,7 @@ class TrivialDuckDBCache(_DuckDBResultCacheBase):
                 board_slug,
                 query_name,
                 truncated_reason,
+                decimal_columns,
             )
         logger.debug("Cached %d rows to %s", len(outcome), tbl)
 
@@ -218,14 +223,29 @@ class TrivialDuckDBCache(_DuckDBResultCacheBase):
                 "trivial cache: dropped %d stale seq-column table(s) on open", dropped
             )
 
-    def _ensure_result_table(self, table_name: str, data: list[dict[str, Any]]) -> None:
+    def _ensure_result_table(
+        self,
+        table_name: str,
+        data: CacheRows,
+        decimal_columns: frozenset[str] = frozenset(),
+    ) -> None:
         if self._table_exists(table_name):
             return
         # Scan all rows for the first non-None value per column so union_by_name
         # padding (which fills row 0 with None for absent columns) doesn't collapse
-        # numeric columns to VARCHAR.
+        # numeric columns to VARCHAR. A uniformly-Decimal column (decimal_columns)
+        # forces VARCHAR explicitly instead — see _uniform_decimal_columns for why.
         cols = [
-            f'"{col_name}" {_infer_type(next((r[col_name] for r in data if r.get(col_name) is not None), None))}'
+            f'"{col_name}" '
+            + (
+                "VARCHAR"
+                if col_name in decimal_columns
+                else _infer_type(
+                    next(
+                        (r[col_name] for r in data if r.get(col_name) is not None), None
+                    )
+                )
+            )
             for col_name in data[0]
         ]
         self.conn.execute(f"CREATE TABLE {_q(table_name)} ({', '.join(cols)})")
@@ -249,17 +269,35 @@ class TrivialDuckDBCache(_DuckDBResultCacheBase):
                 f"CREATE OR REPLACE VIEW {_q(table_name)} AS SELECT * FROM {_q(tbl)}"
             )
 
-    def _insert_rows(self, table_name: str, data: list[dict[str, Any]]) -> None:
+    def _insert_rows(
+        self,
+        table_name: str,
+        data: CacheRows,
+        decimal_columns: frozenset[str] = frozenset(),
+    ) -> None:
         # Bulk-load via a registered Arrow table + one INSERT … SELECT, not a
         # per-row executemany: DuckDB's executemany binds row by row (~47s for
         # 100k rows), while an Arrow scan is a single columnar append (~100ms).
-        # Values are still coerced (Decimal→float, list/dict→JSON text) so the
-        # typed result table from _ensure_result_table — including its JSON
-        # columns, which _rows_from_result decodes on read — is unchanged.
+        # Values are still coerced (Decimal→float outside decimal_columns,
+        # list/dict→JSON text) so the typed result table from
+        # _ensure_result_table — including its JSON columns, which
+        # _rows_from_result decodes on read — is unchanged. A uniformly-Decimal
+        # column instead gets str(value) — exact — matching the VARCHAR type
+        # _ensure_result_table gave it.
         import pyarrow as pa
 
         keys = list(data[0])
-        coerced = [{k: _cache_safe_value(row.get(k)) for k in keys} for row in data]
+        coerced = [
+            {
+                k: (
+                    str(row[k])
+                    if k in decimal_columns and row.get(k) is not None
+                    else _cache_safe_value(row.get(k))
+                )
+                for k in keys
+            }
+            for row in data
+        ]
         try:
             arrow = pa.Table.from_pylist(coerced)
         except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError):
@@ -271,13 +309,13 @@ class TrivialDuckDBCache(_DuckDBResultCacheBase):
             # fallback; these inputs are rare and small in practice.
             self._insert_rows_row_by_row(table_name, keys, coerced)
             return
-        self.conn.register("_dft_bulk_ingest", arrow)
+        self.conn.register("_dct_bulk_ingest", arrow)
         try:
             self.conn.execute(
-                f"INSERT INTO {_q(table_name)} SELECT * FROM _dft_bulk_ingest"
+                f"INSERT INTO {_q(table_name)} SELECT * FROM _dct_bulk_ingest"
             )
         finally:
-            self.conn.unregister("_dft_bulk_ingest")
+            self.conn.unregister("_dct_bulk_ingest")
 
     def _insert_rows_row_by_row(
         self, table_name: str, keys: list[str], coerced: list[dict[str, Any]]

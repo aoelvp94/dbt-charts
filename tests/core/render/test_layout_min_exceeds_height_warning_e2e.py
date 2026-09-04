@@ -214,19 +214,75 @@ rows:
     assert "400" in w.message
 
 
-def test_fires_for_a_faceted_horizontal_bar_with_disjoint_panel_categories() -> None:
+def test_fires_for_a_faceted_horizontal_bar_with_the_full_domain_in_every_panel() -> (
+    None
+):
+    """Every panel carries the SAME, full 15-category domain (no panel's own
+    rows are a proper subset of anything) — the facet operator resolves the
+    category ordinal scale as SHARED (only the measure channel ever gets
+    `resolve.scale`, and only under `multiples.scale: independent`), and
+    domain-subset narrowing (`facet_bound_position_channels`) never fires
+    here either, since 15-of-15 is not a proper subset — so every panel
+    needs room for all 15 categories. The floor is
+    `count_horizontal_bar_categories` over the WHOLE dataset (15) multiplied
+    by the row cardinality (3): an authored height of 1000px clears the
+    too-small 5-categories-per-panel floor (~267px/panel -> ~801px for 3
+    panels, which is what a BUGGY narrowing verdict would compute here) but
+    not the correct whole-set floor (15 categories -> ~657px/panel ->
+    ~1971px for 3 panels).
+
+    The sibling below, `test_silent_for_a_faceted_horizontal_bar_whose_
+    disjoint_panel_categories_narrow`, is the mirror-image fixture — panels
+    that DO each hold a proper subset — where narrowing correctly applies
+    and this same 1000px height turns out to be enough.
+    """
+    yaml_source = """
+title: Probe
+charts:
+  hbar:
+    query: q
+    type: bar
+    x: cat
+    y: val
+    style:
+      orientation: horizontal
+    multiples:
+      rows: grp
+queries:
+  q:
+    sql: SELECT * FROM t
+    source: test_source
+rows:
+  - height: 1000
+    rows:
+      - hbar
+"""
+    rows = [
+        {"cat": f"c{i:02d}", "grp": f"g{g}", "val": i + 1}
+        for g in range(3)
+        for i in range(15)
+    ]
+    result = compile(yaml_source)
+    assert result.success and result.board is not None, result.errors
+    executor = _make_executor(result.board, result.query_registry, rows)
+    warnings = list(render(result.board, executor, format="svg").warnings)
+    codes = {w.code for w in warnings}
+    assert _CODE in codes, codes
+
+
+def test_silent_for_a_faceted_horizontal_bar_whose_disjoint_panel_categories_narrow() -> (
+    None
+):
     """Panels with DIFFERENT categories (the ordinary "top 5 per region"
     shape): 3 panels x 5 categories each, all 15 category values distinct
-    across panels. The facet operator resolves the category ordinal scale
-    as SHARED (only the measure channel ever gets `resolve.scale`, and only
-    under `multiples.scale: independent`) — every panel paints the union
-    domain, so each panel needs room for all 15 categories, not just its
-    own 5. The floor is `count_horizontal_bar_categories` over the WHOLE
-    dataset (15) multiplied by the row cardinality (3), not the widest
-    single panel's own count (5) multiplied by 3 — an authored height of
-    1000px clears the wrong, too-small per-panel-only floor (5 categories
-    -> ~267px/panel -> ~801px for 3 panels) but not the correct whole-set
-    floor (15 categories -> ~657px/panel -> ~1971px for 3 panels)."""
+    across panels. Each panel's own 5 categories ARE a proper subset of the
+    15-value whole-dataset domain, so `facet_bound_position_channels`
+    narrows the category axis independently per panel — the height floor
+    only needs the WIDEST panel's own count (5), not the whole-dataset
+    union (15). 1000px comfortably clears the correct ~801px floor (5
+    categories -> ~267px/panel -> 3 panels); the OLD, pre-domain-subset
+    behaviour would have wrongly demanded ~1971px here (see the sibling
+    test above, whose fixture actually needs that)."""
     yaml_source = """
 title: Probe
 charts:
@@ -258,7 +314,7 @@ rows:
     executor = _make_executor(result.board, result.query_registry, rows)
     warnings = list(render(result.board, executor, format="svg").warnings)
     codes = {w.code for w in warnings}
-    assert _CODE in codes, codes
+    assert _CODE not in codes, codes
 
 
 def test_silent_for_a_faceted_horizontal_bar_that_fits_every_panel() -> None:

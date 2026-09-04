@@ -283,6 +283,30 @@ class TestComputeCacheKey:
         q = SqlQuery(sql="SELECT 1", setup_sql="SET x = 1", source="warehouse")
         assert compute_cache_key(q)[1] == compute_query_hash("SELECT 1\nSET x = 1")
 
+    def test_incremental_inactive_matches_non_incremental_key(self):
+        """A query most people don't use incremental on must hash exactly as
+        before the feature existed, so upgrading never busts every cache entry."""
+        inactive = SqlQuery(sql="SELECT 1", source="dw")
+        assert inactive.incremental is None
+        assert compute_cache_key(inactive)[1] == compute_query_hash("SELECT 1")
+
+    def test_incremental_active_differs_from_inactive(self):
+        active = SqlQuery(sql="SELECT 1", source="dw", incremental="updated_at")
+        inactive = SqlQuery(sql="SELECT 1", source="dw")
+        assert compute_cache_key(active)[1] != compute_cache_key(inactive)[1]
+
+    def test_incremental_distinct_columns_distinct_keys(self):
+        a = SqlQuery(sql="SELECT 1", source="dw", incremental="updated_at")
+        b = SqlQuery(sql="SELECT 1", source="dw", incremental="created_at")
+        assert compute_cache_key(a)[1] != compute_cache_key(b)[1]
+
+    def test_incremental_column_named_false_differs_from_inactive(self):
+        """A column literally named 'False' must not collide with the
+        inactive (None) state — the fold format must be unambiguous."""
+        named_false = SqlQuery(sql="SELECT 1", source="dw", incremental="False")
+        inactive = SqlQuery(sql="SELECT 1", source="dw")
+        assert compute_cache_key(named_false)[1] != compute_cache_key(inactive)[1]
+
     def test_distinct_sql_distinct_key(self):
         assert compute_cache_key(
             SqlQuery(sql="SELECT 1", source="warehouse")

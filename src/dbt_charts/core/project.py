@@ -27,7 +27,7 @@ FACES_FALLBACK_SUBDIR = "faces"
 # Cascade fragments are project inputs, not standalone dashboards.
 META_FILENAMES: frozenset[str] = frozenset({"meta.yaml", "meta.yml"})
 
-# What `dft init` creates, what `dft` reads, and what the IDE and completion
+# What `dct init` creates, what `dct` reads, and what the IDE and completion
 # schemas decorate.
 PROJECT_CONFIG_NAME = "dbt_charts.yml"
 
@@ -101,7 +101,7 @@ SKIP_SCAN_DIRS: frozenset[str] = frozenset(
         "build",
         "dist",
         "node_modules",
-        # dbt generated dirs — a dbt project root is a valid Dataface root
+        # dbt generated dirs — a dbt project root is a valid dbt charts root
         # (dbt_project.yml is a root marker), and these are full of .yml/.md
         # files that would pass the board-candidate suffix test. Direct-path
         # reads (target/manifest.json, target/super_schema.json) are
@@ -141,7 +141,7 @@ IMAGE_ASSET_SUFFIXES: tuple[str, ...] = (
     ".bmp",
 )
 
-# The closed set of file suffixes Dataface serves from a project tree:
+# The closed set of file suffixes dbt charts serves from a project tree:
 #   BOARD_CANDIDATE_SUFFIXES — config + board files (.yml/.yaml) and markdown
 #                  boards (.md/.markdown); composed in so this set can never
 #                  drift behind a new board suffix.
@@ -151,7 +151,7 @@ IMAGE_ASSET_SUFFIXES: tuple[str, ...] = (
 #                  (models/source.py `_validate_files_mapping`)
 # Matched case-insensitively on the filename suffix. Consumed by Cloud's
 # subdir-scoped git-blob fetch to skip files it will never serve, without
-# reading any blob content (git_providers._collect_subdir_blob_oids).
+# reading any blob content (GitEdge.objects.subtree_blob_shas in Cloud).
 SERVED_FILE_SUFFIXES: frozenset[str] = (
     frozenset(BOARD_CANDIDATE_SUFFIXES)
     | frozenset(IMAGE_ASSET_SUFFIXES)
@@ -460,7 +460,7 @@ class InMemoryBoard(BoardFile):
 
 
 class Project(ABC):
-    """The structure of a Dataface project — the host-substitution seam.
+    """The structure of a dbt charts project — the host-substitution seam.
 
     Answers "which file holds X" for the canonical project files. The five
     file-access methods (``read_text``, ``read_bytes``, ``exists``,

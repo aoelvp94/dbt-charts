@@ -230,7 +230,7 @@ def test_propose_pack_missing_project_dir_raises(
 ) -> None:
     """propose_pack raises FileNotFoundError for a non-existent project_dir."""
     with pytest.raises(FileNotFoundError):
-        propose_pack(local_project(Path("/tmp/does_not_exist_dataface_project_xyz")))
+        propose_pack(local_project(Path("/tmp/does_not_exist_dbt_charts_project_xyz")))
 
 
 # ---------------------------------------------------------------------------

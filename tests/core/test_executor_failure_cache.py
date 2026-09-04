@@ -101,7 +101,7 @@ class TestDbtChartsErrorNotCached:
     str(cached_failure) == '' and the human-readable text is silently discarded on replay.
     """
 
-    def test_dataface_error_not_written_to_failure_cache(self):
+    def test_dbt_charts_error_not_written_to_failure_cache(self):
         cache = TrivialDuckDBCache(failure_ttl_seconds=900)
         try:
             result = compile(BOARD_YAML)
@@ -327,24 +327,24 @@ class TestQueryErrorCodePreservation:
     """When adapter.execute() raises DbtChartsError, QueryError must preserve .code.
 
     Regression for: executor line 499 called QueryError(str(e), query_name) without
-    code=..., so DbtChartsError codes (e.g. ERR-DBT-MANIFEST-INCOMPATIBLE) became
+    code=..., so DbtChartsError codes (e.g. ERR-DBT-MANIFEST-UNREADABLE) became
     ERR-INTERNAL after wrapping.
     """
 
     def test_adapter_execution_error_code_preserved_in_query_error(self):
         from dbt_charts.core.diagnostics.codes_execute import (
-            ERR_DBT_MANIFEST_INCOMPATIBLE,
+            ERR_DBT_MANIFEST_UNREADABLE,
         )
         from dbt_charts.core.diagnostics.execution import ExecutionError
 
         err = ExecutionError.from_code(
-            ERR_DBT_MANIFEST_INCOMPATIBLE,
+            ERR_DBT_MANIFEST_UNREADABLE,
             relpath="target/manifest.json",
-            detail="schema version v999 is not compatible",
+            detail="Expecting value: line 1 column 1 (char 0)",
         )
         executor = _make_executor(adapter_side_effect=err)
 
         with pytest.raises(QueryError) as exc_info:
             executor.execute_query("good_query", use_cache=False)
 
-        assert exc_info.value.code is ERR_DBT_MANIFEST_INCOMPATIBLE
+        assert exc_info.value.code is ERR_DBT_MANIFEST_UNREADABLE

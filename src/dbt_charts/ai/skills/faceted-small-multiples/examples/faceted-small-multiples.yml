@@ -1,9 +1,9 @@
 title: Signups by Channel
-description: Faceted small multiples pattern — one series per segment via color encoding
+notes: Faceted small multiples pattern — one series per segment via color encoding
 
 queries:
   signups_by_channel:
-    description: Monthly signups broken down by acquisition channel
+    notes: Monthly signups broken down by acquisition channel
     columns: [month, channel, signups]
     values:
       - ["2026-01-01", Organic,  90]
@@ -21,7 +21,7 @@ queries:
 
 charts:
   signups_trend:
-    description: Signup trend faceted by channel — one colored series per channel
+    notes: Signup trend faceted by channel — one colored series per channel
     type: area
     query: signups_by_channel
     x: month

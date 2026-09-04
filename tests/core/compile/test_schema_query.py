@@ -144,3 +144,17 @@ def test_normalize_query_does_not_apply_default_source():
     )
     assert isinstance(q, SchemaQuery)
     assert q.source == "warehouse"
+
+
+def test_source_description_carries_the_fields_projection() -> None:
+    """Non-SQL cache identity hashes source_description — two schema queries
+    over the same target with different `fields:` must not share one."""
+    plain = SchemaQuery(source="warehouse", schema="analytics", table="orders")
+    projected = SchemaQuery(
+        source="warehouse",
+        schema="analytics",
+        table="orders",
+        fields=["name", "role"],
+    )
+    assert plain.source_description != projected.source_description
+    assert "name, role" in projected.source_description

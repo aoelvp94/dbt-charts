@@ -1,7 +1,7 @@
-"""Dataface MCP (Model Context Protocol) Server.
+"""dbt charts MCP (Model Context Protocol) Server.
 
 This module provides an MCP server that enables AI assistants (Claude, Cursor,
-ChatGPT, etc.) to interact with Dataface dashboards through a standardized
+ChatGPT, etc.) to interact with dbt charts dashboards through a standardized
 protocol.
 
 Architecture:
@@ -21,7 +21,7 @@ Architecture:
         - query_board - Run one named query from a board YAML and return columns + rows
         - schema - Drill the data hierarchy: source → schema → table → column
         - search_boards - Search dashboards by keyword/structure
-        - docs - Browse Dataface YAML reference docs offline
+        - docs - Browse dbt charts YAML reference docs offline
 
 Usage:
     # Configure MCP for your AI client

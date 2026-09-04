@@ -21,6 +21,7 @@ COMMANDS = [
     ["search", "--help"],
     ["serve", "--help"],
     ["validate", "--help"],
+    ["impact", "--help"],
     ["query", "--help"],
 ]
 

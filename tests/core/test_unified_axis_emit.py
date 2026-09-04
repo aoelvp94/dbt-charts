@@ -62,7 +62,7 @@ def _spec(style: BarChartStylePatch | None = None) -> dict:
     """Render a single-chart spec against `stark`.
 
     Pinned to stark so the legend-emission tests in this file observe the
-    legend at encoding.color.legend.*. The shipped editorial `default` sets
+    legend at encoding.color.legend.*. The shipped `clarity` default sets
     legend.disable=true, which would null out the color legend before the
     tests get to inspect it.
 
@@ -283,11 +283,11 @@ def test_chart_local_legend_disable():
     )
 
 
-def test_editorial_scatter_legend_position_reaches_color_encoding(
+def test_clarity_scatter_legend_position_reaches_color_encoding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """scatter inherits the family legend opt-in and honors authored placement."""
-    monkeypatch.setenv("DCT_DEFAULT_THEME", "editorial")
+    monkeypatch.setenv("DCT_DEFAULT_THEME", "clarity")
     reset_config()
     style = ScatterChartStylePatch(
         legend=LegendStylePatch(position="top", direction="horizontal")

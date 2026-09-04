@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -19,7 +20,8 @@ from dbt_charts.ai.events import (
     ToolCallEvent,
     ToolResultEvent,
 )
-from dbt_charts.ai.llm import LLMClient, LLMClientError
+from dbt_charts.ai.failures import AITurnFailure
+from dbt_charts.ai.llm import LLMClient, LLMClientError, classify
 from dbt_charts.ai.messages import (
     AgentMessage,
     AssistantMessage,
@@ -33,7 +35,7 @@ from dbt_charts.ai.prompts import (
     load_project_instructions,
 )
 from dbt_charts.ai.tool_schemas import AGENT_TOOLS
-from dbt_charts.ai.tools import ToolHandler, dispatch_tool_call
+from dbt_charts.ai.tools import ToolHandler, dispatch_tool_call, tool_call_outcome
 
 if TYPE_CHECKING:
     from dbt_charts.core.execute.adapters import AdapterRegistry
@@ -158,10 +160,10 @@ _TOOL_GUIDANCE = """## Tool Use
   to start one.
 - If a tool returns an error, explain it clearly and fix it — do not proceed on
   assumptions or hide it.
-- If the user asks for a chart shape Dataface has no chart family for (funnel,
+- If the user asks for a chart shape dbt charts has no chart family for (funnel,
   gauge, sunburst, chord, and others — check `docs(topic="charts")` when
   unsure), never silently build a different shape and label it with the
-  requested name. Say plainly that Dataface can't draw that shape, name what
+  requested name. Say plainly that dbt charts can't draw that shape, name what
   you built instead, and let the user decide whether to proceed. An honest
   substitution is fine; an undisclosed one is not.
 - When you save a board, tell the user the saved file path and the preview URL.
@@ -274,7 +276,7 @@ def run_agent(
             tools-disabled request) and mirrors the choice into the prompt
             context. Hosts with a fixed surface bake it into the profile
             instead. Defaults to the profile's tools.
-        extra_handlers: Per-call handlers for tools with no meaning to dft-core
+        extra_handlers: Per-call handlers for tools with no meaning to dbt_charts.core
             (e.g. Cloud's placement tool) — threaded straight to dispatch_tool_call.
     """
     active = profile if profile is not None else DASHBOARD_PROFILE
@@ -303,7 +305,11 @@ def run_agent(
                 yield event
         except LLMClientError as exc:
             logger.exception("agent_llm_error")
-            yield AgentError(message=AGENT_ERROR_MESSAGE, details=str(exc))
+            yield AgentError(
+                message=AGENT_ERROR_MESSAGE,
+                reason=classify(exc),
+                details=str(exc),
+            )
             return
 
         conversation.append(
@@ -336,11 +342,15 @@ def run_agent(
                 message=(
                     f"Stopped: {names} called with identical arguments "
                     f"{identical_count} times in a row without making progress."
-                )
+                ),
+                # Set literally: this terminal raises nothing, so there is no
+                # exception for classify() to read.
+                reason=AITurnFailure.LOOP_DETECTED,
             )
             return
 
         for tc in tool_calls:
+            start = time.monotonic()
             result = dispatch_tool_call(
                 tc.name,
                 tc.arguments,
@@ -348,6 +358,7 @@ def run_agent(
                 extra_handlers=extra_handlers,
                 tool_overrides=active.tool_overrides,
             )
+            duration_s = time.monotonic() - start
             conversation.append(
                 ToolResultMessage(
                     tool_call_id=tc.id,
@@ -355,12 +366,21 @@ def run_agent(
                     content=json.dumps(_model_facing_result(result), default=str),
                 )
             )
-            yield ToolResultEvent(id=tc.id, name=tc.name, result=result)
+            yield ToolResultEvent(
+                id=tc.id,
+                name=tc.name,
+                result=result,
+                duration_s=duration_s,
+                outcome=tool_call_outcome(result),
+            )
 
     yield AgentError(
         message=(
             f"Reached the {max_iterations}-step limit before finishing. Any files "
             "written so far are saved — open the preview server URL to view them, "
             "or send another message to continue."
-        )
+        ),
+        # Set literally, same as the loop terminal above: falling out of the
+        # step budget is a return, not a raise.
+        reason=AITurnFailure.STEP_LIMIT_EXCEEDED,
     )

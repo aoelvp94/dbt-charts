@@ -1,6 +1,7 @@
 """Render-time capture of series labels the endpoint-label rail had to cut.
 
-``_measure_label_pane_width`` caps the rail at a fraction of the chart's slot
+``measure_label_pane_width`` (in ``emitters/_endpoint_rail.py``) caps the rail
+at a fraction of the chart's slot
 (``chart_rendering.endpoint_labels.max_width_fraction``); Vega then ellipsizes
 any name wider than that at the pane's mark limit. The cut itself is silent —
 the rail just reads ``Enterprise Cloud Data Pl…`` — so this module is the seam

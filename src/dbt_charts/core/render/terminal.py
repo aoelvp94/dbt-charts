@@ -112,10 +112,10 @@ def render_board_terminal(
     resolved_style: ResolvedStyle,
     **options: Any,
 ) -> str:
-    """Render a compiled dataface to terminal output.
+    """Render a compiled board to terminal output.
 
     Args:
-        board: Compiled dataface to render
+        board: Compiled board to render
         executor: Executor for query execution
         variables: Variable values for queries
         width: Terminal width in characters (auto-detect if None)
@@ -125,7 +125,7 @@ def render_board_terminal(
         **options: Additional rendering options
 
     Returns:
-        Terminal-formatted dataface string
+        Terminal-formatted board string
     """
     # Auto-detect terminal size if not provided
     if width is None or height is None:

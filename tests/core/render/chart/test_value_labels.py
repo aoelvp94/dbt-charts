@@ -49,7 +49,7 @@ def _has_text_layer(spec):
 
 
 def _board_with_bar_labels_visible(visible: bool, position=None):
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     new_labels = compiled.charts.marks.bar.labels.model_copy(
         update={"visible": visible}
     )
@@ -62,7 +62,7 @@ def _board_with_bar_labels_visible(visible: bool, position=None):
 
 
 def _board_with_line_labels_visible(visible: bool):
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     new_labels = compiled.charts.marks.line.labels.model_copy(
         update={"visible": visible}
     )
@@ -73,7 +73,7 @@ def _board_with_line_labels_visible(visible: bool):
 
 
 def _board_with_point_labels_visible(visible: bool):
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     new_labels = compiled.charts.marks.point.labels.model_copy(
         update={"visible": visible}
     )
@@ -106,7 +106,7 @@ class TestBarValueLabels:
 
     def test_default_no_text_layer(self, make_chart):
         """Default theme has labels.visible=False — no text layer."""
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         board_rs, board_ctx = resolve_style_and_context(compiled)
         chart = make_chart("bar", x="month", y="revenue")
         resolve(chart, SAMPLE_DATA, chart_style_context=board_ctx)
@@ -125,7 +125,7 @@ class TestBarValueLabels:
         transform, not the text channel's own field, is what must reference
         revenue_millions.
         """
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         new_labels = compiled.charts.marks.bar.labels.model_copy(
             update={"visible": True, "field": "revenue_millions"}
         )
@@ -183,7 +183,7 @@ class TestBarValueLabels:
         from dbt_charts.core.compile.resolve import resolve
         from dbt_charts.core.render.chart.session import BoardRenderSession
 
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         new_labels = compiled.charts.marks.bar.labels.model_copy(
             update={"visible": True, "field": "revenue_millions"}
         )
@@ -235,7 +235,7 @@ class TestBarValueLabels:
     def test_bar_labels_field_unknown_column_raises(self, make_chart):
         """A labels.field naming a column absent from the data fails fast (no
         silent blank labels) — same contract as channel-column validation."""
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         new_labels = compiled.charts.marks.bar.labels.model_copy(
             update={"visible": True, "field": "does_not_exist"}
         )
@@ -248,7 +248,7 @@ class TestBarValueLabels:
         chart = make_chart("bar", x="month", y="revenue")
         with pytest.raises(
             ChartDataError,
-            match=r"labels\.field 'does_not_exist' names a column not present",
+            match=r"labels\.field 'does_not_exist' on the chart names a column not present",
         ):
             generate_vega_lite_spec(
                 chart, SAMPLE_DATA, board_style=board_rs, chart_style_context=board_ctx
@@ -263,7 +263,7 @@ class TestBarValueLabels:
         area's own top-edge stroke lives on area_mark) and is scoped under
         charts.area.marks.line, not the standalone line chart's charts.line.
         """
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         area_chart = compiled.charts.area
         new_labels = area_chart.marks.line.labels.model_copy(
             update={"visible": True, "field": "does_not_exist"}
@@ -278,7 +278,7 @@ class TestBarValueLabels:
         chart = make_chart("area", x="month", y="revenue")
         with pytest.raises(
             ChartDataError,
-            match=r"labels\.field 'does_not_exist' names a column not present",
+            match=r"labels\.field 'does_not_exist' on the chart names a column not present",
         ):
             generate_vega_lite_spec(
                 chart, SAMPLE_DATA, board_style=board_rs, chart_style_context=board_ctx
@@ -378,8 +378,8 @@ class TestBarValueLabels:
         assert layers, "Expected a text layer"
         lyr = layers[0]
         expected_bg = resolved.background
-        assert lyr["mark"].get("color") == expected_bg, (
-            f"bottom must use background color {expected_bg!r}: {lyr['mark']}"
+        assert lyr["encoding"].get("color") == {"value": expected_bg}, (
+            f"bottom must pin the background color {expected_bg!r}: {lyr['encoding']}"
         )
         # V2 hoists sub-layer transforms to the outer spec to preserve y.sort.
         transforms = spec.get("transform", [])
@@ -433,8 +433,8 @@ class TestBarValueLabels:
         assert enc.get("y", {}).get("field") == mid_field, (
             f"middle_aligned text layer y must use '{mid_field}': {enc}"
         )
-        assert lyr["mark"].get("color") == resolved.background, (
-            f"middle_aligned is inside bar fill, must use background color: {lyr['mark']}"
+        assert enc.get("color") == {"value": resolved.background}, (
+            f"middle_aligned is inside bar fill, must pin the background color: {enc}"
         )
 
     def test_stacked_bar_label_pins_constant_color(self, make_chart):
@@ -527,7 +527,7 @@ class TestPointValueLabels:
 
 def _board_with_bar_labels(updates: dict[str, object]):
     """Build a resolved style with bar labels configured."""
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     new_labels = compiled.charts.marks.bar.labels.model_copy(
         update={"visible": True, **updates}
     )
@@ -539,7 +539,7 @@ def _board_with_bar_labels(updates: dict[str, object]):
 
 def _board_with_point_labels(updates: dict[str, object]):
     """Build a resolved style with point labels configured."""
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     new_labels = compiled.charts.marks.point.labels.model_copy(
         update={"visible": True, **updates}
     )
@@ -744,9 +744,9 @@ class TestFormatExplicit:
         """An explicit labels.format must resolve through the theme's alias
         table like every other format slot — value_labels.py hands the
         resolved spec to Vega verbatim, so an unresolved alias key
-        ("currency") would compile clean and ship the literal word to
+        ("currency_full") would compile clean and ship the literal word to
         Vega's d3 instead of "$,.2f"."""
-        board_rs, board_ctx = _board_with_bar_labels({"format": "currency"})
+        board_rs, board_ctx = _board_with_bar_labels({"format": "currency_full"})
         chart = make_chart("bar", x="month", y="revenue")
         resolve(chart, SAMPLE_DATA, chart_style_context=board_ctx)
         spec = generate_vega_lite_spec(
@@ -762,12 +762,12 @@ class TestFormatNullInherit:
         """When labels.format is None, it inherits from axis_quantitative.format (not axis_y).
 
         axis_y.format is None in all shipped themes; the measure format lives on
-        axis_quantitative (the number_default alias → ".3~s" in editorial). The
+        axis_quantitative (the number alias → ".3~s" in editorial). The
         inherited format is SI-shaped, so the label takes the narrative
         house register (a calculate transform) rather than a literal
         text.format — see _house_register_text_encoding.
         """
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         # Set axis_quantitative format explicitly (mirrors how shipped themes work)
         new_aq_labels = compiled.charts.axis_quantitative.labels.model_copy(
             update={"format": "~s"}
@@ -849,7 +849,7 @@ class TestFormatTracksEffectiveAxis:
     """
 
     def _label_fmt(self, make_chart, chart_kwargs):
-        # editorial: axis_quantitative.format references the number_default alias (.3~s)
+        # editorial: axis_quantitative.format references the number alias (.3~s)
         board_rs, board_ctx = _board_with_bar_labels({})
         chart = make_chart("bar", x="month", y="revenue", **chart_kwargs)
         resolved = resolve(chart, SAMPLE_DATA, chart_style_context=board_ctx)
@@ -898,7 +898,7 @@ class TestFormatTracksEffectiveAxis:
     def test_no_override_still_inherits_axis_quantitative(self, make_chart):
         """Without a per-chart format, the board inherit is preserved.
 
-        The theme default resolves the ``number_default`` alias to ``.3~s`` — a
+        The theme default resolves the ``number`` alias to ``.3~s`` — a
         bounded (3-sig-fig) SI format, so value labels on real data read ``9.18``
         rather than the unbounded ``9.18039`` that a bare ``~s`` produces. It is
         SI-shaped, so the label takes the narrative house register (a
@@ -955,11 +955,12 @@ class TestFormatTracksEffectiveAxis:
 
 
 class TestFontApplication:
-    def test_font_color_in_mark(self, make_chart):
-        """font.color goes into mark.color so VL honors it over any inherited color channel.
+    def test_font_color_in_encoding(self, make_chart):
+        """font.color goes into encoding.color, not mark.color.
 
-        encoding.color: {value: ...} can be ignored by VL when the outer layer encoding
-        has a nominal color field — mark-level color is always authoritative.
+        Vega-Lite lets an inherited encoding channel beat a static mark prop, so
+        a label carrying its color only on the mark is repainted by any outer
+        color encoding.
         """
         from dbt_charts.core.compile.models.primitives import FontStyle
 
@@ -973,13 +974,13 @@ class TestFontApplication:
         )
         lyr = _get_text_layer(spec)
         assert lyr is not None
-        assert lyr["mark"].get("color") == "#ff0000"
-        assert "color" not in lyr.get("encoding", {}), (
-            "color must not also leak into encoding"
+        assert lyr["encoding"].get("color") == {"value": "#ff0000"}
+        assert "color" not in lyr["mark"], (
+            "a static mark color any outer encoding can beat must not linger"
         )
 
     def test_font_color_survives_bar_color_channel(self, make_chart):
-        """font.color in mark.color is not overridden when the chart has a color encoding."""
+        """An authored font.color wins over the chart's own color encoding."""
         from dbt_charts.core.compile.models.primitives import FontStyle
 
         board_rs, board_ctx = _board_with_bar_labels(
@@ -992,7 +993,7 @@ class TestFontApplication:
         )
         lyr = _get_text_layer(spec)
         assert lyr is not None
-        assert lyr["mark"].get("color") == "#ff0000"
+        assert lyr["encoding"].get("color") == {"value": "#ff0000"}
 
     def test_font_size_in_encoding(self, make_chart):
         """font.size goes into encoding.size so it overrides inherited size on bubble charts."""
@@ -1022,14 +1023,15 @@ class TestFontApplication:
             f"Outer encoding must not expose size to text layer: {outer_enc}"
         )
 
-    def test_middle_grouped_bar_has_background_mark_color(self, make_chart) -> None:
-        """position=middle on a grouped bar: text mark color equals chart background.
+    def test_middle_grouped_bar_has_background_encoding_color(self, make_chart) -> None:
+        """position=middle on a grouped bar: label color equals chart background.
 
         A grouped (non-stacked) bar with a color channel has bars painted with
         the nominal palette.  A label at the midpoint inherits the bar fill color
-        through the outer encoding → invisible.  The auto-background color goes
-        into mark.color to reliably override VL layer color inheritance, and uses
-        the actual chart background rather than hardcoded white so dark-mode works.
+        through the outer encoding → invisible.  The auto-background color is
+        pinned as the layer's own encoding.color, which is what actually beats
+        that inheritance, and uses the actual chart background rather than
+        hardcoded white so dark-mode works.
         """
         board_rs, board_ctx = _board_with_bar_labels({"position": "middle"})
         chart = make_chart("bar", x="month", y="revenue", color="month")
@@ -1042,8 +1044,9 @@ class TestFontApplication:
             "Grouped bar with middle position must emit a text layer"
         )
         expected_bg = resolved.background
-        assert lyr["mark"].get("color") == expected_bg, (
-            f"middle-position label mark must use background {expected_bg!r}, got: {lyr['mark']}"
+        assert lyr["encoding"].get("color") == {"value": expected_bg}, (
+            f"middle-position label must pin background {expected_bg!r}, "
+            f"got: {lyr['encoding']}"
         )
 
     def test_font_color_overrides_auto_background_for_top(self, make_chart) -> None:
@@ -1353,7 +1356,7 @@ class TestLinePointLabelsAlias:
 
     def test_line_marks_line_labels_takes_precedence(self, make_chart) -> None:
         """When both line.labels and point.labels are visible, marks.line.labels is used."""
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         # Set marks.line.labels with a distinctive format so we can confirm it's used.
         new_line_lbl = compiled.charts.marks.line.labels.model_copy(
             update={"visible": True, "format": ",.2f"}
@@ -1541,9 +1544,9 @@ class TestStackedBarLabelPositioning:
         lyr = _get_text_layer(spec)
         assert lyr is not None, "Grouped bar with top must emit a text layer"
         expected_bg = resolved.background
-        assert lyr["mark"].get("color") == expected_bg, (
-            f"top non-stacked bar mark must use chart background {expected_bg!r}, "
-            f"got: {lyr['mark']}"
+        assert lyr["encoding"].get("color") == {"value": expected_bg}, (
+            f"top non-stacked bar must pin chart background {expected_bg!r}, "
+            f"got: {lyr['encoding']}"
         )
 
 
@@ -1560,8 +1563,8 @@ def _get_value_label_layer(spec: dict[str, Any]) -> dict[str, Any] | None:
     encoding, or the computed narrative-register field (see
     _house_register_text_encoding, render/chart/features/value_labels.py).
 
-    Distinguishes the value-label layer from data_table strip layers (which use
-    a text mark but encode __data_table_N fields).
+    Distinguishes the value-label layer from support_table strip layers (which use
+    a text mark but encode __support_table_N fields).
     """
     for lyr in spec.get("layer", []):
         m = lyr.get("mark", {})
@@ -1594,7 +1597,7 @@ class TestLayersDoNotSuppressBaseValueLabels:
             "line": _board_with_line_labels_visible(True),
         }
         board_rs, board_ctx = boards.get(
-            base_type, resolve_style_and_context(get_theme_style("editorial"))
+            base_type, resolve_style_and_context(get_theme_style("clarity"))
         )
         chart = make_chart(
             base_type,
@@ -1615,11 +1618,11 @@ class TestLayersDoNotSuppressBaseValueLabels:
             )
 
 
-class TestDataTableValueLabels:
-    """Value labels on a bar chart that also has a data_table attachment."""
+class TestSupportTableValueLabels:
+    """Value labels on a bar chart that also has a support_table attachment."""
 
-    def test_bar_with_data_table_has_x_and_y_in_text_layer(self, make_chart) -> None:
-        """After apply_chart_data_table_post_pass wraps the spec into layers, the injected
+    def test_bar_with_support_table_has_x_and_y_in_text_layer(self, make_chart) -> None:
+        """After apply_chart_support_table_post_pass wraps the spec into layers, the injected
         text layer must still carry both x and y so labels are positioned correctly.
 
         _wrap_base_as_layer moves mark+encoding into layer[0]; the outer spec gets
@@ -1627,8 +1630,8 @@ class TestDataTableValueLabels:
         and labels appear at wrong positions.
         """
         from dbt_charts.core.compile.models.chart.authored import (
-            ChartDataTable,
-            ChartDataTableAggregate,
+            ChartSupportTable,
+            ChartSupportTableAggregate,
         )
 
         board_rs, board_ctx = _board_with_bar_labels({"position": "top"})
@@ -1637,10 +1640,10 @@ class TestDataTableValueLabels:
             x="month",
             y="revenue",
             # "month" is a categorical string x, which auto-resolves to horizontal;
-            # data_table is unsupported there, so pin vertical explicitly.
+            # support_table is unsupported there, so pin vertical explicitly.
             style={"orientation": "vertical"},
-            data_table=ChartDataTable(
-                entries=[ChartDataTableAggregate(source="revenue", aggregate="sum")]
+            support_table=ChartSupportTable(
+                entries=[ChartSupportTableAggregate(source="revenue", aggregate="sum")]
             ),
         )
         resolve(chart, SAMPLE_DATA, chart_style_context=board_ctx)
@@ -1653,7 +1656,7 @@ class TestDataTableValueLabels:
         )
         lyr = _get_value_label_layer(spec)
         assert lyr is not None, (
-            "Must emit value-label text layer when data_table is present"
+            "Must emit value-label text layer when support_table is present"
         )
         enc = lyr.get("encoding", {})
         assert "x" in enc, (
@@ -1678,7 +1681,7 @@ _STACKED_DATA = [
 
 def _board_with_bar_total_label_visible(visible: bool) -> ResolvedStyle:
     """Build a resolved style with bar total_label.visible configured."""
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     new_total = compiled.charts.marks.bar.total_label.model_copy(
         update={"visible": visible}
     )
@@ -1867,9 +1870,9 @@ class TestBarTotalLabel:
         alias table like every other format slot — bar.py's raw_total branch
         hands the resolved spec to Vega verbatim, so an unresolved alias key
         would compile clean and ship the literal word to Vega's d3."""
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         new_total = compiled.charts.marks.bar.total_label.model_copy(
-            update={"visible": True, "format": "currency"}
+            update={"visible": True, "format": "currency_full"}
         )
         new_bar = compiled.charts.marks.bar.model_copy(
             update={"total_label": new_total}
@@ -1901,7 +1904,7 @@ class TestBarTotalLabel:
 
     def test_total_label_and_segment_labels_coexist(self, make_chart) -> None:
         """Per-segment labels and total_label can both be visible simultaneously."""
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         new_labels = compiled.charts.marks.bar.labels.model_copy(
             update={"visible": True}
         )
@@ -1974,7 +1977,7 @@ class TestBarTotalLabel:
         overrides the inherited outer nominal color:{field:segment} encoding."""
         from dbt_charts.core.compile.models.primitives import FontStyle
 
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         new_total = compiled.charts.marks.bar.total_label.model_copy(
             update={"visible": True, "font": FontStyle(color="#cc0000")}
         )
@@ -2009,7 +2012,7 @@ class TestBarTotalLabel:
         """total_label.font.style reaches the total-label mark as fontStyle."""
         from dbt_charts.core.compile.models.primitives import FontStyle
 
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         new_total = compiled.charts.marks.bar.total_label.model_copy(
             update={"visible": True, "font": FontStyle(style="italic")}
         )
@@ -2042,7 +2045,7 @@ class TestBarTotalLabel:
 
     def test_total_label_format_applied(self, make_chart) -> None:
         """An explicit total_label.format is emitted on the text encoding."""
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         new_total = compiled.charts.marks.bar.total_label.model_copy(
             update={"visible": True, "format": ",.0f"}
         )
@@ -2288,10 +2291,10 @@ class TestHouseRegister:
         assert "$1,200,000" in texts, f"authored format must render verbatim: {texts}"
 
     def test_authored_alias_still_resolves_and_stays_verbatim(self, make_chart) -> None:
-        """An authored alias (format: currency) resolves through the theme
+        """An authored alias (format: currency_full) resolves through the theme
         alias table and, since it isn't SI-shaped, is emitted verbatim — no
         narrative wrapping applies."""
-        board_rs, board_ctx = _board_with_bar_labels({"format": "currency"})
+        board_rs, board_ctx = _board_with_bar_labels({"format": "currency_full"})
         chart = make_chart("bar", x="month", y="revenue")
         resolve(chart, SAMPLE_DATA, chart_style_context=board_ctx)
         spec = generate_vega_lite_spec(
@@ -2338,10 +2341,10 @@ class TestHouseRegister:
     def test_authored_alias_si_format_takes_narrative_register(
         self, make_chart
     ) -> None:
-        """A SI format authored via a predefined name (format: compact -> ~s)
+        """A SI format authored via a predefined name (format: compact -> .3~s)
         fires the narrative register -- the predefined name is a house choice,
         not a hand-written d3 spec, so the callout still reads '1.2mn'."""
-        board_rs, board_ctx = _board_with_bar_labels({"format": "compact"})
+        board_rs, board_ctx = _board_with_bar_labels({"format": "number"})
         chart = make_chart(
             "bar", x="month", y="revenue", style={"bar": {"orientation": "vertical"}}
         )
@@ -2356,8 +2359,8 @@ class TestHouseRegister:
             f"predefined-resolved SI must use a calculate transform (narrative): {lyr['encoding']['text']}"
         )
         text_field = lyr["encoding"]["text"]["field"]
-        # "compact" resolves to "~s" (trim already set; round_aware_spec is no-op).
-        expected = numeral_vega_expr("datum['revenue']", "~s", "narrative")
+        # "number" resolves to ".3~s" (trim already set; round_aware_spec is no-op).
+        expected = numeral_vega_expr("datum['revenue']", ".3~s", "narrative")
         calc = next(
             (t for t in spec.get("transform", []) if t.get("as") == text_field), None
         )
@@ -2454,7 +2457,7 @@ class TestKpiProvenance:
         The author explicitly wrote a literal d3 spec in their chart YAML --
         that opts out of the narrative register (raw d3 output: "1.2M").
         """
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart("kpi", value="revenue", style={"value": {"format": "~s"}})
         resolved = resolve(chart, _KPI_MILLIONS_DATA, chart_style_context=board_ctx)
         assert resolved.format_native is True, (
@@ -2470,7 +2473,7 @@ class TestKpiProvenance:
         """
         from dbt_charts.core.render.chart.kpi import render_kpi_svg
 
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart("kpi", value="revenue", style={"value": {"format": "~s"}})
         resolved = resolve(chart, _KPI_MILLIONS_DATA, chart_style_context=board_ctx)
         assert resolved.format_native is True
@@ -2496,7 +2499,7 @@ class TestKpiProvenance:
 
 def _board_with_line_labels(updates: dict[str, object]):
     """Build a resolved style with line mark labels configured."""
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     new_labels = compiled.charts.marks.line.labels.model_copy(
         update={"visible": True, **updates}
     )
@@ -2512,10 +2515,10 @@ class TestLineLabelTransformRegister:
     through the full render path."""
 
     def test_line_alias_axis_label_uses_calculate_transform(self, make_chart) -> None:
-        """Line chart with axis alias format "compact" on labels: narrative
+        """Line chart with axis alias format "number" on labels: narrative
         calculate transform must appear inside the text mark layer, not in
         the top-level spec.transforms."""
-        board_rs, board_ctx = _board_with_line_labels({"format": "compact"})
+        board_rs, board_ctx = _board_with_line_labels({"format": "number"})
         chart = make_chart("line", x="month", y="revenue")
         resolve(chart, _MILLIONS_DATA, chart_style_context=board_ctx)
         spec = generate_vega_lite_spec(
@@ -2587,7 +2590,7 @@ class TestLineVsPointLabelSelection:
         """When line labels are visible but point labels are not, the text mark
         uses the line register -- and the resolved model exposes line_label_is_house
         distinct from point_label_is_house."""
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         # Line labels visible with alias (narrative), point labels hidden
         chart = make_chart(
             "line",
@@ -2595,7 +2598,7 @@ class TestLineVsPointLabelSelection:
             y="revenue",
             style={
                 "marks": {
-                    "line": {"labels": {"visible": True, "format": "compact"}},
+                    "line": {"labels": {"visible": True, "format": "number"}},
                     "point": {"labels": {"visible": False}},
                 }
             },
@@ -2603,7 +2606,7 @@ class TestLineVsPointLabelSelection:
         resolved = resolve(chart, _MILLIONS_DATA, chart_style_context=board_ctx)
         # Line labels authored with alias -> narrative
         assert resolved.style.line_label_is_house is True, (
-            "line label with alias 'compact' must be narrative (is_house=True)"
+            "line label with alias 'number' must be narrative (is_house=True)"
         )
         # Point labels not visible -- field must exist with a real value (not vacuous hasattr)
         assert resolved.style.point_label_is_house is True, (
@@ -2616,7 +2619,7 @@ class TestLineVsPointLabelSelection:
 
         Line labels have alias format (narrative); point labels have literal format
         (native). The two resolved flags must diverge."""
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "line",
             x="month",
@@ -2624,7 +2627,7 @@ class TestLineVsPointLabelSelection:
             style={
                 "marks": {
                     # Line labels: alias -> narrative
-                    "line": {"labels": {"visible": True, "format": "compact"}},
+                    "line": {"labels": {"visible": True, "format": "number"}},
                     # Point labels: literal -> native
                     "point": {"labels": {"visible": True, "format": "~s"}},
                 }
@@ -2678,7 +2681,7 @@ class TestHistogramNoValueLabels:
         total_label_is_house stays False (histograms have no stack totals).
         The correct provenance value comes from _bake_cartesian_axes, the same
         source _resolve_bar uses."""
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart("histogram", x="revenue")
         resolved = resolve(chart, _MILLIONS_DATA, chart_style_context=board_ctx)
         assert resolved.style.label_is_house is True, (
@@ -2700,23 +2703,21 @@ class TestHistogramAliasLabelNoCrash:
     An authored theme alias (format: compact) must resolve through
     _label_format_fallback before reaching value_labels.py -- the render
     layer calls is_d3_si_spec on the format string, and an unresolved alias
-    key like "compact" is not a valid d3 format spec, causing a parse error.
+    key like "number" is not a valid d3 format spec, causing a parse error.
     _resolve_histogram calls _label_format_fallback like _resolve_bar does.
     """
 
     def test_histogram_authored_alias_label_resolves_without_crash(
         self, make_chart
     ) -> None:
-        """Histogram with style.marks.bar.labels.format: "compact" must resolve
+        """Histogram with style.marks.bar.labels.format: "number" must resolve
         and emit a VL spec without raising D3FormatError."""
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
-        board_rs, _ = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
+        board_rs, _ = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "histogram",
             x="revenue",
-            style={
-                "marks": {"bar": {"labels": {"visible": True, "format": "compact"}}}
-            },
+            style={"marks": {"bar": {"labels": {"visible": True, "format": "number"}}}},
         )
         from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
@@ -2733,13 +2734,11 @@ class TestHistogramAliasLabelNoCrash:
     ) -> None:
         """After _label_format_fallback runs on histogram, alias format maps to
         label_is_house=True (narrative) -- an alias is the theme's house choice."""
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "histogram",
             x="revenue",
-            style={
-                "marks": {"bar": {"labels": {"visible": True, "format": "compact"}}}
-            },
+            style={"marks": {"bar": {"labels": {"visible": True, "format": "number"}}}},
         )
         resolved = resolve(chart, _MILLIONS_DATA, chart_style_context=board_ctx)
         assert resolved.style.label_is_house is True, (
@@ -2791,7 +2790,7 @@ class TestOverlayBarLabelSortPreservation:
         from dbt_charts.core.compile.normalize.charts import normalize_chart
         from dbt_charts.core.render.chart.session import BoardRenderSession
 
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart_def = {
             "type": "bar",
             "query": "q",
@@ -2807,12 +2806,12 @@ class TestOverlayBarLabelSortPreservation:
                             "bar": {
                                 "labels": {
                                     "visible": True,
-                                    # "compact" is a theme alias for "~s" (SI).
-                                    # resolve_label_format("compact", ...) → is_house=True
+                                    # "number" is a theme alias for "~s" (SI).
+                                    # resolve_label_format("number", ...) → is_house=True
                                     # → calculate transform → _reconcile_x_domain's
                                     # force=True trigger fires and, since a sort IS
                                     # authored below, pins an explicit sorted domain.
-                                    "format": "compact",
+                                    "format": "number",
                                 }
                             }
                         }
@@ -2873,7 +2872,7 @@ class TestOverlayBarLabelSortPreservation:
         from dbt_charts.core.compile.normalize.charts import normalize_chart
         from dbt_charts.core.render.chart.session import BoardRenderSession
 
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart_def = {
             "type": "bar",
             "query": "q",
@@ -2886,7 +2885,7 @@ class TestOverlayBarLabelSortPreservation:
                     "y": "revenue",
                     "style": {
                         "marks": {
-                            "bar": {"labels": {"visible": True, "format": "compact"}}
+                            "bar": {"labels": {"visible": True, "format": "number"}}
                         }
                     },
                 }
@@ -2908,6 +2907,171 @@ class TestOverlayBarLabelSortPreservation:
             f"without an authored sort, domain must be in query-row order "
             f"(Jan/Feb/Mar), got {domain!r}"
         )
+
+
+# =============================================================================
+# An overlay layer's own labels.field must be validated against ITS OWN rows
+# (own query, when diverging from the base's; the base's own already-
+# normalized rows otherwise) — not skipped entirely, and not checked against
+# the wrong side's columns.
+# =============================================================================
+
+
+class TestOverlayLabelFieldValidation:
+    """``_collect_label_fields`` must walk ``chart.layers`` too, validating
+    each layer's own ``labels.field`` against ITS OWN rows: the base's rows
+    when the layer shares the base's query (the common, unauthored-``query:``
+    shape — ``_resolve_layer_rows``'s own docstring calls this "nearly every
+    layer"), or ``datasets[layer.query_name]`` when the layer's resolved
+    query name diverges from the base's — the same rule
+    ``render_cartesian_overlay``/``_resolve_layer_rows`` use.
+
+    Parametrized over all four overlay layer families (bar/line/area/
+    scatter) so every branch of ``_layer_label_slots``' per-family dispatch
+    is actually exercised, not just the line branch.
+    """
+
+    _BASE_DATA = [
+        {"month": "Jan", "revenue": 100, "revenue_caption": "Strong"},
+        {"month": "Feb", "revenue": 200, "revenue_caption": "Growing"},
+    ]
+    _TARGET_DATA = [
+        {"month": "Jan", "target": 90, "target_caption": "On track"},
+        {"month": "Feb", "target": 95, "target_caption": "Ahead"},
+    ]
+    # Where each layer family's `labels:` config lives under `style.marks`.
+    _LAYER_MARK_KEY = {"bar": "bar", "line": "line", "area": "line", "scatter": "point"}
+
+    def _resolved_and_datasets(
+        self, layer_type: str, label_field: str, *, diverges: bool = True
+    ) -> tuple[Any, dict[str | None, list[dict[str, Any]]], Any]:
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.compile.normalize.charts import normalize_chart
+
+        registry = {
+            "q": SqlQuery(sql="SELECT 1", source="test"),
+            "targets": SqlQuery(sql="SELECT 1", source="test"),
+        }
+        layer_def: dict[str, Any] = {
+            "type": layer_type,
+            "y": "target",
+            "style": {
+                "marks": {
+                    self._LAYER_MARK_KEY[layer_type]: {
+                        "labels": {"visible": True, "field": label_field}
+                    }
+                }
+            },
+        }
+        if diverges:
+            layer_def["query"] = "targets"
+        chart_def = {
+            "type": "bar",
+            "query": "q",
+            "x": "month",
+            "y": "revenue",
+            "layers": [layer_def],
+        }
+        compiled = normalize_chart("v2chart", chart_def, registry, sources={})
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
+        resolved = resolve(compiled, self._BASE_DATA, chart_style_context=board_ctx)
+        datasets: dict[str | None, list[dict[str, Any]]] = {
+            resolved.query_name: self._BASE_DATA
+        }
+        if diverges:
+            datasets["targets"] = self._TARGET_DATA
+        return resolved, datasets, board_rs
+
+    @pytest.mark.parametrize("layer_type", ["bar", "line", "area", "scatter"])
+    def test_diverging_layer_typo_field_raises(self, layer_type: str) -> None:
+        """A typo'd overlay labels.field on a diverging-query layer must
+        fail fast, matching the base-chart contract — not render a blank
+        (or NaN, per the number-classifier fallback) with no diagnostic."""
+        from dbt_charts.core.diagnostics.chart_data import ChartDataError
+        from dbt_charts.core.render.chart.session import BoardRenderSession
+
+        resolved, datasets, board_rs = self._resolved_and_datasets(
+            layer_type, "does_not_exist", diverges=True
+        )
+        session = BoardRenderSession.create(board_rs)
+        with pytest.raises(
+            ChartDataError,
+            match=(
+                rf"labels\.field 'does_not_exist' on overlay layer 0 "
+                rf"\({layer_type}, query='targets'\) names a column not present"
+            ),
+        ):
+            session.emit_chart(resolved, _DEFAULT_BOX, datasets)
+
+    @pytest.mark.parametrize("layer_type", ["bar", "line", "area", "scatter"])
+    def test_non_diverging_layer_typo_field_raises(self, layer_type: str) -> None:
+        """The common, unauthored-``query:`` shape: the layer's resolved
+        query name is baked to the base's own (``layer.query_name ==
+        chart.query_name``), so it validates against the base's own ``data``
+        rather than a ``datasets`` lookup. This is the branch every prior
+        test in this class skipped by always authoring ``query: targets`` —
+        it is the majority case per ``_resolve_layer_rows``'s own docstring,
+        not an edge case, so a typo here must fail exactly as loudly."""
+        from dbt_charts.core.diagnostics.chart_data import ChartDataError
+        from dbt_charts.core.render.chart.session import BoardRenderSession
+
+        resolved, datasets, board_rs = self._resolved_and_datasets(
+            layer_type, "does_not_exist", diverges=False
+        )
+        assert resolved.layers[0].query_name == resolved.query_name, (
+            "precondition: this test only proves something about the "
+            "non-diverging branch if the layer's query actually matches "
+            "the base's"
+        )
+        session = BoardRenderSession.create(board_rs)
+        with pytest.raises(
+            ChartDataError,
+            match=(
+                rf"labels\.field 'does_not_exist' on overlay layer 0 "
+                rf"\({layer_type}, query='q'\) names a column not present"
+            ),
+        ):
+            session.emit_chart(resolved, _DEFAULT_BOX, datasets)
+
+    def test_field_present_only_in_layer_own_dataset_is_valid(self) -> None:
+        """A field that exists only in the layer's OWN (diverging) dataset —
+        not the base's — must validate clean: the layer's rows are what it
+        actually renders against."""
+        from dbt_charts.core.render.chart.session import BoardRenderSession
+
+        resolved, datasets, board_rs = self._resolved_and_datasets(
+            "line", "target_caption", diverges=True
+        )
+        session = BoardRenderSession.create(board_rs)
+        spec = session.emit_chart(resolved, _DEFAULT_BOX, datasets)
+        vl = session.finalize_vl(spec)
+        overlay_text_layers = [
+            lyr
+            for lyr in vl.get("layer", [])
+            if isinstance(lyr.get("mark"), dict) and lyr["mark"].get("type") == "text"
+        ]
+        assert overlay_text_layers, "expected the overlay layer's own text layer"
+
+    def test_field_present_only_in_base_dataset_raises_on_diverging_layer(self) -> None:
+        """A field that exists only in the BASE's dataset, authored on a
+        layer whose own query diverges from the base's, must raise — the
+        layer never sees that column at render time, so it is the likelier
+        authoring mistake, not a cross-dataset union."""
+        from dbt_charts.core.diagnostics.chart_data import ChartDataError
+        from dbt_charts.core.render.chart.session import BoardRenderSession
+
+        resolved, datasets, board_rs = self._resolved_and_datasets(
+            "line", "revenue_caption", diverges=True
+        )
+        session = BoardRenderSession.create(board_rs)
+        with pytest.raises(
+            ChartDataError,
+            match=(
+                r"labels\.field 'revenue_caption' on overlay layer 0 "
+                r"\(line, query='targets'\) names a column not present"
+            ),
+        ):
+            session.emit_chart(resolved, _DEFAULT_BOX, datasets)
 
 
 # =============================================================================
@@ -2947,7 +3111,7 @@ class TestOverlayRenderLevelIsHouse:
             ).SqlQuery(sql="SELECT 1", source="test")
         }
 
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart_def = {
             "type": "bar",
             "query": "q",
@@ -3010,7 +3174,7 @@ class TestAreaScatterLiteralSiFormat:
     def test_area_chart_local_literal_si_label_is_native(self, make_chart) -> None:
         """Area chart with style.marks.line.labels.format: "~s" (chart-local
         literal) must compute label_is_house=False (native)."""
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "area",
             x="month",
@@ -3027,7 +3191,7 @@ class TestAreaScatterLiteralSiFormat:
     def test_scatter_chart_local_literal_si_label_is_native(self, make_chart) -> None:
         """Scatter chart with style.marks.point.labels.format: "~s" (chart-local
         literal) must compute label_is_house=False (native)."""
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "scatter",
             x="month",
@@ -3101,7 +3265,7 @@ class TestOverlayLayerXTypePreservation:
         from dbt_charts.core.compile.normalize.charts import normalize_chart
         from dbt_charts.core.render.chart.session import BoardRenderSession
 
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart_def = _overlay_chart_def("line", "date", "line", "line")
         compiled = normalize_chart("v2chart", chart_def, _DUMMY_QUERY_REG, sources={})
         resolved = resolve(compiled, _DATE_DATA, chart_style_context=board_ctx)
@@ -3121,7 +3285,7 @@ class TestOverlayLayerXTypePreservation:
         from dbt_charts.core.compile.normalize.charts import normalize_chart
         from dbt_charts.core.render.chart.session import BoardRenderSession
 
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart_def = _overlay_chart_def("area", "date", "area", "line")
         compiled = normalize_chart("v2chart", chart_def, _DUMMY_QUERY_REG, sources={})
         resolved = resolve(compiled, _DATE_DATA, chart_style_context=board_ctx)
@@ -3146,7 +3310,7 @@ class TestOverlayLayerXTypePreservation:
         from dbt_charts.core.compile.normalize.charts import normalize_chart
         from dbt_charts.core.render.chart.session import BoardRenderSession
 
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart_def = _overlay_chart_def("scatter", "qty", "scatter", "point")
         compiled = normalize_chart("v2chart", chart_def, _DUMMY_QUERY_REG, sources={})
         resolved = resolve(compiled, _QTY_DATA, chart_style_context=board_ctx)
@@ -3184,7 +3348,7 @@ class TestHistogramLabelProvenance:
 
         The theme default format is an alias, so label_is_house=True (narrative).
         A hardcoded authored=True flag would misclassify it as a literal opt-out."""
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart_hist = make_chart(
             "histogram",
             x="revenue",
@@ -3207,13 +3371,11 @@ class TestHistogramLabelProvenance:
         """Histogram with alias-format label stays narrative (is_house=True).
         This tests the same path as TestHistogramAliasLabelNoCrash but checks
         the three-case matrix row for the alias case."""
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "histogram",
             x="revenue",
-            style={
-                "marks": {"bar": {"labels": {"visible": True, "format": "compact"}}}
-            },
+            style={"marks": {"bar": {"labels": {"visible": True, "format": "number"}}}},
         )
         resolved = resolve(chart, _MILLIONS_DATA, chart_style_context=board_ctx)
         assert resolved.style.label_is_house is True, (
@@ -3222,7 +3384,7 @@ class TestHistogramLabelProvenance:
 
     def test_histogram_authored_literal_si_label_is_native(self, make_chart) -> None:
         """Histogram with a chart-local literal SI format opts out of narrative."""
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "histogram",
             x="revenue",
@@ -3243,7 +3405,7 @@ class TestAreaScatterIsHouseNarrative:
 
     def test_area_default_si_format_is_narrative(self, make_chart) -> None:
         """Area chart with visible labels and no authored format: label_is_house=True."""
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "area",
             x="month",
@@ -3257,13 +3419,13 @@ class TestAreaScatterIsHouseNarrative:
 
     def test_area_alias_si_format_is_narrative(self, make_chart) -> None:
         """Area chart with alias-format labels: label_is_house=True."""
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "area",
             x="month",
             y="revenue",
             style={
-                "marks": {"line": {"labels": {"visible": True, "format": "compact"}}}
+                "marks": {"line": {"labels": {"visible": True, "format": "number"}}}
             },
         )
         resolved = resolve(chart, _MILLIONS_DATA, chart_style_context=board_ctx)
@@ -3273,7 +3435,7 @@ class TestAreaScatterIsHouseNarrative:
 
     def test_scatter_default_si_format_is_narrative(self, make_chart) -> None:
         """Scatter chart with visible labels and no authored format: label_is_house=True."""
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "scatter",
             x="month",
@@ -3287,13 +3449,13 @@ class TestAreaScatterIsHouseNarrative:
 
     def test_scatter_alias_si_format_is_narrative(self, make_chart) -> None:
         """Scatter chart with alias-format labels: label_is_house=True."""
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "scatter",
             x="month",
             y="revenue",
             style={
-                "marks": {"point": {"labels": {"visible": True, "format": "compact"}}}
+                "marks": {"point": {"labels": {"visible": True, "format": "number"}}}
             },
         )
         resolved = resolve(chart, _MILLIONS_DATA, chart_style_context=board_ctx)
@@ -3315,7 +3477,7 @@ class TestAreaScatterOverlayRenderLevel:
         from dbt_charts.core.compile.normalize.charts import normalize_chart
         from dbt_charts.core.render.chart.session import BoardRenderSession
 
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart_def = _overlay_chart_def("area", "month", "area", "line")
         compiled = normalize_chart("v2chart", chart_def, _DUMMY_QUERY_REG, sources={})
         resolved = resolve(compiled, _MILLIONS_DATA, chart_style_context=board_ctx)
@@ -3339,7 +3501,7 @@ class TestAreaScatterOverlayRenderLevel:
         from dbt_charts.core.compile.normalize.charts import normalize_chart
         from dbt_charts.core.render.chart.session import BoardRenderSession
 
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart_def = _overlay_chart_def("scatter", "month", "scatter", "point")
         compiled = normalize_chart("v2chart", chart_def, _DUMMY_QUERY_REG, sources={})
         resolved = resolve(compiled, _MILLIONS_DATA, chart_style_context=board_ctx)
@@ -3379,10 +3541,10 @@ class TestSharedAxisOverlayWithMarkFormat:
         """Overlay layer with no axis_y, mark labels authored with alias: narrative.
 
         The base chart has no explicit axis format (inherits SI default from theme).
-        The overlay layer authors marks.<mark>.labels.format: "compact" (alias).
+        The overlay layer authors marks.<mark>.labels.format: "number" (alias).
         Result must be label_is_house=True (narrative) because alias -> house rules.
         """
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             chart_type,
             x="month",
@@ -3393,7 +3555,7 @@ class TestSharedAxisOverlayWithMarkFormat:
                     "y": "revenue",
                     "style": {
                         "marks": {
-                            mark_key: {"labels": {"visible": True, "format": "compact"}}
+                            mark_key: {"labels": {"visible": True, "format": "number"}}
                         }
                     },
                 }
@@ -3418,7 +3580,7 @@ class TestSharedAxisOverlayWithMarkFormat:
         self, make_chart, chart_type: str, layer_type: str, mark_key: str
     ) -> None:
         """Overlay layer with no axis_y, mark labels authored with literal "~s": native."""
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             chart_type,
             x="month",
@@ -3451,7 +3613,7 @@ class TestOverlayAliasGateRegister:
     """Overlay layer label register is decided purely by alias membership.
 
     - No format → stays unformatted, label_is_house=False (no register question)
-    - Alias format (marks.<mark>.labels.format = "compact") → narrative
+    - Alias format (marks.<mark>.labels.format = "number") → narrative
     - Literal SI format (marks.<mark>.labels.format = "~s") → native
 
     These hold regardless of whether the format was set by the chart author or
@@ -3475,7 +3637,7 @@ class TestOverlayAliasGateRegister:
         An unformatted layer label never inherits any axis's format — no
         format means no register question, so label_is_house stays False.
         """
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             chart_type,
             x="month",
@@ -3518,7 +3680,7 @@ class TestOverlayLineVsPointRenderLevel:
         If the ternary always used point_label_is_house (False, literal "~s"),
         this would emit text.format instead of a calculate transform.
         """
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "line",
             x="month",
@@ -3529,7 +3691,7 @@ class TestOverlayLineVsPointRenderLevel:
                     "y": "revenue",
                     "style": {
                         "marks": {
-                            "line": {"labels": {"visible": True, "format": "compact"}},
+                            "line": {"labels": {"visible": True, "format": "number"}},
                             "point": {"labels": {"visible": False, "format": "~s"}},
                         }
                     },
@@ -3564,10 +3726,10 @@ class TestOverlayLineVsPointRenderLevel:
         """Overlay line label hidden but alias, point label visible + literal:
         must use point_label_is_house=False (text.format, no calculate).
 
-        If the ternary always used line_label_is_house (True, alias "compact"),
+        If the ternary always used line_label_is_house (True, alias "number"),
         this would emit a calculate transform instead of text.format.
         """
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "line",
             x="month",
@@ -3578,7 +3740,7 @@ class TestOverlayLineVsPointRenderLevel:
                     "y": "revenue",
                     "style": {
                         "marks": {
-                            "line": {"labels": {"visible": False, "format": "compact"}},
+                            "line": {"labels": {"visible": False, "format": "number"}},
                             "point": {"labels": {"visible": True, "format": "~s"}},
                         }
                     },
@@ -3615,7 +3777,7 @@ class TestOverlayLineVsPointRenderLevel:
 
 
 # =============================================================================
-# _sort_domain_by_field: numeric string coercion and correct aggregate choice.
+# Authored categorical-domain sort: numeric coercion and aggregate choice.
 # =============================================================================
 
 # Revenue as numeric strings — the real warehouse row shape from some adapters.
@@ -3659,7 +3821,7 @@ def _overlay_chart_def_with_sort(
                         "bar": {
                             "labels": {
                                 "visible": True,
-                                "format": "compact",
+                                "format": "number",
                             }
                         }
                     }
@@ -3673,7 +3835,7 @@ def _overlay_chart_def_with_sort(
 
 
 class TestOverlayBarSortNumericStrings:
-    """_sort_domain_by_field must handle numeric-string revenue values.
+    """The shared categorical-domain order handles numeric-string measures.
 
     Some warehouse adapters return measure columns as strings ("1200000").
     domain_sort_aggregates uses coerce_numeric_cell for type-safe coercion,
@@ -3692,7 +3854,7 @@ class TestOverlayBarSortNumericStrings:
         from dbt_charts.core.compile.normalize.charts import normalize_chart
         from dbt_charts.core.render.chart.session import BoardRenderSession
 
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart_def = _overlay_chart_def_with_sort("revenue", "desc")
         compiled = normalize_chart("v2chart", chart_def, _DUMMY_QUERY_REG, sources={})
         resolved = resolve(
@@ -3726,7 +3888,7 @@ class TestOverlayBarSortAggregateMatchesUnlabeled:
     """A house-register overlay label must not change the base chart's own
     category order.
 
-    _sort_domain_by_field pins an explicit domain (the force=True trigger,
+    ``rendered_x_domain`` pins an explicit domain (the force=True trigger,
     since the label sublayer's calculate transform breaks Vega-Lite's native
     sort-by-field across the shared scale). That pinned domain must sort by
     the same aggregate Vega-Lite's own EncodingSortField.op applies when
@@ -3755,7 +3917,7 @@ class TestOverlayBarSortAggregateMatchesUnlabeled:
         from dbt_charts.core.compile.normalize.charts import normalize_chart
         from dbt_charts.core.render.chart.session import BoardRenderSession
 
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
 
         def render_order(chart_def: dict[str, Any]) -> list[str]:
             compiled = normalize_chart(
@@ -3812,7 +3974,7 @@ class TestKpiPrefixSuffixOnlyNotNative:
         """FormatConfig(prefix='$') with no spec: format_native must be False."""
         from dbt_charts.core.compile.models.primitives import FormatConfig
 
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "kpi",
             value="revenue",
@@ -3828,7 +3990,7 @@ class TestKpiPrefixSuffixOnlyNotNative:
         """FormatConfig(suffix=' ARR') with no spec: format_native must be False."""
         from dbt_charts.core.compile.models.primitives import FormatConfig
 
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "kpi",
             value="revenue",
@@ -3845,7 +4007,7 @@ class TestKpiPrefixSuffixOnlyNotNative:
         """FormatConfig(spec='~s', prefix='$') -- spec present, literal -> native."""
         from dbt_charts.core.compile.models.primitives import FormatConfig
 
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "kpi",
             value="revenue",
@@ -3873,13 +4035,13 @@ class TestAreaScatterRenderLevelRegister:
 
     def test_area_alias_label_has_calculate_transform(self, make_chart) -> None:
         """Area chart with alias-format label: emitted text layer must carry calculate."""
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "area",
             x="month",
             y="revenue",
             style={
-                "marks": {"line": {"labels": {"visible": True, "format": "compact"}}}
+                "marks": {"line": {"labels": {"visible": True, "format": "number"}}}
             },
         )
         spec = generate_vega_lite_spec(
@@ -3903,7 +4065,7 @@ class TestAreaScatterRenderLevelRegister:
 
     def test_area_literal_si_label_has_format_not_calculate(self, make_chart) -> None:
         """Area chart with literal SI label: text.format set, no calculate."""
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "area",
             x="month",
@@ -3930,13 +4092,13 @@ class TestAreaScatterRenderLevelRegister:
 
     def test_scatter_alias_label_has_calculate_transform(self, make_chart) -> None:
         """Scatter chart with alias-format label: emitted text layer has calculate."""
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "scatter",
             x="month",
             y="revenue",
             style={
-                "marks": {"point": {"labels": {"visible": True, "format": "compact"}}}
+                "marks": {"point": {"labels": {"visible": True, "format": "number"}}}
             },
         )
         spec = generate_vega_lite_spec(
@@ -3961,7 +4123,7 @@ class TestAreaScatterRenderLevelRegister:
         self, make_chart
     ) -> None:
         """Scatter chart with literal SI label: text.format set, no calculate."""
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "scatter",
             x="month",
@@ -4009,14 +4171,14 @@ class TestLineVsPointLabelRenderLevel:
         If the ternary were flipped to always use point_label_is_house (False here),
         there would be no calculate transform.
         """
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "line",
             x="month",
             y="revenue",
             style={
                 "marks": {
-                    "line": {"labels": {"visible": True, "format": "compact"}},
+                    "line": {"labels": {"visible": True, "format": "number"}},
                     "point": {"labels": {"visible": False, "format": "~s"}},
                 }
             },
@@ -4046,14 +4208,14 @@ class TestLineVsPointLabelRenderLevel:
         If the ternary were flipped to use line_label_is_house (True here),
         there would be a calculate transform instead of text.format.
         """
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "line",
             x="month",
             y="revenue",
             style={
                 "marks": {
-                    "line": {"labels": {"visible": False, "format": "compact"}},
+                    "line": {"labels": {"visible": False, "format": "number"}},
                     "point": {"labels": {"visible": True, "format": "~s"}},
                 }
             },
@@ -4089,9 +4251,9 @@ class TestLineVsPointLabelRenderLevel:
 
 def _bar_with_house_label(position: str):
     """Board+context with bar labels visible, alias format, and given position."""
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     new_labels = compiled.charts.marks.bar.labels.model_copy(
-        update={"visible": True, "position": position, "format": "compact"}
+        update={"visible": True, "position": position, "format": "number"}
     )
     new_bar = compiled.charts.marks.bar.model_copy(update={"labels": new_labels})
     new_marks = compiled.charts.marks.model_copy(update={"bar": new_bar})
@@ -4245,7 +4407,7 @@ class TestKpiNotationOverrideIsHouse:
         """
         from dbt_charts.core.compile.models.primitives import FormatConfig
 
-        _, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        _, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = make_chart(
             "kpi",
             value="revenue",
@@ -4294,7 +4456,7 @@ class TestOverlayIsHouseAllFamiliesRenderLevel:
         from dbt_charts.core.compile.normalize.charts import normalize_chart
         from dbt_charts.core.render.chart.session import BoardRenderSession
 
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart_def = {
             "type": chart_type,
             "query": "q",
@@ -4306,7 +4468,7 @@ class TestOverlayIsHouseAllFamiliesRenderLevel:
                     "y": "revenue",
                     "style": {
                         "marks": {
-                            mark_key: {"labels": {"visible": True, "format": "compact"}}
+                            mark_key: {"labels": {"visible": True, "format": "number"}}
                         }
                     },
                 }
@@ -4315,7 +4477,7 @@ class TestOverlayIsHouseAllFamiliesRenderLevel:
         compiled = normalize_chart("v2chart", chart_def, _DUMMY_QUERY_REG, sources={})
         resolved = resolve(compiled, _MILLIONS_DATA, chart_style_context=board_ctx)
         assert resolved.layers and resolved.layers[0].label_is_house is True, (
-            f"{layer_type} overlay with alias 'compact' must resolve to house "
+            f"{layer_type} overlay with alias 'number' must resolve to house "
             f"(label_is_house=True)"
         )
         session = BoardRenderSession.create(board_rs)
@@ -4362,7 +4524,7 @@ class TestOverlayIsHouseAllFamiliesRenderLevel:
         from dbt_charts.core.compile.normalize.charts import normalize_chart
         from dbt_charts.core.render.chart.session import BoardRenderSession
 
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart_def = {
             "type": chart_type,
             "query": "q",
@@ -4413,8 +4575,8 @@ class TestOverlayIsHouseAllFamiliesRenderLevel:
 
 # =============================================================================
 # datetime.date x-values must not break an overlay's authored sort.
-# _sort_domain_by_field remaps sort_aggs keys through normalize_scalar_for_json
-# so they match the ISO-string keys in the domain array.
+# rendered_x_domain normalizes raw category keys so they match the ISO-string
+# keys in the emitted domain array.
 # =============================================================================
 
 
@@ -4464,13 +4626,13 @@ class TestOverlayDateXSortPreservation:
                     "y": "revenue",
                     "style": {
                         "marks": {
-                            "bar": {"labels": {"visible": True, "format": "compact"}}
+                            "bar": {"labels": {"visible": True, "format": "number"}}
                         }
                     },
                 }
             ],
         }
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         compiled = normalize_chart("v2chart", chart_def, _DUMMY_QUERY_REG, sources={})
         resolved = resolve(compiled, date_data, chart_style_context=board_ctx)
         session = BoardRenderSession.create(board_rs)
@@ -4501,13 +4663,13 @@ class TestOverlayDateXSortPreservation:
 
 # =============================================================================
 # A stacked bar overlay must use sum for the sort aggregate.
-# _sort_domain_by_field always uses op="sum", matching Vega-Lite's own
-# EncodingSortField.op default for the shapes this codebase emits.
+# The shared categorical-domain helper uses sum, matching Vega-Lite's own
+# EncodingSortField.op default for the bar shapes this codebase emits.
 # =============================================================================
 
 
 class TestOverlayStackedBarSumAggregate:
-    """Stacked bar overlay: _sort_domain_by_field must use sum aggregate.
+    """A stacked bar overlay's authored field sort uses the sum aggregate.
 
     Vega-Lite uses sum as the EncodingSortField.op default for stacked plots.
     With multi-row-per-x data, sum and min give different orderings. The
@@ -4532,7 +4694,7 @@ class TestOverlayStackedBarSumAggregate:
         from dbt_charts.core.compile.normalize.charts import normalize_chart
         from dbt_charts.core.render.chart.session import BoardRenderSession
 
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart_def = {
             "type": "bar",
             "query": "q",
@@ -4547,7 +4709,7 @@ class TestOverlayStackedBarSumAggregate:
                     "y": "revenue",
                     "style": {
                         "marks": {
-                            "bar": {"labels": {"visible": True, "format": "compact"}}
+                            "bar": {"labels": {"visible": True, "format": "number"}}
                         }
                     },
                 }
@@ -4670,7 +4832,7 @@ class TestNullMeasureLabels:
             {"month": "Mar", "goal": 500, "actual": None},
             {"month": "Apr", "goal": 500, "actual": None},
         ]
-        board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+        board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart_def = {
             "type": "bar",
             "query": "q",
@@ -4708,7 +4870,7 @@ class TestNullMeasureLabels:
 
 def _text_label_encodings(data, label_format=None, label_field="caption"):
     """Every ``text`` channel encoding a bar chart emits for ``labels.field``."""
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     update = {"visible": True, "field": label_field}
     if label_format is not None:
         update["format"] = label_format
@@ -5113,7 +5275,7 @@ class TestValueLabelFitTest:
 
     def test_stack_total_label_is_never_hidden(self, make_chart):
         """The total sits above the whole stack — no segment has to hold it."""
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         new_labels = compiled.charts.marks.bar.labels.model_copy(
             update={"visible": True, "position": "middle"}
         )
@@ -5250,7 +5412,7 @@ class TestStackGeometryFidelity:
         rows = [{"month": "Jan", "revenue": 100}, {"month": "Feb", "revenue": 3}]
         thresholds = {}
         for size in (11.0, 33.0):
-            compiled = get_theme_style("editorial")
+            compiled = get_theme_style("clarity")
             font = compiled.charts.marks.bar.labels.font
             new_font = (
                 font.model_copy(update={"size": size})
@@ -5927,3 +6089,272 @@ class TestFitTestMeasuresThePlotRect:
         assert not re.search(r"(?<!child_)\bheight\b", test), (
             f"a bare `height` reads 0 inside a facet cell: {test}"
         )
+
+
+# =============================================================================
+# TestDualAxisValueLabelPhantomAxis — a value-label text sublayer must never
+# contribute its own y axis. A dual-axis layered chart emits
+# resolve.scale.y = "independent" (emitters/_overlay.py), under which every
+# sublayer's un-suppressed VL y channel earns its own axis — titled with a
+# raw field name nobody authored. The phantom-bearing channel is y whatever
+# its type: a vertical chart's label measure is quantitative y, a horizontal
+# bar's is its nominal *category* y (the measure sits on the shared x, which
+# must NOT be suppressed — an explicit null on a shared scale corrupts VL's
+# axis merge).
+# =============================================================================
+
+_DUAL_AXIS_DATA = [
+    {"month": "Jan", "count_services": 10.0, "count_connections": 100.0},
+    {"month": "Feb", "count_services": 20.0, "count_connections": 300.0},
+]
+
+_DUAL_AXIS_STACKED_DATA = [
+    {"month": "Jan", "channel": "Web", "revenue": 100.0, "target": 500.0},
+    {"month": "Jan", "channel": "Mobile", "revenue": 60.0, "target": 500.0},
+    {"month": "Feb", "channel": "Web", "revenue": 120.0, "target": 600.0},
+    {"month": "Feb", "channel": "Mobile", "revenue": 80.0, "target": 600.0},
+]
+
+
+def _board_with_mark_label_slots(mark_updates: dict[str, dict[str, dict[str, Any]]]):
+    """Resolve a board style with label slots configured on several marks.
+
+    ``mark_updates`` maps mark name ("bar"/"line"/"point") to
+    {slot attr ("labels"/"total_label"): field updates}.
+    """
+    compiled = get_theme_style("clarity")
+    marks = compiled.charts.marks
+    new_marks: dict[str, Any] = {}
+    for mark_name, patches in mark_updates.items():
+        mark = getattr(marks, mark_name)
+        for attr, fields in patches.items():
+            mark = mark.model_copy(
+                update={attr: getattr(mark, attr).model_copy(update=fields)}
+            )
+        new_marks[mark_name] = mark
+    charts = compiled.charts.model_copy(
+        update={"marks": marks.model_copy(update=new_marks)}
+    )
+    return resolve_style_and_context(compiled.model_copy(update={"charts": charts}))
+
+
+def _channel_axis_states(
+    node: dict[str, Any],
+    channel: str,
+    _out: list[tuple[Any, str | None, Any]] | None = None,
+) -> list[tuple[Any, str | None, Any]]:
+    """(mark type, field, axis state) for every sublayer's ``channel`` encoding.
+
+    Axis state is "absent" when no ``axis`` key exists — under an independent
+    scale resolution that channel draws its own axis, same as a dict; only an
+    explicit None suppresses it."""
+    out = [] if _out is None else _out
+    for lyr in node.get("layer", []):
+        mark = lyr.get("mark")
+        mark_type = mark.get("type") if isinstance(mark, dict) else mark
+        enc = lyr.get("encoding", {}).get(channel)
+        if isinstance(enc, dict) and "field" in enc:
+            out.append((mark_type, enc.get("field"), enc.get("axis", "absent")))
+        _channel_axis_states(lyr, channel, out)
+    return out
+
+
+class TestDualAxisValueLabelPhantomAxis:
+    def _assert_only_authored_axes(self, spec: dict[str, Any]) -> None:
+        assert spec.get("resolve", {}).get("scale", {}).get("y") == "independent", (
+            f"precondition: dual-axis chart must emit an independent y scale: "
+            f"{spec.get('resolve')}"
+        )
+        assert _has_text_layer(spec), "precondition: value labels must render"
+        y_states = _channel_axis_states(spec, "y")
+        phantom = [s for s in y_states if s[0] == "text" and s[2] is not None]
+        assert not phantom, (
+            f"value-label text sublayers must not draw their own y axis: {phantom}"
+        )
+        axis_bearing = [s for s in y_states if s[2] is not None]
+        assert len(axis_bearing) == 2, (
+            f"only the base's and the layer's authored axes may draw: {axis_bearing}"
+        )
+        # The x scale is never resolved independent, so it is always shared —
+        # and an explicit axis: None on a shared scale corrupts VL's axis
+        # merge. The suppression must not leak onto x.
+        x_nulled = [
+            s
+            for s in _channel_axis_states(spec, "x")
+            if s[0] == "text" and s[2] is None
+        ]
+        assert not x_nulled, (
+            f"a text sublayer must never null the shared x axis: {x_nulled}"
+        )
+
+    @pytest.mark.parametrize(
+        "position", ["above", "middle", "bottom", "middle_aligned"]
+    )
+    def test_bar_base_and_line_layer_labels_draw_no_phantom_axis(
+        self, make_chart, position: str
+    ) -> None:
+        """Dashboard-1291 shape: dual-axis bar + line, value labels on both."""
+        board_rs, board_ctx = _board_with_mark_label_slots(
+            {
+                "bar": {"labels": {"visible": True, "position": position}},
+                "line": {"labels": {"visible": True}},
+            }
+        )
+        chart = make_chart(
+            "bar",
+            x="month",
+            y="count_services",
+            style={"orientation": "vertical"},
+            layers=[
+                {
+                    "type": "line",
+                    "y": "count_connections",
+                    "label": "Connections",
+                    "axis_y": {"position": "right"},
+                }
+            ],
+        )
+        resolve(chart, _DUAL_AXIS_DATA, chart_style_context=board_ctx)
+        spec = generate_vega_lite_spec(
+            chart, _DUAL_AXIS_DATA, board_style=board_rs, chart_style_context=board_ctx
+        )
+        self._assert_only_authored_axes(spec)
+
+    @pytest.mark.parametrize("position", ["top", "middle"])
+    def test_stacked_base_segment_and_total_labels_draw_no_phantom_axis(
+        self, make_chart, position: str
+    ) -> None:
+        board_rs, board_ctx = _board_with_mark_label_slots(
+            {
+                "bar": {
+                    "labels": {"visible": True, "position": position},
+                    "total_label": {"visible": True},
+                }
+            }
+        )
+        chart = make_chart(
+            "bar",
+            x="month",
+            y="revenue",
+            color="channel",
+            style={"orientation": "vertical", "stack": "zero"},
+            layers=[
+                {
+                    "type": "line",
+                    "y": "target",
+                    "label": "Target",
+                    "axis_y": {"position": "right"},
+                }
+            ],
+        )
+        resolve(chart, _DUAL_AXIS_STACKED_DATA, chart_style_context=board_ctx)
+        spec = generate_vega_lite_spec(
+            chart,
+            _DUAL_AXIS_STACKED_DATA,
+            board_style=board_rs,
+            chart_style_context=board_ctx,
+        )
+        self._assert_only_authored_axes(spec)
+
+    def test_scatter_base_point_labels_draw_no_phantom_axis(self, make_chart) -> None:
+        board_rs, board_ctx = _board_with_mark_label_slots(
+            {"point": {"labels": {"visible": True}}}
+        )
+        chart = make_chart(
+            "scatter",
+            x="month",
+            y="count_services",
+            layers=[
+                {
+                    "type": "line",
+                    "y": "count_connections",
+                    "label": "Connections",
+                    "axis_y": {"position": "right"},
+                }
+            ],
+        )
+        resolve(chart, _DUAL_AXIS_DATA, chart_style_context=board_ctx)
+        spec = generate_vega_lite_spec(
+            chart, _DUAL_AXIS_DATA, board_style=board_rs, chart_style_context=board_ctx
+        )
+        self._assert_only_authored_axes(spec)
+
+    def test_horizontal_base_labels_carry_no_axis_key_at_all(self, make_chart) -> None:
+        """The shared-scale gate on a HORIZONTAL base, where the channel pair is
+        swapped: the measure is on VL x and the category on VL y.
+
+        There is no dual-axis variant of this to test — ``axis_y.position``
+        names a left/right side and a horizontal base measures along VL x, so
+        that combination raises (see ``test_layer_base_orientation.py``). This
+        once ran as a dual-axis case only because the overlay resolved the
+        *category* scale independent and left the measure shared across base
+        and layer, which is the wrong chart, not a configuration to pin.
+        """
+        board_rs, board_ctx = _board_with_mark_label_slots(
+            {
+                "bar": {"labels": {"visible": True}},
+                "line": {"labels": {"visible": True}},
+            }
+        )
+        chart = make_chart(
+            "bar",
+            x="month",
+            y="count_services",
+            style={"orientation": "horizontal"},
+            layers=[{"type": "line", "y": "count_connections", "label": "Connections"}],
+        )
+        resolve(chart, _DUAL_AXIS_DATA, chart_style_context=board_ctx)
+        spec = generate_vega_lite_spec(
+            chart, _DUAL_AXIS_DATA, board_style=board_rs, chart_style_context=board_ctx
+        )
+        assert spec.get("resolve", {}).get("scale", {}).get("x") != "independent", (
+            f"precondition: this chart must share one measure scale: "
+            f"{spec.get('resolve')}"
+        )
+        assert _has_text_layer(spec), "precondition: value labels must render"
+        for channel in ("x", "y"):
+            keyed = [
+                s
+                for s in _channel_axis_states(spec, channel)
+                if s[0] == "text" and s[2] != "absent"
+            ]
+            assert not keyed, (
+                f"shared-scale label sublayers must not carry an axis key: {keyed}"
+            )
+
+    def test_shared_scale_labels_carry_no_axis_key_at_all(self, make_chart) -> None:
+        """The gate itself, pinned directly: on a SHARED-scale layered chart
+        (no layer pins a side, no independent resolve) the label sublayer must
+        not carry an ``axis`` key in any state — an explicit None there
+        corrupts Vega-Lite's axis merge (the merged axis loses its ticks or
+        fails to parse)."""
+        board_rs, board_ctx = _board_with_mark_label_slots(
+            {
+                "bar": {"labels": {"visible": True}},
+                "line": {"labels": {"visible": True}},
+            }
+        )
+        chart = make_chart(
+            "bar",
+            x="month",
+            y="count_services",
+            style={"orientation": "vertical"},
+            layers=[{"type": "line", "y": "count_connections", "label": "Connections"}],
+        )
+        resolve(chart, _DUAL_AXIS_DATA, chart_style_context=board_ctx)
+        spec = generate_vega_lite_spec(
+            chart, _DUAL_AXIS_DATA, board_style=board_rs, chart_style_context=board_ctx
+        )
+        assert spec.get("resolve", {}).get("scale", {}).get("y") != "independent", (
+            f"precondition: this chart must share one y scale: {spec.get('resolve')}"
+        )
+        assert _has_text_layer(spec), "precondition: value labels must render"
+        for channel in ("x", "y"):
+            keyed = [
+                s
+                for s in _channel_axis_states(spec, channel)
+                if s[0] == "text" and s[2] != "absent"
+            ]
+            assert not keyed, (
+                f"shared-scale label sublayers must not carry an axis key: {keyed}"
+            )

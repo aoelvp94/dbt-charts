@@ -25,7 +25,7 @@ from dbt_charts.core.compile.models.factories import (
     build_patch_model,
     build_patch_model_ext,
 )
-from dbt_charts.core.compile.models.markers import Color, Format
+from dbt_charts.core.compile.models.markers import Color, DisplayText, Format, Url
 from dbt_charts.core.compile.models.primitives import (
     FontStyle,
     FormatConfig,
@@ -63,7 +63,7 @@ class PaginationConfig(BaseModel):
         default=None,
         description=(
             "Rows per page. When enabled and None, the renderer auto-fits page size "
-            "to the cell — set explicitly to pin the page size."
+            "to the cell; set explicitly to pin the page size."
         ),
     )
 
@@ -89,9 +89,9 @@ class TableColumnDefaultsConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    label: str | None = Field(
+    label: Annotated[str | None, DisplayText()] = Field(
         default=None,
-        description="Override column header label text.",
+        description="One header text applied to every column, unless a column sets its own.",
     )
     width: int | str | None = Field(
         default=None,
@@ -103,7 +103,7 @@ class TableColumnDefaultsConfig(BaseModel):
     )
     format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
         default=None,
-        description="Override cell value format (D3 format string or format config object).",
+        description="How values are written in every column, unless a column sets its own.",
     )
     background: Annotated[str | None, Color()] = Field(
         default=None, description="Override cell background color (CSS color string)."
@@ -193,7 +193,15 @@ class SparkConfig(BaseModel):
     )
     value_suffix: str | None = Field(
         default=None,
-        description="Suffix appended to the displayed value label (e.g., '%').",
+        description="Text placed after the displayed value (e.g., '%').",
+    )
+    negative_color: bool = Field(
+        default=False,
+        description=(
+            "Opt-in: paint negative values (bar / column / columns) with the "
+            "theme's tones.negative color instead of the shared spark color. "
+            "Has no effect on columns with no negative values."
+        ),
     )
 
     @field_validator("type", mode="before")
@@ -251,22 +259,36 @@ class TableColumnConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    label: str | None = Field(
+    visible: bool | None = Field(
+        default=None,
+        description=(
+            "Whether this column renders. Defaults to true: style.columns is "
+            "styling only, so naming a column here never hides it or any other "
+            "column. Set false to hide it while keeping its values available "
+            "to link: templates and style-input references. A column consumed "
+            "as a style input (another column's background / font.color / "
+            "font.weight names it) is hidden automatically unless it has "
+            "its own style.columns entry; an explicit entry is a display "
+            "signal and the column renders."
+        ),
+    )
+    label: Annotated[str | None, DisplayText()] = Field(
         default=None, description="Display header label (defaults to column name)."
     )
     format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
         default=None,
-        description="Number format (D3 string, preset name, or FormatConfig).",
+        description="How the number is written: a D3 spec, a preset name, or a format block.",
     )
     spark: SparkConfig | SparkTypeLiteral | None = Field(
-        default=None, description="Inline spark chart config or spark type name."
+        default=None,
+        description="Miniature chart drawn inside each cell: a type name, or a full block.",
     )
     swatch: bool | None = Field(
         default=None,
         description=(
             "When True, render this column's cells as small rounded color squares "
             "instead of text. Cell value must be a CSS color string (e.g. '#3164a3'). "
-            "Useful for series-keyed tables — e.g. a 'Series' column where each row "
+            "Useful for series-keyed tables, e.g. a 'Series' column where each row "
             "is identified by its color in the parent chart's palette."
         ),
     )
@@ -287,12 +309,12 @@ class TableColumnConfig(BaseModel):
     )
     header_overflow: Literal["clip", "truncate", "wrap-two", "wrap"] | None = Field(
         default=None,
-        description="Header text overflow mode (clip, truncate, wrap-two, wrap).",
+        description="What happens to header text too wide for its column (clip, truncate, wrap-two, wrap).",
     )
-    header_link: str | None = Field(
-        default=None, description="URL template for the column header link."
+    header_link: Annotated[str | None, Url()] = Field(
+        default=None, description="URL template that makes the column header clickable."
     )
-    link: str | None = Field(
+    link: Annotated[str | None, Url()] = Field(
         default=None,
         description="URL template for cell values (Jinja template with row fields available).",
     )
@@ -300,7 +322,7 @@ class TableColumnConfig(BaseModel):
         default=None,
         description=(
             "Cell background color (hex string, or 'transparent'/'none'), or a "
-            "column ID — a value matching a query column name uses that row's "
+            "column ID: a value matching a query column name uses that row's "
             "value in the named column instead of the literal string."
         ),
     )
@@ -308,7 +330,7 @@ class TableColumnConfig(BaseModel):
         default=None,
         description=(
             "Cell font style overrides. `color` and `weight` resolve column-ID-"
-            "first, the same as `background` — a value matching a query column "
+            "first, the same as `background`: a value matching a query column "
             "name uses that row's value in the named column."
         ),
     )
@@ -317,7 +339,8 @@ class TableColumnConfig(BaseModel):
         description="Continuous color mapping configuration for this column.",
     )
     glyph: str | None = Field(
-        default=None, description="Glyph character prepended to cell values."
+        default=None,
+        description="Text shown before every cell value; fills the same slot as format.prefix and wins over it.",
     )
     glyph_color: str | None = Field(
         default=None, description="Color for the glyph. Requires glyph to be set."
@@ -376,6 +399,7 @@ def fill_table_column_defaults(
     fallback_label: str | None = None,
     link_override: str | None = None,
     values: Sequence[Any] = (),
+    auto_hidden: bool = False,
 ) -> TableColumnConfig:
     """Build one final ``TableColumnConfig`` from an optional explicit source
     and table-level ``column_defaults``, constructed once (never
@@ -383,10 +407,12 @@ def fill_table_column_defaults(
 
     Precedence per field: ``source``'s own value > ``defaults`` (fills only
     ``None`` fields) > ``fallback_label`` for ``label`` / ``link_override``
-    for ``link`` / a value-classified verdict for ``align`` (see below), each
-    used only when neither of the above set one. ``width``/``max_width`` are
-    one sizing slot — a source that claims either is never filled from the
-    other by ``defaults``.
+    for ``link`` / a value-classified verdict for ``align`` (see below) /
+    ``auto_hidden`` for ``visible`` (a column resolve identified as a style
+    input finalizes to ``visible=False`` unless the author said otherwise),
+    each used only when neither of the above set one. ``width``/``max_width``
+    are one sizing slot — a source that claims either is never filled from
+    the other by ``defaults``.
 
     When ``align`` is still unset after ``source``/``defaults``, it is
     finalized from ``classify_date_column_align(values)`` — "right" iff
@@ -431,6 +457,11 @@ def fill_table_column_defaults(
         fields["align"] = classify_date_column_align(values)
     if fields["link"] is None and link_override is not None:
         fields["link"] = link_override
+    # A column consumed as a style input (another column's background /
+    # font.color / font.weight names it) is hidden unless the author says
+    # otherwise — its values are paint, not display data.
+    if fields["visible"] is None and auto_hidden:
+        fields["visible"] = False
     return TableColumnConfig(**fields)
 
 

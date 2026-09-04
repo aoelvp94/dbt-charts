@@ -1,15 +1,16 @@
 title: KPI Specimen Foundations
-description: 'Design evaluation surface for the dbt charts KPI quantitative-text-object (#1754).
+notes: 'Design evaluation surface for the dbt charts KPI quantitative-text-object (#1754).
   Each group probes one structural decision: editorial-vs-BI style poles, three-slot
-  anatomy, tone, glyph, support row, and string-literal status. Inspect these as design
+  anatomy, tone, glyph, support row, string-literal status, and the ink-precedence
+  ladder. Inspect these as design
   probes, not finished dashboards.
 
   '
 source: examples_db
 text: 'KPI is a left-aligned three-slot typographic object: **value**, **label**,
   optional **support row**. No card chrome by default. Group A compares the editorial
-  (cream + serif) and BI (white + sans) style poles. Groups B–F isolate one design
-  axis each (anatomy, tone, glyph, support row, status).
+  (cream + serif) and BI (white + sans) style poles. Groups B–G isolate one design
+  axis each (anatomy, tone, glyph, support row, status, ink precedence).
 
   '
 queries:
@@ -26,7 +27,7 @@ charts:
     style:
       background: '#FAF7F0'
       value:
-        format: currency_compact
+        format: currency
         font:
           family: '''Source Serif 4'', Georgia, ''Times New Roman'', serif'
     support:
@@ -42,7 +43,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
       background: '#ffffff'
     support:
       value: delta_pct
@@ -57,7 +58,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
   anatomy_value_title:
     type: kpi
     query: q
@@ -65,7 +66,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
   anatomy_value_title_support:
     type: kpi
     query: q
@@ -73,7 +74,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
     support:
       value: delta_pct
       label: vs last quarter
@@ -87,7 +88,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
     support:
       value: delta_pct
       label: vs last quarter
@@ -101,7 +102,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
     support:
       value: growth_pct
       label: growth
@@ -115,7 +116,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
     support:
       value: decline_pct
       label: decline
@@ -129,7 +130,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
     support:
       value: growth_pct
       label: change
@@ -141,7 +142,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
     support:
       value: growth_pct
       label: at risk
@@ -180,12 +181,13 @@ charts:
   color_override:
     type: kpi
     query: q
-    label: Value and glyph with explicit style color
+    label: Value and glyph with explicit value color
     value: growth_pct
     style:
-      color: '#bf8700'
       value:
         format: percent_delta
+        font:
+          color: '#bf8700'
       glyph:
         character: ▲
   support_title_only:
@@ -195,7 +197,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
     support:
       label: vs last quarter
   support_value_format:
@@ -205,7 +207,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
     support:
       value: delta
       label: vs last quarter
@@ -217,7 +219,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
     support:
       value: delta_pct
       label: vs last quarter
@@ -231,7 +233,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
     support:
       value: decline_pct
       label: vs target
@@ -260,6 +262,135 @@ charts:
       glyph: ●
       label: at risk
       tone: warning
+  ink_shared_only:
+    type: kpi
+    query: q
+    label: style.font.color only
+    value: growth_pct
+    style:
+      font:
+        color: '#bf8700'
+      value:
+        format: percent_delta
+      glyph:
+        character: ▲
+  ink_value_named:
+    type: kpi
+    query: q
+    label: style.value.font.color alone
+    value: growth_pct
+    style:
+      value:
+        format: percent_delta
+        font:
+          color: '#2563eb'
+      glyph:
+        character: ▲
+  ink_label_named:
+    type: kpi
+    query: q
+    label: style.label.font.color alone
+    value: growth_pct
+    style:
+      value:
+        format: percent_delta
+      label:
+        font:
+          color: '#2563eb'
+      glyph:
+        character: ▲
+  ink_both_named:
+    type: kpi
+    query: q
+    label: both slots named, no shared style.font.color
+    value: growth_pct
+    style:
+      value:
+        format: percent_delta
+        font:
+          color: '#15803d'
+      label:
+        font:
+          color: '#7c3aed'
+      glyph:
+        character: ▲
+  align_left:
+    type: kpi
+    query: q
+    label: Quarterly revenue
+    value: revenue
+    style:
+      align: left
+      value:
+        format: currency
+    support:
+      value: delta_pct
+      label: vs last quarter
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  align_center:
+    type: kpi
+    query: q
+    label: Quarterly revenue
+    value: revenue
+    style:
+      align: center
+      value:
+        format: currency
+    support:
+      value: delta_pct
+      label: vs last quarter
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  align_right:
+    type: kpi
+    query: q
+    label: Quarterly revenue
+    value: revenue
+    style:
+      align: right
+      value:
+        format: currency
+    support:
+      value: delta_pct
+      label: vs last quarter
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  align_inline_right:
+    type: kpi
+    query: q
+    variant: inline
+    label: Quarterly revenue
+    value: revenue
+    style:
+      align: right
+      value:
+        format: currency
+    support:
+      value: delta_pct
+      label: vs last quarter
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  align_compact_right:
+    type: kpi
+    query: q
+    variant: compact
+    label: Quarterly revenue
+    value: revenue
+    style:
+      align: right
+      value:
+        format: currency
+    support:
+      value: delta_pct
+      label: vs last quarter
+      format: percent_delta
+      glyph: ▲
+      tone: positive
 rows:
 - title: 'A: Style variants — Editorial vs BI'
   cols:
@@ -293,3 +424,18 @@ rows:
   cols:
   - status_string
   - status_warning
+- title: 'G: Ink precedence — the named slot beats the shared one'
+  cols:
+  - ink_shared_only
+  - ink_value_named
+  - ink_label_named
+  - ink_both_named
+- title: 'H: Alignment — left (default), center, right'
+  cols:
+  - align_left
+  - align_center
+  - align_right
+- title: 'H2: Alignment — right, on inline and compact variants'
+  cols:
+  - align_inline_right
+  - align_compact_right

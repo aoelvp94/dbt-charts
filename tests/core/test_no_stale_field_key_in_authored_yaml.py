@@ -1,11 +1,11 @@
 """Guard against the renamed ``field:`` key reappearing in authored YAML.
 
 Pre-launch the data-binding key was renamed from ``field:`` to ``column:``.
-Every place in authored Dataface YAML that used ``field:`` was codemoded.
+Every place in authored dbt charts YAML that used ``field:`` was codemoded.
 This test prevents regressions: a new example that copies old syntax or a
 careless paste-from-docs will be caught here before it lands.
 
-Scope: authored Dataface surfaces under ``dbt-charts/examples``, the package
+Scope: authored dbt charts surfaces under ``dbt-charts/examples``, the package
 defaults tree, and the package inspect templates. dbt model trees
 (``**/models/**``, where ``field:`` is dbt's ``relationships`` test argument)
 and Looker migrator outputs and Looker corpus JSON live outside these roots
@@ -37,9 +37,9 @@ _FIELD_KEY_RE = re.compile(r"^[ \t]*(-[ \t]+)?field:(?:[ \t]|$)")
 
 # `dbt_packages` holds vendored dbt code; `models` is a dbt project's own model
 # tree. In both, `field:` is *dbt's* key — the argument to a `relationships`
-# test (`to: ref(...)`, `field: id`), not Dataface's data-binding key. Same
+# test (`to: ref(...)`, `field: id`), not dbt charts' data-binding key. Same
 # reasoning the module docstring gives for the Looker roots: the token belongs
-# to another language there. No authored Dataface chart or board lives under a
+# to another language there. No authored dbt charts chart or board lives under a
 # models/ tree.
 _EXCLUDE_PARTS = {"dbt_packages", "models"}
 

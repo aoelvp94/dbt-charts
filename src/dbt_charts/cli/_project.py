@@ -20,7 +20,7 @@ import typer
 from dbt_charts.agent_api import Project
 from dbt_charts.agent_api._paths import (
     CHARTS_SUBDIR,
-    DFT_ROOT_MARKERS as DFT_ROOT_MARKERS,
+    DCT_ROOT_MARKERS as DCT_ROOT_MARKERS,
     find_dct_root,
     find_repo_root,
 )
@@ -47,7 +47,7 @@ def resolve_project_dir(project_dir: Path | None) -> Path:
         root = project_dir.resolve()
         if find_dct_root(root) is None:
             raise ProjectNotFoundError(
-                f"--project-dir {root} is not a Dataface project (no dbt_charts.yml "
+                f"--project-dir {root} is not a dbt charts project (no dbt_charts.yml "
                 "or dbt_project.yml here or in any parent)."
             )
         return root
@@ -55,14 +55,14 @@ def resolve_project_dir(project_dir: Path | None) -> Path:
     found = find_dct_root(cwd)
     if found is None:
         raise ProjectNotFoundError(
-            "No Dataface project found in the current directory or any parent "
+            "No dbt charts project found in the current directory or any parent "
             "(no dbt_charts.yml). Run from inside your project, or pass --project-dir."
         )
     return found
 
 
 def has_charts_marker(start: Path) -> bool:
-    """True iff *start* sits inside a Dataface project that has a ``charts/`` directory.
+    """True iff *start* sits inside a dbt charts project that has a ``charts/`` directory.
 
     Anchors on ``find_dct_root`` so the walk-up stops at the project root rather
     than blindly hunting upward for stray ``charts/`` dirs elsewhere on the filesystem.

@@ -9,32 +9,46 @@ the SQL instead would report failures the real render never produces.
 |---------------|---------------|--------------------|
 | duckdb        | ``DESCRIBE``  | validity + columns |
 | bigquery      | dry run       | validity + columns |
+| postgres      | ``EXPLAIN``   | validity only      |
+| redshift      | ``EXPLAIN``   | validity only      |
+| snowflake     | ``EXPLAIN``   | validity only      |
 | anything else | none          | ``unchecked``      |
 
 The last row is the point: an adapter with no primitive that runs without
 executing reports ``unchecked``, never ``valid``. "Unchecked" is not a flavour
-of valid — nothing looked at that SQL, so the caller must say so.
+of valid — nothing looked at that SQL, so the caller must say so. Databricks is
+held in that row deliberately even though it has an ``EXPLAIN``: Spark returns
+planner errors as plan *text* instead of failing the statement, so an EXPLAIN
+branch there would report a broken query valid.
 
-``DESCRIBE`` is a keyword prefix on SQL this module did not write, so before it
-is built the authored statement is parsed and checked against what that keyword
-can legally lead (:func:`_unwrappable_reason`). A statement it cannot lead is
-reported ``unchecked`` with nothing sent. That gate is what makes the
-classification honest in the other direction: every rejection of a statement
-that *was* sent is a rejection of the author's SQL, so no error has to be read
-for whose fault it was.
+``EXPLAIN`` proves the query parses, binds and plans but returns a plan, not a
+result schema — so those rows are ``columns_checked=False`` and the caller
+reports the chart-column check as unavailable rather than pretending it ran.
+
+A first EXPLAIN tier was cut from PR #7266: its guard inferred fault from
+warehouse errors and kept producing false-invalids. The tier exists again only
+because the guard was rebuilt the other way round — see the next paragraph.
+
+``DESCRIBE`` and ``EXPLAIN`` are keyword prefixes on SQL this module did not
+write, so before one is built the authored statement is parsed and checked
+against what a check keyword can legally lead (:func:`_unwrappable_reason`). A
+statement it cannot lead is reported ``unchecked`` with nothing sent. That gate
+is what makes the classification honest in the other direction: every rejection
+of a statement that *was* sent is a rejection of the author's SQL, so no error
+has to be read for whose fault it was.
 """
 
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import sqlglot
 import sqlglot.errors
 import sqlglot.expressions as exp
 from pydantic import BaseModel, ConfigDict
 
-from dbt_charts.core.compile.models.query.normalized import is_sql_query
+from dbt_charts.core.compile.models.query.normalized import SqlQuery, is_sql_query
 from dbt_charts.core.compile.sql_guard import (
     as_expressions,
     build_skeleton,
@@ -51,10 +65,11 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_WAREHOUSE_RUNTIME,
 )
 from dbt_charts.core.diagnostics.execution import UnparseableSqlError
+from dbt_charts.core.execute.source_resolver import AD_HOC_QUERY_NAME
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
-    from dbt_charts.core.compile.models.query.normalized import AnyQuery, SqlQuery
+    from dbt_charts.core.compile.models.query.normalized import AnyQuery
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
     from dbt_charts.core.diagnostics.registry import ErrorCode
     from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
@@ -62,6 +77,26 @@ if TYPE_CHECKING:
 CheckStatus = Literal["valid", "invalid", "unchecked"]
 
 _BIGQUERY_DRY_RUN = "bigquery-dry-run"
+
+
+class _PrefixCheck(NamedTuple):
+    """One adapter's prefix-check mechanism: the keyword and what its rows are."""
+
+    keyword: str
+    reads_columns: bool
+
+
+# Adapter type → the keyword whose prefix checks a query without executing it,
+# paired with whether its result rows are the column schema (DESCRIBE) or a
+# plan read by nobody (EXPLAIN — validity-only). Absent means unchecked:
+# notably databricks, whose EXPLAIN embeds planner errors in the plan text
+# instead of failing (see the module docstring and the dispatch below).
+_PREFIX_CHECKS: dict[str, _PrefixCheck] = {
+    "duckdb": _PrefixCheck("DESCRIBE", reads_columns=True),
+    "postgres": _PrefixCheck("EXPLAIN", reads_columns=False),
+    "redshift": _PrefixCheck("EXPLAIN", reads_columns=False),
+    "snowflake": _PrefixCheck("EXPLAIN", reads_columns=False),
+}
 
 
 class WarehouseCheckColumn(BaseModel):
@@ -157,38 +192,95 @@ def warehouse_check(
             variables=variables,
             source_config=source_config,
         )
-    if adapter_type == "duckdb":
+    prefix_check = _PREFIX_CHECKS.get(adapter_type)
+    if prefix_check is not None:
+        keyword = prefix_check.keyword
         # A bare keyword prefix rather than a parenthesized wrapper, so a
         # pasted trailing `;`, comment, or `;;` rides along harmlessly —
         # unlike `DESCRIBE (\n{sql}\n)`, which needed a semicolon-strip helper
         # that broke again on each new trailing shape (see the git history of
         # this line for the round-2 regressions). What a bare prefix cannot do
-        # is lead every statement, which is what the gate below rules on.
-        unwrappable = _unwrappable_reason(query.sql, dialect=adapter_type)
+        # is lead every statement, which is what the gate below rules on — and
+        # for EXPLAIN the gate's leading-parenthesized-arm refusal also covers
+        # Postgres parsing `EXPLAIN (SELECT …)` as EXPLAIN's options list.
+        unwrappable = _unwrappable_reason(
+            query.sql, dialect=adapter_type, keyword=keyword
+        )
         if unwrappable is not None:
             return WarehouseCheck(
                 status="unchecked",
                 adapter_type=adapter_type,
-                mechanism="DESCRIBE",
+                mechanism=keyword,
                 columns_checked=False,
                 reason=unwrappable,
             )
         return _check_via_wrap(
             query,
-            f"DESCRIBE {query.sql}",
+            f"{keyword} {query.sql}",
             adapter_type=adapter_type,
+            check=prefix_check,
             board=board,
             adapter_registry=adapter_registry,
             variables=variables,
         )
+    # The remaining adapters are unchecked because dbt charts implements no
+    # non-executing check for them — a claim about us, not the warehouse
+    # (mysql and trino have EXPLAIN too, just no branch here yet). Databricks
+    # is the exception with a reason of its own: adding it to the table above
+    # would silently shadow this refusal, and the refusal is the point.
+    if adapter_type == "databricks":
+        reason = (
+            "databricks EXPLAIN returns planner errors as plan text "
+            "instead of failing the statement, so a broken query would "
+            "read as valid — dbt charts implements no check for it"
+        )
+    else:
+        reason = f"dbt charts implements no non-executing check for {adapter_type}"
     return WarehouseCheck(
         status="unchecked",
         adapter_type=adapter_type,
         mechanism="no-validity-primitive",
         columns_checked=False,
-        reason=(
-            f"{adapter_type} offers no way to check a query without running it in full"
-        ),
+        reason=reason,
+    )
+
+
+def check_ad_hoc_query(
+    sql: str,
+    *,
+    source: str | None,
+    adapter_registry: AdapterRegistry,
+) -> WarehouseCheck:
+    """Warehouse-check a standalone SQL string that was never authored on a board.
+
+    ``warehouse_check`` composes ``{{ queries.X }}`` refs and board variables
+    against a board's own registry — an ad hoc query (e.g. ``describe_query``'s
+    column-schema lookup) has neither, so this synthesizes a minimal empty
+    board for it to resolve against and delegates to the same per-adapter
+    dispatch. Callers checking a query that *is* part of a board should call
+    ``warehouse_check`` directly with the real board instead of this.
+    """
+    from dbt_charts.core.compile.models.board.normalized import (
+        Board,
+        Layout,
+        LayoutType,
+    )
+    from dbt_charts.core.compile.normalize.dispatch import compile_board_resolved_style
+
+    resolved_style, chart_style_context = compile_board_resolved_style(None, None, None)
+    board = Board(
+        id=AD_HOC_QUERY_NAME,
+        layout=Layout(type=LayoutType.ROWS, items=[]),
+        resolved_style=resolved_style,
+        chart_style_context=chart_style_context,
+        level=0,
+    )
+    return warehouse_check(
+        SqlQuery(sql=sql, source=source),
+        board=board,
+        adapter_registry=adapter_registry,
+        query_name=AD_HOC_QUERY_NAME,
+        query_registry={},
     )
 
 
@@ -212,8 +304,8 @@ def _statement_label(stmt: exp.Expression) -> str:
     return type(stmt).__name__.upper()
 
 
-def _unwrappable_reason(sql: str, *, dialect: str) -> str | None:
-    """Why prefixing this statement with ``DESCRIBE`` would not check it, or None.
+def _unwrappable_reason(sql: str, *, dialect: str, keyword: str) -> str | None:
+    """Why prefixing this statement with *keyword* would not check it, or None.
 
     Decided from the author's own parsed statement, before anything is built or
     sent. Deciding it here rather than reading it back out of a warehouse error
@@ -222,9 +314,9 @@ def _unwrappable_reason(sql: str, *, dialect: str) -> str | None:
     mis-sorted a different quadrant.
 
     A statement that parses clean and is wrappable stays wrappable once the
-    keyword is prepended — ``DESCRIBE`` of a single select-family statement
-    parses for the guard and for the engine alike — so every rejection of what
-    does get sent is a rejection of the author's SQL.
+    keyword is prepended — ``DESCRIBE`` or ``EXPLAIN`` of a single
+    select-family statement parses for the guard and for the engine alike — so
+    every rejection of what does get sent is a rejection of the author's SQL.
     """
     try:
         # Primary branch only. An `{% if %}` in *expression* position is a
@@ -250,13 +342,13 @@ def _unwrappable_reason(sql: str, *, dialect: str) -> str | None:
 
     if len(statements) != 1:
         return (
-            "this tier checks a query by prefixing it with DESCRIBE, which "
+            f"this tier checks a query by prefixing it with {keyword}, which "
             "reaches only the first statement of a multi-statement script"
         )
     stmt = statements[0]
     if not isinstance(stmt, _WRAPPABLE_STATEMENTS):
         return (
-            "this tier checks a query by prefixing it with DESCRIBE, and a "
+            f"this tier checks a query by prefixing it with {keyword}, and a "
             f"{_statement_label(stmt)} statement cannot be led by it"
         )
     # A leading parenthesized arm — `(SELECT …) UNION ALL (SELECT …)` — binds
@@ -266,7 +358,7 @@ def _unwrappable_reason(sql: str, *, dialect: str) -> str | None:
         leftmost = leftmost.this
     if isinstance(leftmost, exp.Subquery):
         return (
-            "this tier checks a query by prefixing it with DESCRIBE, which "
+            f"this tier checks a query by prefixing it with {keyword}, which "
             "would bind to this query's own leading parenthesized statement "
             "rather than to the whole compound"
         )
@@ -278,17 +370,24 @@ def _check_via_wrap(
     wrapped_sql: str,
     *,
     adapter_type: str,
+    check: _PrefixCheck,
     board: Board,
     adapter_registry: AdapterRegistry,
     variables: VariableValues,
 ) -> WarehouseCheck:
-    """Run a DESCRIBE-wrapped statement through the real execute path.
+    """Run a keyword-wrapped statement through the real execute path.
 
     The wrap replaces ``sql``; source, ``setup_sql`` and lenient_variables ride
     along, so the adapter resolves refs and variables exactly as it would for
     the real run. ``limit`` is dropped: it bounds the *rows* of the authored
-    query, but DESCRIBE's rows are the result column schema, so keeping it
-    would truncate the schema we read.
+    query, and the wrapped statement's rows are a schema or a plan, never the
+    authored result.
+
+    ``check.reads_columns`` says what those rows are: DESCRIBE's are the result
+    column schema and are read into ``columns``; EXPLAIN's are a plan nobody
+    reads, so the check is validity-only, ``columns_checked`` stays False, and
+    ``reason`` carries why — it is the whole detail a caller that wanted
+    columns (``describe_query``'s refusal) has to show.
 
     Callers must have cleared :func:`_unwrappable_reason` first — that is what
     entitles this to read a failure of the wrapped statement as a verdict on
@@ -304,12 +403,22 @@ def _check_via_wrap(
             result.error,
             rejected=_is_query_defect(result.error_code),
             adapter_type=adapter_type,
-            mechanism="DESCRIBE",
+            mechanism=check.keyword,
+        )
+    if not check.reads_columns:
+        return WarehouseCheck(
+            status="valid",
+            adapter_type=adapter_type,
+            mechanism=check.keyword,
+            columns_checked=False,
+            reason=(
+                f"{check.keyword} validated the query but returns no result schema"
+            ),
         )
     return WarehouseCheck(
         status="valid",
         adapter_type=adapter_type,
-        mechanism="DESCRIBE",
+        mechanism=check.keyword,
         columns_checked=True,
         columns=[
             WarehouseCheckColumn(name=row["column_name"], type=row["column_type"])
@@ -357,11 +466,14 @@ def _failure(
 # ERR_WAREHOUSE_RUNTIME is a deliberate exception to "the code means a
 # defect": ``_classify_duckdb_error`` has no finer code for a raw
 # duckdb.ParserException (what a malformed ORDER BY or an empty ``IN ()``
-# raises), so excluding it would report those as "unchecked". The cost: an
-# *unrecognized mid-flight* DuckDB fault — a dropped connection while DESCRIBE
-# is already running, an insufficient-privileges error, a quota refusal — also
-# falls through to this code and is reported "invalid" rather than "unchecked".
-# Pinned as a decision, not an accident.
+# raises), and on the dbt-adapter path it is the catch-all for every mid-query
+# fault *and* the only code a genuine binding rejection carries — so excluding
+# it would report real defects as "unchecked". The cost, wider since the
+# EXPLAIN tier: an *unrecognized mid-flight* fault — a dropped connection while
+# DESCRIBE runs, a Snowflake warehouse suspended or a grant revoked mid-EXPLAIN,
+# a quota refusal — also falls through to this code and is reported "invalid"
+# rather than "unchecked", now across three managed warehouses rather than a
+# local DuckDB file. Pinned as a decision, not an accident.
 _QUERY_DEFECT_CODES = frozenset(
     {
         ERR_BINDER_TYPE_MISMATCH.code,

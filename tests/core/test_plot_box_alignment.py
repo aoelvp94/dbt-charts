@@ -51,6 +51,18 @@ rows:
   - c1
 """
 
+# Line/area default to auto-density points now (line-charts-need-density-aware-
+# point-defaults task): 3 points at this board's width is well within the
+# on-trigger, so an unpinned line chart grows a real visible point layer at
+# the domain edge. That's out of scope for "no ink is reserved that a reader
+# can't see" -- pin points off so this board isolates the invisible-ink
+# question the same way test_visible_point_overlay_keeps_its_radius below
+# isolates the opposite (points explicitly on).
+_LINE_BOARD_NO_POINTS = _LINE_BOARD.replace(
+    "    y: revenue\n",
+    "    y: revenue\n    style:\n      marks:\n        point:\n          size: 0\n",
+)
+
 
 def plot_origin_x(svg: str, chart_id: str) -> float:
     """Left edge of the chart's plot box, in the chart SVG's own coordinates.
@@ -112,7 +124,7 @@ def _data_lines(chart_type: str) -> list[dict]:
 @pytest.mark.parametrize("chart_type", ["line", "area"])
 def test_plot_box_reserves_nothing_for_invisible_ink(chart_type: str):
     """The only inset left is the data line's own stroke, plus the grid's half."""
-    svg = render_board_to_svg(_LINE_BOARD.replace("CHART_TYPE", chart_type))
+    svg = render_board_to_svg(_LINE_BOARD_NO_POINTS.replace("CHART_TYPE", chart_type))
 
     inset = plot_origin_x(svg, "c1") - CARD_PADDING
 

@@ -11,8 +11,10 @@ from __future__ import annotations
 import re
 from typing import get_args
 
+from dbt_charts.core.compile.models.markers import ExplicitTag
 from dbt_charts.core.compile.models.source import SourceConfig
 from dbt_charts.core.compile.schema.introspection import (
+    UNION_ALIAS_VARIANT_NAMES,
     AuthorableSchema,
     SchemaField,
     schema_path_to_yaml,
@@ -53,18 +55,17 @@ def _bfs(
         model = schema.models[name]
         for field in model.fields:
             for nested in field.nested_models:
-                if nested not in seen:
-                    # Opaque union aliases: discover the family classes directly
-                    # so they are included in the BFS order.
-                    union_model = schema.models.get(nested)
-                    if union_model is not None and union_model.union is not None:
-                        for class_name in dict.fromkeys(
-                            union_model.union.variants.values()
-                        ):
-                            if class_name not in seen:
-                                queue.append(class_name)
-                    else:
-                        queue.append(nested)
+                # An opaque union alias (e.g. "AuthoredChart") is pre-seeded
+                # into `seen` below so it never gets its own heading — checked
+                # first, unconditionally, so that pre-seeding does not also
+                # block descending into the family it names.
+                variant_names = UNION_ALIAS_VARIANT_NAMES.get(nested)
+                if variant_names is not None:
+                    for class_name in variant_names:
+                        if class_name not in seen:
+                            queue.append(class_name)
+                elif nested not in seen:
+                    queue.append(nested)
 
 
 def _ordered_model_names(schema: AuthorableSchema) -> list[str]:
@@ -123,10 +124,19 @@ def _enum_str(values: list[str | bool]) -> str:
     machine-readable list lives in the JSON Schema, where completion actually
     reads it; the docs table only needs enough to show the shape.
     """
+    if len(values) == 1:
+        return f"const: {_enum_member(values[0])}"
     if len(values) <= _ENUM_CELL_TRUNCATE_AT:
-        return "enum: " + ", ".join(f'"{v}"' for v in values)
-    shown = ", ".join(f'"{v}"' for v in values[:_ENUM_CELL_TRUNCATE_AT])
+        return "enum: " + ", ".join(_enum_member(v) for v in values)
+    shown = ", ".join(_enum_member(v) for v in values[:_ENUM_CELL_TRUNCATE_AT])
     return f"enum: {shown}, … ({len(values) - _ENUM_CELL_TRUNCATE_AT} more; see the JSON Schema)"
+
+
+def _enum_member(value: str | bool) -> str:
+    # Bool literals are authored as YAML `true`/`false`, not quoted strings.
+    if isinstance(value, bool):
+        return str(value).lower()
+    return f'"{value}"'
 
 
 def _family_display_names(model_name: str, schema: AuthorableSchema) -> list[str]:
@@ -282,22 +292,8 @@ def _render_model(name: str, schema: AuthorableSchema, path_map: _StylePathMap) 
 
     required = [f for f in model.fields if f.required]
     optional = [f for f in model.fields if not f.required]
-    fields = required + optional
 
-    show_optional = any(not f.required for f in fields)
-
-    header = "| Field | Type |"
-    sep = "|-------|------|"
-    if show_optional:
-        header += " Optional |"
-        sep += ":--------:|"
-    header += " Description |"
-    sep += "-------------|"
-
-    lines.append(header)
-    lines.append(sep)
-
-    for field in fields:
+    def field_row(field: SchemaField) -> str:
         desc = (
             (field.description or "")
             .replace("&", "&amp;")
@@ -305,6 +301,16 @@ def _render_model(name: str, schema: AuthorableSchema, path_map: _StylePathMap) 
             .replace(">", "&gt;")
             .replace("|", "\\|")
         )
+        # A single-value literal tag says nothing its const cell doesn't —
+        # unless the field is marked ExplicitTag (a tag the normalizer never
+        # infers, so its description is the author's only warning).
+        if (
+            field.enum_values is not None
+            and len(field.enum_values) == 1
+            and field.name == "type"
+            and not any(isinstance(f, ExplicitTag) for f in field.facets)
+        ):
+            desc = ""
         if field.inherit_slot:
             link = _fallback_link(field, field.inherit_slot, path_map, name)
             if link is not None:
@@ -319,11 +325,24 @@ def _render_model(name: str, schema: AuthorableSchema, path_map: _StylePathMap) 
             link = _fallback_link(field, field.inherit_from[0], path_map, name)
             if link is not None:
                 desc += f" Falls back to {link}."
-        row = f"| `{field.name}` | {_type_cell(field, schema)} |"
-        if show_optional:
-            row += f" {'✓' if not field.required else ''} |"
-        row += f" {desc} |"
-        lines.append(row)
+        return f"| `{field.name}` | {_type_cell(field, schema)} | {desc} |"
+
+    def table(fields: list[SchemaField]) -> list[str]:
+        return [
+            "| Field | Type | Description |",
+            "|-------|------|-------------|",
+            *(field_row(f) for f in fields),
+        ]
+
+    # Any required field gets the **Required** label — the header legend
+    # promises that an unlabeled table means every field is optional.
+    if required and optional:
+        lines += ["**Required**", "", *table(required), "", "**Optional**", ""]
+        lines += table(optional)
+    elif required:
+        lines += ["**Required**", "", *table(required)]
+    else:
+        lines += table(model.fields)
 
     return "\n".join(lines)
 
@@ -338,7 +357,12 @@ def render_prompt(schema: AuthorableSchema) -> str:
     """
     order = _ordered_model_names(schema)
     path_map = _build_style_path_map(schema)
-    parts = ["# dbt charts YAML Schema Reference", ""]
+    parts = [
+        "# dbt charts YAML Schema Reference",
+        "",
+        "Fields are optional unless they appear under a **Required** label.",
+        "",
+    ]
     for i, name in enumerate(order):
         if i > 0:
             parts.append("")

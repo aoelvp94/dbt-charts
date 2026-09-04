@@ -94,6 +94,18 @@ MCP_CLIENTS: dict[str, McpClient] = {
 }
 
 
+class McpConfigReadError(Exception):
+    """An existing MCP client config could not be read and must not be overwritten."""
+
+    def __init__(self, config_path: Path, reason: str) -> None:
+        self.config_path = config_path
+        self.reason = reason
+        super().__init__(
+            f"{config_path}: existing MCP config could not be read ({reason}); "
+            "refusing to overwrite it. Fix or remove the file and re-run."
+        )
+
+
 class InstallResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -200,17 +212,24 @@ def install_for_client(
         else ai_config_root / client.config_path
     )
     if client.config_format == "toml":
-        msg = _upsert_toml_mcp_config(abs_path, client.servers_key, server_entry, force)
+        outcome = _upsert_toml_mcp_config(
+            abs_path, client.servers_key, server_entry, force
+        )
     else:
-        msg = _upsert_mcp_config(abs_path, client.servers_key, server_entry, force)
+        outcome = _upsert_mcp_config(abs_path, client.servers_key, server_entry, force)
 
-    already = msg is None
+    already = outcome is None
+    message = (
+        f"  {abs_path} already has dbt-charts (use -f to update)"
+        if already
+        else f"  {'Updated' if outcome == 'updated' else 'Added dbt-charts to'} {abs_path}"
+    )
     return InstallResult(
         client_name=client.name,
         config_path=abs_path,
         already_configured=already,
-        updated=not already and "Updated" in (msg or ""),
-        message=msg or f"  {abs_path} already has dbt-charts (use -f to update)",
+        updated=outcome == "updated",
+        message=message,
     )
 
 
@@ -219,10 +238,12 @@ def _upsert_mcp_config(
     servers_key: str,
     server_entry: dict[str, Any],
     force: bool,
-) -> str | None:
+) -> Literal["added", "updated"] | None:
     """Add dbt-charts to a JSON MCP config file, preserving existing content.
 
-    Returns a status message, or None if skipped (already configured).
+    Returns "added"/"updated", or None if skipped (already configured).
+    Raises McpConfigReadError, without touching the file, if an existing
+    config can't be read or isn't a JSON object — never silently discarded.
     """
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -230,9 +251,16 @@ def _upsert_mcp_config(
     if config_path.exists():
         try:
             loaded = json.loads(config_path.read_text(encoding="utf-8"))
-            existing = loaded if isinstance(loaded, dict) else {}
-        except (json.JSONDecodeError, OSError):
-            existing = {}
+        except json.JSONDecodeError as exc:
+            raise McpConfigReadError(config_path, f"invalid JSON: {exc}") from exc
+        except OSError as exc:
+            raise McpConfigReadError(config_path, str(exc)) from exc
+        if not isinstance(loaded, dict):
+            raise McpConfigReadError(
+                config_path,
+                f"top-level JSON must be an object, got {type(loaded).__name__}",
+            )
+        existing = loaded
 
     already_has = servers_key in existing and "dbt-charts" in existing.get(
         servers_key, {}
@@ -243,7 +271,7 @@ def _upsert_mcp_config(
     existing.setdefault(servers_key, {})
     existing[servers_key]["dbt-charts"] = server_entry
     config_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
-    return f"  {'Updated' if already_has else 'Added dbt-charts to'} {config_path}"
+    return "updated" if already_has else "added"
 
 
 def _upsert_toml_mcp_config(
@@ -251,16 +279,21 @@ def _upsert_toml_mcp_config(
     servers_key: str,
     server_entry: dict[str, Any],
     force: bool,
-) -> str | None:
+) -> Literal["added", "updated"] | None:
     """Add dbt-charts to a TOML MCP config file, preserving existing content.
 
-    Returns a status message, or None if skipped (already configured).
+    Returns "added"/"updated", or None if skipped (already configured).
     """
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     existing: dict[str, Any] = {}
     if config_path.exists():
-        existing = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        try:
+            existing = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as exc:
+            raise McpConfigReadError(config_path, f"invalid TOML: {exc}") from exc
+        except OSError as exc:
+            raise McpConfigReadError(config_path, str(exc)) from exc
 
     already_has = "dbt-charts" in existing.get(servers_key, {})
     if already_has and not force:
@@ -269,4 +302,4 @@ def _upsert_toml_mcp_config(
     existing.setdefault(servers_key, {})
     existing[servers_key]["dbt-charts"] = server_entry
     config_path.write_text(tomli_w.dumps(existing), encoding="utf-8")
-    return f"  {'Updated' if already_has else 'Added dbt-charts to'} {config_path}"
+    return "updated" if already_has else "added"

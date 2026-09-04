@@ -54,7 +54,7 @@ def install_extension(editor: str, emit: Callable[[str], None] = print) -> int:
         )
         return 1
 
-    with tempfile.TemporaryDirectory(prefix="dft-ext-") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="dct-ext-") as tmpdir:
         vsix_path = Path(tmpdir) / LATEST_VSIX
         emit(f"Downloading {LATEST_VSIX} from {DOWNLOADS_BASE}…")
         try:

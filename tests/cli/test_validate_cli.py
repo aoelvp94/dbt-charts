@@ -82,7 +82,7 @@ class TestDftCheckCommandRemoved:
 class TestDftValidateJsonRoundTrip:
     """dct validate --json produces valid JSON matching ValidateResult schema."""
 
-    def test_dft_validate_json_round_trip(self, tmp_path: Path) -> None:
+    def test_dct_validate_json_round_trip(self, tmp_path: Path) -> None:
         from dbt_charts.agent_api.validate import ValidateResult
 
         (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
@@ -101,7 +101,7 @@ class TestDftValidateJsonRoundTrip:
             f"path field in --json output must be a JSON string, got {type(data['path'])}"
         )
 
-    def test_dft_validate_directory_json_serializes_path(self, tmp_path: Path) -> None:
+    def test_dct_validate_directory_json_serializes_path(self, tmp_path: Path) -> None:
         """Multi-file --json must produce JSON-serializable output."""
         from dbt_charts.agent_api.validate import ValidateResult
 
@@ -126,7 +126,7 @@ class TestDftValidateJsonRoundTrip:
 class TestDftValidateExits1OnErrors:
     """dct validate exits 1 when the board has validation errors."""
 
-    def test_dft_validate_exits_1_on_errors(self, tmp_path: Path) -> None:
+    def test_dct_validate_exits_1_on_errors(self, tmp_path: Path) -> None:
         board = tmp_path / "board.yml"
         board.write_text(_BAD_BOARD)
 
@@ -139,7 +139,7 @@ class TestDftValidateExits1OnErrors:
 class TestDftValidateStrictExits1OnWarnings:
     """dct validate --strict exits 1 when the board has warnings."""
 
-    def test_dft_validate_strict_exits_1_on_warnings(self, tmp_path: Path) -> None:
+    def test_dct_validate_strict_exits_1_on_warnings(self, tmp_path: Path) -> None:
         (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
         board = tmp_path / "board.yml"
         board.write_text(_ORPHAN_BOARD)
@@ -157,7 +157,7 @@ class TestDftValidateStrictExits1OnWarnings:
 class TestDftValidatePrettyOutputHasNoTraceback:
     """dct validate pretty output shows message text, not a Python traceback."""
 
-    def test_dft_validate_pretty_output_has_no_traceback(self, tmp_path: Path) -> None:
+    def test_dct_validate_pretty_output_has_no_traceback(self, tmp_path: Path) -> None:
         (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
         board = tmp_path / "board.yml"
         board.write_text(_BAD_BOARD)
@@ -551,3 +551,39 @@ def test_cli_validate_command_calls_project_session_validate(tmp_path: Path) -> 
     assert result.exit_code == 0, result.output + (result.stderr or "")
     assert from_project_mock.call_count == 1
     fake_project.validate_paths.assert_called_once()
+
+
+def test_a_model_column_rename_fails_validate_before_dbt_run(tmp_path: Path) -> None:
+    """End-to-end drift case: models/orders.sql renames customer_id → user_id,
+    `dbt parse` refreshed the manifest, nothing was rebuilt — the board
+    referencing customer_id must fail plain `dct validate`, no warehouse."""
+    (tmp_path / "dbt_charts.yml").write_text("name: p\n")
+    (tmp_path / "target").mkdir()
+    (tmp_path / "target" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "metadata": {"adapter_type": "postgres"},
+                "nodes": {
+                    "model.p.orders": {
+                        "resource_type": "model",
+                        "name": "orders",
+                        "schema": "main",
+                        "raw_code": "SELECT id AS user_id, amount FROM raw",
+                    }
+                },
+            }
+        )
+    )
+    (tmp_path / "charts").mkdir()
+    (tmp_path / "charts" / "board.yaml").write_text(
+        "title: B\nsource: s\nqueries:\n"
+        "  o: SELECT customer_id FROM {{ ref('orders') }}\n"
+        "charts:\n  c:\n    query: o\n    type: table\nrows:\n  - c\n"
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["validate", "charts", "--project-dir", str(tmp_path)])
+
+    assert result.exit_code == 1, result.output
+    assert "ERR-DBT-MODEL-COLUMN-MISSING" in result.output
+    assert "customer_id" in result.output

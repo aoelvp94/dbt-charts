@@ -732,7 +732,10 @@ def rename_key_at_path(yaml_text: str, path: str, new_key: str) -> str:
     Args:
         yaml_text: Original board YAML content. LF line endings only, same
             contract as `set_board_values`.
-        path: Dot-path to the key being renamed (`"axis_x.label"`).
+        path: Dot-path to the key being renamed (`"axis_x.label"`). A numeric
+            segment indexes a block sequence the same way `set_board_values`
+            does (`"rows.0.notes"`), so a key inside a list item can be
+            renamed too.
         new_key: The key's new name. Written verbatim, so it must already
             be a bare valid YAML key token (no quoting/escaping is applied).
 
@@ -758,6 +761,23 @@ def rename_key_at_path(yaml_text: str, path: str, new_key: str) -> str:
     start, end, indent = 0, len(lines), 0
     for depth, segment in enumerate(segments):
         is_leaf = depth == len(segments) - 1
+
+        # A numeric segment indexes a sequence item on the way to the key
+        # being renamed (rows.0.notes) -- same rule `_apply_update` uses: only
+        # where a block sequence actually sits, so a mapping key that happens
+        # to be digits stays a mapping lookup.
+        if segment.isdigit() and _is_sequence_block(lines, start, end, indent):
+            if is_leaf:
+                raise ValueError(
+                    f"Cannot rename {path!r}: {segment!r} addresses a whole "
+                    "sequence item, not a key."
+                )
+            start, end = _sequence_item_span(
+                lines, start, end, indent, int(segment), path
+            )
+            indent += _ITEM_KEY_OFFSET
+            continue
+
         match, _ = _find_key(lines, start, end, indent, segment, path)
         if match is None:
             raise ValueError(f"Cannot rename {path!r}: {segment!r} not found.")
@@ -769,7 +789,11 @@ def rename_key_at_path(yaml_text: str, path: str, new_key: str) -> str:
                     f"already exists at line {sibling.line_index + 1}."
                 )
             old_line = lines[match.line_index]
-            key_match = _KEY_RE.match(old_line)
+            # An item's first key rides its `- ` line (`- description: x`),
+            # so it needs the item-head pattern to locate the key token past
+            # the dash; every other key is a plain `key:` line.
+            key_pattern = _ITEM_KEY_RE if match.is_item_head else _KEY_RE
+            key_match = key_pattern.match(old_line)
             assert key_match is not None  # _find_key already matched this line
             new_line = (
                 old_line[: key_match.start(2)] + new_key + old_line[key_match.end(2) :]
@@ -778,6 +802,13 @@ def rename_key_at_path(yaml_text: str, path: str, new_key: str) -> str:
             lines[match.line_index] = new_line
             return "\n".join(lines)
         start = match.line_index + 1
-        end = _block_extent(lines, start, len(lines), match.indent)
-        indent = _child_indent(lines, start, end, match.indent)
+        # A sequence value may sit at the key's own column, outside the block
+        # extent a mapping value would occupy — look for that shape first
+        # (mirrors the setter path in `_apply_update` above).
+        span = _sequence_span(lines, start, len(lines), match.indent, immediate=False)
+        if span is not None:
+            end, indent = span
+        else:
+            end = _block_extent(lines, start, len(lines), match.indent)
+            indent = _child_indent(lines, start, end, match.indent)
     raise ValueError(f"Cannot rename {path!r}: not found.")  # pragma: no cover

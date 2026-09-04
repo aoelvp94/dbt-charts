@@ -38,7 +38,7 @@ from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 import yaml
-from pydantic import BaseModel, ValidationError as PydanticValidationError
+from pydantic import ValidationError as PydanticValidationError
 
 from dbt_charts.core.compile.config import (
     ProjectSourcesConfig,
@@ -46,26 +46,19 @@ from dbt_charts.core.compile.config import (
 )
 from dbt_charts.core.compile.errors import (
     CompilationError,
-    JinjaError,
     MergeValidationError,
     ParseError,
     ReferenceError,
 )
-from dbt_charts.core.compile.models.board.authored import (
-    AuthoredBoard,
-    QueryOrRef,
-)
+from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.cache import (
     INHERIT_CACHE,
     CachePatch,
     merge_cache_layers,
 )
-from dbt_charts.core.compile.models.chart.authored import _BaseChartFields
 from dbt_charts.core.compile.models.config import ProjectCacheConfig
-from dbt_charts.core.compile.models.query.authored import (
-    AuthoredMetricflowQuery,
-)
+from dbt_charts.core.compile.models.primitives import IncrementalValue
 from dbt_charts.core.compile.models.query.normalized import AnyQuery, is_sql_query
 from dbt_charts.core.compile.models.refs import (
     ChartRef,
@@ -74,9 +67,6 @@ from dbt_charts.core.compile.models.refs import (
     normalize_query_value,
 )
 from dbt_charts.core.compile.models.variable.authored import Variable
-from dbt_charts.core.compile.normalize.charts import (
-    collect_metricflow_channel_refs,
-)
 from dbt_charts.core.compile.normalize.dispatch import (
     board_style_cache,
     normalize_board,
@@ -86,10 +76,7 @@ from dbt_charts.core.compile.normalize.queries import (
     dialect_for_source,
     split_external_query_ref,
 )
-from dbt_charts.core.compile.normalize.variables import (
-    VariableReferenceErrors,
-    synthetic_query_name,
-)
+from dbt_charts.core.compile.normalize.variables import VariableReferenceErrors
 from dbt_charts.core.compile.parse.meta import (
     MetaLintConfig,
     resolve_meta_lint,
@@ -358,88 +345,6 @@ def compile_authored_board(
         return CompileResult(errors=[e.to_diagnostic(file=file)])
 
     # ════════════════════════════════════════════════════════════════════
-    # STEP 3b.5: Desugar chart-level `model:` sugar into a synthesized named
-    # query, before Surface B channel collection (below) so the synthesized
-    # query is visible to that pass. `model: source.semantic_model` on a
-    # dbt_profile source becomes a metricflow query (roles inferred from the
-    # manifest in STEP 3c). Runs unconditionally so an unknown/ambiguous
-    # `model:` name still raises a clear error.
-    # ════════════════════════════════════════════════════════════════════
-    metricflow_model_by_query: dict[str, str] = {}
-    try:
-        collectible_charts = dict(chart_registry)
-        _collect_inline_layout_charts(authored, collectible_charts)
-        if authored.queries is None:
-            authored.queries = {}
-        for _chart_key, _chart_def in collectible_charts.items():
-            # Use BaseModel (not _BaseChartFields) for dump so callout charts and
-            # other non-_BaseChartFields models are serialised to a dict first.
-            if isinstance(_chart_def, BaseModel):
-                _chart_dict = _chart_def.model_dump(exclude_none=True)
-            elif isinstance(_chart_def, dict):
-                _chart_dict = _chart_def
-            else:
-                continue
-            _model_value = _chart_dict.get("model")
-            if not _model_value:
-                continue
-            if _chart_dict.get("query") is not None:
-                raise CompilationError(
-                    f"chart '{_chart_key}' sets both `model:` and `query:` — "
-                    "`model:` is sugar for a query, so only one may be set."
-                )
-            _parts = _model_value.split(".")
-            if len(_parts) != 2 or not all(_parts):
-                raise CompilationError(
-                    f"chart '{_chart_key}' has `model: {_model_value!r}` — expected "
-                    "`source.semantic_model` (a dbt_profile source name and "
-                    "semantic model name joined by a dot)."
-                )
-            _source_name, _semantic_model_name = _parts
-            _source_cfg = sources_registry.get(_source_name)
-            if not (
-                isinstance(_source_cfg, dict)
-                and _source_cfg.get("type") == "dbt_profile"
-            ):
-                raise CompilationError(
-                    f"chart '{_chart_key}' has `model: {_model_value}` naming "
-                    f"unknown source '{_source_name}' — it is not a dbt_profile source."
-                )
-            _synth_name = synthetic_query_name("model_query", _chart_key)
-            authored.queries[_synth_name] = AuthoredMetricflowQuery(source=_source_name)
-            metricflow_model_by_query[_synth_name] = _semantic_model_name
-            # Mutate in place: _BaseChartFields declares query + model; plain
-            # dicts use key assignment. Non-_BaseChartFields BaseModels (e.g.
-            # CalloutChart) have no `model:` field and are skipped above.
-            if isinstance(_chart_def, _BaseChartFields):
-                _chart_def.query = _synth_name
-                _chart_def.model = None
-            elif isinstance(_chart_def, dict):
-                _chart_def["query"] = _synth_name
-                _chart_def.pop("model", None)
-    except CompilationError as e:
-        return CompileResult(errors=[e.to_diagnostic(file=file)])
-
-    # ════════════════════════════════════════════════════════════════════
-    # STEP 3c: Collect bare-field (metricflow) chart channels into their
-    # synthesized queries, before query normalization lowers them. MetricFlow
-    # classifies bare fields against the manifest into
-    # metrics/dimensions/time_grain.
-    # ════════════════════════════════════════════════════════════════════
-    if metricflow_model_by_query:
-        try:
-            raw_queries: dict[str, QueryOrRef] = {}
-            _collect_raw_queries(authored, raw_queries)
-            collect_metricflow_channel_refs(
-                collectible_charts,
-                raw_queries,
-                metricflow_model_by_query,
-                base_dir,
-            )
-        except CompilationError as e:
-            return CompileResult(errors=[e.to_diagnostic(file=file)])
-
-    # ════════════════════════════════════════════════════════════════════
     # STEP 4: Build Query Registry
     # ════════════════════════════════════════════════════════════════════
     try:
@@ -463,7 +368,7 @@ def compile_authored_board(
     if query_registry:
         try:
             detect_query_dependencies(query_registry)
-        except JinjaError as e:
+        except CompilationError as e:
             return CompileResult(errors=[e.to_diagnostic(file=file)])
 
     # ════════════════════════════════════════════════════════════════════
@@ -477,8 +382,8 @@ def compile_authored_board(
                 # host-supplied fallback) so inline chart queries synthesized during
                 # normalization inherit it too — not just the named queries built
                 # above. `sources` (board-global named source configs) rides
-                # alongside so an inline metricflow query on a chart resolves its
-                # model just like an up-top query.
+                # alongside so an inline chart query resolves its source just like
+                # an up-top query.
                 parent_context={
                     "default_source": default_source,
                     "sources": sources_registry,
@@ -590,7 +495,7 @@ def compile(
 
     Example:
         >>> yaml_content = '''
-        ... title: My Dataface
+        ... title: My dbt charts
         ... queries:
         ...   users: SELECT * FROM users
         ... charts:
@@ -604,7 +509,7 @@ def compile(
         >>> result = compile(yaml_content)
         >>> if result.success:
         ...     board = result.board
-        ...     print(board.title)  # "My Dataface"
+        ...     print(board.title)  # "My dbt charts"
     """
     options = options or {}
 
@@ -959,9 +864,12 @@ def compile_file(
             )
             merged_board_data = merged.model_dump(exclude_unset=True)
             # Identity + routing fields are dropped during merge so they never
-            # inherit from meta/extends. Re-attach only id and aliases so
-            # parse_mapping can identify this board.
-            for k in ("id", "aliases"):
+            # inherit from meta/extends. id and aliases are re-attached so
+            # parse_mapping can identify this board; _schema_version (the YAML
+            # key -- AuthoredBoard.schema_version's alias) carries no such role
+            # (nothing reads it back) but is identity-scoped to this file the
+            # same way, so it belongs in the same set.
+            for k in ("id", "aliases", "_schema_version"):
                 if k in board_data:
                     merged_board_data[k] = board_data[k]
             # Inject the SELECTED chain-wide base theme (incl. meta-level themes
@@ -1100,10 +1008,20 @@ def _build_registry(
     # both need the folded layer.
     board_cache = merge_cache_layers(board_cache, board.cache)
 
+    # Board-level incremental setting cascades into queries (and nested boards).
+    # A nested board overrides the parent's value when it sets its own.
+    effective_incremental: IncrementalValue = kwargs.pop("board_incremental", None)
+    if board.incremental is not None:
+        effective_incremental = board.incremental
+
     # Process definitions at this board level
     if registry_type == "queries":
         _process_queries_for_registry(
-            board, registry, board_cache=board_cache, **kwargs
+            board,
+            registry,
+            board_cache=board_cache,
+            board_incremental=effective_incremental,
+            **kwargs,
         )
     elif registry_type == "charts":
         _process_charts_for_registry(board, registry, board_cache=board_cache, **kwargs)
@@ -1113,77 +1031,16 @@ def _build_registry(
     # Recursively process nested boards
     nested_boards = _extract_nested_boards(board)
     for nested_board in nested_boards:
-        _build_registry(nested_board, registry_type, registry, board_cache, **kwargs)
+        _build_registry(
+            nested_board,
+            registry_type,
+            registry,
+            board_cache,
+            board_incremental=effective_incremental,
+            **kwargs,
+        )
 
     return registry
-
-
-def _collect_raw_queries(board: AuthoredBoard, registry: dict[str, QueryOrRef]) -> None:
-    """Flatten named queries (this board + nested boards) without normalizing.
-
-    Unlike `build_query_registry`, entries stay as authored AuthoredQuery/
-    QueryRef instances — used by the Surface B collect pass, which must
-    mutate a semantic query's fields before `normalize_query` lowers it.
-    Cross-file QueryRef entries are included by reference but not resolved
-    (a ref's own file already ran its own collect pass at its own compile).
-    """
-    queries = board.queries if board.queries is not None else {}
-    for name, query_def in queries.items():
-        if name not in registry:
-            registry[name] = query_def
-    for nested_board in _extract_nested_boards(board):
-        _collect_raw_queries(nested_board, registry)
-
-
-def _collect_inline_layout_charts(
-    board: AuthoredBoard, registry: dict[str, Any]
-) -> None:
-    """Flatten inline layout charts (this board + nested boards) into `registry`.
-
-    `build_chart_registry` only sees top-level named `charts:` — a chart authored
-    directly inline in `rows:`/`cols:`/`grid:`/`tabs:` (a bare AuthoredChart patch,
-    or `dict[str, AuthoredChart]`) never gets a registry entry. The Surface B
-    collect pass (`collect_metricflow_channel_refs`) needs to see and mutate those
-    authored chart objects in place before normalization re-serializes them.
-
-    Keys are Python object ids (`id(chart_obj)`) — guaranteed unique per live
-    object regardless of container nesting depth, so sibling nested boards with
-    charts at the same position index cannot collide.
-    """
-
-    def register(item: object) -> None:
-        # Handles both the bare-patch form (`- type: bar, ...`) and the named-dict
-        # form (`- my_chart: {type: bar, ...}`). Anything else (chart-name string,
-        # nested board, swatch strip) is not an inline chart and is skipped here.
-        # str(id(item)) is unique per live Python object — safer key than a
-        # position-only path, which collides when sibling nested boards share indices.
-        if isinstance(item, _BaseChartFields):
-            registry[f"_obj_{id(item)}"] = item
-        elif isinstance(item, dict) and len(item) == 1:
-            (chart_def,) = item.values()
-            if isinstance(chart_def, _BaseChartFields):
-                registry[f"_obj_{id(chart_def)}"] = chart_def
-
-    for items in (board.rows, board.cols):
-        if not items:
-            continue
-        for item in items:
-            register(item)
-
-    if board.grid:
-        for grid_item in board.grid.items:
-            register(grid_item.item)
-
-    if board.tabs:
-        for tab_item in board.tabs.items:
-            for items in (tab_item.rows, tab_item.cols):
-                if not items:
-                    continue
-                for item in items:
-                    register(item)
-
-    for nested_board in _extract_nested_boards(board):
-        _collect_inline_layout_charts(nested_board, registry)
 
 
 def _process_queries_for_registry(
@@ -1195,6 +1052,7 @@ def _process_queries_for_registry(
     sources: dict[str, Any],
     cache_root: CachePatch | None = None,
     board_cache: CachePatch = INHERIT_CACHE,
+    board_incremental: IncrementalValue = None,
 ) -> None:
     """Process queries from a board and add to registry.
 
@@ -1203,9 +1061,10 @@ def _process_queries_for_registry(
         registry: Registry to add queries to
         base_dir: ProjectDirectory anchor for the board file (used to resolve sub-file refs).
         default_source: Default source to apply to queries without explicit source
-        sources: Named source config dicts. Consulted by metricflow queries at normalize time.
+        sources: Named source config dicts.
         board_cache: The board-scope cache layer already folded down the nesting
             chain by the caller.
+        board_incremental: Effective board-level incremental setting for the cascade.
 
     Raises:
         CompilationError: If duplicate query names found
@@ -1241,6 +1100,7 @@ def _process_queries_for_registry(
                 base_dir=base_dir,
                 cache_root=cache_root,
                 board_cache=board_cache,
+                board_incremental=board_incremental,
             )
 
 
@@ -1319,8 +1179,7 @@ def build_query_registry(
         base_dir: ProjectDirectory anchor for the board file (used to resolve sub-file refs).
         registry: Existing registry to add to
         default_source: Default source to apply to queries without explicit source
-        sources: Named source config dicts (project + board level). Consulted by
-            metricflow queries, which resolve their source at normalize time.
+        sources: Named source config dicts (project + board level).
         board_cache: The cache layer this board inherits from the boards it is
             nested in; its own `cache:` folds over it inside `_build_registry`.
 

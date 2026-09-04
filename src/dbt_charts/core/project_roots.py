@@ -21,7 +21,7 @@ from dbt_charts.core.project import PROJECT_CONFIG_NAME
 logger = logging.getLogger(__name__)
 
 REPO_MARKERS = (".git",)
-DFT_ROOT_MARKERS = (PROJECT_CONFIG_NAME, "dbt_project.yml")
+DCT_ROOT_MARKERS = (PROJECT_CONFIG_NAME, "dbt_project.yml")
 _SERVE_ONLY_CONFIG_KEYS = {"server"}
 
 
@@ -40,7 +40,7 @@ def find_repo_root(start: Path | None = None) -> Path | None:
     """Walk up from *start* (default cwd) to the repo root (dir containing ``.git``), else None.
 
     Locates where editor/AI-client config lives (``.cursor/``, ``.vscode/``, skill
-    dirs) — distinct from the dft project root.
+    dirs) — distinct from the dbt charts project root.
     """
     return find_root(start, REPO_MARKERS)
 
@@ -77,7 +77,7 @@ def find_dct_root(start: Path | None = None) -> Path | None:
     Returns None outside a dbt charts project; callers that want a fallback append
     ``or Path.cwd()``.
     """
-    return find_root(start, DFT_ROOT_MARKERS)
+    return find_root(start, DCT_ROOT_MARKERS)
 
 
 def _has_render_project_config(path: Path) -> bool:
@@ -141,7 +141,7 @@ def resolve_profiles_path(
     explicitly named (profiles_dir set but missing → error, not next step).
 
     Args:
-        project_dir: The dataface project root (where dbt_charts.yml lives).
+        project_dir: The dbt charts project root (where dbt_charts.yml lives).
         profiles_dir: Explicit directory from the ``profiles_dir`` source field,
             already resolved to an absolute Path. None means not set.
     """

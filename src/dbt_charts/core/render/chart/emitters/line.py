@@ -6,13 +6,18 @@ from dataclasses import dataclass
 from typing import Any
 
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
-from dbt_charts.core.compile.models.style.resolved._base import ResolvedAxisStyle
 from dbt_charts.core.compile.models.style.resolved._marks import ResolvedLineMarkStyle
 from dbt_charts.core.compile.models.style.resolved.line import ResolvedLineStyle
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    category_scale_for,
+    color_at,
+)
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset, restripe
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     WIDE_LABEL_FIELD,
     WIDE_VALUE_FIELD,
+    unfold_wide_rows,
+    wide_series_names,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart._types import VLDict
@@ -22,6 +27,7 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
     build_palette_config,
     build_x_enc,
     distinct_series_values,
+    multiples_scale_independent,
     resolve_cartesian_x,
     resolve_xy_titles,
     sorted_series_by_last_value,
@@ -34,14 +40,17 @@ from dbt_charts.core.render.chart.emitters._channels import (
     gap_fill_ordinal_time_per_panel,
     pin_legend_display_order,
 )
+from dbt_charts.core.render.chart.emitters._endpoint_rail import (
+    resolve_endpoint_rail_span,
+)
 from dbt_charts.core.render.chart.emitters._layers import emit_line_layer
 from dbt_charts.core.render.chart.emitters._overlay import (
     overlay_uses_band_step,
+    overlay_x_domain_values,
     render_cartesian_overlay,
 )
 from dbt_charts.core.render.chart.emitters._wide import (
     fold_wide_measures,
-    unfold_wide_rows,
 )
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.step_band import (
@@ -115,7 +124,6 @@ def _normalize_line_data(
 def _apply_line_color_encoding(
     chart: ResolvedLineChart,
     data: list[dict[str, Any]],
-    ax: ResolvedAxisStyle,
     style: ResolvedLineStyle,
     top_encoding: VLDict,
 ) -> bool:
@@ -126,25 +134,41 @@ def _apply_line_color_encoding(
     """
     color_ch = chart.resolved_channels.get("color")
     has_color_encoding = False
+    # This chart's board scale for its own color field, when one exists —
+    # None for an unbound field, in which case spatial_color_scale below
+    # falls back to its own alphabetical-by-palette-position default.
+    # Computed once and reused by both the plain (last-value order) branch
+    # below and the dashes branch further down: the two domain-locking
+    # mechanisms aren't meant to compose, but they DO share the same board
+    # slot for a given value, so this is deliberately not re-derived per
+    # branch.
+    scale = None
     if color_ch is not None:
         color_field = color_ch.data_field
         color_title = (
-            format_display_text(color_field, from_slug=True, font=ax.title.font)
+            format_display_text(
+                color_field, from_slug=True, font=chart.legend.title.font
+            )
             if color_field
             else None
         )
         enc = channel_to_encoding(color_ch, data, title=color_title)
         if enc is not None:
             apply_color_legend(enc, chart.legend)
+            is_bindable_series = (
+                color_ch.mode == "series"
+                and enc.get("type") == "nominal"
+                and color_field
+                and chart.palette
+            )
+            if is_bindable_series:
+                scale = category_scale_for(chart.category_colors, color_field)
             # Stable last-value order — skipped when style.dashes is set,
             # since that path pins color's domain to a DIFFERENT explicit
             # order (data-insertion) to merge the color+strokeDash legends;
             # the two domain-locking mechanisms aren't meant to compose.
             if (
-                color_ch.mode == "series"
-                and enc.get("type") == "nominal"
-                and color_field
-                and chart.palette
+                is_bindable_series
                 and not style.dashes
                 and chart.x
                 and isinstance(chart.y, str)
@@ -154,7 +178,9 @@ def _apply_line_color_encoding(
                     order = sorted_series_by_last_value(
                         series, data, chart.x, chart.y, color_field
                     )
-                    enc["scale"] = spatial_color_scale(series, chart.palette, order)
+                    enc["scale"] = spatial_color_scale(
+                        series, chart.palette, order, scale
+                    )
                     pin_legend_display_order(enc, order)
             top_encoding["color"] = enc
             has_color_encoding = True
@@ -194,6 +220,16 @@ def _apply_line_color_encoding(
         color_scale = top_encoding["color"].setdefault("scale", {})
         if isinstance(color_scale, dict) and dash_domain:
             color_scale["domain"] = dash_domain
+            # The two domain-locking mechanisms don't compose (see the
+            # comment above), but a board scale still owes this chart's
+            # values their slot's color — without an explicit `range` here,
+            # VL painted `dash_domain` positionally over the config-level
+            # palette, which desynced from a plain (non-dashed) sibling
+            # chart bound to the same field.
+            if scale is not None:
+                color_scale["range"] = [
+                    color_at(scale, v, chart.palette) for v in dash_domain
+                ]
         # strokeDash must share color's title for VL to merge the two legends.
         color_title = top_encoding["color"].get("title")
         strokedash_scale: dict[str, Any] = {"range": style.dashes}
@@ -243,6 +279,7 @@ def _build_line_top_encoding(
     data: list[dict[str, Any]],
     style: ResolvedLineStyle,
     box: RenderBox,
+    x_domain: list[Any] | None,  # type-state: explicit_any — raw x values
 ) -> tuple[VLDict, bool, str | None, str | None]:
     """Build the VL encoding dict, has_color_enc flag, and resolved x VL type
     (None when the chart has no x channel at all) for a line chart.
@@ -262,6 +299,8 @@ def _build_line_top_encoding(
             "line",
             style.line_mark.curve,
             overlay_uses_band_step(chart.layers),
+            x_domain,
+            reserved_width=resolve_endpoint_rail_span(chart, data, box.width),
         )
         if chart.x
         else CartesianXResolution("nominal", {}, {})
@@ -291,7 +330,7 @@ def _build_line_top_encoding(
         )
     if chart.y:
         top_encoding["y"] = y_enc
-    has_color_enc = _apply_line_color_encoding(chart, data, ax, style, top_encoding)
+    has_color_enc = _apply_line_color_encoding(chart, data, style, top_encoding)
     x_type = vl_type if chart.x else None
     return top_encoding, has_color_enc, x_type, titles.y_plain
 
@@ -313,7 +352,14 @@ def _emit_folded_line(
     ax, ay = style.axis_x, style.axis_y
     x_res = (
         resolve_cartesian_x(
-            chart.x, data, ax, style.label_usable_ratio, box.width, chart.id, "line"
+            chart.x,
+            data,
+            ax,
+            style.label_usable_ratio,
+            box.width,
+            chart.id,
+            "line",
+            reserved_width=resolve_endpoint_rail_span(chart, data, box.width),
         )
         if chart.x
         else CartesianXResolution("nominal", {}, {})
@@ -325,19 +371,21 @@ def _emit_folded_line(
             "choose a different curve style."
         )
     measures = list(chart.wide_measures)
-    series = sorted(measures)
+    series = wide_series_names(measures, chart.color, data)
     # Same order computation line's authored-color path uses
     # (sorted_series_by_last_value in _apply_line_color_encoding, above), fed
     # a long-form view of the wide data — a wide line's series order must
     # match what an authored color: field of the same data would produce.
     display_order = series
     if chart.x:
-        folded = unfold_wide_rows(data, measures)
+        folded = unfold_wide_rows(data, measures, chart.color)
         display_order = sorted_series_by_last_value(
             series, folded, chart.x, WIDE_VALUE_FIELD, WIDE_LABEL_FIELD
         )
     wide = fold_wide_measures(
         measures,
+        chart.color,
+        data,
         chart.palette,
         chart.legend,
         display_order=display_order,
@@ -350,9 +398,7 @@ def _emit_folded_line(
     # Wide/folded y has no single measure field to title from — fall back to
     # the joined, humanized measure names, same as an authored y_label always
     # would (an authored y_label still wins outright).
-    y_label_effective = chart.y_label or wide_measures_title(
-        chart.wide_measures, ay.title.font
-    )
+    y_label_effective = chart.y_label or wide_measures_title(chart.wide_measures)
     y_title = resolve_xy_titles(
         None, None, None, y_label_effective, ax, ay, box, chart.id
     ).y_title
@@ -411,13 +457,34 @@ class LineEmitter:
             chart, dataset, data
         )
         if chart.wide_measures:
+            # A folded (wide-measures) chart returns before chart.layers ever
+            # applies (below) — no union to compute here.
             spec = _emit_folded_line(chart, data, box)
             if transformed:
                 spec.data = normalize_data_types(data)
             return spec
         style = chart.style
+        # Overlay layers may carry x buckets the base series doesn't (a
+        # forward goal ramp against actuals). Vega-Lite unions the sub-layer
+        # domains, so the axis must be built against that union — both its
+        # tick values and its crowding measurement — not against the base's
+        # own rows. Mirrors bar.py's identical computation ahead of its own
+        # x encoding.
+        x_domain = (
+            overlay_x_domain_values(
+                chart.layers,
+                data,
+                chart.x,
+                style.axis_x,
+                base_x_authored_temporal,
+                datasets,
+                chart.query_name,
+            )
+            if chart.layers
+            else None
+        )
         top_encoding, has_color_enc, x_type, y_plain = _build_line_top_encoding(
-            chart, data, style, box
+            chart, data, style, box, x_domain
         )
         step_band_data = _apply_line_step_band(
             chart, data, top_encoding, style.line_mark, x_type
@@ -461,9 +528,10 @@ class LineEmitter:
                 chart_id=chart.id,
                 axis_x=style.axis_x,
                 axis_y=style.axis_y,
-                base_y_title_suppressed=(
+                base_measure_title_suppressed=(
                     bool(chart.y_label) and chart.style.axis_y.title.visible is False
                 ),
+                base_orientation="vertical",
                 base_x_authored_temporal=base_x_authored_temporal,
                 tooltip_format=style.tooltip_format,
                 background=chart.background,
@@ -481,6 +549,9 @@ class LineEmitter:
                 base_mark_type="line",
                 base_label=base_label,
                 datasets=datasets,
+                base_stack_normalize=False,
+                base_stack_center=False,
+                multiples_scale_independent=multiples_scale_independent(chart),
             )
 
         return spec

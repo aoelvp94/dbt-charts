@@ -1,7 +1,7 @@
 """A board must declare something that renders.
 
 `AuthoredBoard.validate_layout` rejects a board with no layout, no text, no title,
-no description, and no charts. Styling alone does not qualify — a `style:` block
+no notes, and no charts. Styling alone does not qualify — a `style:` block
 paints a box that has nothing in it, which is the empty-region failure the rule
 exists to catch.
 """
@@ -37,10 +37,10 @@ class TestBoardWithContentAccepted:
         [
             {"text": "hello"},
             {"title": "Section"},
-            {"description": "why this board exists"},
+            {"notes": "why this board exists"},
             {"rows": ["some_chart"]},
         ],
-        ids=["text", "title", "description", "rows"],
+        ids=["text", "title", "notes", "rows"],
     )
     def test_content_key_is_enough(self, payload: dict[str, object]):
         AuthoredBoard.model_validate(payload)

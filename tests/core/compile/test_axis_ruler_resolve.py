@@ -555,7 +555,7 @@ class TestMechanismFollowsResolvedAnchoringNotEdge:
         (``_fallback_reversed_label_align``) deletes an own-side
         ``labelAlign`` at render when ``label.font.case`` is upper/lower --
         VL then prefers the injected, un-measurable ``labelExpr`` over
-        ``format``, so Dataface can't safely compute a ``labelPadding`` and
+        ``format``, so dbt charts can't safely compute a ``labelPadding`` and
         falls back to VL's own smart default instead of shipping an
         unmeasured (and possibly wrong) gutter. A left-edge axis with
         ``align: left`` (own-side, start-anchored) and ``case: upper`` must
@@ -805,13 +805,13 @@ def test_non_compacting_ladder_leaves_an_authored_format_untouched():
 
 
 def test_non_compacting_ladder_bakes_tick_label_when_format_is_an_authored_alias():
-    """An author who reaches for a named format alias (``currency_compact``,
+    """An author who reaches for a named format alias (``currency``,
     ``"$~s"``) to get the ``$`` prefix still gets the ruler's own settled
     non-compacting rule -- ``format_is_alias`` relaxes the ``format_authored``
     gate so an alias-sourced SI format bakes plain digits below the
     compaction threshold exactly like the unauthored theme default does.
     Reproduces the bug report's ``hero_bookings`` case: an 8,000-topping
-    ladder authored via ``currency_compact`` must write ``$0, $2,000, ...``,
+    ladder authored via ``currency`` must write ``$0, $2,000, ...``,
     not stay permanently SI-compacted.
     """
     ay_merged = _merged_axis_y()
@@ -884,7 +884,7 @@ _NON_COMPACTING_BAR_DATA = [
 
 def test_end_to_end_authored_alias_bakes_plain_digits_through_real_resolve():
     """Reproduces the bug report exactly: a real BarChart authoring
-    ``style.axis_y.labels.format: currency_compact`` on data topping out at
+    ``style.axis_y.labels.format: currency`` on data topping out at
     8,000 must bake plain-digit tick_label through the actual
     production resolve() pipeline, not just the isolated
     ``build_resolved_axis`` call above.
@@ -897,12 +897,12 @@ def test_end_to_end_authored_alias_bakes_plain_digits_through_real_resolve():
 
     board = resolve_chart_style_context(get_theme_style())
     patch = BarChartStylePatch(
-        axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format="currency_compact"))
+        axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format="currency"))
     )
     chart = BarChart(id="t", type="bar", x="month", y="revenue", style=patch)
     resolved = resolve(chart, _NON_COMPACTING_BAR_DATA, chart_style_context=board)
     ay = resolved.style.axis_y
-    assert ay.labels.format == "$~s"
+    assert ay.labels.format == "$.3~s"
     assert ay.ruler is None
     # Left-edge (end-anchored): prefix is split out, digit spec is in tick_label.format.
     assert ay.tick_label.format == ",.0~f"
@@ -914,7 +914,7 @@ def test_end_to_end_authored_alias_bakes_plain_digits_through_real_resolve():
 def test_end_to_end_board_authored_alias_bakes_plain_digits():
     """Board-scope twin of the test above.
 
-    The same ``currency_compact`` alias, authored at board level
+    The same ``currency`` alias, authored at board level
     (``style.charts.axis_y.labels.format``) instead of on the chart, must bake
     the same plain-digit tick_label. This pins the board tier's
     ``format_is_alias`` computation: without it the board layer reports
@@ -926,20 +926,20 @@ def test_end_to_end_board_authored_alias_bakes_plain_digits():
     from dbt_charts.core.compile.models.style.authored import StylePatch
 
     board_patch = StylePatch.model_validate(
-        {"charts": {"axis_y": {"labels": {"format": "currency_compact"}}}}
+        {"charts": {"axis_y": {"labels": {"format": "currency"}}}}
     )
     board = resolve_chart_style_context(get_theme_style(), board_patch)
     chart = BarChart(id="t", type="bar", x="month", y="revenue")
     resolved = resolve(chart, _NON_COMPACTING_BAR_DATA, chart_style_context=board)
     ay = resolved.style.axis_y
-    assert ay.labels.format == "$~s"
+    assert ay.labels.format == "$.3~s"
     assert ay.tick_label.format == ",.0~f"
     assert ay.tick_label.prefix == "$"
     assert d3_format_apply(ay.tick_label.format, 8_000.0) == "8,000"
 
 
 def test_end_to_end_authored_alias_right_edge_splits_prefix():
-    """On a right-edge axis with currency_compact, the house-rule forces
+    """On a right-edge axis with currency, the house-rule forces
     label.align = 'right' (end-anchored), and the prefix is split so it
     appears on the anchor tick only -- same as a left-edge axis.
 
@@ -957,7 +957,7 @@ def test_end_to_end_authored_alias_right_edge_splits_prefix():
     patch = LineChartStylePatch(
         axis_y=AxisYStylePatch(
             position="right",
-            labels=AxisLabelStylePatch(format="currency_compact"),
+            labels=AxisLabelStylePatch(format="currency"),
         )
     )
     # Numeric x so the line chart resolves y as the measure axis.
@@ -970,7 +970,7 @@ def test_end_to_end_authored_alias_right_edge_splits_prefix():
     resolved = resolve(chart, data, chart_style_context=board)
     ay = resolved.style.axis_y
 
-    assert ay.labels.format == "$~s"
+    assert ay.labels.format == "$.3~s"
     # Forced end-anchored: no column-forming device needed.
     assert ay.labels.align == "right"
     assert ay.ruler is None

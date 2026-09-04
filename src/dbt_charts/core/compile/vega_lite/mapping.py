@@ -1,6 +1,6 @@
 """Vega-Lite config mapping from ChartStyleContext.
 
-style_to_vega_lite() is the sole place that maps Dataface's nested field
+style_to_vega_lite() is the sole place that maps dbt charts' nested field
 names to flat Vega-Lite camelCase; effective_vega_config() is its sole
 production caller, merging the base VL config dict with the style overlay
 it produces.
@@ -46,7 +46,7 @@ def effective_vega_config(
 
 
 # =============================================================================
-# VEGA-LITE MAPPING (nested Dataface fields → flat camelCase)
+# VEGA-LITE MAPPING (nested dbt charts fields → flat camelCase)
 # =============================================================================
 
 
@@ -55,7 +55,7 @@ def style_to_vega_lite(
 ) -> Any:  # -> vlc.VegaLiteConfig, avoid circular import
     """Map ChartStyleContext to VegaLiteConfig.
 
-    Translates nested Dataface field names to flat Vega-Lite camelCase.
+    Translates nested dbt charts field names to flat Vega-Lite camelCase.
     This is the sole place that knows about Vega-Lite naming.
 
     Sole VL mapper. The overloaded style_to_vega_lite(Style) signature was removed.

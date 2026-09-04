@@ -26,7 +26,7 @@ from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 # 1. _QueryNamespace proxy
 # ─────────────────────────────────────────────────────────────────────────────
 
-_SENTINEL_RE = re.compile(r"^__dft_cache_ref__(\w+)__$")
+_SENTINEL_RE = re.compile(r"^__dct_cache_ref__(\w+)__$")
 
 
 def _make_namespace(queries: dict[str, Any]) -> _QueryNamespace:
@@ -83,7 +83,7 @@ class TestQueryProxy:
         assert inline != cache_ref
         # inline is an aliased subquery, cache_ref is the sentinel
         assert inline == "(SELECT 1) AS q"
-        assert "__dft_cache_ref__" in cache_ref
+        assert "__dct_cache_ref__" in cache_ref
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -656,7 +656,7 @@ class TestCacheRefMaxRowsEnforcement:
         the author's own Query.limit the same way they do.
 
         `limit:` is not an authorable YAML field on a `type: sql` query
-        today (only metricflow/http queries carry it in the authored
+        today (only http queries carry it in the authored
         schema), so this sets it directly on the compiled query — the same
         way a non-YAML producer (e.g. the Looker migrator's inline-UDF-script
         queries) would."""

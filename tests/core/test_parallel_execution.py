@@ -12,11 +12,7 @@ from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.adapters.base import QueryResult
-from dbt_charts.core.execute.duckdb_cache import (
-    compute_query_hash,
-    compute_source_hash,
-    compute_variables_hash,
-)
+from dbt_charts.core.execute.duckdb_cache import compute_cache_key
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 from dbt_charts.core.render import render
 
@@ -344,19 +340,12 @@ class TestDuckDBIntegration:
             rendered = render(result.board, executor, format="html")
             assert rendered.output
 
-            variables_hash = compute_variables_hash({})
             for query_name in ("sales", "users", "orders"):
                 query = result.board.queries[query_name]
-                query_sql = query.sql
-                if query.setup_sql:
-                    query_sql += "\n" + query.setup_sql
-                hit = cache.get(
-                    compute_source_hash(
-                        query.source, board_sources=result.board.sources
-                    ),
-                    compute_query_hash(query_sql),
-                    variables_hash,
+                source_hash, query_hash, variables_hash = compute_cache_key(
+                    query, board_sources=result.board.sources
                 )
+                hit = cache.get(source_hash, query_hash, variables_hash)
                 assert hit is not None, f"{query_name} was not cached"
                 assert hit.rows[0]["x"] == query_name
         finally:
@@ -535,6 +524,48 @@ class TestIsCached:
         as a miss and execute_query surfaces the error on the real call."""
         executor = self._executor()
         assert executor.is_cached("does_not_exist") is False
+
+    def test_memo_hit_reports_true_even_with_use_cache_off(self):
+        """`use_cache=False` disables the persistent store, not the memo —
+        is_cached must keep predicting execute_query, which serves memo rows."""
+        result = compile(SIMPLE_BOARD_YAML)
+        assert result.success, result.errors
+        mock_registry = Mock()
+        mock_registry.execute.return_value = QueryResult(data=[{"x": 1, "y": 2}])
+        executor = Executor(
+            result.board, adapter_registry=mock_registry, use_cache=False
+        )
+        assert executor.is_cached("sales") is False
+        executor.execute_query("sales")
+        assert executor.is_cached("sales") is True
+
+
+def test_execute_queries_parallel_propagates_attribution_to_every_worker() -> None:
+    """A fan-out render must label EVERY query with the calling actor.
+
+    `attribute()`'s ContextVar does not cross `ThreadPoolExecutor.submit` on
+    its own (its own docstring warns of exactly this) — this is a regression
+    test through the real `execute_queries_parallel` + a real thread pool
+    with `max_workers > 1`, not a unit test of the ContextVar in isolation.
+    A dropped propagation would silently omit the actor label on every query
+    that fans out, which is the multi-query path that matters most.
+    """
+    from dbt_charts.core.attribution import attribute, current_attribution
+    from dbt_charts.core.execute.parallel import execute_queries_parallel
+
+    seen: dict[str, str | None] = {}
+
+    def _record(name: str, variables: object = None) -> list[dict[str, object]]:
+        seen[name] = current_attribution().get("dbt_charts_actor")
+        return []
+
+    stub = Mock()
+    stub.execute_query.side_effect = _record
+
+    with attribute({"actor": "tenant-a"}, {}):
+        execute_queries_parallel(stub, {"a", "b", "c"}, max_workers=3)
+
+    assert seen == {"a": "tenant-a", "b": "tenant-a", "c": "tenant-a"}
 
 
 def test_execute_queries_parallel_names_pool_threads_with_render_prefix() -> None:

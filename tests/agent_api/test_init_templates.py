@@ -66,7 +66,7 @@ class TestBoardYmlTemplate:
 class TestInitCreatesGuide:
     """init_project() must create charts/guide.yaml, not charts/dbt_charts.yml or charts/hello.yml.
 
-    charts/dbt_charts.yml collides with the DFT_ROOT_MARKERS sentinel in project_roots.py:
+    charts/dbt_charts.yml collides with the DCT_ROOT_MARKERS sentinel in project_roots.py:
     find_project_root walks up from a board, stops at charts/dbt_charts.yml, and
     treats charts/ as the project root — so every chart errors "Source not found".
     """
@@ -81,13 +81,13 @@ class TestInitCreatesGuide:
         )
 
     def test_init_does_not_create_board_yml(self, tmp_path: Path) -> None:
-        """charts/dbt_charts.yml must not be scaffolded — it collides with DFT_ROOT_MARKERS."""
+        """charts/dbt_charts.yml must not be scaffolded — it collides with DCT_ROOT_MARKERS."""
         from dbt_charts.agent_api.init import init_project
 
         init_project(tmp_path)
         assert not (tmp_path / "charts" / "dbt_charts.yml").exists(), (
             "charts/dbt_charts.yml must not be created by init_project: it collides with "
-            "the dbt_charts.yml DFT_ROOT_MARKERS sentinel in project_roots.py, causing "
+            "the dbt_charts.yml DCT_ROOT_MARKERS sentinel in project_roots.py, causing "
             "find_project_root to stop at charts/ and treat it as the project root"
         )
 
@@ -132,5 +132,5 @@ class TestInitCreatesGuide:
         content = _template_pkg().joinpath("README.md").read_text()
         assert "hello" not in content, "README.md must not reference 'hello'"
         assert "guide" in content.lower(), (
-            "README.md must reference the 'guide' board (was 'board', renamed to avoid DFT_ROOT_MARKERS collision)"
+            "README.md must reference the 'guide' board (was 'board', renamed to avoid DCT_ROOT_MARKERS collision)"
         )

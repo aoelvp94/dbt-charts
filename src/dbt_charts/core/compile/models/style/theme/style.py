@@ -22,6 +22,9 @@ from dbt_charts.core.compile.models.style.theme.board import (
 from dbt_charts.core.compile.models.style.theme.charts import (
     ChartsStyle,
 )
+from dbt_charts.core.compile.models.style.theme.kpi import (
+    KpiTonesStyle,
+)
 from dbt_charts.core.compile.models.style.theme.layout import (
     LayoutStyle,
 )
@@ -75,16 +78,18 @@ class Style(BaseModel):
         description="CSS box shadow for chart cards; None means no shadow.",
     )
     opacity: float = Field(description="Default mark opacity (0–1).")
-    title: TitleStyle = Field(description="Board and board title style.")
+    title: TitleStyle = Field(
+        description="Typography for every heading: board and prose titles, and chart, table, and spark object titles."
+    )
     text: TextStyle = Field(description="Markdown and plain text content style.")
     placeholder: PlaceholderStyle = Field(
-        description="Placeholder overlay style for empty charts."
+        description="Appearance of the stand-in drawn on a chart with no data."
     )
     charts: ChartsStyle = Field(
         description="Root of all chart-type styles and shared chart configuration."
     )
     layout: LayoutStyle = Field(
-        description="Layout container styles (rows, cols, grid, tabs, details)."
+        description="Spacing and arrangement inside the containers (rows, cols, grid, tabs, details)."
     )
     variables: VariablesStyle = Field(description="Variable controls chrome style.")
     page: PageStyle = Field(description="Page-level canvas style (behind the board).")
@@ -120,6 +125,13 @@ class Style(BaseModel):
             "Theme palette role assignments: open dict mapping role name to palette file name. "
             "Default seed: chrome, info, negative, positive, warning, category, sequence, diverge."
         ),
+    )
+    # Semantic tone palette shared by the KPI support row, table
+    # conditional-formatting glyphs, and in-cell spark marks' opt-in
+    # negative_color — a board-level slot (not one family's) since all three
+    # read it.
+    tones: KpiTonesStyle = Field(
+        description="Semantic tone color palette (positive/negative/warning/info) for KPI support rows, table conditional glyphs, and spark negative_color."
     )
     # Top-level theme role shortcuts.
     # Optional bare aliases: e.g. ink → chrome.heading. Board authors write the

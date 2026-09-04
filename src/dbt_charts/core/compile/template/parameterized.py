@@ -12,11 +12,19 @@ This module renders to parameterized queries (safe):
 
 Entry Points:
     - render_parameterized(template, variables, dialect) -> ParameterizedQuery
+    - make_filter_helper(emit) / make_filter_date_range_helper(emit) -> the
+      filter() helpers Jinja calls, over a caller-supplied value-emission
+      strategy. Both callers pass a collector's add_param; they differ in the
+      placeholder style the collector's dialect emits, and in whether the
+      result is bound by a driver or flattened to literals for one that takes
+      no bindings.
 
 The executor then uses: cursor.execute(sql, params)
 
 Security Notes:
-    - All variable values are passed as parameters, never interpolated
+    - Values reach SQL only through the emission strategy, as a collected
+      parameter standing behind a placeholder; never by interpolation in this
+      module
     - Operator validation uses VALID_OPERATORS allowlist
     - Column/table names are validated to prevent injection via identifiers
     - Legacy filter helpers in jinja.py should NOT be used (deprecated)
@@ -126,6 +134,13 @@ class ParameterizedQuery:
     template_hash: str = ""
 
 
+# How one runtime variable value becomes the SQL text standing for it. The
+# filter helpers never write a value into SQL themselves — they call this, and
+# the caller's collector decides which placeholder style stands in for the
+# value until something downstream binds or inlines it.
+Emitter = Callable[[Any], str]  # type-state: explicit_any — a runtime variable value
+
+
 class _ParameterCollector:
     """Collects parameters during Jinja rendering.
 
@@ -157,6 +172,20 @@ class _ParameterCollector:
         # placeholders (?, %s) every occurrence needs its own param entry.
         self._deduplicate = dialect.param(1) != dialect.param(2)
         self._seen_params: dict[tuple[Any, ...], int] = {}
+
+    def add_param(
+        self,
+        value: Any,  # type-state: explicit_any — a runtime variable value; any scalar or list the author bound
+    ) -> str:  # type-state: explicit_any — a runtime variable value; any scalar or list the author bound
+        """Append one value and return its placeholder.
+
+        No dedup: the caller is the filter helpers, whose values arrive as
+        expression results rather than named variables, so there is no name to
+        key a repeat on.
+        """
+        self._param_index += 1
+        self.params.append(value)
+        return self.dialect.param(self._param_index)
 
     def get_param(self, name: str, value: Any) -> str:
         """Get parameter placeholder for a variable.
@@ -449,8 +478,8 @@ def render_parameterized(
             context[name] = _ParameterizedValue(name, value, collector)
 
     # Add parameterized filter helpers
-    context["filter"] = _make_filter_helper(collector, dialect)
-    context["filter_date_range"] = _make_filter_date_range_helper(collector, dialect)
+    context["filter"] = make_filter_helper(collector.add_param)
+    context["filter_date_range"] = make_filter_date_range_helper(collector.add_param)
 
     # Handle queries namespace if present
     if "queries" in variables:
@@ -555,24 +584,25 @@ def _clean_parameter_quotes(sql: str, dialect: SQLDialect, param_count: int) -> 
     return result
 
 
-def _make_filter_helper(
-    collector: _ParameterCollector,
-    dialect: SQLDialect,
-) -> Callable[..., str]:
-    """Create parameterized filter helper.
+def make_filter_helper(emit: Emitter) -> Callable[..., str]:
+    """Create the filter() helper Jinja calls, over a value-emission strategy.
 
-    Returns a function that generates parameterized filter clauses:
-        {{ filter('column', value) }} -> "column = $1"
-        {{ filter('column', value, '!=') }} -> "column != $1"
+    Returns a function that generates filter clauses:
+        {{ filter('column', value) }} -> "column = <emitted>"
+        {{ filter('column', value, '!=') }} -> "column != <emitted>"
 
     Security:
         - Column names are validated against SQL injection
         - Operators are validated against VALID_OPERATORS allowlist
-        - Values are always passed as parameters, never interpolated
+        - Values only ever reach SQL through `emit`, never interpolated here
 
     Args:
-        collector: Parameter collector
-        dialect: SQL dialect
+        emit: The value-emission strategy, and the only route a value takes
+            into the statement. Both callers pass a `_ParameterCollector`'s
+            `add_param`; the collector's dialect decides the placeholder style,
+            and what resolves it — a driver binding the parameter, or the
+            inline pass flattening it to an escaped literal for dbt's
+            adapter.execute(), which takes no bindings.
 
     Returns:
         Filter helper function
@@ -620,46 +650,30 @@ def _make_filter_helper(
             if not actual_value:
                 return "1=0" if none == "deny" else "1=1"
 
-            # Validate column for IN clause too
-            # For IN clause, we need multiple parameters
-            placeholders = []
-            for item in actual_value:
-                collector._param_index += 1
-                collector.params.append(item)
-                placeholders.append(dialect.param(collector._param_index))
-
-            return f"{column} IN ({', '.join(placeholders)})"
+            emitted = ", ".join(emit(item) for item in actual_value)
+            return f"{column} IN ({emitted})"
 
         # Validate operator to prevent SQL injection
         _validate_operator(operator)
 
-        # Single value - get parameter placeholder
-        collector._param_index += 1
-        collector.params.append(actual_value)
-        placeholder = dialect.param(collector._param_index)
-
-        return f"{column} {operator} {placeholder}"
+        return f"{column} {operator} {emit(actual_value)}"
 
     return filter_helper
 
 
-def _make_filter_date_range_helper(
-    collector: _ParameterCollector,
-    dialect: SQLDialect,
-) -> Callable[[str, Any], str]:
-    """Create parameterized date range filter helper.
+def make_filter_date_range_helper(emit: Emitter) -> Callable[..., str]:
+    """Create the filter_date_range() helper, over the same emission strategy.
 
-    Returns a function that generates parameterized BETWEEN clauses:
+    Returns a function that generates BETWEEN clauses:
         {{ filter_date_range('date', date_range) }}
-        -> "date BETWEEN $1 AND $2"
+        -> "date BETWEEN <emitted> AND <emitted>"
 
     Security:
         - Column names are validated against SQL injection
-        - Date values are always passed as parameters
+        - Date values only ever reach SQL through `emit`
 
     Args:
-        collector: Parameter collector
-        dialect: SQL dialect
+        emit: Value-emission strategy — see `make_filter_helper`.
 
     Returns:
         Date range filter helper function
@@ -717,16 +731,7 @@ def _make_filter_date_range_helper(
         if not start or not end:
             return "1=1"  # Empty dates = no filter (intentional)
 
-        # Add parameters for start and end
-        collector._param_index += 1
-        collector.params.append(start)
-        start_placeholder = dialect.param(collector._param_index)
-
-        collector._param_index += 1
-        collector.params.append(end)
-        end_placeholder = dialect.param(collector._param_index)
-
-        return f"{column} BETWEEN {start_placeholder} AND {end_placeholder}"
+        return f"{column} BETWEEN {emit(start)} AND {emit(end)}"
 
     return filter_date_range_helper
 

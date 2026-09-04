@@ -220,7 +220,7 @@ class TestNavHtml:
         assert 'href="/"' in html
         assert 'aria-label="Project home"' in html
 
-    def test_home_icon_is_house_not_dataface_logo(self) -> None:
+    def test_home_icon_is_house_not_dbt_charts_logo(self) -> None:
         html = nav_html("q3", "/sales/q3", self._nav_dir_ctx())
         assert "<svg" in html
         assert "M2.35 7.15 8 2.25" in html
@@ -508,7 +508,7 @@ class TestNavHtml:
             # Auto margins, not text-align: the artifact sets display:block inline.
             if "margin-inline:auto" in body:
                 centered += selectors.split(",")
-        assert ".dbt-view-actual.dataface-svg-container>svg" in centered
+        assert ".dbt-view-actual.dbt-charts-svg-container>svg" in centered
 
     def test_host_drops_the_inline_sizing_hints(self) -> None:
         """`boards.py` writes `max-width:100%; height:auto` onto the root SVG so a

@@ -670,13 +670,13 @@ class TestDbtSchemaSourceDatabase:
 
 
 # ---------------------------------------------------------------------------
-# Fusion-emitted manifest.json — real fixture, not a hand-built dbt-core shape.
+# dbt v2-emitted manifest.json — real fixture, not a hand-built dbt-core shape.
 #
 # `dbt-charts/tests/fixtures/fusion_manifest/manifest.json` was produced by
 # `dbt parse` with `dbt-fusion 2.0.0-preview.193` against the `jaffle-shop`
 # jaffle project (Snowflake target), with the `macros` key stripped (unused
-# by any dataface reader; it was 828KB of the 934KB raw file). Every other
-# key is byte-for-byte what Fusion wrote.
+# by any dbt charts reader; it was 828KB of the 934KB raw file). Every other
+# key is byte-for-byte what dbt v2 wrote.
 # ---------------------------------------------------------------------------
 
 _FUSION_FIXTURES = DBT_CHARTS_DIR / "tests" / "fixtures" / "fusion_manifest"
@@ -693,7 +693,7 @@ def _fusion_project(
 
 
 class TestDbtSchemaSourceFusionManifest:
-    """Every field DbtSchemaSource reads, exercised against a real Fusion
+    """Every field DbtSchemaSource reads, exercised against a real dbt v2
     manifest.json rather than a hand-built dbt-core-shaped dict."""
 
     def test_profile_table_surfaces_relation_and_column_descriptions(
@@ -717,7 +717,7 @@ class TestDbtSchemaSourceFusionManifest:
         )
         col = profile["columns"]["customer_id"]
         assert col["description"] == "The unique key of the orders mart."
-        # Fusion writes `"meta": {}` verbatim, same as dbt-Core, for a model
+        # dbt v2 writes `"meta": {}` verbatim, same as dbt v1, for a model
         # with no declared owner — honest absence, not a missing key.
         assert "owner" not in profile
 

@@ -71,7 +71,7 @@ def test_compiled_charts_style_padding_field_exists():
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.models.style.theme import PaddingStyle
 
-    kpi = get_theme_style("editorial")
+    kpi = get_theme_style("clarity")
     assert isinstance(kpi.charts.padding, PaddingStyle)
 
 
@@ -85,8 +85,8 @@ def test_theme_corpus_padding_field_compiles(compiled_themes):
         )
 
 
-def test_data_table_strip_and_right_padding_both_survive_pipeline():
-    """charts.padding.right and data-table strip both reach the final spec.
+def test_support_table_strip_and_right_padding_both_survive_pipeline():
+    """charts.padding.right and support-table strip both reach the final spec.
 
     Pipeline: generate_vega_lite_spec with non-zero charts.padding.right.
     Verifies right padding survives the render path.

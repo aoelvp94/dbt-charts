@@ -1,4 +1,4 @@
-# Dataface architectural boundaries — single source of truth.
+# dbt charts architectural boundaries — single source of truth.
 #
 # Class B (direction/layering) — enforced by `tach check` via layers +
 # cannot_depend_on.
@@ -100,21 +100,22 @@ exclude = [
     # (tach 0.35.0 only reads [project] dependencies, not optional-deps).
     # Imported by file_source_materializer.py when parquet sources are used.
     "pyarrow",
-    # `metricflow` and `metricflow_semantics` are declared in
-    # [project.optional-dependencies] metricflow (tach 0.35.0 only reads
-    # [project] dependencies, not optional-deps). Imported lazily in
-    # _lower_metricflow_query; raises CompilationError if absent.
-    "metricflow",
-    "metricflow_semantics",
     # `filelock` is a test-only dev dep (declared in root pyproject.toml
     # dev group). Used by dbt-charts/tests/integration/conftest.py to guard
-    # the xdist TOCTOU race when creating examples/metricflow/warehouse.duckdb.
+    # xdist TOCTOU races when creating example fixture DuckDB files.
     "filelock",
     # `packaging` is a test-only dev dep (declared in root pyproject.toml dev
     # group). Used by dbt-charts/tests/core/test_packaging_metadata.py to parse
     # declared dependency specifiers with PEP 440 semantics rather than
     # substring-matching them.
     "packaging",
+    # `tasks` is the task-management workspace member (libs/tasks, declared in
+    # root pyproject.toml's uv workspace, not a dbt-charts dependency). Used by
+    # dbt-charts/tests/visual/series_naming.py to import the single canonical
+    # TERMINAL_STATUSES set from tasks/statuses.py, rather than re-declaring a
+    # second copy of the task-status vocabulary in the matrix_known_defects.yml
+    # register guard.
+    "tasks",
     # `nh3` is imported by the peer mdsvg package (built into the wheel via
     # [tool.hatch.build.targets.wheel.force-include] in dbt-charts/pyproject.toml),
     # not by dbt-charts/src/dbt_charts/ directly.
@@ -181,7 +182,7 @@ path = "dbt_charts.core.attribution"
 layer = "core"
 # leaf node — the authored-attribution validator is needed by compile (models/source)
 # and the query header by execute (dbt_adapter_factory); keeping both here avoids a
-# compile -> execute edge for one shared `dft_` namespace.
+# compile -> execute edge for one shared `dbt_charts_` namespace.
 depends_on = []
 
 [[modules]]
@@ -202,7 +203,7 @@ depends_on = ["dbt_charts.core.utils"]   # case.py uses slug_to_text; no compile
 [[modules]]
 path = "dbt_charts.core.utils"
 layer = "core"
-depends_on = []   # leaf node — pure cross-cutting helpers (slug_to_text, to_plain_dict, ...)
+depends_on = ["dbt_charts.core.font_measure"]   # leaf-of-leaves — cross-cutting helpers (slug_to_text, to_plain_dict, ...) plus measured_label_padding, which needs font_measure's strict measurer; no compile/render/execute deps
 
 [[modules]]
 path = "dbt_charts.core.dialects"
@@ -218,7 +219,7 @@ depends_on = []   # leaf node — no compile/execute/render deps
 path = "dbt_charts.core.numeric"
 layer = "core"
 # Leaf node — the generic d3-style "nice step" tick primitive (nice_tick_values),
-# zero Dataface-specific types. compile/resolve/chart/_domain.py bakes real axis
+# zero dbt charts-specific types. compile/resolve/chart/_domain.py bakes real axis
 # ticks with it; render/chart/emitters/_measured_label_padding.py uses it only to
 # estimate the widest plausible foreign-rendered label width.
 depends_on = []
@@ -236,9 +237,10 @@ depends_on = ["dbt_charts.core.diagnostics"]
 path = "dbt_charts.core.compile"
 layer = "core"
 # Remaining compile -> {project, project_roots, inspect} edges (and the
-# DbtAdapter/SqlAdapter/_read_target_dict compile->execute edges in sources/detection.py
-# and normalize/queries.py, which are real adapter-class usage, not relocatable
+# DbtAdapter/SqlAdapter/_read_target_dict compile->execute edges in
+# sources/detection.py, which are real adapter-class usage, not relocatable
 # leaf behavior) are real, pre-existing accepted debt — not addressed here.
+# (normalize/queries.py's edge left with the MetricFlow lowering removal.)
 # Each site carries an inline `# tach-ignore(...)` with its own rationale
 # rather than a depends_on entry, since project/etc. are not carved into their
 # own tach modules yet — doing so risks reintroducing cycles (e.g. project.py
@@ -264,7 +266,7 @@ layer = "agent_api"
 # FilesystemProject construction is confined to the dbt_charts.cli leaf. agent_api
 # receives a Project and may reference the concrete type only under TYPE_CHECKING;
 # a runtime import (i.e. construction) is a boundary break. The lone exception is
-# the host-type guard in _paths.resolve_face_or_error / _relpath_for_fs_location
+# the host-type guard in _paths.resolve_board_or_error / _relpath_for_fs_location
 # (carries a # tach-ignore + tracked task). project_session is unchecked, so its
 # ProjectSession.open construction is
 # not caught here — its migration to the edge is the tracked follow-up.
@@ -283,7 +285,19 @@ path = "dbt_charts.cli"
 depends_on = [
     "dbt_charts.agent_api",
     "dbt_charts.cli.filesystem_project",
+    "dbt_charts.cloud_client",
 ]
+
+# The Cloud client: HTTP, the user-level token store, and per-invocation
+# org/project resolution for the `dct cloud` verbs. Unlayered with an empty
+# depends_on, the enforcing shape (see the dbt_charts.cli comment above): it
+# may import nothing else first-party — not `core` (board semantics have no
+# place on the wire) and not `agent_api` (local-by-contract). Django is barred
+# by `check-external`: it is not a declared dependency of this wheel, so an
+# import of it anywhere in src/ fails the allowlist.
+[[modules]]
+path = "dbt_charts.cloud_client"
+depends_on = []
 
 # FilesystemProject — the concrete local-filesystem Project — lives here at the
 # CLI composition root so construction is confined to dbt_charts.cli: core/agent_api/ai

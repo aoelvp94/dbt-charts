@@ -26,7 +26,6 @@ def _legend(position: str = "right", direction: str = "vertical") -> LegendStyle
 @pytest.mark.parametrize(
     "position",
     [
-        "none",
         "left",
         "right",
         "top",
@@ -41,9 +40,11 @@ def test_legend_style_accepts_valid_positions(position: str) -> None:
     assert _legend(position=position).position == position
 
 
-def test_legend_style_rejects_invalid_position() -> None:
+@pytest.mark.parametrize("position", ["center", "none"])
+def test_legend_style_rejects_invalid_position(position: str) -> None:
+    """``none`` is VL's "place me by hand", not "hide me" — that is `visible`."""
     with pytest.raises(ValidationError):
-        _legend(position="center")
+        _legend(position=position)
 
 
 @pytest.mark.parametrize("direction", ["horizontal", "vertical"])

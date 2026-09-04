@@ -34,7 +34,7 @@ def test_inherit_slot_fills_per_family_padding_from_board():
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
-    board_resolved = resolve_chart_style_context(get_theme_style("editorial"))
+    board_resolved = resolve_chart_style_context(get_theme_style("clarity"))
 
     # Board padding is the canonical source.
     board_padding = board_resolved.padding
@@ -76,7 +76,7 @@ def test_chart_local_padding_merges_into_per_family_resolved():
         build_chart_style_context,
     )
 
-    board_resolved = resolve_chart_style_context(get_theme_style("editorial"))
+    board_resolved = resolve_chart_style_context(get_theme_style("clarity"))
     board_padding = board_resolved.padding
 
     chart = BarChart(
@@ -111,7 +111,7 @@ def test_resolve_bakes_final_layout_padding_for_vega_family():
     from dbt_charts.core.compile.resolve import resolve
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
-    board_resolved = resolve_chart_style_context(get_theme_style("editorial"))
+    board_resolved = resolve_chart_style_context(get_theme_style("clarity"))
     board_padding = board_resolved.padding
 
     chart = BarChart(
@@ -141,7 +141,7 @@ def test_resolve_bakes_final_layout_padding_for_svg_family():
     from dbt_charts.core.compile.resolve import resolve
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
-    board_resolved = resolve_chart_style_context(get_theme_style("editorial"))
+    board_resolved = resolve_chart_style_context(get_theme_style("clarity"))
     board_padding = board_resolved.padding
 
     chart = TableChart(
@@ -184,7 +184,7 @@ def test_resolve_bakes_family_padding_for_type_aliases():
     from dbt_charts.core.compile.resolve import resolve
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
-    board_resolved = resolve_chart_style_context(get_theme_style("editorial"))
+    board_resolved = resolve_chart_style_context(get_theme_style("clarity"))
 
     donut = PieChart(
         id="d",
@@ -230,7 +230,7 @@ def test_render_layout_item_threads_per_family_padding_to_vega_render():
     from dbt_charts.core.render.chart import rendering as rendering_mod
 
     board_resolved, board_context = resolve_style_and_context(
-        get_theme_style("editorial")
+        get_theme_style("clarity")
     )
     card_pad = float(board_resolved.frame.card_padding)
 
@@ -298,7 +298,7 @@ def test_svg_family_render_threads_chart_local_padding():
     from dbt_charts.core.render.chart import rendering as rendering_mod
 
     board_resolved, board_context = resolve_style_and_context(
-        get_theme_style("editorial")
+        get_theme_style("clarity")
     )
     card_pad = float(board_resolved.frame.card_padding)
 
@@ -366,7 +366,7 @@ def test_chart_local_callout_padding_flows_without_tone():
     from dbt_charts.core.compile.resolve import resolve
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
-    board_resolved = resolve_chart_style_context(get_theme_style("editorial"))
+    board_resolved = resolve_chart_style_context(get_theme_style("clarity"))
     chart = CalloutChart(
         id="c",
         type="callout",
@@ -404,7 +404,7 @@ def test_svg_family_sizing_and_render_agree_on_chart_local_padding():
     from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 
     board_resolved, board_context = resolve_style_and_context(
-        get_theme_style("editorial")
+        get_theme_style("clarity")
     )
     card_pad = float(board_resolved.frame.card_padding)
 

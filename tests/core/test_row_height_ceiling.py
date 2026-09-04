@@ -14,7 +14,7 @@ in ``render/boards.py``), so only the emitted SVG proves the fix reaches it.
 
 Assertions are relative (authored-ceiling case vs. natural-content case)
 rather than pinned to exact theme-derived pixel constants — see
-``dataface/AGENTS.md`` "Don't pin theme/default values in tests."
+``dbt-charts/AGENTS.md`` "Don't pin theme/default values in tests."
 """
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ def _bar_rows(n: int) -> str:
 def _table_board(height: str | None, n_rows: int = 3) -> str:
     row = f"  - height: {height}\n    rows:\n      - c1" if height else "  - c1"
     return f"""\
-theme: editorial
+theme: clarity
 title: Test
 width: 872
 rows:
@@ -96,7 +96,7 @@ charts:
 def _bar_board(height: str | None, n_cats: int = 3) -> str:
     row = f"  - height: {height}\n    rows:\n      - c1" if height else "  - c1"
     return f"""\
-theme: editorial
+theme: clarity
 title: Test
 width: 872
 rows:
@@ -205,7 +205,7 @@ class TestRowShrinksToContent:
         authored-ceiling rows wrapper shrinks at both levels, not just the
         innermost one."""
         yaml_body = f"""\
-theme: editorial
+theme: clarity
 title: Test
 width: 872
 rows:
@@ -241,7 +241,7 @@ charts:
         clamping to zero and vanishing (a real regression this fix's first
         version caused before the content>0 guard was added)."""
         yaml_body = """\
-theme: editorial
+theme: clarity
 title: Swatches
 width: 400
 rows:

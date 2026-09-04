@@ -36,12 +36,12 @@ def test_board_patch_desugars_theme() -> None:
 
     Fragments loaded as BoardPatch (meta files, extends targets) may use
     theme: as sugar just like AuthoredBoard. Without this, a meta.yaml
-    with ``theme: cream`` would be silently ignored — .extends stays None.
+    with ``theme: paper`` would be silently ignored — .extends stays None.
     """
     from dbt_charts.core.compile.models.board.patch import BoardPatch
 
-    patch = BoardPatch.model_validate({"theme": "cream"})
-    assert patch.extends == "cream"
+    patch = BoardPatch.model_validate({"theme": "paper"})
+    assert patch.extends == "paper"
 
 
 def test_board_patch_desugar_rejects_both_theme_and_extends() -> None:
@@ -51,7 +51,7 @@ def test_board_patch_desugar_rejects_both_theme_and_extends() -> None:
     from dbt_charts.core.compile.models.board.patch import BoardPatch
 
     with pytest.raises(ValidationError, match="Cannot specify both"):
-        BoardPatch.model_validate({"theme": "cream", "extends": "stark"})
+        BoardPatch.model_validate({"theme": "paper", "extends": "stark"})
 
 
 # ===========================================================================
@@ -328,28 +328,28 @@ def test_resolve_entry_loads_theme_yaml_as_fragment(
 ) -> None:
     """After step 2, a built-in theme name in extends: resolves to real style data.
 
-    The engine must NOT return BoardPatch(theme='cream') — it must load cream.yaml
-    and return a patch whose .style carries cream's concrete values.
+    The engine must NOT return BoardPatch(theme='paper') — it must load paper.yaml
+    and return a patch whose .style carries paper's concrete values.
     """
     from dbt_charts.core.compile.merge import (
         _ExtendCtx,
-        _get_theme_names,
         _resolve_entry,
+        get_theme_names,
     )
 
     project = local_project(tmp_path)
     ctx = _ExtendCtx(
         board_dir=project.directory("."),
         boards_root=project.directory("."),
-        theme_names=_get_theme_names(),
+        theme_names=get_theme_names(),
     )
-    patch = _resolve_entry("cream", ctx, frozenset())
-    # Must NOT be a bridge patch with theme='cream' and nothing else
-    assert "cream" not in _get_theme_names() or patch.style is not None, (  # type: ignore[union-attr]
-        "_resolve_entry must load the theme YAML, not return a bridge BoardPatch(theme='cream')"
+    patch = _resolve_entry("paper", ctx, frozenset())
+    # Must NOT be a bridge patch with theme='paper' and nothing else
+    assert "paper" not in get_theme_names() or patch.style is not None, (  # type: ignore[union-attr]
+        "_resolve_entry must load the theme YAML, not return a bridge BoardPatch(theme='paper')"
     )
-    # The merged patch must carry style fields from the cream theme chain
-    assert patch.style is not None, "cream theme must produce a non-None style block"  # type: ignore[union-attr]
+    # The merged patch must carry style fields from the paper theme chain
+    assert patch.style is not None, "paper theme must produce a non-None style block"  # type: ignore[union-attr]
 
 
 def test_resolve_entry_theme_cycle_fails(
@@ -360,19 +360,19 @@ def test_resolve_entry_theme_cycle_fails(
     from dbt_charts.core.compile.errors import CompilationError
     from dbt_charts.core.compile.merge import (
         _ExtendCtx,
-        _get_theme_names,
         _resolve_entry,
+        get_theme_names,
     )
 
     project = local_project(tmp_path)
     ctx = _ExtendCtx(
         board_dir=project.directory("."),
         boards_root=project.directory("."),
-        theme_names=_get_theme_names(),
+        theme_names=get_theme_names(),
     )
-    # "cream.yaml" is the relpath inside the theme Project — seed it as already-seen.
+    # "paper.yaml" is the relpath inside the theme Project — seed it as already-seen.
     with pytest.raises(CompilationError, match="[Cc]ircular"):
-        _resolve_entry("cream", ctx, frozenset({"cream.yaml"}))
+        _resolve_entry("paper", ctx, frozenset({"paper.yaml"}))
 
 
 def test_resolve_built_in_theme_loads_style() -> None:
@@ -380,7 +380,7 @@ def test_resolve_built_in_theme_loads_style() -> None:
     real style, reading package data directly — no Project seam."""
     from dbt_charts.core.compile.merge import resolve_built_in_theme
 
-    patch = resolve_built_in_theme("cream")
+    patch = resolve_built_in_theme("paper")
     assert patch.style is not None  # type: ignore[union-attr]
 
 
@@ -399,28 +399,28 @@ def test_resolve_built_in_theme_unknown_raises() -> None:
 
 
 def test_get_theme_style_returns_full_style() -> None:
-    """get_theme_style('editorial') must return a fully-populated Style."""
+    """get_theme_style('clarity') must return a fully-populated Style."""
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.models.style.theme import Style
 
-    style = get_theme_style("editorial")
+    style = get_theme_style("clarity")
     assert isinstance(style, Style)
     assert style.background is not None
     assert style.accent is not None
     assert style.font is not None
 
 
-def test_get_theme_style_chain_editorial_differs_from_stark() -> None:
-    """editorial and stark should have different background colors."""
+def test_get_theme_style_chain_clarity_differs_from_structural_root() -> None:
+    """clarity and stark should have different background colors."""
     from dbt_charts.core.compile.config import get_theme_style
 
-    editorial = get_theme_style("editorial")
+    clarity = get_theme_style("clarity")
     stark = get_theme_style("stark")
-    # editorial extends stark and overrides typography/colors
+    # clarity extends stark and overrides typography/colors
     # At minimum, they must produce valid Style objects. If they differ, good.
     # If they happen to share background, the test is still valid — we just
     # confirm both load without error and produce Style instances.
-    assert editorial is not None
+    assert clarity is not None
     assert stark is not None
 
 
@@ -468,37 +468,37 @@ def test_authored_board_rejects_cascade_annotation_on_source() -> None:
 def test_compiled_board_theme_from_extends(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """When a board has extends: cream, compiled board.theme must be 'cream'."""
+    """When a board has extends: paper, compiled board.theme must be 'paper'."""
     from dbt_charts.core.compile.compiler import compile_file
 
     project = local_project(tmp_path)
-    board_yaml = "extends: cream\ntitle: T\nrows:\n  - cols:\n    - text: hi\n"
+    board_yaml = "extends: paper\ntitle: T\nrows:\n  - cols:\n    - text: hi\n"
     _write(tmp_path, "charts/board.yaml", board_yaml)
 
     result = compile_file(project.path("charts/board.yaml").read_board())
     assert result.success, result.errors
-    assert result.board.theme == "cream", (
-        f"board.theme must be 'cream' (from extends:); got {result.board.theme!r}"
+    assert result.board.theme == "paper", (
+        f"board.theme must be 'paper' (from extends:); got {result.board.theme!r}"
     )
 
 
 def test_compile_file_theme_style_from_extends_end_to_end(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """A board with extends: cream must get cream's resolved_style, not default theme."""
+    """A board with extends: paper must get paper's resolved_style, not default theme."""
     from dbt_charts.core.compile.compiler import compile_file
     from dbt_charts.core.compile.config import get_theme_style
 
     project = local_project(tmp_path)
-    board_yaml = "extends: cream\ntitle: T\nrows:\n  - cols:\n    - text: hi\n"
+    board_yaml = "extends: paper\ntitle: T\nrows:\n  - cols:\n    - text: hi\n"
     _write(tmp_path, "charts/board.yaml", board_yaml)
 
     result = compile_file(project.path("charts/board.yaml").read_board())
     assert result.success, result.errors
-    # The board's resolved background must match the cream theme's background
-    cream_style = get_theme_style("cream")
-    assert result.board.resolved_style.background == cream_style.background, (
-        "resolved_style.background must come from the cream theme"
+    # The board's resolved background must match the paper theme's background
+    paper_style = get_theme_style("paper")
+    assert result.board.resolved_style.background == paper_style.background, (
+        "resolved_style.background must come from the paper theme"
     )
 
 

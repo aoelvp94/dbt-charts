@@ -3,11 +3,14 @@
 Tests the spark chart rendering functions in dbt-charts/render/spark.py.
 """
 
+import re
+
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.render.chart.spark import (
+    _SPARK_HEIGHT,
     render_spark,
     render_spark_area,
     render_spark_bar,
@@ -153,6 +156,32 @@ class TestSparkBarThresholds:
             95, normalize=True, thresholds=thresholds, resolved_style=_EFF
         )
         assert "#00ff00" in svg_high
+
+    def test_spark_bar_threshold_exact_value_with_non_round_max(self) -> None:
+        """A value exactly at its threshold still hits the threshold color
+        under a non-round max_value. The threshold clamp must compare the
+        raw value, not a value/max*max round trip — that division and
+        remultiplication is not an IEEE-754 identity, and can undershoot the
+        threshold by a ULP for non-round max_value/value pairs (e.g. 15/22)."""
+        svg = render_spark_bar(
+            15,
+            max_value=22,
+            normalize=True,
+            thresholds={15: "#ff0000"},
+            resolved_style=_EFF,
+        )
+        assert "#ff0000" in svg
+
+    def test_spark_column_threshold_exact_value_with_non_round_max(self) -> None:
+        """Same round-trip hazard as the bar variant, for `column`'s
+        threshold clamp."""
+        svg = render_spark_column(
+            15,
+            max_value=22,
+            thresholds={15: "#ff0000"},
+            resolved_style=_EFF,
+        )
+        assert "#ff0000" in svg
 
 
 class TestSparkBarOverMax:
@@ -401,3 +430,308 @@ class TestSparkColorResolution:
 
         resolved = _resolve_spark_color(None, spark_cfg)
         assert resolved == "#00ff00"
+
+
+def _rects(svg: str) -> list[dict[str, float]]:
+    """Parse every `<rect .../>` in an SVG into a dict of its numeric attrs."""
+    out: list[dict[str, float]] = []
+    for tag in re.findall(r"<rect[^/]*/>", svg):
+        attrs = dict(re.findall(r'(\w+)="([-\d.]+)"', tag))
+        out.append({k: float(v) for k, v in attrs.items()})
+    return out
+
+
+class TestSparkBarSigned:
+    """`render_spark_bar` midline layout — positives right, negatives left."""
+
+    def test_default_has_negative_false_matches_legacy_clamp(self) -> None:
+        """Without has_negative, a negative value still clamps to nothing —
+        the pre-existing behavior for callers that never opt in."""
+        svg = render_spark_bar(-30, max_value=100, width=100, resolved_style=_EFF)
+        assert _rects(svg) == []
+
+    def test_positive_only_bar_unaffected_by_signed_support(self) -> None:
+        """has_negative=False (the default) reproduces the exact pre-fix
+        geometry for an ordinary all-positive bar: fill starts at the left
+        edge, not the midline."""
+        svg = render_spark_bar(50, max_value=100, width=100, resolved_style=_EFF)
+        rects = _rects(svg)
+        assert len(rects) == 1
+        assert rects[0]["x"] == 0.0
+        assert rects[0]["width"] == 50.0
+
+    def test_negative_value_grows_left_from_midline(self) -> None:
+        svg = render_spark_bar(
+            -30, max_value=100, width=100, has_negative=True, resolved_style=_EFF
+        )
+        rects = _rects(svg)
+        assert len(rects) == 1
+        # 30% of the half-width (50px) = 15px, anchored so it ends at the midline.
+        assert rects[0]["width"] == pytest.approx(15.0)
+        assert rects[0]["x"] == pytest.approx(35.0)
+
+    def test_positive_value_grows_right_from_midline(self) -> None:
+        svg = render_spark_bar(
+            30, max_value=100, width=100, has_negative=True, resolved_style=_EFF
+        )
+        rects = _rects(svg)
+        assert len(rects) == 1
+        assert rects[0]["width"] == pytest.approx(15.0)
+        assert rects[0]["x"] == pytest.approx(50.0)
+
+    def test_midline_halves_extent_for_the_largest_magnitude(self) -> None:
+        """At the ceiling value, a signed bar reaches only the half-width —
+        proving the anchor moved rather than the scale silently doubling."""
+        svg = render_spark_bar(
+            100, max_value=100, width=100, has_negative=True, resolved_style=_EFF
+        )
+        rects = _rects(svg)
+        assert rects[0]["width"] == pytest.approx(50.0)
+
+    def test_no_midline_rule_is_drawn(self) -> None:
+        """No visible rule at the midline — only the fill rect(s)."""
+        svg = render_spark_bar(
+            -30, max_value=100, width=100, has_negative=True, resolved_style=_EFF
+        )
+        assert "<line" not in svg
+
+    def test_negative_color_opt_in_uses_theme_negative_token(self) -> None:
+        """negative_color=True paints negative bars with resolved_style.tones.negative
+        — asserted by identity with the resolved token, never a hardcoded hex."""
+        svg = render_spark_bar(
+            -30,
+            max_value=100,
+            width=100,
+            has_negative=True,
+            negative_color=True,
+            resolved_style=_EFF,
+        )
+        assert _EFF.tones.negative in svg
+
+    def test_negative_color_default_off_keeps_one_color(self) -> None:
+        """Without opting in, negative and positive bars share the same fill —
+        one colour by default."""
+        svg_neg = render_spark_bar(
+            -30, max_value=100, width=100, has_negative=True, resolved_style=_EFF
+        )
+        svg_pos = render_spark_bar(
+            30, max_value=100, width=100, has_negative=True, resolved_style=_EFF
+        )
+        neg_fill = re.search(r'fill="([^"]+)"', svg_neg)
+        pos_fill = re.search(r'fill="([^"]+)"', svg_pos)
+        assert neg_fill is not None and pos_fill is not None
+        assert neg_fill.group(1) == pos_fill.group(1)
+
+
+class TestSparkColumnSigned:
+    """`render_spark_column` midline layout — positives up, negatives down."""
+
+    def test_positive_only_column_unaffected_by_signed_support(self) -> None:
+        svg = render_spark_column(
+            50, max_value=100, width=20, height=40, resolved_style=_EFF
+        )
+        rects = _rects(svg)
+        assert rects[0]["y"] == pytest.approx(20.0)
+        assert rects[0]["height"] == pytest.approx(20.0)
+
+    def test_negative_value_grows_down_from_midline(self) -> None:
+        svg = render_spark_column(
+            -30,
+            max_value=100,
+            width=20,
+            height=40,
+            has_negative=True,
+            resolved_style=_EFF,
+        )
+        rects = _rects(svg)
+        # 30% of the half-height (20px) = 6px, growing downward from y=20.
+        assert rects[0]["height"] == pytest.approx(6.0)
+        assert rects[0]["y"] == pytest.approx(20.0)
+
+    def test_positive_value_grows_up_from_midline(self) -> None:
+        svg = render_spark_column(
+            30,
+            max_value=100,
+            width=20,
+            height=40,
+            has_negative=True,
+            resolved_style=_EFF,
+        )
+        rects = _rects(svg)
+        assert rects[0]["height"] == pytest.approx(6.0)
+        assert rects[0]["y"] == pytest.approx(14.0)
+
+    def test_negative_color_opt_in_uses_theme_negative_token(self) -> None:
+        svg = render_spark_column(
+            -30,
+            max_value=100,
+            width=20,
+            height=40,
+            has_negative=True,
+            negative_color=True,
+            resolved_style=_EFF,
+        )
+        assert _EFF.tones.negative in svg
+
+
+class TestSparkColumnsZeroBaseline:
+    """`render_spark_columns` — sign must survive normalization."""
+
+    def test_all_positive_layout_unchanged(self) -> None:
+        """Regression pin: an all-positive array keeps the existing
+        min-rebased layout (no behavior change for the common case)."""
+        svg = render_spark_columns([10, 20, 30, 40], resolved_style=_EFF)
+        rects = _rects(svg)
+        assert len(rects) == 4
+        # Smallest value floors to min_bar_height; largest reaches full plot height.
+        assert rects[0]["height"] < rects[-1]["height"]
+
+    def test_all_negative_does_not_draw_identically_to_all_positive(self) -> None:
+        """-40 -30 -20 -10 must not render identically to 10 20 30 40 — the
+        exact pair the old min-max normalization erased sign on (see the
+        `render_spark_columns` docstring): ``(val - min) / range`` gives both
+        arrays the identical ascending 0, 0.33, 0.67, 1.0 height sequence."""
+        svg_negative = render_spark_columns([-40, -30, -20, -10], resolved_style=_EFF)
+        svg_positive = render_spark_columns([10, 20, 30, 40], resolved_style=_EFF)
+        assert svg_negative != svg_positive
+
+    def test_all_negative_bars_grow_downward_from_midline(self) -> None:
+        svg = render_spark_columns([-40, -30, -20, -10], resolved_style=_EFF)
+        rects = _rects(svg)
+        # Every bar starts at the same y (the zero baseline) and grows down.
+        ys = {r["y"] for r in rects}
+        assert len(ys) == 1
+        # -40 is the largest magnitude, so it must be the tallest bar.
+        assert rects[0]["height"] > rects[-1]["height"]
+
+    def test_mixed_sign_bars_split_across_the_midline(self) -> None:
+        svg = render_spark_columns([-40, 40], resolved_style=_EFF)
+        rects = _rects(svg)
+        assert len(rects) == 2
+        negative_rect, positive_rect = rects
+        # Same magnitude, opposite direction: heights match, y's differ.
+        assert negative_rect["height"] == pytest.approx(positive_rect["height"])
+        assert negative_rect["y"] > positive_rect["y"]
+
+    def test_all_zero_stays_on_the_legacy_path(self) -> None:
+        """Zero is not negative — an all-zero column must not pay the
+        midline's halved-extent cost for nothing."""
+        svg = render_spark_columns([0, 0, 0, 0], resolved_style=_EFF)
+        rects = _rects(svg)
+        heights = {r["height"] for r in rects}
+        assert len(heights) == 1
+        # The legacy (min-rebased, bottom-anchored) path floors every bar to
+        # half the plot height when value_range == 0. The signed/midline path
+        # would instead floor to min_bar_height — a different, much smaller
+        # number — so this pins which formula actually ran, not just that
+        # every bar agrees with itself.
+        plot_height = _SPARK_HEIGHT - (2 * _EFF.spark.columns.padding)
+        assert next(iter(heights)) == pytest.approx(plot_height / 2)
+
+    def test_negative_color_opt_in_uses_theme_negative_token(self) -> None:
+        svg = render_spark_columns([-40, 40], negative_color=True, resolved_style=_EFF)
+        assert _EFF.tones.negative in svg
+
+
+class TestSparkNonFiniteValues:
+    """NaN/±Infinity must follow the null rule every other numeric-cell
+    consumer uses (`utils.coerce_numeric_cell`): no colour, no domain
+    contribution — never a full-extent, wrongly-signed bar."""
+
+    def test_bar_nan_renders_nothing(self) -> None:
+        svg = render_spark_bar(
+            float("nan"),
+            max_value=100,
+            width=100,
+            has_negative=True,
+            resolved_style=_EFF,
+        )
+        assert _rects(svg) == []
+
+    def test_bar_negative_infinity_renders_nothing(self) -> None:
+        svg = render_spark_bar(
+            float("-inf"),
+            max_value=100,
+            width=100,
+            has_negative=True,
+            resolved_style=_EFF,
+        )
+        assert _rects(svg) == []
+
+    def test_bar_nan_renders_nothing_even_unsigned(self) -> None:
+        """Same null rule applies with has_negative=False (the default,
+        legacy-clamp path) — not just the signed layout."""
+        svg = render_spark_bar(
+            float("nan"), max_value=100, width=100, resolved_style=_EFF
+        )
+        assert _rects(svg) == []
+
+    def test_column_nan_renders_nothing(self) -> None:
+        svg = render_spark_column(
+            float("nan"),
+            max_value=100,
+            width=20,
+            height=40,
+            has_negative=True,
+            resolved_style=_EFF,
+        )
+        assert _rects(svg) == []
+
+    def test_columns_nan_element_does_not_erase_real_bars(self) -> None:
+        """Before the fix: `max_abs = max(abs(v) for v in values)` is NaN
+        whenever any value is NaN, so `max_value > 0` is False and every bar
+        (including the real -5 and 5) collapses to a 1px stub."""
+        svg = render_spark_columns([float("nan"), -5, 5], resolved_style=_EFF)
+        rects = _rects(svg)
+        # NaN contributes no rect; -5 and 5 each render their real height,
+        # scaled against their own magnitude (5) — not the 1px min-height stub.
+        assert len(rects) == 2
+        assert all(r["height"] > 1.0 for r in rects)
+
+    def test_columns_all_positive_path_nan_does_not_erase_real_bars(self) -> None:
+        """Same null rule on the min-rebased (all-positive) branch."""
+        svg = render_spark_columns([float("nan"), 10, 20, 30], resolved_style=_EFF)
+        rects = _rects(svg)
+        assert len(rects) == 3
+
+
+class TestSparkColorPrecedence:
+    """The three in-cell spark surfaces must agree: negative_color, when set,
+    wins over an authored `color` for negative values — matching the field's
+    published description ("instead of the shared spark color")."""
+
+    def test_bar_negative_color_wins_over_authored_color(self) -> None:
+        svg = render_spark_bar(
+            -30,
+            max_value=100,
+            width=100,
+            color="#0000ff",
+            has_negative=True,
+            negative_color=True,
+            resolved_style=_EFF,
+        )
+        assert _EFF.tones.negative in svg
+        assert "#0000ff" not in svg
+
+    def test_column_negative_color_wins_over_authored_color(self) -> None:
+        svg = render_spark_column(
+            -30,
+            max_value=100,
+            width=20,
+            height=40,
+            color="#0000ff",
+            has_negative=True,
+            negative_color=True,
+            resolved_style=_EFF,
+        )
+        assert _EFF.tones.negative in svg
+        assert "#0000ff" not in svg
+
+    def test_columns_negative_color_wins_over_authored_color(self) -> None:
+        svg = render_spark_columns(
+            [-40, 40], color="#0000ff", negative_color=True, resolved_style=_EFF
+        )
+        fills = re.findall(r'fill="([^"]+)"', svg)
+        negative_fill, positive_fill = fills
+        assert negative_fill == _EFF.tones.negative
+        assert positive_fill == "#0000ff"

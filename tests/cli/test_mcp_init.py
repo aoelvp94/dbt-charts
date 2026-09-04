@@ -67,6 +67,22 @@ def test_mcp_init_vscode_writes_servers_key(
         assert "cwd" not in config["servers"]["dbt-charts"]
 
 
+def test_mcp_init_corrupt_config_errors_without_overwriting(
+    tmp_path: Path, patch_mcp_clients: None
+) -> None:
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        _seed_project()
+        Path(".vscode").mkdir()
+        corrupt = "{not valid json"
+        Path(".vscode/mcp.json").write_text(corrupt, encoding="utf-8")
+
+        result = runner.invoke(cli_main.app, ["init", "mcp", "vscode"])
+
+        assert result.exit_code == 1, result.output
+        assert ".vscode/mcp.json" in result.output
+        assert Path(".vscode/mcp.json").read_text(encoding="utf-8") == corrupt
+
+
 def test_mcp_init_claude_code_writes_project_root_config(
     tmp_path: Path, patch_mcp_clients: None
 ) -> None:
@@ -187,7 +203,7 @@ def test_mcp_init_auto_detects_workspace_markers(
         assert not Path(".cursor/mcp.json").exists()
 
 
-def test_mcp_init_auto_detects_markers_at_git_root_without_dataface_marker(
+def test_mcp_init_auto_detects_markers_at_git_root_without_dbt_charts_marker(
     tmp_path: Path, patch_mcp_clients: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """ai_config_root must resolve to the git root, not cwd, in a pure-git repo.
@@ -198,7 +214,7 @@ def test_mcp_init_auto_detects_markers_at_git_root_without_dataface_marker(
     that live at the git root but NOT at cwd would otherwise be invisible, and
     `dct init mcp` would report "No AI client markers detected".
     """
-    # git root has .git + .cursor/ but NO Dataface/dbt marker anywhere
+    # git root has .git + .cursor/ but NO dbt charts/dbt marker anywhere
     git_root = tmp_path / "repo"
     git_root.mkdir()
     (git_root / ".git").mkdir()
@@ -279,7 +295,7 @@ def test_mcp_init_errors_when_no_project_marker_found(
     result = runner.invoke(cli_main.app, ["init", "mcp", "vscode"])
 
     assert result.exit_code != 0
-    assert "No Dataface or dbt project" in result.output
+    assert "No dbt charts or dbt project" in result.output
     assert "--project-dir" in result.output
     assert not (parent / ".vscode/mcp.json").exists()
     # Skills must not have been installed either.
@@ -324,7 +340,7 @@ def test_mcp_init_project_dir_flag_invalid_errors(
     )
 
     assert result.exit_code != 0
-    assert "does not contain a Dataface or dbt project" in result.output
+    assert "does not contain a dbt charts or dbt project" in result.output
     assert not (parent / ".vscode/mcp.json").exists()
 
 
@@ -347,7 +363,7 @@ def test_mcp_init_project_dir_flag_rejects_subdir_of_project(
     )
 
     assert result.exit_code != 0
-    assert "does not contain a Dataface or dbt project" in result.output
+    assert "does not contain a dbt charts or dbt project" in result.output
     assert "Tip: did you mean" in result.output
     assert str(project.resolve()) in result.output
     assert not (parent / ".vscode/mcp.json").exists()
@@ -594,3 +610,27 @@ def test_configured_trailer_advertises_every_tool_and_resource_family(
         assert family in resources_block, (
             f"Trailer omits resource family {family!r}: {resources_block}"
         )
+
+
+def test_mcp_init_all_continues_past_a_failed_client(
+    tmp_path: Path, patch_mcp_clients: None
+) -> None:
+    """--all keeps configuring healthy clients after one config fails to read.
+
+    Corrupts the first client in the registry (cursor) and asserts a later one
+    (vscode) is still written — the assertion that separates ``continue`` from
+    aborting the loop on the first failure.
+    """
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        _seed_project()
+        Path(".cursor").mkdir()
+        corrupt = "{not valid json"
+        Path(".cursor/mcp.json").write_text(corrupt, encoding="utf-8")
+
+        result = runner.invoke(cli_main.app, ["init", "mcp", "--all"])
+
+        assert result.exit_code == 1, result.output
+        assert ".cursor/mcp.json" in result.output
+        assert Path(".cursor/mcp.json").read_text(encoding="utf-8") == corrupt
+        vscode = json.loads(Path(".vscode/mcp.json").read_text(encoding="utf-8"))
+        assert "dbt-charts" in vscode["servers"]

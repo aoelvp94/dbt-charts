@@ -13,7 +13,7 @@ eliminating the race.
 
 Because open() never sets cls.credentials_manager, the inherited _query_dbr_version()
 stays safe for SQL warehouses (it returns before reading the class var) and raises
-loudly for clusters (class var is None) rather than crossing credentials — Dataface
+loudly for clusters (class var is None) rather than crossing credentials — dbt charts
 Databricks connections are SQL warehouses.
 
 Drift guard

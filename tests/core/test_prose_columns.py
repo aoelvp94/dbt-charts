@@ -36,7 +36,7 @@ WCAG_MAX_LINE_LENGTH = 80
 
 
 def render(markdown: str, width: float, **column: object) -> str:
-    resolved = resolve_style(get_theme_style("editorial"))
+    resolved = resolve_style(get_theme_style("clarity"))
     text_style = resolved.text.model_copy(
         update={"column": resolved.text.column.model_copy(update=column)}
     )
@@ -130,7 +130,7 @@ class TestAuthoredMeasureFitsTheSlot:
             html.unescape(re.sub(r"<[^>]+>", "", t)).strip()
             for t in re.findall(r"<text[^>]*>(.*?)</text>", svg, re.S)
         ]
-        resolved = resolve_style(get_theme_style("editorial"))
+        resolved = resolve_style(get_theme_style("clarity"))
         style = get_compact_style(resolved)
         face = markdown_font_faces(body_text_font_family(resolved), style).regular
         measurer = measurer_for_face(face)
@@ -153,7 +153,7 @@ class TestAlignmentIsRelativeToTheCard:
     """
 
     def _anchor(self, width: float, align: str) -> float:
-        resolved = resolve_style(get_theme_style("editorial"))
+        resolved = resolve_style(get_theme_style("clarity"))
         text_style = resolved.text.model_copy(update={"align": align})
         svg, _ = render_prose_svg(SHORT, width, text_style, resolved)
         xs = [float(x) for x in re.findall(r'<text[^>]*\bx="([\d.]+)"', svg)]
@@ -183,7 +183,7 @@ class TestEveryWordSurvivesTheWeight:
 
     @pytest.mark.parametrize("weight", [100, 200, 300, 400, 700])
     def test_no_word_is_dropped(self, weight: int) -> None:
-        resolved = resolve_style(get_theme_style("editorial"))
+        resolved = resolve_style(get_theme_style("clarity"))
         text_style = resolved.text.model_copy(
             update={
                 "font": resolved.text.font.model_copy(update={"weight": weight}),

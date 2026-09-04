@@ -637,7 +637,7 @@ def test_area_log_scale_authored_domain_wins() -> None:
 def test_area_log_scale_with_right_pinned_layer_does_not_raise() -> None:
     """The baked log-workaround domain must not trip the ambiguous-dual-axis-
     domain check — that check exists for a genuinely AUTHORED chart-level
-    domain colliding with a split-scale layer, not Dataface's own internal
+    domain colliding with a split-scale layer, not dbt charts' own internal
     workaround for a Vega-Lite area-mark rendering limitation.
     """
     from dbt_charts.core.compile.models.chart.authored._layer import LineLayer

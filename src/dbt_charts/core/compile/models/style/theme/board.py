@@ -150,13 +150,31 @@ class FrameStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    width: float = Field(
+    # None is the default state, not a fallback: no theme supplies a width —
+    # authoring one anywhere in the cascade opts the board into an exact
+    # width, and unset boards size themselves from max_width and content.
+    width: float | None = Field(
+        default=None,
+        gt=0,
         description=(
-            "Maximum board width in pixels. Caps the measured layout width, "
-            "setting the board's proportions. Rendered as an on-screen pixel "
-            "maximum everywhere except the dct HTML page (dct serve, dct render "
-            "--format html), which scales the board to its container."
-        )
+            "Exact board width in pixels. Set it, on a board, a template it "
+            "extends, or a project's meta.yaml, and the board is exactly "
+            "this wide; the layout distributes it. Leave it unset and the "
+            "board sizes itself to its content, bounded by max_width. "
+            "Rendered as an on-screen pixel size everywhere except the dct "
+            "HTML page (dct serve, dct render --format html), which scales "
+            "the board to its container."
+        ),
+    )
+    max_width: float = Field(
+        gt=0,
+        description=(
+            "Widest a board without an exact width may grow, in pixels. A "
+            "board with no width of its own measures its charts' preferred "
+            "widths and hugs them up to this bound: a single small chart "
+            "stays a small card. Ignored when width is set. Themes supply "
+            "the default; a project's meta.yaml can lower or raise it."
+        ),
     )
     min_height: float = Field(description="Minimum board height in pixels.")
     margin: float = Field(description="Board outer margin in pixels.")
@@ -335,7 +353,7 @@ class BoxStyle(BaseModel):
     font: FontStyle = Field(
         default_factory=FontStyle,
         description=(
-            "Box text font overrides — full FontStyle "
+            "Box text font overrides: full FontStyle "
             "(family, color, size, weight, style, decoration, case)."
         ),
     )
@@ -406,6 +424,20 @@ class BlockMarginStyle(BaseModel):
     )
 
 
+class TextRuleStyle(BaseModel):
+    """Horizontal rules in markdown prose: `---` and markdown-table gridlines.
+
+    One slot, because mdsvg paints both from it and always has. Splitting it
+    would invent a knob no theme has ever needed.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    color: Annotated[str, Color()] = Field(
+        description="Color of markdown horizontal rules and markdown-table gridlines."
+    )
+
+
 class TextStyle(BaseModel):
     """Markdown / plain text content."""
 
@@ -435,6 +467,9 @@ class TextStyle(BaseModel):
     )
     bold: TextBoldStyle = Field(
         description="Inline bold-run styling (weight), distinct from heading weight.",
+    )
+    rule: TextRuleStyle = Field(
+        description="Markdown horizontal-rule and table-gridline color."
     )
 
 

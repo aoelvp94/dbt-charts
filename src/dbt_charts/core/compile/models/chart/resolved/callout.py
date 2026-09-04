@@ -9,6 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from dbt_charts.core.compile.models.chart.resolved._channel import ResolvedStyleChannel
 from dbt_charts.core.compile.models.style.resolved.callout import ResolvedCalloutStyle
 from dbt_charts.core.compile.models.style.theme.board import PaddingStyle
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    CategoryColorScale,
+)
 
 
 class ResolvedCalloutChart(BaseModel):
@@ -17,7 +20,7 @@ class ResolvedCalloutChart(BaseModel):
     Minimal model: no query, no data channels.  Inherits BaseModel directly
     (not _BaseResolvedChartFields) mirroring compiled.CalloutChart.
 
-    Carries query_name=None, description="", and resolved_channels={} so
+    Carries query_name=None, notes="", and resolved_channels={} so
     that generic chart-walking code (warning detectors, _wrap_rendered_chart_svg)
     can access these fields without isinstance guards.
     """
@@ -77,10 +80,10 @@ class ResolvedCalloutChart(BaseModel):
         default=None,
         description="Always None — callout has no query.",
     )
-    description: str = Field(
+    notes: str = Field(
         default="",
-        description="Always empty — callout has no description. Present so generic "
-        "chart-iteration code can access chart.description without isinstance guards.",
+        description="Always empty — callout has no notes. Present so generic "
+        "chart-iteration code can access chart.notes without isinstance guards.",
     )
     label: str = Field(
         default="",
@@ -103,6 +106,12 @@ class ResolvedCalloutChart(BaseModel):
         description="Always empty — callout has no color encoding. Present so "
         "generic chart-iteration code (warning detectors) can access "
         "chart.palette without isinstance guards.",
+    )
+    category_colors: tuple[CategoryColorScale, ...] = Field(
+        default=(),
+        description="Always empty — callout has no color encoding. Present so "
+        "generic chart-iteration code (warning detectors) can access "
+        "chart.category_colors without isinstance guards.",
     )
     requested_alias_palette: str | None = Field(
         default=None,

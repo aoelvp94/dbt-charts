@@ -16,7 +16,8 @@ cache-aware executor is a deliberate follow-up; this module is the primitive.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING, Any
 
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.diagnostics.base import DbtChartsError
@@ -27,6 +28,50 @@ if TYPE_CHECKING:
 
 # Ordered schema tree: schema -> table -> column -> type.
 SchemaTree = dict[str, dict[str, dict[str, str]]]
+
+# Raw warehouse credential dict / adapter row values — heterogeneous JSON-ish
+# scalars (str/int/bool/None), the same boundary as
+# AdapterRegistry.resolve_source_config's dict[str, Any].
+_RawValues = Mapping[str, Any]  # type-state: explicit_any — warehouse-boundary values
+
+
+def bulk_schema_scope(source_type: str, source_config: _RawValues) -> str:
+    """The dialect-specific whole-source scope for ``bulk_schema_sql``.
+
+    BigQuery needs the region qualifier to span every dataset in one query;
+    Snowflake names the database. The value comes from registered connection
+    config, never user input.
+    """
+    scope = ""
+    if source_type.lower() == "bigquery":
+        location = source_config.get("location") or source_config.get("region")
+        if location:
+            scope = f"region-{str(location).lower()}"
+    elif source_type.lower() == "snowflake":
+        database = source_config.get("database")
+        if database:
+            scope = str(database)
+    return scope
+
+
+def parse_bulk_schema_rows(rows: Iterable[_RawValues]) -> SchemaTree:
+    """Parse ``INFORMATION_SCHEMA.COLUMNS``-shaped rows into a schema tree."""
+    tree: SchemaTree = {}
+    for row in rows:
+        # Metadata column names vary in case across warehouses (Snowflake
+        # upper-cases them); normalize before reading.
+        lower = {str(k).lower(): v for k, v in row.items()}
+        schema_name = lower.get("table_schema")
+        table_name = lower.get("table_name")
+        column_name = lower.get("column_name")
+        if not schema_name or not table_name or not column_name:
+            continue
+        raw_type = lower.get("data_type")
+        data_type = str(raw_type) if raw_type else ""
+        tree.setdefault(str(schema_name), {}).setdefault(str(table_name), {})[
+            str(column_name)
+        ] = data_type
+    return tree
 
 
 def bulk_schema(source: str, adapter_registry: AdapterRegistry) -> SchemaTree:
@@ -44,19 +89,7 @@ def bulk_schema(source: str, adapter_registry: AdapterRegistry) -> SchemaTree:
     source_config = adapter_registry.resolve_source_config(source)
     source_type = str(source_config.get("type"))
     dialect = get_dialect(source_type)
-
-    # Dialect-specific whole-source scope: BigQuery needs the region qualifier
-    # to span every dataset in one query; Snowflake names the database. The
-    # value comes from registered connection config, never user input.
-    scope = ""
-    if source_type.lower() == "bigquery":
-        location = source_config.get("location") or source_config.get("region")
-        if location:
-            scope = f"region-{str(location).lower()}"
-    elif source_type.lower() == "snowflake":
-        database = source_config.get("database")
-        if database:
-            scope = str(database)
+    scope = bulk_schema_scope(source_type, source_config)
     sql = dialect.bulk_schema_sql(scope)
 
     try:
@@ -75,22 +108,7 @@ def bulk_schema(source: str, adapter_registry: AdapterRegistry) -> SchemaTree:
             "column count to fix this."
         )
 
-    tree: SchemaTree = {}
-    for row in result.data:
-        # Metadata column names vary in case across warehouses (Snowflake
-        # upper-cases them); normalize before reading.
-        lower = {str(k).lower(): v for k, v in row.items()}
-        schema_name = lower.get("table_schema")
-        table_name = lower.get("table_name")
-        column_name = lower.get("column_name")
-        if not schema_name or not table_name or not column_name:
-            continue
-        raw_type = lower.get("data_type")
-        data_type = str(raw_type) if raw_type else ""
-        tree.setdefault(str(schema_name), {}).setdefault(str(table_name), {})[
-            str(column_name)
-        ] = data_type
-    return tree
+    return parse_bulk_schema_rows(result.data)
 
 
 def format_bulk_schema(schema: SchemaTree, source: str, dialect: str) -> str:

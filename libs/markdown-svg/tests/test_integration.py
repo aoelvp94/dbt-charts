@@ -118,8 +118,11 @@ class TestStyleAPI:
         body_gap = body_ys[1] - body_ys[0]
         tight_gap = tight_ys[1] - tight_ys[0]
         # Body multiplier 1.6 × 24 = 38.4; heading multiplier 1.2 × 24 = 28.8.
-        assert body_gap == 24.0 * 1.6
-        assert tight_gap == 24.0 * 1.2
+        # `y` is emitted at 2dp, so a gap recovered from two of them is good to
+        # about that — exact equality held only while both baselines happened to
+        # land on values whose float difference was exact.
+        assert body_gap == pytest.approx(24.0 * 1.6, abs=0.01)
+        assert tight_gap == pytest.approx(24.0 * 1.2, abs=0.01)
         assert tight_gap < body_gap
 
     def test_heading_line_height_none_falls_back_to_body(self) -> None:
@@ -131,7 +134,7 @@ class TestStyleAPI:
 
         ys = [float(m) for m in re.findall(r'<text [^>]*y="([\d.]+)"', svg)]
         assert len(ys) >= 2
-        assert ys[1] - ys[0] == 24.0 * 1.6
+        assert ys[1] - ys[0] == pytest.approx(24.0 * 1.6, abs=0.01)
 
 
 class TestThemes:

@@ -22,6 +22,9 @@ repos:
       - id: check-yaml
         args: [--unsafe]  # Allow custom YAML tags
       - id: check-added-large-files
+        # The committed lock is ~680 KB. It is generated upstream (the monorepo
+        # this repo is exported from), not hand-edited here.
+        exclude: ^uv\.lock$
       - id: mixed-line-ending
         args: [--fix=lf]
       - id: check-case-conflict

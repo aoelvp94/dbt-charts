@@ -37,7 +37,7 @@ def reset():
 
 
 def _board() -> Any:
-    return resolve_style_and_context(get_theme_style("editorial"))
+    return resolve_style_and_context(get_theme_style("clarity"))
 
 
 def _v2_vl(
@@ -127,6 +127,61 @@ class TestV2MirrorAxis:
             "left",
             "right",
         } <= orients, f"expected y-axis on both edges, got {orients}"
+
+    def test_mirror_without_y_is_inert(self):
+        """`axis_y.mirror: true` on a chart that authors no `y:` at all emits
+        no y encoding and no y axis — there is nothing to mirror, so the
+        feature is inert. Previously it raised the code-less ChartDataError
+        ("could not find the chart's y encoding to mirror"), surfacing as
+        ERR-INTERNAL for a board the design panel can produce by clearing y."""
+        chart = LineChart.model_validate(
+            {"id": "t", "type": "line", "x": "month", "style": _MIRROR}
+        )
+        spec = _v2_vl(chart, _wide_data())
+        assert _y_axis_orients(spec) == set()
+        assert spec.get("resolve", {}).get("axis", {}).get("y") != "independent"
+
+    def test_histogram_mirror_draws_both_edges(self):
+        """A histogram resolves y=None by design (the count measure is
+        synthesized at emit time), yet its emitted spec carries a real y
+        encoding — mirror binds to THAT, not to the resolved model's y.
+        Regression: gating applies_to on `chart.y` silently dropped the
+        mirrored edge from a working histogram."""
+        chart = BarChart.model_validate(
+            {"id": "t", "type": "histogram", "x": "price", "style": _MIRROR}
+        )
+        data = [{"price": float(i % 7) + i / 10} for i in range(30)]
+        spec = _v2_vl(chart, data)
+        assert {"left", "right"} <= _y_axis_orients(spec)
+        assert spec.get("resolve", {}).get("axis", {}).get("y") == "independent"
+
+    @pytest.mark.parametrize("top_y", [None, "revenue"])
+    def test_layered_mirror_raises_typed_error(self, top_y):
+        """`layers:` move every y encoding onto the layers (the base's own
+        included), so the shared encoding has no y for the ghost to bind —
+        but a real y axis still paints, so mirror must refuse with the typed
+        ERR-MIRROR-LAYERS rather than silently skip (or die in the code-less
+        ChartDataError that surfaces as ERR-INTERNAL, the pre-fix behavior).
+        Both authored shapes, since the y-less one still binds layer ys."""
+        from dbt_charts.core.diagnostics.chart_data import ChartDataError
+        from dbt_charts.core.diagnostics.codes_render import ERR_MIRROR_LAYERS
+
+        chart_def: dict[str, Any] = {
+            "id": "t",
+            "type": "line",
+            "x": "month",
+            "layers": [
+                {"type": "line", "y": "target"},
+            ],
+            "style": _MIRROR,
+        }
+        if top_y is not None:
+            chart_def["y"] = top_y
+        chart = LineChart.model_validate(chart_def)
+        data = [{"month": i, "revenue": 100 + i, "target": 90 + i} for i in range(6)]
+        with pytest.raises(ChartDataError, match="layers") as exc_info:
+            _v2_vl(chart, data)
+        assert exc_info.value.code is ERR_MIRROR_LAYERS
 
     def test_resolve_axis_y_independent(self):
         chart = AreaChart.model_validate(
@@ -234,6 +289,30 @@ class TestV2MirrorAxis:
         # must not also repr it — "(y = 'a, b')" reads as one comma-named field.
         assert "(y = a, b)" in exc_info.value.message
 
+    def test_heatmap_multi_measure_mirror_errors_as_multi_series(self):
+        """A multi-measure heatmap folds its list y into per-measure sublayers
+        (no shared y encoding, no authored `layers:`), so mirror must refuse
+        with ERR-MIRROR-MULTI-SERIES — naming the fields the author wrote —
+        never ERR-MIRROR-LAYERS, whose remedy ("drop the `layers:`") is
+        un-actionable on a board that has none."""
+        from dbt_charts.core.compile.models.chart.normalized import HeatmapChart
+        from dbt_charts.core.diagnostics.chart_data import ChartDataError
+        from dbt_charts.core.diagnostics.codes_render import ERR_MIRROR_MULTI_SERIES
+
+        chart = HeatmapChart.model_validate(
+            {
+                "id": "t",
+                "type": "heatmap",
+                "x": "month",
+                "y": ["revenue", "target"],
+                "style": _MIRROR,
+            }
+        )
+        rows = [{"month": i, "revenue": i, "target": i * 2} for i in range(4)]
+        with pytest.raises(ChartDataError, match="multi-series") as exc_info:
+            _v2_vl(chart, rows)
+        assert exc_info.value.code is ERR_MIRROR_MULTI_SERIES
+
     def test_no_mirror_no_wrap(self):
         chart = AreaChart(id="t", type="area", x="month", y="value")
         spec = _v2_vl(chart, _wide_data())
@@ -339,7 +418,7 @@ class TestV2MirrorAxis:
         ``ghost_axis = dict(primary_axis)`` copies the primary's own
         engine-injected labelExpr onto the ghost. The own-side-align guard
         must not mistake that inherited, engine-composed expression for an
-        authored one Dataface can't introspect (the bug: it was gated on
+        authored one dbt charts can't introspect (the bug: it was gated on
         bare ``"labelExpr" not in ghost_axis"``, so any compacting ladder
         made every mirrored, own-side-aligned axis look unmeasurable and
         raise) — a board that rendered before this task must still render.
@@ -530,7 +609,7 @@ class TestV2MirrorAxis:
 
     def test_mirror_with_explicit_label_align_and_expr_override_errors(self):
         """mirror.expr replaces the ghost's rendered label with an arbitrary
-        Vega expression — Dataface can't measure that string, so the
+        Vega expression — dbt charts can't measure that string, so the
         own-side invasion still rejects even though tick_values/format are
         baked (unlike the plain-format case above).
 
@@ -710,7 +789,14 @@ class TestV2MirrorAxis:
             {"id": "t", "type": "area", "x": "month", "y": "value", "style": _MIRROR}
         )
         resolved = resolve(chart, _wide_data(), chart_style_context=_board()[1])
-        composed = ChartSpec(mark="area", endpoint_label_layout="right_pane")
+        # A real endpoint-label pane always carries the y encoding its rail
+        # was positioned from — mirror checks for one before anything else
+        # (no y encoding -> inert, never a collision error).
+        composed = ChartSpec(
+            mark="area",
+            encoding={"y": {"field": "value", "type": "quantitative"}},
+            endpoint_label_layout="right_pane",
+        )
         with pytest.raises(ChartDataError, match="endpoint labels") as exc_info:
             MirrorAxisFeature().apply(
                 composed, resolved, _DEFAULT_BOX, {resolved.query_name: _wide_data()}
@@ -1082,4 +1168,4 @@ class TestMirrorAxisTitleSuppression:
         data = [{"month": i, "signups": 100 + i * 5} for i in range(6)]
         svg = _v2_svg(chart, data)
         # Aria-label attributes (not text content) still carry "Signups: <value>"
-        assert "Signups: 100" in svg
+        assert "signups: 100" in svg

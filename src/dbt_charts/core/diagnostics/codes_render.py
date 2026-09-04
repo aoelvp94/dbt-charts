@@ -5,8 +5,8 @@ unsupported, no layout, input invalid, Vega-Lite unsupported type, histogram
 non-numeric, histogram pre-aggregated, label/ticks validation, percent range,
 emitter not found, labels field not found, scale domain, concat overshoot,
 chart painted no marks, pie null theta, pie negative theta, multiples +
-endpoint labels, mirror + endpoint labels, multiples + data_table,
-multiples independent-scale + mirror.
+endpoint labels, mirror + endpoint labels, multiples + support_table,
+multiples independent-scale + mirror, gap-fill bucket collision.
 
 Warning codes: every render-time detector code, declared here (not in the
 detector modules, which sit above this leaf) so the registry is complete on
@@ -56,6 +56,28 @@ ERR_BAR_DUPLICATE_ROWS = REGISTRY.register(
     )
 )
 
+ERR_GAP_FILL_BUCKET_COLLISION = REGISTRY.register(
+    ErrorCode(
+        code="ERR-GAP-FILL-BUCKET-COLLISION",
+        domain="render",
+        title="Two rows collapse to the same gap-fill bucket",
+        message_template=(
+            "Rows with {x_field!r} values {value_a!r} and {value_b!r} both "
+            "collapse to the {time_unit!r} bucket {bucket!r}{dim_desc}. "
+            "Aggregate to {time_unit} grain in the query before rendering."
+        ),
+        doc=(
+            "Fired when gap-filling an ordinal bucketed-time axis finds two "
+            "rows whose x-values round to the same bucket (e.g. two "
+            "timestamps on the same calendar day under a `yearmonthdate` "
+            "grain). A last-wins merge would silently discard one row; "
+            "aggregate to the bucket grain in the query before rendering."
+        ),
+        summary="Fired when two rows collapse to the same gap-fill bucket.",
+        docs_topic="charts",
+    )
+)
+
 ERR_COLOR_NULL_SERIES = REGISTRY.register(
     ErrorCode(
         code="ERR-COLOR-NULL-SERIES",
@@ -65,7 +87,7 @@ ERR_COLOR_NULL_SERIES = REGISTRY.register(
             "{chart_type} chart {chart_id!r} has {null_rows} row(s) with a NULL "
             "value in its color column {color_field!r}. A NULL category cannot "
             "be painted or named in the legend, but its rows still occupy "
-            "stack space — the chart would read as bars floating off the "
+            "stack space; the chart would read as bars floating off the "
             "baseline. Give every row a category in the query "
             "(e.g. COALESCE({color_field}, 'Unknown'))."
         ),
@@ -73,7 +95,7 @@ ERR_COLOR_NULL_SERIES = REGISTRY.register(
             "Fired when the column bound to a chart's `color` channel contains "
             "NULL values. The renderer cannot assign a NULL a palette slot or a "
             "legend entry, so the series would consume stack space while being "
-            "invisible and unattributable. Fix the grain in the query — the most "
+            "invisible and unattributable. Fix the grain in the query: the most "
             "common cause is a `CASE` with no `ELSE`, or an `ELSE` that passes "
             "the raw column through unchanged."
         ),
@@ -96,7 +118,7 @@ ERR_PIE_NULL_THETA = REGISTRY.register(
         doc=(
             "Fired when the column bound to a pie or donut chart's `theta` "
             "channel contains NULL values. A pie slice's angle comes directly "
-            "from theta, so a NULL cannot be drawn or labeled — fix the grain "
+            "from theta, so a NULL cannot be drawn or labeled; fix the grain "
             "in the query instead of letting the renderer guess a value."
         ),
         summary="Fired when a pie chart's theta column contains NULL values.",
@@ -224,7 +246,7 @@ ERR_NO_LAYOUT = REGISTRY.register(
         domain="render",
         title="Board defines charts but has no layout",
         message_template=(
-            "Board defines charts ({charts}) but no layout — would render with no visible "
+            "Board defines charts ({charts}) but no layout: would render with no visible "
             "charts. Add a `rows:`/`cols:`/`grid:`/`tabs:` block that references them."
         ),
         doc=(
@@ -298,7 +320,7 @@ ERR_HISTOGRAM_PREAGGREGATED = REGISTRY.register(
         message_template=(
             "Histogram chart {chart_id!r} received data where {field!r} forms "
             "a gapless run of whole numbers alongside unused numeric column(s) "
-            "{count_fields} — this looks like pre-aggregated data (one row "
+            "{count_fields}: this looks like pre-aggregated data (one row "
             "per bucket, e.g. `GROUP BY {field}`), not the raw, ungrouped "
             "rows a histogram bins itself. Vega-Lite would bin and count "
             "these already-counted rows again, silently discarding whatever "
@@ -307,12 +329,58 @@ ERR_HISTOGRAM_PREAGGREGATED = REGISTRY.register(
         ),
         doc=(
             "Fired when a histogram chart receives data where its x field forms "
-            "a gapless run of whole numbers alongside an unused numeric column "
-            "— the shape of already-aggregated, one-row-per-bucket data. "
+            "a gapless run of whole numbers alongside an unused numeric column, "
+            "the shape of already-aggregated, one-row-per-bucket data. "
             "Histograms rely on Vega-Lite's own binning + counting over raw, "
             "ungrouped rows; pre-aggregated data silently produces a wrong, "
             "miscounted histogram instead of erroring. Aggregate in the query "
             "and use `type: bar` instead."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_LABEL_FORMAT_AXIS_MISMATCH = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LABEL-FORMAT-AXIS-MISMATCH",
+        domain="render",
+        title="a non-time axis format needs numeric tick values",
+        # The message states what the FIELD holds rather than calling the
+        # spec a number format — a spec Vega rejects outright (the `%%`
+        # literal-percent escape) reaches here too, and is not a number
+        # format by any reading.
+        message_template=(
+            "style.{setting} ({fmt!r}) cannot be read on this "
+            "axis: {field!r} holds non-numeric tick labels. {remedy}"
+        ),
+        doc=(
+            "Fired when `style.axis_x.labels.format`, "
+            "`style.axis_y.labels.format` or `style.axis_y.mirror.format` is "
+            "anything but a d3 time spec on an axis whose field resolves to "
+            "nominal, ordinal or temporal. "
+            "All three matter: nominal is a plain category column, ordinal "
+            "covers the date-like buckets (`2024-01`, `Q1 2024`, `FY2024`) "
+            "that are still band-scale strings, and temporal is a real "
+            "date/time field. On a band scale Vega coerces every tick to "
+            "`NaN` rather than failing; on a temporal one it reads the spec "
+            "as a time spec instead and paints its literal text (`$,.0f`) "
+            "across the axis. Either way it raises here now. A horizontal "
+            "bar is the case worth calling out: its `axis_x` addresses the "
+            "categories, which the rotation draws down the left edge, so an "
+            "author formatting what looks like the value axis reaches the "
+            "wrong channel. The measure is `axis_y` in both orientations; on "
+            "a heatmap the value is the color channel and neither axis "
+            "carries it; on a scatter dot plot the measure is `axis_x` "
+            "instead, since the categorical channel there is `axis_y`. "
+            "Numeric categories on a band scale are NOT gated: they format "
+            "cleanly, so nothing distinguishes an intended format from a "
+            "misaddressed one — a temporal axis has no such exemption, since "
+            "no reading of a number format over dates was ever the author's "
+            "intent."
+        ),
+        summary=(
+            "Fired when a non-time format is authored on an axis holding "
+            "category or date tick labels."
         ),
         docs_topic="charts",
     )
@@ -333,7 +401,7 @@ ERR_LABEL_VALUES_NOT_TEMPORAL = REGISTRY.register(
         message_template="style.axis_x.labels.values isn't usable on {field!r}: {cause}. {remedy}",
         doc=(
             "Fired when `style.axis_x.labels.values` is set on an x-axis that can't "
-            "honor it — either the x-axis values aren't valid ISO dates or datetime "
+            "honor it: either the x-axis values aren't valid ISO dates or datetime "
             "objects, or the chart's horizontal-bar categorical axis never applies "
             "label filtering regardless of date format."
         ),
@@ -359,7 +427,7 @@ ERR_TICKS_STEP_NOT_QUANTITATIVE = REGISTRY.register(
             "scale has a numeric tick interval. On a temporal axis, author "
             "`ticks.time_unit` alongside `step` to name a calendar cadence. "
             "On a discrete axis (ordinal or nominal) there is no tick "
-            "interval to set — remove `ticks.step`. A horizontal bar is the "
+            "interval to set; remove `ticks.step`. A horizontal bar is the "
             "case worth calling out: its `axis_x` is the categorical axis and "
             "its measure is `axis_y`, so `orientation: vertical` is usually "
             "what the author wanted."
@@ -446,7 +514,7 @@ ERR_NUMERAL_EXPR_EMPTY_SPEC = REGISTRY.register(
         doc=(
             "Fired when numeral_vega_expr() is called with an empty format_spec. "
             "format_d3 short-circuits an empty spec to the bare Python value, "
-            "bypassing d3 entirely — a Vega expression cannot reproduce that "
+            "bypassing d3 entirely: a Vega expression cannot reproduce that "
             "byte-for-byte (Python and JS do not stringify numbers identically), "
             "so building the expression is rejected rather than silently "
             "diverging. This indicates an engine bug: callers should always "
@@ -463,7 +531,7 @@ ERR_EMITTER_NOT_FOUND = REGISTRY.register(
         title="No emitter registered for the resolved chart type",
         message_template=(
             "No emitter registered for resolved chart type {resolved_type!r}. "
-            "This indicates an engine bug — the normalizer should have rejected "
+            "This indicates an engine bug; the normalizer should have rejected "
             "this chart before it reached render."
         ),
         doc=(
@@ -489,8 +557,8 @@ ERR_STACKED_MIDDLE_ALIGNED_LABELS = REGISTRY.register(
         doc=(
             "Fired when `labels.position: middle_aligned` is set on a stacked "
             "bar. `middle_aligned` places every label at a single common height "
-            "(the mean bar height, halved) so a row of labels reads as one line "
-            "— a whole-bar idea with no per-segment reading. Stacked segments "
+            "(the mean bar height, halved) so a row of labels reads as one line, "
+            "a whole-bar idea with no per-segment reading. Stacked segments "
             "each need their own center: use `middle`."
         ),
         summary=(
@@ -506,13 +574,16 @@ ERR_LABELS_FIELD_NOT_FOUND = REGISTRY.register(
         domain="render",
         title="labels.field names a column not in the query result",
         message_template=(
-            "labels.field {field!r} names a column not present in the data. "
-            "Available columns: {available}."
+            "Chart {chart_id!r}: labels.field {field!r} on {source} names a "
+            "column not present in its data. Available columns: {available}."
         ),
         doc=(
             "Fired when `labels.field` names a column that is not present in "
-            "the query result. Check the column name against the actual columns "
-            "returned by the query."
+            "the query result. `source` identifies which slot fired: the base "
+            "chart's own labels, or a specific overlay layer (by position, "
+            "type, and query), since a chart's overlay `layers:` can each "
+            "carry their own `labels.field`. Check the column name against the "
+            "actual columns returned by that slot's query."
         ),
         summary="Fired when `labels.field` names a column that isn't present in the query result.",
         docs_topic="charts",
@@ -532,7 +603,7 @@ ERR_SCALE_DOMAIN_REQUIRES_CONTINUOUS_X = REGISTRY.register(
             "Chart {chart_id!r}: axis_x.scale.domain is set, but the x-axis "
             "resolved to a {vl_type!r} (categorical) scale, not a continuous "
             "one. An explicit [low, high] domain only extends a continuous "
-            "scale — on a categorical scale Vega-Lite reads it as exactly two "
+            "scale: on a categorical scale Vega-Lite reads it as exactly two "
             "category values, collapsing every mark onto the first one. If "
             "the x field is a date, add `axis_x.scale.type: temporal` to "
             "force a continuous temporal scale."
@@ -586,7 +657,7 @@ ERR_BOARD_ARTIFACT_INVALID = REGISTRY.register(
         doc=(
             "Fired when a resolved-board artifact fails to validate against "
             "`ResolvedBoard` while loading it for replay. The artifact is the "
-            "published, versioned contract a resolved board serializes to — this "
+            "published, versioned contract a resolved board serializes to; this "
             "means the file is not a valid instance of that contract."
         ),
         docs_topic="errors",
@@ -625,7 +696,7 @@ ERR_BOARD_RECORDING_MISMATCH = REGISTRY.register(
             "that either lacks rows for one of the artifact's queries, or "
             "recorded them under different variable values. Both mean the "
             "artifact and recording came from different emits (or a truncated "
-            "one) — replaying anyway would render an empty or wrong chart that "
+            "one); replaying anyway would render an empty or wrong chart that "
             "looks like real data."
         ),
         docs_topic="errors",
@@ -639,15 +710,15 @@ ERR_CHART_PAINTED_NO_MARKS = REGISTRY.register(
         title="Chart received rows but painted no marks",
         message_template=(
             "Chart {chart_id!r} received {row_count} row(s) but every mark it drew "
-            "has zero width or height — check whether the x/y fields and scale "
+            "has zero width or height; check whether the x/y fields and scale "
             "types match the data's actual shape."
         ),
         doc=(
             "Fired when a plotting-family chart's query returns at least one row "
-            "but the rendered SVG contains no mark with visible extent — every "
+            "but the rendered SVG contains no mark with visible extent: every "
             "bar, line, area, point, wedge, or shape it drew is degenerate. "
             "`WARN-QUERY-RETURNED-ZERO-ROWS` covers the honest empty case (no "
-            "rows); this covers the dishonest one — rows arrived, the renderer "
+            "rows); this covers the dishonest one: rows arrived, the renderer "
             "just didn't paint anything visible with them."
         ),
         docs_topic="charts",
@@ -661,7 +732,7 @@ ERR_MULTIPLES_ENDPOINT_LABELS = REGISTRY.register(
         title="multiples cannot be combined with endpoint labels",
         message_template=(
             "Chart {chart_id!r}: multiples cannot be combined with endpoint "
-            "labels — the endpoint-label rail names series for a single "
+            "labels; the endpoint-label rail names series for a single "
             "panel, and a faceted chart has no single panel for it to sit "
             "beside. Set style.endpoint_labels.visible: false on this chart "
             "to keep the small multiples, or remove multiples to keep the "
@@ -672,7 +743,7 @@ ERR_MULTIPLES_ENDPOINT_LABELS = REGISTRY.register(
             "rail is explicitly switched on. The rail names series for one "
             "panel; a faceted chart has no single panel for it to sit beside. "
             "The shipped default switches the rail off wherever `multiples:` "
-            "is set — a legend above the panels names the series instead — so "
+            "is set (a legend above the panels names the series instead), so "
             "this fires only where the rail was asked for by name. Turn off "
             "`style.endpoint_labels.visible` to keep the small multiples, or "
             "remove `multiples:` to keep the labels."
@@ -688,14 +759,14 @@ ERR_MIRROR_ENDPOINT_LABELS = REGISTRY.register(
         title="axis_y.mirror cannot be combined with endpoint labels",
         message_template=(
             "Chart {chart_id!r}: axis_y.mirror is not supported together "
-            "with endpoint labels — the endpoint-label rail occupies the "
+            "with endpoint labels; the endpoint-label rail occupies the "
             "opposite edge. Use one or the other on this chart."
         ),
         doc=(
             "Fired when a chart authors (or its theme sets) "
             "`style.axis_y.mirror` while its endpoint-label rail is also "
             "visible. Both want the opposite edge from the chart's primary "
-            "y-axis — the mirrored scale and the label rail can't share it. "
+            "y-axis; the mirrored scale and the label rail can't share it. "
             "Distinct from ERR-MULTIPLES-ENDPOINT-LABELS: this code fires "
             "when the chart has no `multiples:` at all, so `axis_y.mirror` "
             "is the field actually responsible for the collision; a "
@@ -720,7 +791,7 @@ ERR_MIRROR_MULTI_SERIES = REGISTRY.register(
         title="axis_y.mirror requires a single y field",
         message_template=(
             "Chart {chart_id!r}: axis_y.mirror is not supported on multi-series "
-            "charts (y = {y}) — a mirrored axis restates one shared y-scale, "
+            "charts (y = {y}); a mirrored axis restates one shared y-scale, "
             "and folded measures have no single scale to restate. Collapse "
             "`y:` to one field, or drop `style.axis_y.mirror`."
         ),
@@ -741,19 +812,100 @@ ERR_MIRROR_MULTI_SERIES = REGISTRY.register(
     )
 )
 
-ERR_MULTIPLES_DATA_TABLE = REGISTRY.register(
+ERR_LAYER_AXIS_POSITION_ORIENTATION = REGISTRY.register(
     ErrorCode(
-        code="ERR-MULTIPLES-DATA-TABLE",
+        code="ERR-LAYER-AXIS-POSITION-ORIENTATION",
         domain="render",
-        title="multiples cannot be combined with a chart data_table",
+        title="axis_y.position on a layer needs a vertical base chart",
+        message_template=(
+            "Chart {chart_id!r}: a layer's `axis_y.position` names a left or "
+            "right side, and `style.orientation: horizontal` measures along "
+            "the horizontal axis, whose sides are top and bottom. Drop "
+            "`axis_y.position`, or set `style.orientation: vertical`."
+        ),
+        doc=(
+            "Fired when a layer pins `axis_y.position` on a chart whose base "
+            "is horizontal. The resolved model always measures on `y` and "
+            "carries its category on `x`; a horizontal bar paints that same "
+            "model with the pair swapped, so its measure axis runs horizontally "
+            "and has no left or right side to pin a second axis to. "
+            "Whether left/right should map onto bottom/top is a design "
+            "decision nobody has taken, so this refuses rather than drawing "
+            "the layer against a side the author did not ask for."
+        ),
+        summary=("Fired when a layer sets `axis_y.position` on a horizontal base."),
+        docs_topic="charts",
+    )
+)
+
+ERR_LAYER_STEP_ORIENTATION = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LAYER-STEP-ORIENTATION",
+        domain="render",
+        title="curve: step on a layer needs a vertical base chart",
+        message_template=(
+            "Chart {chart_id!r}: a layer's `curve: step` builds its band "
+            "offset along the horizontal axis, which "
+            "`style.orientation: horizontal` uses for the measure. Drop "
+            "`curve: step` on the layer, or set "
+            "`style.orientation: vertical`."
+        ),
+        doc=(
+            "Fired when a layer authors `style.marks.line.curve: step` on a "
+            "chart whose base is horizontal. The band-aware step transform "
+            "doubles each row to its band edges and separates them with an "
+            "`xOffset` scale sized by `bandwidth('x')`: the channel a "
+            "horizontal base measures on rather than the one it bands. "
+            "Refused rather than offsetting the layer along an axis that has "
+            "no bands to measure."
+        ),
+        summary=("Fired when a layer sets `curve: step` on a horizontal base."),
+        docs_topic="charts",
+    )
+)
+
+ERR_MIRROR_LAYERS = REGISTRY.register(
+    ErrorCode(
+        code="ERR-MIRROR-LAYERS",
+        domain="render",
+        title="axis_y.mirror is not supported with layers",
+        message_template=(
+            "Chart {chart_id!r}: axis_y.mirror is not supported on a chart "
+            "with `layers:`; each layer owns its own y encoding, so there is "
+            "no single shared y encoding for the mirrored edge to restate. "
+            "Drop `style.axis_y.mirror` or the `layers:`."
+        ),
+        doc=(
+            "Fired when a chart carries `layers:` while `style.axis_y.mirror` "
+            "is on. Overlay layers move the y encodings onto the layers "
+            "themselves (the base's own y included), so the composed spec has "
+            "no shared y encoding for the ghost axis to bind; yet a real y "
+            "axis paints, so silently skipping the mirror would be a wrong "
+            "result that looks right. Reported at render rather than by "
+            "`dct validate` because mirror is cascade-resolved: a theme layer "
+            "can turn it on for a chart that never authored it."
+        ),
+        summary=(
+            "Fired when a chart with `layers:` also has `style.axis_y.mirror` "
+            "on, from either the chart or its theme."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_MULTIPLES_SUPPORT_TABLE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-MULTIPLES-SUPPORT-TABLE",
+        domain="render",
+        title="multiples cannot be combined with a chart support_table",
         message_template=(
             "Chart {chart_id!r}: multiples is not supported together with a "
-            "chart data_table — the attached table has no meaning per panel. "
+            "chart support_table; the attached table has no meaning per panel. "
             "Use one or the other on this chart."
         ),
         doc=(
             "Fired when a chart authors both `multiples:` and a "
-            "`data_table:`. The attached table is a single per-chart "
+            "`support_table:`. The attached table is a single per-chart "
             "element; once the chart is faceted into a small-multiples grid "
             "it has no per-panel meaning. Remove one or the other."
         ),
@@ -769,7 +921,7 @@ ERR_MULTIPLES_LAYER_PARTITION = REGISTRY.register(
         message_template=(
             "Chart {chart_id!r}: multiples cannot be combined with an "
             "own-query overlay layer whose query returns the partition "
-            "field(s) {fields} — Vega-Lite cannot split one inline layer "
+            "field(s) {fields}; Vega-Lite cannot split one inline layer "
             "dataset per panel. Remove the partition column(s) from the "
             "layer's query to repeat the layer in every panel, or drop "
             "multiples."
@@ -781,7 +933,7 @@ ERR_MULTIPLES_LAYER_PARTITION = REGISTRY.register(
             "partitions the root dataset, never a layer's own inline "
             "dataset, so per-panel layer data cannot be represented. A "
             "layer whose query does not return the partition column is "
-            "unaffected — it repeats identically in every panel, which is "
+            "unaffected; it repeats identically in every panel, which is "
             "correct for a global reference line."
         ),
         docs_topic="charts",
@@ -800,7 +952,7 @@ ERR_MULTIPLES_ROW_OUTSIDE_PANEL_AXES = REGISTRY.register(
         ),
         doc=(
             "Fired when a chart is rendered against rows whose partition "
-            "column carries a value `resolve()` never saw — the row-truncated "
+            "column carries a value `resolve()` never saw: the row-truncated "
             "render path can only ever hold a subset of the axis values "
             "baked at resolve, never one the axes lack, so this firing means "
             "the chart is being rendered against data resolve never saw. "
@@ -818,7 +970,7 @@ ERR_MULTIPLES_ROW_MISSING_PARTITION_FIELD = REGISTRY.register(
         title="row is missing a multiples partition field entirely",
         message_template=(
             "Row is missing the multiples partition field {field!r} "
-            "entirely (it carries: {available}) — every row must carry "
+            "entirely (it carries: {available}); every row must carry "
             "every partition field, even one whose value is null."
         ),
         doc=(
@@ -865,7 +1017,7 @@ ERR_MULTIPLES_INDEPENDENT_SCALE_MIRROR = REGISTRY.register(
         title="multiples with scale: independent cannot use a both-edge mirror axis",
         message_template=(
             "Chart {chart_id!r}: multiples with scale: independent cannot "
-            "use a both-edge (mirror) y-axis — mirroring a shared scale to "
+            "use a both-edge (mirror) y-axis: mirroring a shared scale to "
             "both edges is meaningless when each panel has its own scale. "
             "Use scale: shared, or set style.axis_y.mirror: false."
         ),
@@ -873,13 +1025,66 @@ ERR_MULTIPLES_INDEPENDENT_SCALE_MIRROR = REGISTRY.register(
             "Fired when a chart authors `multiples: {scale: independent}` "
             "together with `style.axis_y.mirror` (bool true or an "
             "AxisMirrorStyle format/expr override). Mirroring reflects one "
-            "shared scale to both edges — meaningless once every panel has "
+            "shared scale to both edges; meaningless once every panel has "
             "its own independent scale. Use `scale: shared`, or turn mirror "
             "off."
         ),
         summary=(
             "Fired when a chart authors `multiples: {scale: independent}` "
             "together with a both-edge mirrored y-axis."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_SPARK_BAR_VALUE_NOT_NUMERIC = REGISTRY.register(
+    ErrorCode(
+        code="ERR-SPARK-BAR-VALUE-NOT-NUMERIC",
+        domain="render",
+        title="spark_bar value field is not numeric",
+        message_template=(
+            "spark_bar chart {chart_id!r}: x field {field!r} is not usable "
+            "as the magnitude: {reason}. spark_bar reverses the usual "
+            "convention: x is the magnitude (the number) and y is the "
+            "label (the text), the opposite of every other chart family. "
+            "Set x to a numeric column and y to the text column."
+        ),
+        doc=(
+            "Fired when a spark_bar chart's x field (the magnitude channel) "
+            "is missing, holds no numeric values, or holds a non-numeric "
+            "value in one of the rows being rendered. spark_bar reverses "
+            "the x/y convention used by every other chart family: x is the "
+            "magnitude, y is the label. This usually means x and y were "
+            "authored in the cartesian order (swap them), or that x was "
+            "left unset with no numeric column to auto-detect."
+        ),
+        docs_topic="charts",
+    )
+)
+
+
+ERR_SPARK_BAR_VALUE_FIELD_NOT_FOUND = REGISTRY.register(
+    ErrorCode(
+        code="ERR-SPARK-BAR-VALUE-FIELD-NOT-FOUND",
+        domain="render",
+        title="spark_bar x names a column not in the query result",
+        message_template=(
+            "spark_bar chart {chart_id!r}: x field {field!r} names a column "
+            "not present in its data. Available columns: {available}. "
+            "On spark_bar, x is the bar magnitude and must name a numeric "
+            "column from the query."
+        ),
+        doc=(
+            "Fired when a spark_bar chart's `x` names a column that is not in "
+            "the query result at all; usually a typo or a column renamed in "
+            "the query. Distinct from ERR-SPARK-BAR-VALUE-NOT-NUMERIC, which "
+            "fires when the column exists but holds no usable numbers: that "
+            "one's fix is to swap `x` and `y`, which would be the wrong "
+            "advice for a name that simply isn't there."
+        ),
+        summary=(
+            "Fired when a spark_bar chart's `x` names a column that isn't in "
+            "the query result."
         ),
         docs_topic="charts",
     )
@@ -895,11 +1100,23 @@ WARN_BAR_BAND_WIDTH_TOO_NARROW = REGISTRY.register(
         code="WARN-BAR-BAND-WIDTH-TOO-NARROW",
         domain="render",
         title="Bar chart bands are too narrow to read",
+        # This message_template is the CATEGORICAL (band-scale) branch's own
+        # wording — "N bands x M series" is a band-scale concept with no
+        # continuous-x equivalent. The continuous (quantitative-x) branch
+        # shares this diagnostic CODE (one warning, not a second parallel
+        # one) but formats its own message
+        # (``_CONTINUOUS_MESSAGE_TEMPLATE`` in
+        # ``render/warnings/bar_band_width_too_narrow.py``): its comparison
+        # direction is inverted (bar_width exceeds the gap rather than
+        # falling below a floor), and printing both numbers through this
+        # template's shared rounded shape reads self-contradictory once the
+        # threshold is a live measured step rather than a fixed floor
+        # constant.
         message_template=(
             "Chart {chart_id!r} has {distinct} bands x {series} series across "
             "{render_width:.0f}px (~{bar_width:.2f}px per bar); "
-            "below {min_band_width:.0f}px the fill disappears under "
-            "the bar's own stroke."
+            "{min_band_width:.0f}px is the threshold this configuration crosses, "
+            "so bars will read as a merged block instead of separate marks."
         ),
         fix_template=(
             "Widen the chart, reduce the number of categories, "
@@ -908,10 +1125,45 @@ WARN_BAR_BAND_WIDTH_TOO_NARROW = REGISTRY.register(
         ),
         doc=(
             "Fires when a (vertical) bar chart packs so many bands into its plot "
-            "width that each band's fill drops below a readability floor — the fill "
+            "width that each band's fill drops below a readability floor: the fill "
             "disappears and the bar's own border stroke merges neighbours into a "
             '"ghost band" smear. Classic trigger: daily-granularity data (hundreds '
-            "of distinct days) rendered as bars at a normal chart width."
+            "of distinct days) rendered as bars at a normal chart width. Also fires "
+            "on a numeric x (no band scale) when the bar's width, authored or "
+            "computed from gap/min_size/max_size, exceeds the gap between the "
+            "closest two x values, so adjacent bars visually overlap."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_BAR_GROUPED_SERIES_COINCIDE = REGISTRY.register(
+    WarningCode(
+        code="WARN-BAR-GROUPED-SERIES-COINCIDE",
+        domain="render",
+        title="Grouped bar series paint on top of each other",
+        message_template=(
+            "Chart {chart_id!r}: {field!r} is quantitative (or a wide temporal "
+            "range), so its color-grouped bars have no band scale to offset "
+            "series within: every series paints at the same position, hiding "
+            "all but the last one drawn."
+        ),
+        fix_template=(
+            "Switch the x field to a categorical or bucketed-time column "
+            "(so bars group side by side), or use a line/area/scatter mark, "
+            "which already draw overlapping series legibly on a continuous x."
+        ),
+        doc=(
+            "Fires when a color-grouped bar (color + stack: none) sits on a "
+            "quantitative x, or a temporal x wide enough to promote to Vega-"
+            "Lite's continuous temporal type. Vega-Lite's xOffset/yOffset "
+            "sub-scale needs a discrete band to divide bars within; a "
+            "continuous position has none, so every series paints at the "
+            "identical position and width, each one occluding the series "
+            "drawn before it. The render is unchanged by this warning: bar "
+            "renders the same overlapping marks a line/area/scatter chart "
+            "already draws on the same data, just without a legible way to "
+            "tell the series apart."
         ),
         docs_topic="charts",
     )
@@ -924,7 +1176,7 @@ WARN_FACET_PANEL_WIDTH_BELOW_MINIMUM = REGISTRY.register(
         title="Small-multiples panel width shrank below the legibility floor",
         message_template=(
             "Chart {chart_id!r} facets into {panel_cols} column panel(s) at "
-            "{panel_width:.0f}px each — below the {min_panel_px:.0f}px floor "
+            "{panel_width:.0f}px each, below the {min_panel_px:.0f}px floor "
             "small multiples need to stay legible."
         ),
         fix_template=(
@@ -936,8 +1188,8 @@ WARN_FACET_PANEL_WIDTH_BELOW_MINIMUM = REGISTRY.register(
             "Fires when a small-multiples chart's column-facet cardinality "
             "leaves each panel narrower than the configured legibility floor. "
             "The floor is `chart_rendering.facet.min_panel_px`. The card's "
-            "declared width is never negotiable — panels shrink below the "
-            "floor rather than push painted content past the card's edge — "
+            "declared width is never negotiable, panels shrink below the "
+            "floor rather than push painted content past the card's edge, "
             "so this is the author's only signal that the panel count has "
             "outgrown the card."
         ),
@@ -952,7 +1204,7 @@ WARN_ENDPOINT_LABEL_GAP_OVERFLOW = REGISTRY.register(
         title="Endpoint-label rail is too cramped for its intended spacing",
         message_template=(
             "Chart {chart_id!r} packs {series_count} endpoint labels needing "
-            "{gap_px:.0f}px apart into a plot shorter than that — labels are "
+            "{gap_px:.0f}px apart into a plot shorter than that: labels are "
             "distributed evenly across the plot instead of at their intended "
             "spacing."
         ),
@@ -965,9 +1217,9 @@ WARN_ENDPOINT_LABEL_GAP_OVERFLOW = REGISTRY.register(
             "spacing in the plot's height."
         ),
         doc=(
-            "Fires when an endpoint-label rail's intended gap — "
-            "`font_size * chart_rendering.endpoint_labels.line_height_multiplier` "
-            "— cannot fit between the "
+            "Fires when an endpoint-label rail's intended gap "
+            "(`font_size * chart_rendering.endpoint_labels.line_height_multiplier`) "
+            "cannot fit between the "
             "rail's series count and the plot's actual height. This is "
             "advisory, not a floor: the rail still renders, with labels "
             "distributed evenly across the available plot rather than piled "
@@ -984,12 +1236,12 @@ WARN_ENDPOINT_LABEL_RAIL_TIED = REGISTRY.register(
         title="Endpoint-label rail has no spread to place labels along",
         message_template=(
             "Chart {chart_id!r}: all {series_count} series end on the same "
-            "value, so the rail has no vertical spread to space labels by — "
+            "value, so the rail has no vertical spread to space labels by: "
             "they are distributed evenly across the plot instead of stacking "
             "on one point."
         ),
         fix_template=(
-            "This is a property of the data, not the layout — more height will "
+            "This is a property of the data, not the layout; more height will "
             "not change it. Check whether the trailing rows are null or zero "
             "for every series; if that is expected, a color legend names the "
             "series without implying distinct endpoints."
@@ -1004,9 +1256,44 @@ WARN_ENDPOINT_LABEL_RAIL_TIED = REGISTRY.register(
             "every series ends on the same value (a trailing all-null or "
             "all-zero column is the usual cause), or the y scale collapsed "
             "them onto a single pixel. Distinct from "
-            "`WARN-ENDPOINT-LABEL-GAP-OVERFLOW`, which is a height problem — "
+            "`WARN-ENDPOINT-LABEL-GAP-OVERFLOW`, which is a height problem: "
             "this one is a data property and adding height cannot clear it. "
             "Advisory, not a floor: the rail still renders."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_ENDPOINT_LABEL_RAIL_OVERFLOW = REGISTRY.register(
+    WarningCode(
+        code="WARN-ENDPOINT-LABEL-RAIL-OVERFLOW",
+        domain="render",
+        title="Endpoint-label rail dropped series that had no room, despite fitting overall",
+        message_template=(
+            "Chart {chart_id!r}: {dropped_count} of {series_count} endpoint "
+            "labels could not be placed {gap_px:.0f}px apart and were dropped "
+            "from the rail rather than piled onto the same spot."
+        ),
+        fix_template=(
+            "Unlike a rail that is cramped everywhere, more height reliably "
+            "helps here: it gives the clustered anchors room to spread apart "
+            "from whichever series they crowded against. Reducing the series "
+            "count or switching to a color legend also works."
+        ),
+        summary=(
+            "Fired when an endpoint-label rail cannot place every series at "
+            "its intended spacing and drops the labels that do not fit."
+        ),
+        doc=(
+            "Fires when an endpoint-label rail's real anchors are clustered "
+            "such that some labels cannot be placed at the intended gap, even "
+            "though `(n - 1) * gap` fits the plot height in the best case: "
+            "that global check only proves the *block* of labels fits "
+            "somewhere in the domain, not that the anchors' own positions "
+            "leave room for all of them. Distinct from "
+            "`WARN-ENDPOINT-LABEL-GAP-OVERFLOW`, which keeps every label and "
+            "compresses the spacing instead: this fires only when some "
+            "labels are dropped from the rail entirely."
         ),
         docs_topic="charts",
     )
@@ -1019,7 +1306,7 @@ WARN_LAYERED_CHART_SHARED_Y_AXIS_SCALE_MISMATCH = REGISTRY.register(
         title="Layered chart y series have a large scale mismatch",
         message_template=(
             "Chart {chart_id!r}: y columns {col_a!r} and {col_b!r} share a y-axis "
-            "but their value ranges differ by {ratio:.0f}× — the smaller series "
+            "but their value ranges differ by {ratio:.0f}×: the smaller series "
             "will be visually crushed to a flat line."
         ),
         fix_template=(
@@ -1028,9 +1315,50 @@ WARN_LAYERED_CHART_SHARED_Y_AXIS_SCALE_MISMATCH = REGISTRY.register(
         ),
         doc=(
             "Fires on a layered chart where the base chart's own y series and/or "
-            "its layers share the y-axis but their value ranges differ by ≥100× — "
+            "its layers share the y-axis but their value ranges differ by ≥100×: "
             "the smaller series is visually crushed to a flat line. Classic example: "
             "revenue (millions) overlaid with conversion rate ([0, 1])."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_LAYER_X_DOMAIN_PAINT_ORDER = REGISTRY.register(
+    WarningCode(
+        code="WARN-LAYER-X-DOMAIN-PAINT-ORDER",
+        domain="render",
+        title="Layered chart x-axis is ordered by paint order, not by the data",
+        message_template=(
+            "Chart {chart_id!r}: layer queries contribute {n_new} x "
+            "categor{plural} ({sample}) that the base query never returns on "
+            "{x_field!r}, and there is no order the base states to place them "
+            "into, so the axis is drawn base-query rows first, then each "
+            "layer's, and the left-to-right reading order is paint order "
+            "rather than an ordering the data states."
+        ),
+        fix_template=(
+            "Return every x category from one query: join the layers onto a "
+            "shared spine so the axis order is that query's. An authored "
+            "`sort:` is not a fix: it orders only the categories the base "
+            "query returns and leaves the layer's appended in paint order."
+        ),
+        doc=(
+            "Fires on a layered chart whose typed layers contribute x "
+            "categories the base query does not, either from their own "
+            "`query:`, or from their own `x:` column on the shared one, "
+            "when the engine cannot place them into an order the base states. "
+            "Two shapes reach that: the categories have no derivable order at "
+            "all (not dates, not numbers), or they do but the base query's own "
+            "rows are not in it, so there is no direction to extend. Date-like "
+            "buckets and numeric categories over a base already in that order "
+            "are placed into it instead, and never warn. Plain labels (month "
+            "abbreviations, region names) cannot be: "
+            "the union is base-query order followed by each layer's own, which "
+            "is the order the layers happened to be painted in. On the "
+            "migrated shape this reads as a chronology it is not: "
+            "`Jan, Mar, May, Feb, Apr, Jun`. Sorting them lexically would be "
+            "worse than paint order, so the engine leaves the order alone and "
+            "says so rather than guessing."
         ),
         docs_topic="charts",
     )
@@ -1045,7 +1373,7 @@ WARN_LAYOUT_MIN_EXCEEDS_HEIGHT = REGISTRY.register(
             "Chart {chart_id!r} has {n_categories} category bands, which need "
             "at least {min_height:.0f}px to stay readable, but its row/tile "
             "height caps it at {authored_height:.0f}px. The chart rendered at "
-            "{min_height:.0f}px anyway — the row's authored height was not honored, "
+            "{min_height:.0f}px anyway: the row's authored height was not honored, "
             "and any sibling charts sharing the row grew to match."
         ),
         fix_template=(
@@ -1055,7 +1383,7 @@ WARN_LAYOUT_MIN_EXCEEDS_HEIGHT = REGISTRY.register(
         ),
         doc=(
             "Fires when a horizontal bar chart's category count forces a "
-            "minimum height — one readable band per category — that exceeds "
+            "minimum height (one readable band per category) that exceeds "
             "the row/tile height its author assigned. The engine expands the "
             "chart to the computed minimum regardless (squashing labels past "
             "legibility to honor an impossible authored height would be worse), "
@@ -1074,38 +1402,43 @@ WARN_LOCAL_TIME_LABEL_EXPR_ON_BUCKETED_AXIS = REGISTRY.register(
         title="Authored axis label expression uses local time on a bucketed axis",
         message_template=(
             "Chart {chart_id!r}: axis_x.labels.expr calls {accessor}(), which "
-            "reads datum.value in the render host's local time zone. The "
-            "{time_unit!r} bucketing produces UTC-midnight tick values, so this "
-            "can render a tick one bucket early depending on where the chart "
-            "renders (e.g. Apr 2024 reads as Mar 2024 under a negative UTC "
-            "offset)."
+            "reads datum.value in the render process's time zone. Static "
+            "rendering pins that to UTC, so the {time_unit!r} bucketing's "
+            "UTC-midnight tick values resolve in UTC today, not necessarily "
+            "the zone you or the chart's viewers are actually in, and dbt "
+            "charts has no way to render this in a different zone."
         ),
         fix_template=(
             "Replace local-time accessors with their utc-prefixed equivalents "
-            "(utcFormat()/utcyear()/utcmonth()/...) — e.g. "
-            "utcFormat(toDate(datum.value), '%b %Y') — so the label renders "
-            "identically regardless of the render host's time zone."
+            "(utcFormat()/utcyear()/utcmonth()/...), e.g. "
+            "utcFormat(toDate(datum.value), '%b %Y'), to make the UTC result "
+            "explicit instead of implying a local-time read that never happens."
         ),
         doc=(
             "Fires on bar (vertical + horizontal, single-metric + multi-metric), "
             "line, and area charts when axis_x.labels.expr contains a local-time "
             "accessor (timeFormat(), year(), month(), date(), quarter(), ...) while "
             "the chart's x-axis buckets to a UTC-midnight calendar grain "
-            "(yearmonth, yearquarter, year, ...) — whether authored via "
+            "(yearmonth, yearquarter, year, ...), whether authored via "
             "axis_x.time_unit or auto-detected from the query data. Vega-Lite's "
-            "bucketed timeUnit transform produces UTC-midnight Date values, but "
-            "local-time accessors — unlike their utc-prefixed equivalents — "
-            "format them in the render host's local time zone, so a tick can read "
-            "as the previous bucket depending on where the chart renders. Heatmap "
-            "and scatter are not yet covered. dbt charts never rewrites an authored "
-            "label expression, so this only warns; switch to utcFormat() or "
-            "utcmonth()/utcyear()/... to fix the render."
+            "bucketed timeUnit transform produces UTC-midnight Date values, and "
+            "dbt charts always renders statically in UTC, so a local-time "
+            "accessor reads them as UTC today, the same result its "
+            "utc-prefixed equivalent would give, and no longer dependent on "
+            "which machine renders the chart. It still cannot be made to read "
+            "in a different zone: there is no per-board or per-viewer "
+            "timezone setting today, in any dbt charts surface. Heatmap and "
+            "scatter are not yet covered. dbt charts never rewrites an "
+            "authored label expression, so this only warns; switch to "
+            "utcFormat() or utcmonth()/utcyear()/... to say what actually "
+            "happens."
         ),
         summary=(
             "Fired on bar/line/area charts when an authored axis label expression "
             "calls a local-time accessor (timeFormat(), year(), month(), ...) on a "
-            "bucketed temporal axis, which renders under the render host's local "
-            "time zone instead of UTC."
+            "bucketed temporal axis; static rendering resolves it as UTC "
+            "regardless, so the accessor's name misleadingly implies a "
+            "local-time read that never happens."
         ),
         docs_topic="charts",
     )
@@ -1142,7 +1475,7 @@ WARN_PIE_DOMINANT_SEGMENT = REGISTRY.register(
         title="Pie chart is dominated by a single segment",
         message_template=(
             "Pie chart {chart_id!r}: {dominant_field!r} holds "
-            "{dominant_share:.0%} of the total — the chart conveys a single value."
+            "{dominant_share:.0%} of the total; the chart conveys a single value."
         ),
         fix_template=(
             "Use a KPI chart for the dominant share and a bar or table for the "
@@ -1150,7 +1483,7 @@ WARN_PIE_DOMINANT_SEGMENT = REGISTRY.register(
         ),
         doc=(
             "Fires on pie/donut charts where one slice is so large that the chart "
-            "conveys a single value — the other slices are visually negligible. "
+            "conveys a single value; the other slices are visually negligible. "
             "A near-single-value pie should be a KPI (the dominant share) plus a "
             "breakdown elsewhere."
         ),
@@ -1180,6 +1513,107 @@ WARN_PIE_TOO_MANY_SEGMENTS = REGISTRY.register(
     )
 )
 
+WARN_PIE_TOTAL_EXCEEDS_INNER_RADIUS = REGISTRY.register(
+    WarningCode(
+        code="WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS",
+        domain="render",
+        title="Donut center total is too wide for the hole",
+        message_template=(
+            "Donut chart {chart_id!r}: center total {formatted_value!r} "
+            "is {text_width:.1f}px wide but the hole is only {hole_diameter:.1f}px "
+            "across (slot {slot_width:.0f}×{slot_height:.0f}px)."
+        ),
+        fix_template=(
+            "Use a compacting number format (e.g. `format: number`) to shorten the "
+            "total, or enlarge whichever slot dimension is smaller so the hole "
+            "diameter increases."
+        ),
+        doc=(
+            "Fires on donut charts whose formatted center total is wider than the "
+            "hole it sits in, measured with the engine's font measurer. The hole "
+            "diameter is `min(slot_width, slot_height) * outer_fraction * "
+            "inner_radius`, where slot_width is the laid-out width minus the slice "
+            "labels' reach and slot_height is the laid-out card height (for "
+            "attached-table wheels, the wheel width and the theme's continuous "
+            "view height)."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_PLOT_HEIGHT_BELOW_MINIMUM = REGISTRY.register(
+    WarningCode(
+        code="WARN-PLOT-HEIGHT-BELOW-MINIMUM",
+        domain="render",
+        title="Chart chrome squeezes the plot below its readability floor",
+        message_template=(
+            "Chart {chart_id!r} squeezes its plot to an estimated "
+            "{plot_height:.0f}px on a {card_height:.0f}px card, below the "
+            "{floor_px:.0f}px floor it needs to stay readable."
+        ),
+        fix_template=(
+            "Give the chart more height, drop authored chrome that is not "
+            "earning its space here (subtitle, axis titles, a "
+            "high-cardinality legend), or accept the smaller size "
+            "deliberately and suppress this warning per-chart with "
+            "`warnings_ignore`."
+        ),
+        doc=(
+            "Fires when a bar chart's estimated plot height falls below its "
+            "calibrated readability floor. The floor is "
+            "`chart_rendering.plot_height_floor.ratio` of the card's own "
+            "height, checked at every width: a short, wide card carrying "
+            "heavy chrome starves its plot the same way a narrow one does. "
+            "ERR-CHART-PAINTED-NO-MARKS already hard-fails around 247px, "
+            "where marks paint with zero extent; this covers the band above "
+            "it where the chart still renders but its plot has shrunk to a "
+            "squashed sliver. No chrome is removed automatically to fix this: "
+            "the author decides whether to widen the card, trim what they "
+            "authored, or keep the chart small on purpose."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_PLOT_WIDTH_BELOW_MINIMUM = REGISTRY.register(
+    WarningCode(
+        code="WARN-PLOT-WIDTH-BELOW-MINIMUM",
+        domain="render",
+        title="A support_table column block claims most of the card's width",
+        message_template=(
+            "Chart {chart_id!r}: the support_table column block "
+            "({block_width:.0f}px) already claims most of the "
+            "{card_width:.0f}px card, leaving the plot an estimated "
+            "{plot_width:.0f}px."
+        ),
+        fix_template=(
+            "Drop a support_table column, widen the card, or move the "
+            "block to `position: right` — or accept it deliberately and "
+            "suppress this warning per-chart with `warnings_ignore`."
+        ),
+        summary=(
+            "Fires when a horizontal bar's support_table column block claims "
+            "most of the width it shares with the plot."
+        ),
+        doc=(
+            "Fires when a horizontal bar's support_table column block "
+            "already claims more than "
+            "`chart_rendering.support_table.column_block_share_warn_ratio` "
+            "of the width it shares with the plot, measured from the "
+            "column block's own font-measured reservation before any "
+            "further axis-label or legend chrome is subtracted. The "
+            "missing twin of WARN-PLOT-HEIGHT-BELOW-MINIMUM: no chrome is "
+            "removed automatically — the author decides whether to widen "
+            "the card, drop a column, or move the block. A plot that "
+            "would fall below its readability floor once the remaining "
+            "axis chrome is accounted for raises ERR-INPUT-INVALID instead "
+            "of warning: a zero-width plot is a missing chart, not a "
+            "squeezed one."
+        ),
+        docs_topic="charts",
+    )
+)
+
 WARN_POINT_MAP_NEGATIVE_SIZE_VALUES = REGISTRY.register(
     WarningCode(
         code="WARN-POINT-MAP-NEGATIVE-SIZE-VALUES",
@@ -1187,7 +1621,7 @@ WARN_POINT_MAP_NEGATIVE_SIZE_VALUES = REGISTRY.register(
         title="Point map size measure has negative values",
         message_template=(
             "Point map {chart_id!r}: {dropped_count} of {total_count} points "
-            "have a negative {size_field!r} value and were not drawn — mark "
+            "have a negative {size_field!r} value and were not drawn; mark "
             "area cannot be negative."
         ),
         fix_template=(
@@ -1199,7 +1633,7 @@ WARN_POINT_MAP_NEGATIVE_SIZE_VALUES = REGISTRY.register(
             "Fires when a bubble_map's `size:` measure contains negative "
             "values. Mark area cannot be negative, so rows with a negative "
             "size value are dropped before Vega-Lite sees them rather than "
-            "drawn at the smallest visible size — a negative value clamped "
+            "drawn at the smallest visible size; a negative value clamped "
             'to the scale\'s zero floor would read as "nearly zero", '
             "misrepresenting a large-magnitude negative measurement. Size "
             "by a magnitude (e.g. `abs(...)` in the query) and encode "
@@ -1249,12 +1683,12 @@ WARN_QUERY_RETURNED_ZERO_ROWS = REGISTRY.register(
         title="Chart query returned zero rows",
         message_template="Chart {chart_id!r}: query returned zero rows.",
         fix_template=(
-            "Check the WHERE clause or date filter — it may be excluding all data "
+            "Check the WHERE clause or date filter: it may be excluding all data "
             "for the current filter values."
         ),
         doc=(
             "Fires on any chart whose query returned zero rows. An empty chart "
-            "renders as a blank panel with axes — no signal to the viewer that "
+            "renders as a blank panel with axes; no signal to the viewer that "
             "the query returned nothing. Most common cause: a WHERE clause or "
             "date filter that excludes all data."
         ),
@@ -1280,7 +1714,7 @@ WARN_QUERY_RESULT_TRUNCATED = REGISTRY.register(
             "Fires when a query's result exceeded the execution.max_rows or "
             "max_result_bytes safety ceiling and was truncated before it ever "
             "reached the result cache. The chart still renders with the "
-            "truncated data — this is a safety net against an unbounded query "
+            "truncated data; this is a safety net against an unbounded query "
             "exhausting memory or bloating the cache, not a hard error."
         ),
         summary=(
@@ -1299,7 +1733,7 @@ WARN_REDUNDANT_ENCODING = REGISTRY.register(
         title="Same column bound to two visual channels",
         message_template=(
             "Chart {chart_id!r}: field {field!r} is bound to channels "
-            "{channels} — binding the same field twice adds no information."
+            "{channels}: binding the same field twice adds no information."
         ),
         fix_template=(
             "Remove one of the channel bindings, or use different fields for "
@@ -1307,10 +1741,17 @@ WARN_REDUNDANT_ENCODING = REGISTRY.register(
         ),
         doc=(
             "Fires when one query column is bound to two or more visual channels "
-            "of the same chart (e.g. `y` and `color` both set to the same field). "
-            "Binding the same field twice adds no information — the second channel "
-            "is redundant. The bar `x==color` case is excluded: it renders "
-            "full-width category-colored bars, which is a useful pattern."
+            "of the same chart (e.g. `y` and `color` both set to the same field), "
+            "or when a `multiples.rows`/`multiples.columns` facet field is also "
+            "bound to `x` or `y`. Binding the same field twice adds no "
+            "information; the second channel is redundant, and for a facet "
+            "collision, the axis repeats what the panel's own header already "
+            "says. The bar `x==color` case is excluded: it renders full-width "
+            "category-colored bars, a useful pattern. Faceting by a field also "
+            "bound to `color`/`size`/`shape` is excluded too: those legends are "
+            "drawn once, board-wide, never duplicated per panel, so pairing one "
+            "with the facet gives every panel a consistent identifying color at "
+            "no extra cost."
         ),
         summary=(
             "Fires when one query column is bound to two or more visual "
@@ -1327,7 +1768,7 @@ WARN_STATIC_PAGINATION_CAPPED = REGISTRY.register(
         title="Static export stopped short of every table page",
         message_template=(
             "Table {chart_id!r}: static export pre-rendered {rendered_pages} "
-            "of {total_pages} pages — rows past page {rendered_pages} are not "
+            "of {total_pages} pages; rows past page {rendered_pages} are not "
             "in this file."
         ),
         fix_template=(
@@ -1342,7 +1783,7 @@ WARN_STATIC_PAGINATION_CAPPED = REGISTRY.register(
             "page, so every page's rows are pre-rendered into the artifact "
             "as toggle groups; left uncapped, that makes file size scale with "
             "total row count instead of page size. Past the cap, the "
-            "renderer stops pre-rendering — the artifact shows only the "
+            "renderer stops pre-rendering; the artifact shows only the "
             "first N pages, and states so in the exported file itself."
         ),
         docs_topic="charts",
@@ -1367,8 +1808,39 @@ WARN_TABLE_COLUMNS_OVERFLOW = REGISTRY.register(
             "Fires when a table needs more width than the slot it was given. A "
             "table sizes each column to its minimum readable width; when those "
             "widths sum past the available width, the renderer widens the whole "
-            "table past its slot — so in a dashboard it spills over its neighbour "
+            "table past its slot, so in a dashboard it spills over its neighbour "
             "or is clipped, printing columns on top of each other."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_TABLE_PAGE_SQUEEZED = REGISTRY.register(
+    WarningCode(
+        code="WARN-TABLE-PAGE-SQUEEZED",
+        domain="render",
+        title="Layout slot forced a smaller table page than the table asked for",
+        message_template=(
+            "Table {chart_id!r}: the layout slot fits {drawn_rows} of the "
+            "{page_rows} rows a page holds ({total_rows} rows total); the rest "
+            "moved onto later pages."
+        ),
+        fix_template=(
+            "Give the tile more height (layout height:, a taller row, or fewer "
+            "siblings sharing the row), or set style.pagination.page_rows to the "
+            "page size you actually want so the sizer reserves room for it."
+        ),
+        doc=(
+            "Fires when a table's layout slot is shorter than the height the "
+            "sizer reserved for it, so the paginator draws fewer rows per page "
+            "than the table's own pagination settled on. The two estimates are "
+            "computed independently: layout_sizing._get_table_height_from_data "
+            "reserves the slot, table._largest_safe_page_rows decides what fits, "
+            "and when they disagree the paginator wins in silence: the render "
+            "exits 0 and the export photographs as a faithful table while "
+            "showing a fraction of its rows. Paginating because the data is "
+            "genuinely longer than the page is not this warning; only a page "
+            "cut down by the slot is."
         ),
         docs_topic="charts",
     )
@@ -1381,7 +1853,7 @@ WARN_TEMPORAL_SINGLE_POINT = REGISTRY.register(
         title="Temporal line or area chart has only one data point",
         message_template=(
             "Chart {chart_id!r} ({chart_type}): temporal x-axis has exactly "
-            "one data point — a one-point line/area conveys no trend."
+            "one data point; a one-point line/area conveys no trend."
         ),
         fix_template=(
             "Widen the date filter to include more time periods, "
@@ -1391,7 +1863,7 @@ WARN_TEMPORAL_SINGLE_POINT = REGISTRY.register(
             "Fires on line and area charts where the x-axis is temporal and the "
             "query result has exactly one row. A one-point line is rendered as a "
             "single dot; a one-point area is a vertical line. Both render but "
-            "convey nothing about a trend — this almost always means the date "
+            "convey nothing about a trend; this almost always means the date "
             "filter is too narrow."
         ),
         docs_topic="charts",
@@ -1404,9 +1876,9 @@ WARN_TOO_MANY_COLOR_CATEGORIES = REGISTRY.register(
         domain="render",
         title="Color encoding has more categories than the palette can distinguish",
         message_template=(
-            "Chart {chart_id!r}: color field {field!r} has {count} distinct "
-            "values — the palette only has {max_categories} distinct colors "
-            "before recycling."
+            "Chart {chart_id!r}: color encoding on {field!r} yields {count} "
+            "distinct series; the palette only has {max_categories} distinct "
+            "colors before recycling."
         ),
         fix_template=(
             "Reduce the number of color categories by grouping small values into "
@@ -1414,9 +1886,12 @@ WARN_TOO_MANY_COLOR_CATEGORIES = REGISTRY.register(
         ),
         doc=(
             "Fires when a categorical color encoding has more distinct values than "
-            "the palette can distinguish — colors recycle and the legend becomes "
+            "the palette can distinguish; colors recycle and the legend becomes "
             "unreadable. Gated on the Vega-Lite color encoding type so a continuous "
-            "(quantitative) color gradient never trips it."
+            "(quantitative) color gradient never trips it. A wide chart "
+            "(y: [a, b]) is counted by the series its fold renders -- the "
+            "measures, crossed with the color: dimension's values when one is "
+            "authored."
         ),
         docs_topic="charts",
     )
@@ -1432,18 +1907,18 @@ WARN_PALETTE_UNSUPPORTED = REGISTRY.register(
             "resolved to {resolved} instead."
         ),
         fix_template=(
-            "Author a supported palette name — see the anti-patterns table in "
+            "Author a supported palette name; see the anti-patterns table in "
             "docs/guides/palette-resolver.md#anti-patterns."
         ),
         doc=(
             "Fires when a chart authors a palette name on the known anti-pattern "
-            "list (e.g. 'RdYlGn', 'parula') — these are CVD-hostile or superseded "
-            "by a DFT-native palette. palette() resolves the substitute silently "
+            "list (e.g. 'RdYlGn', 'parula'); these are CVD-hostile or superseded "
+            "by a dbt-charts-native palette. palette() resolves the substitute silently "
             "at compile time; this detector is the only place the nudge surfaces."
         ),
         summary=(
             "Fires when a chart authors a palette name on the known anti-pattern "
-            "list — these are CVD-hostile or superseded by a DFT-native palette."
+            "list; these are CVD-hostile or superseded by a dbt-charts-native palette."
         ),
         docs_topic="charts",
     )
@@ -1456,7 +1931,7 @@ WARN_TOO_MANY_X_CATEGORIES = REGISTRY.register(
         title="Categorical x-axis has too many distinct values to read",
         message_template=(
             "Chart {chart_id!r}: x field {field!r} has {count} distinct "
-            "values — labels collide and marks are too thin to read "
+            "values; labels collide and marks are too thin to read "
             "(limit: {max_categories})."
         ),
         fix_template=(
@@ -1465,7 +1940,7 @@ WARN_TOO_MANY_X_CATEGORIES = REGISTRY.register(
         ),
         doc=(
             "Fires when a categorical (nominal/ordinal) x-axis has more distinct "
-            "values than fit legibly — labels collide and the marks are too thin "
+            "values than fit legibly; labels collide and the marks are too thin "
             "to read. For a bar chart, also fires on a temporal x-axis: bars still "
             "draw one band per distinct x value even where the density gate has "
             "moved bucketed temporal data off the ordinal scale. Never fires on a "
@@ -1483,7 +1958,7 @@ WARN_VALUE_LABELS_CROWD_WIDTH = REGISTRY.register(
         title="Value labels are wider than their per-mark slot",
         message_template=(
             "Chart {chart_id!r}: widest value label is {label_width:.0f}px "
-            "but each mark only has {slot_width:.0f}px — labels will overflow "
+            "but each mark only has {slot_width:.0f}px; labels will overflow "
             "and collide with neighbours."
         ),
         fix_template=(
@@ -1495,7 +1970,7 @@ WARN_VALUE_LABELS_CROWD_WIDTH = REGISTRY.register(
             "each one gets. Value labels are drawn at the mark, fixed size, with "
             "no adaptive avoidance, so they are the label kind that genuinely "
             "overflows. The check uses the panel's real rendered width and font "
-            "metrics — it fires exactly when the widest label is wider than its slot."
+            "metrics; it fires exactly when the widest label is wider than its slot."
         ),
         docs_topic="charts",
     )
@@ -1507,7 +1982,7 @@ WARN_AXIS_TITLE_TRUNCATED = REGISTRY.register(
         domain="render",
         title="Axis title was too long and was truncated with an ellipsis",
         message_template=(
-            "Chart {chart_id!r}: {authored_field!r} was truncated — "
+            "Chart {chart_id!r}: {authored_field!r} was truncated: "
             "the authored text {authored_text!r} did not fit within two "
             "lines at the available extent."
         ),
@@ -1515,7 +1990,7 @@ WARN_AXIS_TITLE_TRUNCATED = REGISTRY.register(
         doc=(
             "Fires when an axis title is pre-wrapped to at most two lines "
             "(to prevent Vega-Lite's autosize from collapsing the plot) and "
-            "the authored text is still too long — the last line is cut with "
+            "the authored text is still too long: the last line is cut with "
             "a Unicode ellipsis (…) and the remainder of the title is lost. "
             "The title text in the message is the full authored text before "
             "truncation, so you can see exactly what was cut."
@@ -1544,9 +2019,11 @@ WARN_SERIES_LABEL_TRUNCATED = REGISTRY.register(
             "endpoint-label rail and do not fit. The rail may claim only a "
             "fraction of the chart's width, so longer names are cut with an "
             "ellipsis (…). The labels are the values of the column bound to "
-            "`color:`, or — for a wide-form area authored `y: [a, b, …]` — the "
-            "measure names themselves; the warning names whichever key you "
-            "wrote. The label text in the message is the full value before "
+            "`color:`; for a wide-form chart authored `y: [a, b, …]`, the "
+            "measure names themselves, prefixed by the `color:` column's value "
+            "(`<value> — <measure>`) when one is authored; the warning names "
+            "whichever key holds the long part. The label text in the message is the "
+            "full value before "
             "truncation, so you can see exactly what was cut. Only the drawn "
             "label is shortened: the underlying values, the color scale, and "
             "tooltips still carry the full text."
@@ -1561,7 +2038,7 @@ WARN_CHART_TITLE_TRUNCATED = REGISTRY.register(
         domain="render",
         title="Chart title or subtitle was truncated with an ellipsis",
         message_template=(
-            "Chart {chart_id!r}: {authored_field!r} was truncated — "
+            "Chart {chart_id!r}: {authored_field!r} was truncated: "
             "the authored text {authored_text!r} did not fit within the "
             "available width."
         ),
@@ -1582,7 +2059,7 @@ WARN_KPI_LABEL_TRUNCATED = REGISTRY.register(
         domain="render",
         title="KPI card label was truncated",
         message_template=(
-            "Chart {chart_id!r}: KPI label was truncated — "
+            "Chart {chart_id!r}: KPI label was truncated: "
             "the authored text {authored_text!r} did not fit within the "
             "card at the available width."
         ),
@@ -1598,13 +2075,101 @@ WARN_KPI_LABEL_TRUNCATED = REGISTRY.register(
     )
 )
 
+WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED = REGISTRY.register(
+    WarningCode(
+        code="WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED",
+        domain="render",
+        title="KPI inline variant fell back to stacked",
+        message_template=(
+            "Chart {chart_id!r}: variant: {authored_text!r} did not fit the "
+            "card at the available width: value, label, and support fell "
+            "back to the stacked arrangement instead of painting past the "
+            "card edge."
+        ),
+        fix_template=(
+            "Widen the card, shorten the label or support text, or author "
+            "variant: stacked directly."
+        ),
+        doc=(
+            "Fires when an inline KPI's assembled value + label + support "
+            "run does not fit the card at its available width. The renderer "
+            "falls back to the stacked arrangement for that card rather than "
+            "paint past the card edge, so the card's actual layout no longer "
+            "matches the authored variant: inline."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_KPI_ALIGN_OVERFLOW = REGISTRY.register(
+    WarningCode(
+        code="WARN-KPI-ALIGN-OVERFLOW",
+        domain="render",
+        title="KPI align was ignored because a text run overflowed the card",
+        message_template=(
+            "Chart {chart_id!r}: a text run is wider than the card, so "
+            "align: center/right was not applied; every run on the card stays "
+            "left-aligned and the overflowing one spills past the right edge."
+        ),
+        fix_template=(
+            "Widen the card, shorten the value with a more compact format, or "
+            "drop align: so the left-aligned overflow is expected."
+        ),
+        doc=(
+            "Fires when a KPI authors align: center or align: right and any of "
+            "its text runs (value, label, or support) is wider than the "
+            "available content width. Alignment is a whole-card choice, so it "
+            "is dropped for every run rather than applied to the ones that fit: "
+            "clamping per run would leave the card with two different "
+            "alignments. Shifting the "
+            "run would give it a negative x, and the card's SVG viewport clips "
+            "at x=0; destroying the value's LEADING characters, so a "
+            "right-aligned 1,234,567,890 would read as a well-formed but wrong "
+            "234,567,890. The renderer keeps the run at the left edge instead, "
+            "where overflow spills right and reads as visibly truncated, and "
+            "reports that the authored align did not take effect."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_TABLE_CRAMPED = REGISTRY.register(
+    WarningCode(
+        code="WARN-TABLE-CRAMPED",
+        domain="render",
+        title="Table columns were cramped under their width demand",
+        message_template=(
+            "Table {chart_id!r} is cramped: {wrapped_headers} of {column_count} "
+            "column headers wrapped onto a second line. Columns need "
+            "{needed_width:.0f}px but have {available_width:.0f}px."
+        ),
+        fix_template=(
+            "Set the board's style.frame.width to about {suggested_width:.0f}px, "
+            "widen the table's slot, drop columns, or set explicit pixel column widths."
+        ),
+        doc=(
+            "Fires when a table still fits its box widthwise but only because "
+            "the renderer degraded it: the columns were divided into less than "
+            "their content demanded and headers were forced onto a second line. "
+            "Distinct from WARN-TABLE-COLUMNS-OVERFLOW, which is the physical "
+            "case where columns cannot fit at all and the table paints past its "
+            "slot; from WARN-TABLE-TEXT-TRUNCATED, which fires only once text "
+            "is actually cut with an ellipsis; the last rung of the same "
+            "ladder; and from WARN-TABLE-PAGE-SQUEEZED, the height axis, where "
+            "the slot cuts the rows-per-page down and the fix is to grow the "
+            "slot rather than the width."
+        ),
+        docs_topic="charts",
+    )
+)
+
 WARN_TABLE_TEXT_TRUNCATED = REGISTRY.register(
     WarningCode(
         code="WARN-TABLE-TEXT-TRUNCATED",
         domain="render",
         title="Table column header or cell text was truncated",
         message_template=(
-            "Chart {chart_id!r}: column {authored_field!r} has truncated text — "
+            "Chart {chart_id!r}: column {authored_field!r} has truncated text: "
             "{truncation_count} value(s) were cut with an ellipsis."
         ),
         fix_template=(
@@ -1625,7 +2190,7 @@ WARN_CALLOUT_TEXT_TRUNCATED = REGISTRY.register(
         domain="render",
         title="Callout text was truncated",
         message_template=(
-            "Chart {chart_id!r}: callout {authored_field!r} was truncated — "
+            "Chart {chart_id!r}: callout {authored_field!r} was truncated: "
             "the authored text {authored_text!r} exceeded the maximum lines."
         ),
         fix_template=("Shorten the callout text, or increase the chart height/width."),
@@ -1645,7 +2210,7 @@ WARN_SPARK_LABEL_TRUNCATED = REGISTRY.register(
         title="Spark-bar row label was truncated",
         message_template=(
             "Chart {chart_id!r}: {truncation_count} spark-bar label(s) were "
-            "truncated — the label column is too narrow to show the full text."
+            "truncated; the label column is too narrow to show the full text."
         ),
         fix_template=(
             "Widen the chart or increase the label column width in the chart style."
@@ -1677,6 +2242,74 @@ WARN_Y_ENCODING_MOSTLY_NULL = REGISTRY.register(
             "in the query result rows. Mostly-empty visual marks with no explanation "
             "usually indicate a broken join or a nullable source column. "
             "NULL-only differs from NULL+zero: zero is a valid measurement."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_LEGEND_POSITION_WIDTH_FALLBACK = REGISTRY.register(
+    WarningCode(
+        code="WARN-LEGEND-POSITION-WIDTH-FALLBACK",
+        domain="render",
+        title="Tiny-width tier overrode an authored legend position",
+        # Authored explicitly: the doc's first sentence ends inside the inline
+        # code span `legend.position`, which the agent_api summary deriver
+        # refuses to split on rather than guess.
+        summary=(
+            "Fired when a card too narrow for a side legend overrides the "
+            "position its author wrote."
+        ),
+        message_template=(
+            "Chart {chart_id!r} authored `legend.position: {authored_position}`, "
+            "but the tiny width tier forced the legend back to `top`: a card "
+            "this narrow cannot hold a side legend."
+        ),
+        fix_template=(
+            "Widen the chart past the tiny width tier, or drop "
+            "`legend.position` and accept the automatic top legend."
+        ),
+        doc=(
+            "Fires when a cartesian chart (bar, line, area, scatter, heatmap) "
+            "authors a non-top `legend.position` and the card's width falls "
+            "into the tiny tier, where the engine forces the legend back to "
+            "a compact top strip regardless. The fallback itself is not a "
+            "defect (a tiny card cannot physically fit a side legend); this "
+            "warning exists only because the override was otherwise silent: "
+            "the resolved chart renders a different legend position than the "
+            "one the author wrote, with no signal that happened."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_CATEGORY_COLOR_PIN_UNSEEN = REGISTRY.register(
+    WarningCode(
+        code="WARN-CATEGORY-COLOR-PIN-UNSEEN",
+        domain="render",
+        title="A category_colors pin names a value this render never draws",
+        message_template=(
+            "`style.charts.category_colors.{field}` pins {values}, which "
+            "this render does not draw; the pin was skipped."
+        ),
+        fix_template=(
+            "Check the value's spelling against the data. A pinned value can "
+            "also be missing because a variable filter or a narrowed layout "
+            "excluded it, not necessarily a typo."
+        ),
+        doc=(
+            "Fires when a value pinned under `style.charts.category_colors."
+            "<field>` names something none of the charts on this render "
+            "actually draw for that field. The pin is skipped rather than "
+            "seated — seating it would claim a palette slot for a category "
+            "nothing draws and push every real value along one — but a "
+            "misspelled pin would otherwise do nothing with no signal at "
+            "all. The value can be genuinely absent for reasons other than "
+            "a typo: a variable filter, a narrowed `dct render --chart` "
+            "layout, or a sibling chart whose query failed."
+        ),
+        summary=(
+            "Fired when a category_colors pin names a value none of the "
+            "charts on this render actually draw."
         ),
         docs_topic="charts",
     )

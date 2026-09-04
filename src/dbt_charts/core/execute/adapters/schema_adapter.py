@@ -69,7 +69,7 @@ class SchemaAdapter(BaseAdapter):
         if source is None:
             # No source specified: list all configured sources via the registry.
             source_rows = [dict(entry) for entry in self._registry.list_sql_sources()]
-            return QueryResult(data=query.apply_limit(source_rows))
+            return QueryResult(data=query.project(query.apply_limit(source_rows)))
 
         from dbt_charts.core.inspect.cache_factory import (
             build_resolver,  # noqa: PLC0415
@@ -87,7 +87,7 @@ class SchemaAdapter(BaseAdapter):
                 envelope.get("sources", {}).get(source, {}).get("schemas", {})
             )
             rows = [{**m, "name": n} for n, m in schemas.items()]
-            return QueryResult(data=query.apply_limit(rows))
+            return QueryResult(data=query.project(query.apply_limit(rows)))
 
         if table is None:
             envelope = resolver.list_tables(source, schema)
@@ -101,7 +101,7 @@ class SchemaAdapter(BaseAdapter):
                 )
             tables: dict[str, Any] = source_schemas[schema].get("tables", {})
             rows = [{**m, "name": n} for n, m in tables.items()]
-            return QueryResult(data=query.apply_limit(rows))
+            return QueryResult(data=query.project(query.apply_limit(rows)))
 
         if column is None:
             envelope = resolver.profile_table(source, schema, table)
@@ -119,7 +119,7 @@ class SchemaAdapter(BaseAdapter):
                 )
             columns: dict[str, Any] = all_tables[table].get("columns") or {}
             rows = [{**m, "name": n} for n, m in columns.items()]
-            return QueryResult(data=query.apply_limit(rows))
+            return QueryResult(data=query.project(query.apply_limit(rows)))
 
         # column specified → profile_column
         envelope = resolver.profile_column(source, schema, table, column)
@@ -153,7 +153,7 @@ class SchemaAdapter(BaseAdapter):
                 data=[],
                 error=f"Column {column!r} not found in {schema}.{table}",
             )
-        return QueryResult(data=[{**col_map[column], "name": column}])
+        return QueryResult(data=query.project([{**col_map[column], "name": column}]))
 
 
 def fetch_fk_edges(

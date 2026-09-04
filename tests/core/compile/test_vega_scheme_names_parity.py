@@ -6,7 +6,7 @@ every name must round-trip through vl-convert's bundled Vega-Lite → SVG
 pipeline. A name that stops rendering, or a real scheme vl-convert accepts
 but this set omits, should fail here — not surface as a compile-time
 rejection of a previously-working board (see codes_compile.py's ERR-*
-provenance and `dataface/AGENTS.md`'s "no hand-written parallel schema" rule).
+provenance and `dbt-charts/AGENTS.md`'s "no hand-written parallel schema" rule).
 """
 
 from __future__ import annotations
@@ -51,11 +51,11 @@ def test_every_vega_scheme_name_renders() -> None:
     )
 
 
-def test_vega_scheme_names_has_no_dataface_palette_collisions() -> None:
-    """The two accepted string vocabularies (Vega schemes, Dataface named
+def test_vega_scheme_names_has_no_dbt_charts_palette_collisions() -> None:
+    """The two accepted string vocabularies (Vega schemes, dbt charts named
     palettes) must stay disjoint, or ScaleTargetConfig's palette validator
     can't tell which resolution path a name means."""
     from dbt_charts.core.compile.resolve.style.palette import list_palettes
 
     overlap = VEGA_SCHEME_NAMES & set(list_palettes())
-    assert not overlap, f"Vega scheme / Dataface palette name collision: {overlap}"
+    assert not overlap, f"Vega scheme / dbt charts palette name collision: {overlap}"

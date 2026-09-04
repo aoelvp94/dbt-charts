@@ -52,7 +52,7 @@ class SeriesLabelFontStyle(FontStyle):
 
 
 class SeriesLabelStyle(BaseModel):
-    """Series-label primitive — typography for any text mark that names a
+    """Series-label primitive: typography for any text mark that names a
     data series, regardless of placement.
 
     Endpoint labels (line/area) and direct stack labels (bar-stacked) read
@@ -182,7 +182,7 @@ class SliceLabelsStyle(BaseModel):
     )
     where: Annotated[str | None, AfterValidator(validate_label_where)] = Field(
         default=None,
-        description="Jinja2 boolean filter — labels only render on rows where this is truthy.",
+        description="Jinja2 boolean filter; labels only render on rows where this is truthy.",
     )
 
 
@@ -365,17 +365,49 @@ class BarMarkStyle(BaseModel):
     padding: float | None = Field(
         default=None, description="Padding around bar marks in pixels."
     )
-    # Cascade tier sentinel: None means "not specified at this tier".
+    # Cascade tier sentinel: None means "not specified at this tier". Fixed-width
+    # override: when set, this exact pixel width is used for every bar on any
+    # scale, replacing band_width on a band scale and the gap/min_size/max_size
+    # ladder on a continuous scale.
     size: float | None = Field(
-        default=None, description="Bar width in pixels (fixed-width mode)."
+        default=None, description="Bar width in pixels; overrides all other sizing."
     )
     # Bar width as a fraction of the band step (0..1). Maps to VL
-    # ``mark.width: {band: N}`` and works on temporal/utc x scales so
-    # time-unit bars can preserve gaps while keeping consistent column widths.
+    # ``mark.width: {band: N}`` and works on a BUCKETED (timeUnit) temporal x
+    # scale — a genuine band, see x_encoding_is_banded — so time-unit bars can
+    # preserve gaps while keeping consistent column widths. Not a raw
+    # continuous temporal x (no band there to size against); there the
+    # continuous gap/min_size/max_size ladder governs instead, probing the
+    # scale with epoch-ms points — see continuous_bar_size_prop.
     # Cascade tier sentinel: None means "not specified at this tier".
     band_width: float | None = Field(
         default=None,
         description="Bar width as a fraction of the band step (0–1).",
+    )
+    # Continuous (quantitative) x/y scale only — a band scale sizes via
+    # band_width instead. Cascade tier sentinel: None means "not specified at
+    # this tier".
+    gap: float | None = Field(
+        default=None,
+        description="Target pixel gap between adjacent bars on a continuous scale.",
+    )
+    # Cascade tier sentinel: None means "not specified at this tier".
+    min_size: float | None = Field(
+        default=None,
+        description="Narrowest a computed bar width may shrink to on a continuous scale.",
+    )
+    # Cascade tier sentinel: None means "not specified at this tier".
+    max_size: float | None = Field(
+        default=None,
+        description=(
+            "Widest a computed bar width may grow to on a continuous scale. Also "
+            "stands in for an unauthored `size` when reserving axis padding and "
+            "when budgeting a horizontal bar chart's minimum height."
+        ),
+    )
+    # Cascade tier sentinel: None means "not specified at this tier".
+    opacity: float | None = Field(
+        default=None, description="Bar fill opacity (0–1); None uses VL default."
     )
     # SkipInheritSlots(cascade=True): leaf fields inside labels inherit individually
     # from the parent slot (no container-copy since labels is never None).
@@ -451,7 +483,7 @@ class LineMarkStyle(BaseModel):
             "is its own flat path there, so the cap lands on every band edge "
             "rather than only the two ends of one continuous line; 'butt' keeps "
             "plateaus flush with the band. Overrides stroke.cap in that geometry "
-            "only — every other line keeps stroke.cap."
+            "only; every other line keeps stroke.cap."
         ),
     )
     # Halo: a knockout-colored line drawn behind the foreground line so that
@@ -515,7 +547,7 @@ class AreaMarkStyle(BaseModel):
     (area's ``marks.line`` slot) — Vega-Lite itself compiles an area's edge
     line as a genuine separate ``line`` mark (confirmed: ``mark: {type: area,
     line: {...}}`` compiles to independent ``area``/``line``/``symbol`` marks
-    in the Vega output), and Dataface's emitter does the same by hand. Area
+    in the Vega output), and dbt charts' emitter does the same by hand. Area
     owns only what's genuinely area-shaped: fill opacity and the interpolation
     curve (curve is a single shared value across the fill AND its edge line —
     they trace the same silhouette, so there is exactly one source of truth).
@@ -620,7 +652,7 @@ class PointMarkStyle(BaseModel):
 
 
 class SliceMarkStyle(BaseModel):
-    """Pie/donut slice mark — mark-level paint and layout only.
+    """Pie/donut slice mark: mark-level paint and layout only.
 
     No chart geometry (aspect_ratio, inner_radius), no sub-components (total).
     All fields None = "not set at this tier; inherit from global".
@@ -700,7 +732,7 @@ class CircleMarkStyle(BaseModel):
     # SkipInheritSlots: nullable container; apply_inherit can't navigate through None parent.
     stroke: Annotated[StrokeStyle | None, SkipInheritSlots()] = Field(
         default=None,
-        description="Mark stroke style; None means not overridden at this level.",
+        description="Unset emits no stroke; Vega-Lite's default applies.",
     )
 
 

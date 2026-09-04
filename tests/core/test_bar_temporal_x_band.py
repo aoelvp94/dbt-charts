@@ -145,7 +145,7 @@ class TestBarOnTemporalXKeepsCornerRadius:
 
     def test_dense_monthly_bar_temporal_x_keeps_corner_radius(self) -> None:
         # Explicit style override (not the theme default) — behavior under
-        # override, not a pinned default: dataface/AGENTS.md's Implementation
+        # override, not a pinned default: dbt-charts/AGENTS.md's Implementation
         # philosophy forbids pinning theme values like border.radius/band_width.
         chart = BarChart(
             id="dense_monthly",

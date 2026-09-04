@@ -1,6 +1,6 @@
 """Tests for Vega-Lite chart generation.
 
-Tests the dataface.render.vega_lite module for generating
+Tests the dbt_charts.core.render.vega_lite module for generating
 Vega-Lite specifications from chart definitions and data.
 
 Tooltip-specific tests: see test_vega_lite_tooltips.py
@@ -163,9 +163,6 @@ class TestSingleChartPropertyValidation:
         y_axis = spec.get("encoding", {}).get("y", {}).get("axis", {})
         assert y_axis.get("gridColor")  # presence: axis config reaches encoding
         assert y_axis.get("labelColor")
-        # titleColor is NOT emitted when title.visible is False (default for y-axis);
-        # title:null suppresses the axis label entirely, no color needed.
-        assert "titleColor" not in y_axis
         assert spec["config"]["title"]["color"]  # title stays at config
         assert spec["config"]["range"]["category"]  # palette present
 
@@ -407,12 +404,17 @@ class TestGenerateLineChart:
 
         assert spec["encoding"]["x"]["field"] == "date"
         assert spec["encoding"]["y"]["field"] == "value"
-        # Default point.size=0: halo line + foreground line + hover point overlay.
-        # No zero-baseline rule: data is all-positive and the pipeline infers
-        # zero=False for line charts, so _domain_includes_zero returns False.
+        # 2 points at the default card width is well past the density-auto-on
+        # trigger (bake_point_companions), so points show by default: halo
+        # line + halo point + foreground line + foreground point + hover
+        # overlay. No zero-baseline rule: data is all-positive and the
+        # pipeline infers zero=False for line charts, so
+        # _domain_includes_zero returns False.
         assert [lyr["mark"]["type"] for lyr in spec["layer"]] == [
             "line",
+            "point",
             "line",
+            "point",
             "point",
         ]
 
@@ -552,8 +554,8 @@ class TestGenerateTableChart:
 class TestRenderChart:
     """Tests for render_chart function."""
 
-    def test_render_json_returns_dataface_format(self, make_chart):
-        """Test rendering chart to JSON returns Dataface format, not Vega-Lite."""
+    def test_render_json_returns_dbt_charts_format(self, make_chart):
+        """Test rendering chart to JSON returns dbt charts format, not Vega-Lite."""
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
@@ -571,7 +573,7 @@ class TestRenderChart:
 
         parsed = json.loads(result)
 
-        # Should return Dataface format, NOT Vega-Lite
+        # Should return dbt charts format, NOT Vega-Lite
         assert parsed["type"] == "bar"
         assert parsed["x"] == "month"
         assert parsed["y"] == "revenue"
@@ -662,7 +664,7 @@ class TestRenderChart:
             "kpi",
             value="total_revenue",
             label="Total Revenue",
-            style={"value": {"format": "currency"}},
+            style={"value": {"format": "currency_full"}},
         )
         data = [{"total_revenue": 1000000}]
 
@@ -679,7 +681,7 @@ class TestRenderChart:
         assert parsed["type"] == "kpi"
         assert parsed["label"] == "Total Revenue"
         assert parsed["value"] == "total_revenue"
-        assert parsed["style"]["value"]["format"] == "currency"
+        assert parsed["style"]["value"]["format"] == "currency_full"
         assert parsed["data"] == data
 
     def test_render_json_line_chart(self, make_chart):
@@ -829,8 +831,8 @@ class TestRenderChart:
         assert parsed["y"] == "revenue"
         assert parsed["data"] == []
 
-    def test_render_json_with_subtitle_and_description(self, make_chart):
-        """Test JSON includes subtitle and description fields."""
+    def test_render_json_with_subtitle_and_notes(self, make_chart):
+        """Test JSON includes subtitle and notes fields."""
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
@@ -841,7 +843,7 @@ class TestRenderChart:
             y="revenue",
             title="Sales Chart",
             subtitle="North region only",
-            description="Shows monthly sales data",
+            notes="Shows monthly sales data",
         )
         data = [{"month": "Jan", "revenue": 100}]
 
@@ -858,7 +860,7 @@ class TestRenderChart:
         assert parsed["type"] == "bar"
         assert parsed["title"] == "Sales Chart"
         assert parsed["subtitle"] == "North region only"
-        assert parsed["description"] == "Shows monthly sales data"
+        assert parsed["notes"] == "Shows monthly sales data"
         assert parsed["x"] == "month"
         assert parsed["y"] == "revenue"
         # Verify internal fields are NOT included
@@ -1006,12 +1008,14 @@ class TestChartWithTitle:
 class TestFormatKpiParts:
     """Tests for format_kpi_parts — decomposing formatted KPI values."""
 
-    _FORMATS = {"currency": "$,.2f", "percent": ".1%", "compact": ",.2s"}
+    _FORMATS = {"money": "$,.2f", "pct": ".1%", "tilde": ",.2s"}
 
     def test_currency_format(self):
         from dbt_charts.core.render.format_utils import format_kpi_parts
 
-        prefix, number, suffix = format_kpi_parts(1234567.89, "currency", self._FORMATS)
+        prefix, number, suffix = format_kpi_parts(
+            1234567.89, "currency_full", self._FORMATS
+        )
         assert prefix == "$"
         assert number == "1,234,567.89"
         assert suffix == ""
@@ -1027,7 +1031,7 @@ class TestFormatKpiParts:
     def test_compact_format(self):
         from dbt_charts.core.render.format_utils import format_kpi_parts
 
-        prefix, number, suffix = format_kpi_parts(1500000, "compact", self._FORMATS)
+        prefix, number, suffix = format_kpi_parts(1500000, "number", self._FORMATS)
         assert prefix == ""
         assert number == "1.5"
         assert suffix == "M"
@@ -1227,7 +1231,7 @@ class TestRenderKpiSvg:
                 value="revenue",
                 label="Revenue",
                 style=KpiChartStylePatch.model_validate(
-                    {"value": {"format": "currency"}}
+                    {"value": {"format": "currency_full"}}
                 ),
             ),
             data,

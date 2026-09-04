@@ -95,10 +95,8 @@ class TestPaletteTableSurface:
         assert len(result) == 11
 
     def test_sequential_surface_table_all_stops_wcag_safe(self) -> None:
-        from dbt_charts.core.compile.resolve.style.palette import (
-            _wcag_contrast,
-            palette,
-        )
+        from dbt_charts.core.colors import wcag_contrast as _wcag_contrast
+        from dbt_charts.core.compile.resolve.style.palette import palette
 
         result = palette("dbt-seq-blue", surface="table")
         for stop in result:
@@ -126,10 +124,8 @@ class TestPaletteTableSurface:
         assert len(result) == 11
 
     def test_diverging_surface_table_all_stops_wcag_safe(self) -> None:
-        from dbt_charts.core.compile.resolve.style.palette import (
-            _wcag_contrast,
-            palette,
-        )
+        from dbt_charts.core.colors import wcag_contrast as _wcag_contrast
+        from dbt_charts.core.compile.resolve.style.palette import palette
 
         result = palette("dbt-div-blue-red", surface="table")
         for stop in result:

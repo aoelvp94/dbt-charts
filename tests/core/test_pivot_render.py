@@ -292,6 +292,261 @@ class TestPivotTableDataInference:
         assert n == 2
 
 
+class TestPivotColumnOrder:
+    """Pivot leaf columns follow the dimension's canonical order, not first-seen.
+
+    A reader assumes a time pivot's columns are chronological (they are in
+    every reference tool), so first-seen order is actively misleading there.
+    Dimensions without a canonical order (plain strings, mixed content) keep
+    first-seen (query) order — that's the documented lever for
+    business-ordered categories and the trailing "Total" column pattern.
+    """
+
+    def _leaf_keys(self, wide: list[dict[str, Any]], row_dims: list[str]) -> list[str]:
+        return [k for k in wide[0] if k not in row_dims]
+
+    def test_temporal_string_columns_sort_chronologically(self) -> None:
+        from dbt_charts.core.render.chart.table import pivot_table_data
+
+        # Dashboard-2223 shape: the result set first mentions months out of order.
+        data = [
+            {"region": "US", "month": "2026-06", "amount": 1},
+            {"region": "US", "month": "2026-05", "amount": 2},
+            {"region": "US", "month": "2026-07", "amount": 3},
+            {"region": "EU", "month": "2026-05", "amount": 4},
+        ]
+        wide, *_ = pivot_table_data(
+            data, rows=["region"], columns=["month"], values=["amount"]
+        )
+        assert self._leaf_keys(wide, ["region"]) == ["2026-05", "2026-06", "2026-07"]
+
+    def test_non_lex_sortable_temporal_columns_sort_chronologically(self) -> None:
+        from dbt_charts.core.render.chart.table import pivot_table_data
+
+        # "Mon YYYY" buckets sort lex-incorrectly (Aug < Jan) — the sort must
+        # be chronological, not lexical.
+        data = [
+            {"region": "US", "month": "Aug 2026", "amount": 1},
+            {"region": "US", "month": "Jan 2026", "amount": 2},
+            {"region": "US", "month": "Mar 2026", "amount": 3},
+        ]
+        wide, *_ = pivot_table_data(
+            data, rows=["region"], columns=["month"], values=["amount"]
+        )
+        assert self._leaf_keys(wide, ["region"]) == [
+            "Jan 2026",
+            "Mar 2026",
+            "Aug 2026",
+        ]
+
+    def test_date_object_columns_sort_chronologically(self) -> None:
+        import datetime as dt
+
+        from dbt_charts.core.render.chart.table import pivot_table_data
+
+        data = [
+            {"region": "US", "day": dt.date(2026, 3, 2), "amount": 1},
+            {"region": "US", "day": dt.date(2026, 1, 15), "amount": 2},
+        ]
+        wide, *_ = pivot_table_data(
+            data, rows=["region"], columns=["day"], values=["amount"]
+        )
+        assert self._leaf_keys(wide, ["region"]) == ["2026-01-15", "2026-03-02"]
+
+    def test_numeric_columns_sort_ascending(self) -> None:
+        from dbt_charts.core.render.chart.table import pivot_table_data
+
+        data = [
+            {"region": "US", "quantile": 10, "amount": 1},
+            {"region": "US", "quantile": 2, "amount": 2},
+            {"region": "US", "quantile": 5, "amount": 3},
+        ]
+        wide, *_ = pivot_table_data(
+            data, rows=["region"], columns=["quantile"], values=["amount"]
+        )
+        # Numeric sort, not lexical ("10" < "2" lexically).
+        assert self._leaf_keys(wide, ["region"]) == ["2", "5", "10"]
+
+    def test_plain_string_columns_keep_first_seen_order(self) -> None:
+        from dbt_charts.core.render.chart.table import pivot_table_data
+
+        # Bare month names have no parseable canonical order — the query's
+        # ORDER BY stays the lever, so first-seen order must be preserved
+        # (a lexical sort would scramble Jan/Feb into Feb/Jan).
+        data = [
+            {"region": "US", "month": "Jan", "amount": 1},
+            {"region": "US", "month": "Feb", "amount": 2},
+            {"region": "US", "month": "Mar", "amount": 3},
+        ]
+        wide, *_ = pivot_table_data(
+            data, rows=["region"], columns=["month"], values=["amount"]
+        )
+        assert self._leaf_keys(wide, ["region"]) == ["Jan", "Feb", "Mar"]
+
+    def test_mixed_temporal_and_total_keeps_first_seen_order(self) -> None:
+        from dbt_charts.core.render.chart.table import pivot_table_data
+
+        # The documented trailing-"Total" column pattern: a dimension mixing
+        # parseable dates with an unparseable literal has no canonical order,
+        # so query order (which places "Total" last) is preserved.
+        data = [
+            {"region": "US", "month": "2026-05", "amount": 1},
+            {"region": "US", "month": "2026-06", "amount": 2},
+            {"region": "US", "month": "Total", "amount": 3},
+        ]
+        wide, *_ = pivot_table_data(
+            data, rows=["region"], columns=["month"], values=["amount"]
+        )
+        assert self._leaf_keys(wide, ["region"]) == ["2026-05", "2026-06", "Total"]
+
+    def test_null_column_value_sorts_last_in_temporal_dim(self) -> None:
+        from dbt_charts.core.render.chart.table import pivot_table_data
+
+        data = [
+            {"region": "US", "month": None, "amount": 1},
+            {"region": "US", "month": "2026-06", "amount": 2},
+            {"region": "US", "month": "2026-05", "amount": 3},
+        ]
+        wide, *_ = pivot_table_data(
+            data, rows=["region"], columns=["month"], values=["amount"]
+        )
+        assert self._leaf_keys(wide, ["region"]) == ["2026-05", "2026-06", "None"]
+
+    def test_multi_measure_group_levels_follow_sorted_order(self) -> None:
+        from dbt_charts.core.render.chart.table import pivot_table_data
+
+        data = [
+            {"region": "US", "month": "2026-06", "revenue": 1, "cost": 2},
+            {"region": "US", "month": "2026-05", "revenue": 3, "cost": 4},
+        ]
+        _, groups, __ = pivot_table_data(
+            data, rows=["region"], columns=["month"], values=["revenue", "cost"]
+        )
+        assert groups is not None
+        assert [g[0] for g in groups[0]] == ["2026-05", "2026-06"]
+        # Spans must be re-derived from the sorted order: first group starts
+        # at leaf 0, each spans the 2 measures.
+        assert groups[0][0][1] == 0
+        assert all(n == 2 for _, __, n in groups[0])
+
+    def test_multi_dim_sorted_outer_groups_first_seen_inner(self) -> None:
+        from dbt_charts.core.render.chart.table import pivot_table_data
+
+        # Outer dim (month) sorts chronologically; inner dim (tier, plain
+        # strings) follows one consistent first-seen order across all groups.
+        # Interleaved first-seen tuples must regroup into contiguous outer
+        # spans.
+        data = [
+            {"region": "US", "month": "2026-06", "tier": "gold", "amount": 1},
+            {"region": "US", "month": "2026-05", "tier": "gold", "amount": 2},
+            {"region": "US", "month": "2026-06", "tier": "basic", "amount": 3},
+            {"region": "US", "month": "2026-05", "tier": "basic", "amount": 4},
+        ]
+        wide, groups, _ = pivot_table_data(
+            data, rows=["region"], columns=["month", "tier"], values=["amount"]
+        )
+        assert groups is not None
+        assert [g[0] for g in groups[0]] == ["2026-05", "2026-06"]
+        leaf_keys = [k for k in wide[0] if k != "region"]
+        assert leaf_keys.index("2026-05\x1egold") < leaf_keys.index("2026-06\x1egold")
+
+    def test_unsortable_outer_dim_keeps_contiguous_first_seen_groups(self) -> None:
+        from dbt_charts.core.render.chart.table import pivot_table_data
+
+        # Unsortable OUTER dim + sortable inner dim: the outer dim must keep
+        # its first-seen order as contiguous groups (gold before basic), with
+        # months sorted within each. A sort ignoring the outer dim's
+        # first-seen key would order by month alone and shatter the outer
+        # spans (basic, gold, basic).
+        data = [
+            {"region": "US", "tier": "gold", "month": "2026-06", "amount": 1},
+            {"region": "US", "tier": "basic", "month": "2026-05", "amount": 2},
+            {"region": "US", "tier": "gold", "month": "2026-05", "amount": 3},
+            {"region": "US", "tier": "basic", "month": "2026-06", "amount": 4},
+        ]
+        wide, groups, _ = pivot_table_data(
+            data, rows=["region"], columns=["tier", "month"], values=["amount"]
+        )
+        assert groups is not None
+        assert [g[0] for g in groups[0]] == ["gold", "basic"]
+        leaf_keys = [k for k in wide[0] if k != "region"]
+        assert leaf_keys == [
+            "gold\x1e2026-05",
+            "gold\x1e2026-06",
+            "basic\x1e2026-05",
+            "basic\x1e2026-06",
+        ]
+
+    def test_all_unsortable_dims_pass_through_untouched(self) -> None:
+        from dbt_charts.core.render.chart.table import pivot_table_data
+
+        # No dimension has a canonical order → the col-tuples must come back
+        # in exact first-seen order, interleaved outer values included: a
+        # regroup by per-dim first-seen keys would move (US, basic) before
+        # (EU, gold).
+        data = [
+            {"region": "r1", "team": "US", "tier": "gold", "amount": 1},
+            {"region": "r1", "team": "EU", "tier": "gold", "amount": 2},
+            {"region": "r1", "team": "US", "tier": "basic", "amount": 3},
+        ]
+        wide, *_ = pivot_table_data(
+            data, rows=["region"], columns=["team", "tier"], values=["amount"]
+        )
+        leaf_keys = [k for k in wide[0] if k != "region"]
+        assert leaf_keys == ["US\x1egold", "EU\x1egold", "US\x1ebasic"]
+
+    def test_decimal_nan_dim_keeps_first_seen_order_without_crashing(self) -> None:
+        from decimal import Decimal
+
+        from dbt_charts.core.render.chart.table import pivot_table_data
+
+        # Decimal("NaN") raises decimal.InvalidOperation under ordering
+        # comparison — a NaN anywhere in the dimension must drop it to
+        # first-seen order, not crash the render.
+        data = [
+            {"region": "US", "bucket": Decimal("2"), "amount": 1},
+            {"region": "US", "bucket": Decimal("NaN"), "amount": 2},
+            {"region": "US", "bucket": Decimal("1"), "amount": 3},
+        ]
+        wide, *_ = pivot_table_data(
+            data, rows=["region"], columns=["bucket"], values=["amount"]
+        )
+        assert [k for k in wide[0] if k != "region"] == ["2", "NaN", "1"]
+
+    def test_bool_dim_keeps_first_seen_order(self) -> None:
+        from dbt_charts.core.render.chart.table import pivot_table_data
+
+        # Bools are int subclasses but not values a reader ranks — the
+        # documented contract sorts only dates and numbers, so a bool
+        # dimension follows query order.
+        data = [
+            {"region": "US", "is_returning": True, "amount": 1},
+            {"region": "US", "is_returning": False, "amount": 2},
+        ]
+        wide, *_ = pivot_table_data(
+            data, rows=["region"], columns=["is_returning"], values=["amount"]
+        )
+        assert [k for k in wide[0] if k != "region"] == ["True", "False"]
+
+    def test_cell_values_follow_sorted_columns(self) -> None:
+        from dbt_charts.core.render.chart.table import pivot_table_data
+
+        data = [
+            {"region": "US", "month": "2026-06", "amount": 60},
+            {"region": "US", "month": "2026-05", "amount": 50},
+        ]
+        wide, *_ = pivot_table_data(
+            data, rows=["region"], columns=["month"], values=["amount"]
+        )
+        # Assert over items() so the ORDER of (key, value) pairs is pinned —
+        # a lookup by key would pass on unsorted columns too.
+        assert list(wide[0].items()) == [
+            ("region", "US"),
+            ("2026-05", 50),
+            ("2026-06", 60),
+        ]
+
+
 class TestPivotTableDataErrors:
     """Duplicate cells and missing keys raise ChartDataError with helpful messages."""
 
@@ -567,3 +822,202 @@ class TestPivotEmptyData:
         svg = render_table_svg(resolved, [], width=400, board_style=board)
         # Must render without error; the normal empty state should appear
         assert "<svg" in svg
+
+
+class TestPivotStyleColumnsIsStylingOnly:
+    """`style.columns` on a pivot styles the columns it names and nothing else.
+
+    The old semantics read an authored mapping whose keys were all real
+    post-pivot columns as the complete show-list, silently collapsing the
+    cross-tab. Hiding is the explicit `visible: false`; naming only a subset
+    of the post-pivot columns, with no `visible:` anywhere, styles that
+    subset and renders every column same as any other subset.
+    """
+
+    DATA = [
+        {"region": "East", "quarter": "Q1", "amt": 10},
+        {"region": "East", "quarter": "Q2", "amt": 20},
+        {"region": "West", "quarter": "Q1", "amt": 30},
+        {"region": "West", "quarter": "Q2", "amt": 40},
+    ]
+
+    def _render(self, style_columns: dict[str, Any] | None) -> str:
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.render.chart.table import render_table_svg
+
+        kwargs: dict[str, Any] = {}
+        if style_columns is not None:
+            kwargs["style"] = {"columns": style_columns}
+        chart = TableChart(
+            id="pivcol",
+            type="table",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            rows=["region"],
+            columns=["quarter"],
+            values=["amt"],
+            **kwargs,
+        )
+        resolved = resolve(chart, self.DATA, chart_style_context=_BOARD_CTX)
+        return render_table_svg(
+            resolved, self.DATA, width=600, board_style=_board_style()
+        )
+
+    def test_styling_the_row_group_field_still_renders_the_cross_tab(self) -> None:
+        svg = self._render({"region": {"label": "Rgn"}})
+        assert "Q1" in svg and "Q2" in svg
+        assert ">40<" in svg, "the cross-tab body must still render"
+        assert "rgn" in svg.lower()
+
+    def test_naming_only_some_pivoted_columns_still_renders_all(self) -> None:
+        svg = self._render({"region": {"label": "Rgn"}, "Q1": {"align": "right"}})
+        assert "Q2" in svg
+        assert ">40<" in svg, "the un-named pivoted column must still render"
+
+    def test_leaf_keyed_subset_without_visible_still_renders_the_row_dimension(
+        self,
+    ) -> None:
+        """Naming only the pivoted values used to hide the `rows:` dimension
+        under the old show-list shape. style.columns is styling-only: the row
+        dimension renders regardless of what is named."""
+        svg = self._render({"Q1": {"align": "right"}, "Q2": {"align": "right"}})
+        assert "Q1" in svg and "Q2" in svg
+        assert ">40<" in svg, "the cross-tab body must still render"
+        assert "East" in svg, "the row dimension renders unless hidden explicitly"
+
+    def test_row_dimension_renders_unless_visible_false_hides_it(self) -> None:
+        """`visible: false` is the explicit way to hide a sort-key dimension."""
+        svg = self._render({"region": {"visible": False}, "Q1": {"align": "right"}})
+        assert "Q1" in svg and "Q2" in svg
+        assert ">40<" in svg
+        assert "East" not in svg
+
+    def test_visible_false_hides_a_named_post_pivot_column(self) -> None:
+        svg = self._render({"Q1": {"visible": False}})
+        assert "Q2" in svg
+        assert ">40<" in svg, "Q2's cross-tab body must still render"
+        assert "Q1" not in svg
+
+    def test_styling_every_post_pivot_column_renders(self) -> None:
+        svg = self._render(
+            {
+                "region": {"label": "Rgn"},
+                "Q1": {"align": "right"},
+                "Q2": {"align": "right"},
+            }
+        )
+        assert "Q1" in svg and "Q2" in svg
+        assert ">40<" in svg, "the cross-tab body must still render"
+        assert "East" in svg, "the styled row dimension must still render"
+        assert "rgn" in svg.lower()
+
+    def test_case_a_no_style_columns_unaffected(self) -> None:
+        svg = self._render(None)
+        assert "Q1" in svg and "Q2" in svg
+        assert "East" in svg and ">40<" in svg
+
+    def test_pre_pivot_measure_name_styling_still_renders_every_column(self) -> None:
+        """`amt` names a measure, consumed by the pivot reshape rather than a
+        post-transform column — styling it never hides anything else."""
+        svg = self._render({"amt": {"align": "right"}})
+        assert "Q1" in svg and "Q2" in svg
+        assert "East" in svg and ">40<" in svg
+
+    def test_flat_table_style_columns_never_hides_an_unnamed_column(self) -> None:
+        """Not a pivot — style.columns is styling-only here too."""
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.render.chart.table import render_table_svg
+
+        data = [{"region": "East", "amt": 10, "helper": "x"}]
+        chart = TableChart(
+            id="flat",
+            type="table",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            style={"columns": {"region": {"label": "Rgn", "visible": True}}},
+        )
+        resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
+        svg = render_table_svg(resolved, data, width=600, board_style=_board_style())
+        assert "rgn" in svg.lower()
+        assert ">x<" in svg, "helper wasn't marked visible: false — it must render"
+
+    def test_flat_table_visible_false_hides_the_helper_column(self) -> None:
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.render.chart.table import render_table_svg
+
+        data = [{"region": "East", "amt": 10, "helper": "x"}]
+        chart = TableChart(
+            id="flathidden",
+            type="table",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            style={"columns": {"helper": {"visible": False}}},
+        )
+        resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
+        svg = render_table_svg(resolved, data, width=600, board_style=_board_style())
+        assert "East" in svg
+        assert ">x<" not in svg
+
+    def test_empty_data_with_style_columns_renders_the_authored_header(self) -> None:
+        """Zero rows: there is no post-pivot key space to read a column list
+        from, so the empty-state render falls back to the resolved mapping's
+        keys and still shows the declared header."""
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.render.chart.table import render_table_svg
+
+        chart = TableChart(
+            id="pivempty",
+            type="table",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            rows=["region"],
+            columns=["quarter"],
+            values=["amt"],
+            style={"columns": {"region": {"label": "Rgn"}}},
+        )
+        resolved = resolve(chart, self.DATA, chart_style_context=_BOARD_CTX)
+        svg = render_table_svg(resolved, [], width=600, board_style=_board_style())
+        assert "rgn" in svg.lower()
+
+    def test_empty_data_flat_table_with_style_columns_renders(self) -> None:
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.render.chart.table import render_table_svg
+
+        chart = TableChart(
+            id="flatempty",
+            type="table",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            style={"columns": {"region": {"label": "Rgn", "visible": True}}},
+        )
+        resolved = resolve(
+            chart, [{"region": "East", "amt": 10}], chart_style_context=_BOARD_CTX
+        )
+        svg = render_table_svg(resolved, [], width=600, board_style=_board_style())
+        assert "rgn" in svg.lower()
+
+    def test_a_pivoted_value_colliding_with_the_measure_name_renders(self) -> None:
+        """The measure field is consumed by the reshape, so a pivoted value
+        that collides with its name is an ordinary new column — it renders
+        (the #7712 guard that raised here is deleted)."""
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.render.chart.table import render_table_svg
+
+        data = [
+            {"region": "East", "quarter": "amt", "amt": 10},
+            {"region": "East", "quarter": "Q2", "amt": 20},
+        ]
+        chart = TableChart(
+            id="collide",
+            type="table",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            rows=["region"],
+            columns=["quarter"],
+            values=["amt"],
+            style={"columns": {"region": {"label": "Rgn"}}},
+        )
+        resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
+        svg = render_table_svg(resolved, data, width=600, board_style=_board_style())
+        assert "East" in svg
+        assert ">10<" in svg and ">20<" in svg

@@ -11,7 +11,9 @@ from dbt_charts.agent_api.files import (
     delete_file,
     edit_file,
     glob_files,
+    glob_files_paths,
     grep_files,
+    grep_files_hits,
     move_file,
     read_file,
     write_file,
@@ -176,7 +178,7 @@ class TestMoveFile:
     def test_move_reports_fuzzy_hit_without_rewriting(
         self, project: FilesystemProject
     ) -> None:
-        notes = "title: Notes\ndescription: see the existing dashboard\n"
+        notes = "title: Notes\nnotes: see the existing dashboard\n"
         (project.root / "charts" / "notes.yml").write_text(notes, encoding="utf-8")
         m = move_file("charts/existing.yml", "charts/renamed.yml", project=project)
         assert m.success, m.error
@@ -363,3 +365,89 @@ class TestNonFilesystemProject:
         g = grep_files("alice", project=store)
         assert g.success
         assert [m.path for m in g.matches] == ["charts/report.yml"]
+
+
+_PATCHED_CAP = (
+    2  # Patch the real cap (~500) down so tests need only a handful of files.
+)
+
+
+class TestUncappedGenerators:
+    """glob_files_paths and grep_files_hits are uncapped; glob_files/grep_files
+    delegate to them and apply the cap themselves."""
+
+    @pytest.fixture
+    def crowded(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> FilesystemProject:
+        """More boards than the patched cap."""
+        from dbt_charts.agent_api import files as files_mod
+
+        monkeypatch.setattr(files_mod, "MAX_GLOB_MATCHES", _PATCHED_CAP)
+        monkeypatch.setattr(files_mod, "MAX_GREP_MATCHES", _PATCHED_CAP)
+        (tmp_path / "charts").mkdir()
+        for i in range(_PATCHED_CAP + 2):
+            (tmp_path / "charts" / f"b{i}.yml").write_text(
+                f"title: Board {i}\n", encoding="utf-8"
+            )
+        return local_project(tmp_path)
+
+    @pytest.fixture
+    def at_cap(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> FilesystemProject:
+        """Exactly as many boards as the patched cap."""
+        from dbt_charts.agent_api import files as files_mod
+
+        monkeypatch.setattr(files_mod, "MAX_GLOB_MATCHES", _PATCHED_CAP)
+        monkeypatch.setattr(files_mod, "MAX_GREP_MATCHES", _PATCHED_CAP)
+        (tmp_path / "charts").mkdir()
+        for i in range(_PATCHED_CAP):
+            (tmp_path / "charts" / f"b{i}.yml").write_text(
+                f"title: Board {i}\n", encoding="utf-8"
+            )
+        return local_project(tmp_path)
+
+    def test_glob_files_paths_yields_past_cap(self, crowded: FilesystemProject) -> None:
+        paths = list(glob_files_paths("charts/**/*.yml", crowded))
+        assert len(paths) > _PATCHED_CAP
+
+    def test_grep_files_hits_yields_past_cap(self, crowded: FilesystemProject) -> None:
+        hits = list(grep_files_hits("title", crowded))
+        assert len(hits) > _PATCHED_CAP
+
+    def test_glob_exactly_at_cap_is_not_truncated(
+        self, at_cap: FilesystemProject
+    ) -> None:
+        result = glob_files("charts/**/*.yml", project=at_cap)
+        assert result.success
+        assert len(result.matches) == _PATCHED_CAP
+        assert result.truncated is False
+
+    def test_grep_exactly_at_cap_is_not_truncated(
+        self, at_cap: FilesystemProject
+    ) -> None:
+        result = grep_files("title", project=at_cap)
+        assert result.success
+        assert len(result.matches) == _PATCHED_CAP
+        assert result.truncated is False
+
+    def test_glob_files_caps_via_delegation(self, crowded: FilesystemProject) -> None:
+        uncapped = list(glob_files_paths("charts/**/*.yml", crowded))
+        result = glob_files("charts/**/*.yml", project=crowded)
+        assert result.success
+        assert result.matches == uncapped[:_PATCHED_CAP]
+        assert result.truncated is True
+
+    def test_grep_files_caps_via_delegation(self, crowded: FilesystemProject) -> None:
+        uncapped = list(grep_files_hits("title", crowded))
+        result = grep_files("title", project=crowded)
+        assert result.success
+        assert result.matches == uncapped[:_PATCHED_CAP]
+        assert result.truncated is True

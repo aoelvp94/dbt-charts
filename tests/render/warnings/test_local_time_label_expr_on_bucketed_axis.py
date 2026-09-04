@@ -253,6 +253,40 @@ def test_fires_for_month_accessor() -> None:
     assert WARN_LOCAL_TIME_LABEL_EXPR_ON_BUCKETED_AXIS.code in codes
 
 
+def test_fires_for_over_budget_fine_grain_bar() -> None:
+    """The scaffold-budget gate drops the detected grain when it flips a bar
+    to a continuous temporal scale, but the TZ hazard is a property of the
+    DOMAIN (date-only ISO values a bare accessor coerces in local time), not
+    of whether the axis bands. Dropping the grain must not blind the
+    detector."""
+    import datetime as dt
+
+    sparse = [
+        {
+            "day": (dt.date(2023, 1, 1) + dt.timedelta(days=45 * i)).isoformat(),
+            "value": i,
+        }
+        for i in range(10)
+    ]
+    chart = BarChart(
+        id="c1",
+        type="bar",
+        query_name="q",
+        x="day",
+        y="value",
+        style=BarChartStylePatch.model_validate(
+            {
+                "axis_x": AxisXStylePatch.model_validate(
+                    {"labels": {"expr": "'M' + month(datum.value)"}}
+                )
+            }
+        ),
+    )
+    ctx = _make_ctx(chart, rows=sparse)
+    codes = {w.code for w in detector.detect(ctx)}
+    assert WARN_LOCAL_TIME_LABEL_EXPR_ON_BUCKETED_AXIS.code in codes
+
+
 def test_fires_for_date_accessor() -> None:
     """date(datum.value) is the day-of-month sibling of month() -- same
     local-time hazard."""
@@ -1184,6 +1218,49 @@ def test_silent_for_faceted_chart_whose_panels_stay_ordinal_when_pooled_looks_te
         type="bar",
         query_name="q",
         x="month",
+        y="value",
+        multiples=MultiplesConfig(rows="region"),
+        style=BarChartStylePatch.model_validate(
+            {
+                "axis_x": AxisXStylePatch.model_validate(
+                    {"labels": {"expr": "timeFormat(datum.value, '%b %Y')"}}
+                )
+            }
+        ),
+    )
+    ctx = _make_ctx(chart, rows=rows)
+    codes = {w.code for w in detector.detect(ctx)}
+    assert WARN_LOCAL_TIME_LABEL_EXPR_ON_BUCKETED_AXIS.code not in codes
+
+
+def test_silent_for_faceted_dense_daily_panels_on_a_fine_grain() -> None:
+    """The faceted sibling of the test above, on a FINE grain — the only
+    grains the scaffold-budget gate runs for.
+
+    The existing faceted cases use day-1 dates, which detect as ``yearmonth``
+    and never reach the gate, so they leave the detector's own ``panel_fields``
+    argument unread. Here two panels of 60 contiguous dailies twenty years
+    apart each score a zero-bucket deficit, so the chart stays ordinal and a
+    bare ``timeFormat`` is broken-but-TZ-invariant, not the hazard. Measured
+    on pooled rows instead, the span scores ~7,200, resolves temporal, and the
+    grain-recovery re-key fires a false positive on a chart with no TZ hazard.
+    """
+    import datetime as dt
+
+    rows = [
+        {
+            "day": (start + dt.timedelta(days=i)).isoformat(),
+            "region": region,
+            "value": 5,
+        }
+        for region, start in (("A", dt.date(2000, 1, 1)), ("B", dt.date(2020, 1, 1)))
+        for i in range(60)
+    ]
+    chart = BarChart(
+        id="c1",
+        type="bar",
+        query_name="q",
+        x="day",
         y="value",
         multiples=MultiplesConfig(rows="region"),
         style=BarChartStylePatch.model_validate(

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.primitives import OverlapSpec
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    category_scale_for,
+)
 from dbt_charts.core.compile.resolve.chart._chart_rows import (
     ChartDataset,
     restamp,
@@ -16,7 +20,10 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     WIDE_LABEL_FIELD,
     WIDE_VALUE_FIELD,
+    unfold_wide_rows,
+    wide_series_names,
 )
+from dbt_charts.core.compile.resolve.chart.tick_values import zero_anchor_domain_floor
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_HISTOGRAM_NON_NUMERIC,
@@ -30,13 +37,15 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
     cartesian_x_scale_domain,
     chart_sort_to_vl,
     distinct_series_values,
+    multiples_scale_independent,
     nudge_band_scale_off_range_start,
+    pin_normalize_axis_format,
+    resolve_measure_y_scale,
     resolve_xy_titles,
     series_order_expression,
-    sorted_series_by_stack_order,
     spatial_color_scale,
     wide_measures_title,
-    zero_anchor_domain_floor,
+    x_encoding_is_banded,
 )
 from dbt_charts.core.render.chart.emitters._channels import (
     apply_color_legend,
@@ -45,13 +54,11 @@ from dbt_charts.core.render.chart.emitters._channels import (
     infer_vega_type_from_data,
     pin_legend_display_order,
 )
+from dbt_charts.core.render.chart.emitters._endpoint_rail import (
+    resolve_endpoint_rail_span,
+)
 from dbt_charts.core.render.chart.emitters._label_overlap import resolve_axis_x_overlap
 from dbt_charts.core.render.chart.emitters._layers import emit_bar_layer
-from dbt_charts.core.render.chart.emitters._measured_label_padding import (
-    DEFAULT_VL_LABEL_LIMIT,
-    cap_padding_to_label_limit,
-    measured_label_padding,
-)
 from dbt_charts.core.render.chart.emitters._overlay import (
     overlay_uses_band_step,
     overlay_x_domain_values,
@@ -61,13 +68,13 @@ from dbt_charts.core.render.chart.emitters._tooltip import field_cardinality
 from dbt_charts.core.render.chart.emitters._wide import (
     FoldedMeasures,
     fold_wide_measures,
-    unfold_wide_rows,
 )
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.time_unit_detect import normalize_labeled_temporal
 from dbt_charts.core.render.chart.type_inference import (
     apply_x_tick_cadence,
     build_cartesian_x_encoding,
+    gate_label_format,
     resolve_cartesian_x_type,
     temporal_edge_labels_flushed,
     y_zero_scale,
@@ -84,14 +91,19 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     bar_mark_radius,
     bar_mark_to_vl,
     compose_axis_label_expr,
+    effective_bar_size,
     emit_resolved_scale_vl,
     measure_axis_to_vl,
 )
 from dbt_charts.core.render.utils import normalize_data_types
 from dbt_charts.core.text.case import format_display_text
 from dbt_charts.core.utils import (
+    DEFAULT_VL_LABEL_LIMIT,
+    cap_padding_to_label_limit,
     layered_endpoint_rail_fires,
     layered_endpoint_rail_shape,
+    measured_label_padding,
+    sorted_series_by_stack_order,
 )
 
 # Keeps every band-scale slot on the axis even when its row's own measure is
@@ -239,18 +251,51 @@ def apply_grouped_bar_spacing(
     if offset_ch not in encoding:
         return
 
+    cat_ch = "y" if is_horizontal else "x"
+    mark_props = spec.mark_props
+    if cat_ch in encoding and not x_encoding_is_banded(encoding[cat_ch]):
+        # A continuous categorical channel (quantitative, or a temporal x
+        # promoted past max_ordinal_buckets) has no band scale for the offset
+        # channel to sub-divide, so every spacing control below is inapplicable:
+        # paddingInner/paddingOuter are band-scale-only, and `overlap` is
+        # defined as a fraction of band width. Leave mark.width/height alone so
+        # the mark's own literal pixel width (bar.size, set by bar_mark_to_vl —
+        # or, when unauthored, continuous_bar_size_prop's gap/min_size/max_size
+        # ladder) governs — the same native mechanism a non-grouped
+        # continuous-x bar already renders with.
+        #
+        # An AUTHORED overlap must not evaporate here, though: silently
+        # dropping it would hand back a spec that ignores the setting with no
+        # signal. Only the renderer default falls through — both spellings of
+        # it: None ("not authored") and the explicit "auto" that
+        # BarChartStyle.overlap documents as its equivalent. Authoring the
+        # documented no-op must render exactly as omitting it does, which is
+        # what _resolve_overlap_fraction already does for the banded case.
+        # Written against the generic bandedness predicate rather than
+        # hardcoding "vertical": today `_emit_horizontal` always types its
+        # categorical channel "nominal", so this never fires on a horizontal
+        # bar — but that is a property of the emitter, not an invariant worth
+        # baking in a second time here.
+        if chart.style.overlap is not None and chart.style.overlap != "auto":
+            raise ChartDataError(
+                f"Bar chart '{chart.id}': style.overlap is not supported on a "
+                f"continuous {cat_ch}-axis — overlap is a fraction of the "
+                "categorical band width, and a quantitative (or wide temporal) "
+                f"{cat_ch} has no band to divide. Group the {cat_ch} into "
+                "categories or buckets, or drop the overlap setting.",
+                chart_id=chart.id,
+            )
+        return
+
     # Outer categorical axis band-scale padding — the gap between groups and the
     # margin at both plot edges. The shorthand 'padding' overrides paddingOuter
     # in Vega, so it must be removed.
-    cat_ch = "y" if is_horizontal else "x"
     if cat_ch in encoding:
         cat_scale: dict[str, Any] = encoding[cat_ch].setdefault("scale", {})
         bar_cfg = get_chart_rendering().bar
         cat_scale.pop("padding", None)
         cat_scale["paddingInner"] = bar_cfg.grouped_bar_padding_inner
         cat_scale["paddingOuter"] = bar_cfg.grouped_bar_padding_outer
-
-    mark_props = spec.mark_props
     if n_series < 0:
         n_series = _count_series(chart, data)
     fraction = _resolve_overlap_fraction(chart.style.overlap, n_series)
@@ -335,7 +380,11 @@ def _emit_histogram(
     ) or {}
     color_ch = chart.resolved_channels.get("color")
     mark_props: dict[str, Any] = {
-        **bar_mark_to_vl(chart.style.mark, "vertical"),
+        # A histogram's binned x IS a band scale for width purposes — VL's
+        # {"band": f} shorthand resolves correctly against the bin's own
+        # x/x2 span (measured empirically; unlike a plain continuous x, this
+        # case is not degraded).
+        **bar_mark_to_vl(chart.style.mark, "vertical", True),
         **corner,
         "tooltip": True,
     }
@@ -380,12 +429,13 @@ def _emit_histogram(
     }
 
     encoding: dict[str, Any] = {"x": x_enc, "y": y_enc}
+    transforms: list[VLDict] = []
 
     if color_ch is not None:
         color_field = getattr(color_ch, "data_field", None)
         color_title = (
             format_display_text(
-                color_field, from_slug=True, font=chart.style.axis_x.title.font
+                color_field, from_slug=True, font=chart.legend.title.font
             )
             if color_field
             else None
@@ -393,10 +443,44 @@ def _emit_histogram(
         enc = channel_to_encoding(color_ch, data, title=color_title)
         if enc is not None:
             apply_color_legend(enc, chart.legend)
+            if (
+                color_ch.mode == "series"
+                and enc.get("type") == "nominal"
+                and color_field
+            ):
+                series = distinct_series_values(data, color_field)
+                counts = Counter(
+                    str(row[color_field])
+                    for row in data
+                    if row.get(color_field) is not None
+                )
+                baseline_order = sorted(series, key=lambda s: (-counts[s], s))
+                display_order = list(reversed(baseline_order))
+                if chart.palette:
+                    enc["scale"] = spatial_color_scale(
+                        baseline_order, chart.palette, display_order
+                    )
+                    pin_legend_display_order(enc, display_order)
+                transforms.append(
+                    {
+                        "calculate": series_order_expression(
+                            color_field, baseline_order
+                        ),
+                        "as": _DF_SERIES_ORDER_KEY,
+                    }
+                )
+                encoding["order"] = {
+                    "field": _DF_SERIES_ORDER_KEY,
+                    "sort": "ascending",
+                }
             encoding["color"] = enc
 
     return ChartSpec(
-        mark="bar", mark_props=mark_props, encoding=encoding, config=config
+        mark="bar",
+        mark_props=mark_props,
+        encoding=encoding,
+        config=config,
+        transforms=transforms,
     )
 
 
@@ -444,10 +528,11 @@ class BarEmitter:
         is_horiz = chart.orientation == "horizontal"
         # Gap-fill bucketed ordinal-time x-axis data, same as line/area — before
         # the wide/long-form split, same as _normalize_line_data/_normalize_area_data:
-        # a wide chart's raw rows are one-per-bucket with the measures as columns,
-        # exactly the shape complete_ordinal_time_series expects when dim_fields is
-        # empty (chart.color is always None for a wide chart, so this degenerates to
-        # filling missing buckets with no series cross-join — no unfold needed).
+        # a wide chart's raw rows are one-per-bucket(-per-dimension) with the
+        # measures as columns, exactly the shape complete_ordinal_time_series
+        # expects: chart.color is the authored dimension (or None), so the fill
+        # cross-joins buckets × dimension values as it would for an authored
+        # color: chart, and the measures ride along — no unfold needed.
         # When gap-fill fires, stamp transformed rows onto spec.data so the
         # session does not overwrite with the original raw data (mirrors line.py).
         # resolves_cartesian_x=False for horizontal: _emit_horizontal renders
@@ -478,7 +563,10 @@ class BarEmitter:
             if gap_fired:
                 spec.data = normalize_data_types(data)
             apply_grouped_bar_spacing(
-                chart, spec, data, n_series=len(chart.wide_measures)
+                chart,
+                spec,
+                data,
+                n_series=len(wide_series_names(chart.wide_measures, chart.color, data)),
             )
             return spec
 
@@ -547,14 +635,14 @@ class BarEmitter:
                 chart_id=chart.id,
                 axis_x=chart.style.axis_x,
                 axis_y=chart.style.axis_y,
-                # Horizontal draws the CATEGORY axis on VL y (governed by
-                # axis_x/x_label); vertical draws the measure axis there.
-                base_y_title_suppressed=(
-                    bool(chart.x_label) and chart.style.axis_x.title.visible is False
-                    if is_horiz
-                    else bool(chart.y_label)
-                    and chart.style.axis_y.title.visible is False
+                base_measure_title_suppressed=(
+                    bool(chart.y_label) and chart.style.axis_y.title.visible is False
                 ),
+                # Same narrowing the whole emitter already runs on
+                # `chart.orientation` (`is_horiz` above): the resolved field is
+                # Optional, and every read of it here treats anything but
+                # "horizontal" as the vertical layout.
+                base_orientation="horizontal" if is_horiz else "vertical",
                 base_x_authored_temporal=base_x_authored_temporal,
                 tooltip_format=chart.style.tooltip_format,
                 background=chart.background,
@@ -573,6 +661,12 @@ class BarEmitter:
                 base_mark_type="bar",
                 base_label=base_label,
                 datasets=datasets,
+                base_stack_normalize=chart.stack == "normalize",
+                # A bar's own stack: "center" is a diverging stack (0 is
+                # still the meaningful anchor), not the area-only
+                # streamgraph case base_stack_center guards against.
+                base_stack_center=False,
+                multiples_scale_independent=multiples_scale_independent(chart),
             )
 
         return spec
@@ -591,13 +685,13 @@ def _emit_wide_bar(
     """Emit list-valued measures through one VL fold/unit specification."""
     assert chart.wide_measures
     measures = list(chart.wide_measures)
-    series = sorted(measures)
+    series = wide_series_names(measures, chart.color, data)
     if chart.stack not in (None, "none"):
         # Same order computation bar's authored-color stacked path uses
         # (see the `elif color_ch.mode == "series" ...` branch below), fed a
         # long-form view of the wide data — a wide bar's series order must
         # match what an authored color: field of the same data would produce.
-        folded = unfold_wide_rows(data, measures)
+        folded = unfold_wide_rows(data, measures, chart.color)
         baseline_order = sorted_series_by_stack_order(
             series,
             folded,
@@ -622,6 +716,8 @@ def _emit_wide_bar(
         display_order = series
     wide = fold_wide_measures(
         measures,
+        chart.color,
+        data,
         chart.palette,
         chart.legend,
         display_order=display_order,
@@ -702,13 +798,17 @@ def _emit_vertical(
             measure_field,
             config,
             [],
+            True,
+            None,
         )
         return spec
 
     # Categorical axis (VL x): resolve overlap first, then axis_to_vl
+    panel_fields = tuple(axis.field for axis in dataset.axes)
     emitted_x_vl_type, _, _ = resolve_cartesian_x_type(
-        data, cat_field, ax, "bar", False
+        data, cat_field, ax, "bar", False, panel_fields
     )
+    reserved_width = resolve_endpoint_rail_span(chart, data, box.width)
     label_layout = resolve_axis_x_overlap(
         ax,
         cat_field,
@@ -716,7 +816,7 @@ def _emit_vertical(
         label_usable_ratio,
         is_horizontal_bar=False,
         edge_labels_flushed=temporal_edge_labels_flushed(emitted_x_vl_type, ax),
-        chart_width=box.width,
+        chart_width=box.width - reserved_width,
         domain_values=x_domain,
     )
     ax_vl_raw = axis_to_vl(
@@ -734,6 +834,9 @@ def _emit_vertical(
         visibility_time_unit=label_layout.visibility_time_unit,
         label_anchor_index=label_layout.anchor_index,
         domain_values=x_domain,
+        outer_chart_width=box.width,
+        plot_width=box.width - reserved_width,
+        panel_fields=panel_fields,
     )
 
     # Titles resolve together so each is wrapped against the extent of the
@@ -742,9 +845,7 @@ def _emit_vertical(
     # derive from) — fall back to the joined, humanized measure names instead,
     # same as an authored y_label always would.
     y_label_effective = chart.y_label or (
-        wide_measures_title(chart.wide_measures, ay.title.font)
-        if wide is not False
-        else None
+        wide_measures_title(chart.wide_measures) if wide is not False else None
     )
     titles = resolve_xy_titles(
         cat_field,
@@ -764,18 +865,38 @@ def _emit_vertical(
     x_scale["paddingInner"] = bar_mark.padding
     x_scale.update(cartesian_x_scale_domain(ax.scale, x_vl_type, chart.id))
     nudge_band_scale_off_range_start(x_scale, x_vl_type, ax_vl, band_doubled)
-    if x_vl_type == "quantitative" and bar_mark.size is not None:
-        # Vega-Lite centers each fixed continuousBandSize bar on its data
-        # value; on a continuous scale, "padding" dispatches to VL's own
-        # continuousPadding (pixels on each side of the domain), which keeps
-        # the min/max bars fully on-plot without an explicit domain (so VL's
-        # own `nice` rounding still applies). axis_x.scale.padding defaults to
-        # 0 theme-wide for the categorical/band gutter case (_base.yaml
+    if x_vl_type == "quantitative" or (
+        x_vl_type == "temporal" and (detected_tu is None or detected_tu == "none")
+    ):
+        # Vega-Lite centers each fixed-width bar on its data value; on a
+        # continuous scale — quantitative, or a temporal x with no timeUnit
+        # banding (a bar banded to its bucket sits inside the bucket's own
+        # span and needs no reservation) —
+        # "padding" dispatches to VL's own continuousPadding
+        # (pixels on each side of the domain), which keeps the min/max bars
+        # fully on-plot without an explicit domain (so VL's own `nice`
+        # rounding still applies). axis_x.scale.padding defaults to 0
+        # theme-wide for the categorical/band gutter case (_base.yaml
         # axis_x.scale.padding), which doesn't know about the bar's own pixel
         # footprint on a quantitative scale — take the larger of whatever's
         # already resolved and the half-bar-width the mark geometrically
-        # needs to stay on-plot, so an author's own larger padding still wins.
-        x_scale["padding"] = max(x_scale.get("padding", 0.0), bar_mark.size / 2)
+        # needs to stay on-plot, so an author's own larger padding still
+        # wins. An authored bar_mark.size gives the exact half-width; an
+        # unauthored (computed-default) bar reserves against max_size, the
+        # ceiling continuous_bar_size_prop's clamp can never exceed.
+        bar_width_estimate = effective_bar_size(bar_mark)
+        assert bar_width_estimate is not None, (
+            "marks.bar.size and marks.bar.max_size both unset — "
+            "theme cascade must populate at least one"
+        )
+        # An absent "padding" key means no gutter was resolved at all, so the
+        # half-bar reservation stands alone; when one was resolved, the larger
+        # of the two wins so an author's own wider padding still applies.
+        half_bar = bar_width_estimate / 2
+        resolved_padding = x_scale.get("padding")
+        x_scale["padding"] = (
+            half_bar if resolved_padding is None else max(resolved_padding, half_bar)
+        )
 
     x_enc: dict[str, Any] = {
         "field": cat_field,
@@ -793,6 +914,12 @@ def _emit_vertical(
         from dbt_charts.core.render.chart.time_unit_detect import vl_time_unit
 
         x_enc["timeUnit"] = vl_time_unit(detected_tu)
+
+    # Computed once, ahead of the stack-mode branch below, since both the
+    # "normalize" and the plain stack path need it (the plain path uses it
+    # to gate the auto-stack silencing; emit_bar_layer needs it regardless
+    # of stack mode).
+    x_is_banded = x_encoding_is_banded(x_enc)
 
     # Endpoint labels fire on a vertical bar only when the author opts in AND a
     # series colour channel exists; they then take the right rail (so the y-axis
@@ -814,10 +941,20 @@ def _emit_vertical(
     y_scale: dict[str, Any] = {}
     if chart.stack == "normalize":
         y_enc["stack"] = chart.stack
+        # resolve() bakes ay.scale.continuous.domain to [0, 1] (or the
+        # author's own pinned domain) for every normalize stack — route
+        # through the shared measure-scale builder like every other
+        # measure-channel emitter, so the domain is explicit on the VL spec
+        # (a shared scale with an overlay layer's raw values, e.g. an
+        # invisible padding layer, can't pull the rendered range away from
+        # the percent axis) without re-deriving or overriding what resolve()
+        # already decided.
+        y_scale.update(resolve_measure_y_scale(ay))
         # Default quartile tick grid for 100%-normalize bars unless the author
         # supplied explicit axis.values (already in ay_vl via axis_to_vl).
         if "values" not in ay_vl:
             ay_vl["values"] = list(_NORMALIZE_QUARTILE_TICKS)
+        pin_normalize_axis_format(ay_vl)
     else:
         is_stacked = bool(measure_field) and chart.stack not in (None, "none")
         _ay_cont = ay.scale.continuous if ay.scale is not None else None
@@ -860,7 +997,6 @@ def _emit_vertical(
                 y_scale, ay.domain_max, ay.domain_min
             )
 
-        x_is_banded = x_vl_type in ("nominal", "ordinal") or "timeUnit" in x_enc
         if chart.stack == "none" and not x_is_banded:
             # VL auto-stacks a bar mark whenever a discrete channel (color)
             # accompanies the quantitative measure, even with an xOffset
@@ -893,7 +1029,9 @@ def _emit_vertical(
     elif color_ch is not None:
         color_field = color_ch.data_field
         color_title = (
-            format_display_text(color_field, from_slug=True, font=ax.title.font)
+            format_display_text(
+                color_field, from_slug=True, font=chart.legend.title.font
+            )
             if color_field
             else None
         )
@@ -920,6 +1058,48 @@ def _emit_vertical(
                         "type": color_enc_type,
                         "title": color_title,
                     }
+                # Grouped bars have no display-order to pin (no stack, no
+                # reorder) but a bound field still owes every value its board
+                # slot's color — VL's own alphabetical default range would
+                # otherwise paint this chart from its own local position, not
+                # the board's.
+                if (
+                    color_ch.mode == "series"
+                    and color_enc_type == "nominal"
+                    and color_field
+                    and chart.palette
+                ):
+                    scale = category_scale_for(chart.category_colors, color_field)
+                    if scale is not None:
+                        series = distinct_series_values(data, color_field)
+                        if series:
+                            # No `pin_legend_display_order` here: unlike a
+                            # stacked mark, a grouped bar's legend already
+                            # follows `scale.domain` on its own, and pinning
+                            # would blindly overwrite an authored
+                            # `style.legend.values` order with this chart's
+                            # plain alphabetical one. The domain itself still
+                            # has to MATCH whatever the legend actually
+                            # renders: `apply_color_legend` already bakes
+                            # `style.legend.values` onto `legend.values`
+                            # verbatim, so an authored FULL reordering (same
+                            # set, different order — a curated SUBSET is a
+                            # legend-only filter, not usable as a domain)
+                            # must win here too, or the tooltip rank
+                            # `_series_order_role` bakes from this domain
+                            # disagrees with where the legend visually shows
+                            # each value.
+                            order = series
+                            # sorted(), not set(): a repeated entry matches
+                            # the set but is not a permutation, and taking it
+                            # verbatim duplicates a domain member.
+                            if chart.legend.values is not None and sorted(
+                                chart.legend.values
+                            ) == sorted(series):
+                                order = list(chart.legend.values)
+                            encoding["color"]["scale"] = spatial_color_scale(
+                                series, chart.palette, order, scale
+                            )
             elif (
                 color_ch.mode == "series"
                 and color_enc_type == "nominal"
@@ -943,8 +1123,16 @@ def _emit_vertical(
                     # order is emitted regardless — it needs no palette.
                     if chart.palette:
                         display_order = list(reversed(order))
+                        palette_order = (
+                            series
+                            if _is_color_1to1_with_x(cat_field, color_field, dataset)
+                            else order
+                        )
                         encoding["color"]["scale"] = spatial_color_scale(
-                            series, chart.palette, display_order
+                            palette_order,
+                            chart.palette,
+                            display_order,
+                            category_scale_for(chart.category_colors, color_field),
                         )
                         pin_legend_display_order(encoding["color"], display_order)
                     expr = series_order_expression(color_field, order)
@@ -965,6 +1153,8 @@ def _emit_vertical(
         measure_field,
         config,
         transforms,
+        x_is_banded,
+        cat_field,
     )
     spec.base_series_label = titles.y_plain
     return spec
@@ -1030,6 +1220,20 @@ def _emit_horizontal(
             "is axis_y. Set orientation: vertical, or remove ticks.step."
         ),
     )
+    # Same axis, same misreading: the rotation puts the categories on the
+    # left edge, so a currency authored here paints $NaN over the labels.
+    gate_label_format(
+        ax.labels.format,
+        cat_field,
+        data,
+        "nominal",
+        setting="axis_x.labels.format",
+        remedy=(
+            "orientation: horizontal rotates the chart, it does not swap the "
+            "channels — axis_x still addresses the categories. Author the "
+            "format on style.axis_y.labels.format, the measure axis."
+        ),
+    )
 
     # VL x = measure axis.
     color_ch_early = chart.resolved_channels.get("color") if wide is False else None
@@ -1058,9 +1262,7 @@ def _emit_horizontal(
     # x_authored_field="y_label" tells the truncation recorder that the VL x
     # title came from the authored y_label key (so the squiggle lands correctly).
     y_label_effective = chart.y_label or (
-        wide_measures_title(chart.wide_measures, ay.title.font)
-        if wide is not False
-        else None
+        wide_measures_title(chart.wide_measures) if wide is not False else None
     )
     titles = resolve_xy_titles(
         measure_field if wide is False else None,
@@ -1109,6 +1311,7 @@ def _emit_horizontal(
         # supplied explicit axis.values (already in ay_vl via axis_to_vl).
         if "values" not in ay_vl:
             ay_vl["values"] = list(_NORMALIZE_QUARTILE_TICKS)
+        pin_normalize_axis_format(ay_vl)
     else:
         # domainMax: use baked stacked total; fall back to nice-tick top.
         authored_x_domain = authored_measure_domain(ay)
@@ -1134,7 +1337,8 @@ def _emit_horizontal(
             # silently clipped. zero_anchor_domain_floor excludes an
             # authored ladder — see its own docstring for why.
             floor_ticks = zero_anchor_domain_floor(
-                ay, list(ay.tick_values) if ay.tick_values else []
+                ay.scale.values if ay.scale is not None else None,
+                list(ay.tick_values) if ay.tick_values else [],
             )
             if floor_ticks and x_enc["scale"].get("zero") is not False:
                 x_enc["scale"]["domainMin"] = floor_ticks[0]
@@ -1189,7 +1393,9 @@ def _emit_horizontal(
         and "labelExpr" not in ax_vl
         and cat_labels
     ):
-        cat_padding = measured_label_padding(cat_labels, ax.labels.font)
+        cat_padding = measured_label_padding(
+            cat_labels, ax.labels.font.family, ax.labels.font.size
+        )
         cat_label_limit = (
             ax.labels.max_width
             if ax.labels.max_width is not None
@@ -1222,13 +1428,16 @@ def _emit_horizontal(
     }
     # An authored chart.sort wins on the categorical (y) axis. Otherwise a
     # horizontal bar WITHOUT a colour channel defaults to largest-measure-first;
-    # a series-coloured horizontal bar keeps VL's domain order (mirrors V1
-    # _apply_chart_sort / _apply_default_horizontal_bar_sort).
+    # a series-coloured or wide horizontal bar pins ``sort: null`` so VL keeps
+    # the query's first-occurrence domain order (mirrors V1 _apply_chart_sort /
+    # _apply_default_horizontal_bar_sort).
     y_sort = chart_sort_to_vl(chart.sort)
     if y_sort is not None:
         y_enc["sort"] = y_sort
     elif measure_field and color_ch is None and wide is False:
         y_enc["sort"] = {"field": measure_field, "order": "descending"}
+    else:
+        y_enc["sort"] = None
 
     encoding: dict[str, Any] = {"x": x_enc, "y": y_enc}
 
@@ -1249,7 +1458,9 @@ def _emit_horizontal(
     elif color_ch is not None:
         color_field_h = color_ch.data_field
         color_title_h = (
-            format_display_text(color_field_h, from_slug=True, font=ax.title.font)
+            format_display_text(
+                color_field_h, from_slug=True, font=chart.legend.title.font
+            )
             if color_field_h
             else None
         )
@@ -1269,6 +1480,35 @@ def _emit_horizontal(
                         "type": color_enc_type_h,
                         "title": color_title_h,
                     }
+                # See the vertical branch above: a bound field still owes
+                # every value its board slot's color, even with no
+                # display-order to pin.
+                if (
+                    color_ch.mode == "series"
+                    and color_enc_type_h == "nominal"
+                    and color_field_h
+                    and chart.palette
+                ):
+                    scale = category_scale_for(chart.category_colors, color_field_h)
+                    if scale is not None:
+                        series = distinct_series_values(data, color_field_h)
+                        if series:
+                            # See the vertical branch above: no
+                            # pin_legend_display_order here (a grouped bar's
+                            # legend already follows scale.domain), but the
+                            # domain itself must match whatever the legend
+                            # actually renders.
+                            order = series
+                            # sorted(), not set(): a repeated entry matches
+                            # the set but is not a permutation, and taking it
+                            # verbatim duplicates a domain member.
+                            if chart.legend.values is not None and sorted(
+                                chart.legend.values
+                            ) == sorted(series):
+                                order = list(chart.legend.values)
+                            encoding["color"]["scale"] = spatial_color_scale(
+                                series, chart.palette, order, scale
+                            )
             elif (
                 color_ch.mode == "series"
                 and color_enc_type_h == "nominal"
@@ -1292,8 +1532,16 @@ def _emit_horizontal(
                     # non-empty by resolve(); this guard only matters for
                     # tests that bypass it.
                     if chart.palette:
+                        palette_order = (
+                            series
+                            if _is_color_1to1_with_x(cat_field, color_field_h, dataset)
+                            else order
+                        )
                         encoding["color"]["scale"] = spatial_color_scale(
-                            series, chart.palette, order
+                            palette_order,
+                            chart.palette,
+                            order,
+                            category_scale_for(chart.category_colors, color_field_h),
                         )
                         pin_legend_display_order(encoding["color"], order)
                     expr = series_order_expression(color_field_h, order)
@@ -1314,6 +1562,12 @@ def _emit_horizontal(
         measure_field,
         config,
         transforms,
+        # Horizontal bar's categorical axis is always emitted nominal (see
+        # y_enc above) — there is no continuous-category horizontal shape.
+        True,
+        cat_field,
     )
-    spec.base_series_label = titles.y_plain
+    # The base series' legend label is its MEASURE, which this orientation
+    # draws on VL x — `y_plain` here is the category title.
+    spec.base_series_label = titles.x_plain
     return spec

@@ -1,19 +1,19 @@
 # Concrete board that extends the _report-base template.
 #
 # ./_report-base.yml is a path ref anchored to this file's directory.
-# Theme name ("cream") must come first so _report-base.yml (last) wins in
+# Theme name ("paper") must come first so _report-base.yml (last) wins in
 # the style merge — later extends entries have higher priority.
 # style.frame.card_gap is inherited from _report-base; not set here.
 
 title: Monthly Sales Report
-description: >
+notes: >
   Monthly revenue trend — demonstrates extending a template board
   (./_report-base.yml) and a named theme.
 
 source: examples_db
 
 extends:
-  - cream
+  - paper
   - ./_report-base.yml
 
 queries:

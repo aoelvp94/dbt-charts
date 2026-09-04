@@ -84,7 +84,7 @@ class TestGlyphRendersInSvg:
         board_ctx = resolve_chart_style_context(get_theme_style())
         # Read the tone hex from the same resolved style the renderer threads,
         # so this pins propagation — not a hardcoded theme literal.
-        negative_hex = board_ctx.kpi.tones.negative
+        negative_hex = board_ctx.tones.negative
 
         chart = make_chart(
             "table",

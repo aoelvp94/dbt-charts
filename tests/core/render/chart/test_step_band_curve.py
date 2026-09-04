@@ -116,7 +116,7 @@ def _board_with_mark(family: str, **mark_overrides: Any):
 
     Returns (ResolvedStyle, ChartStyleContext) — unpack both at each call site.
     """
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     fam_style = getattr(compiled.charts, family)
     base_mark = getattr(fam_style.marks, family)
     new_mark = base_mark.model_copy(update={"halo_multiplier": 0.0, **mark_overrides})
@@ -126,16 +126,28 @@ def _board_with_mark(family: str, **mark_overrides: Any):
     return resolve_style_and_context(compiled.model_copy(update={"charts": charts}))
 
 
+def _is_step_band_offset(encoding: dict[str, Any]) -> bool:
+    """True iff ``encoding["xOffset"]`` is the real band-step point scale.
+
+    A zero-anchor baseline rule (``full_rule_at``) also sets a literal
+    ``xOffset: {"value": 0}`` for its own full-width positioning, unrelated
+    to band-step curves — only the real step-band encoding carries a
+    ``scale`` (see ``step_band.py``'s ``encoding["xOffset"]`` bake).
+    """
+    offset = encoding.get("xOffset")
+    return isinstance(offset, dict) and "scale" in offset
+
+
 def _step_band_encoding(spec: dict[str, Any]) -> dict[str, Any] | None:
     """Return the encoding dict carrying the step xOffset.
 
     Standalone charts put it on the shared top-level ``spec["encoding"]``;
     layered charts put it on the overlay layer's own encoding.
     """
-    if "xOffset" in spec.get("encoding", {}):
+    if _is_step_band_offset(spec.get("encoding", {})):
         return spec["encoding"]
     for lyr in spec.get("layer", []):
-        if "xOffset" in lyr.get("encoding", {}):
+        if _is_step_band_offset(lyr.get("encoding", {})):
             return lyr["encoding"]
     return None
 
@@ -149,7 +161,7 @@ def _step_band_rows(spec: dict[str, Any]) -> list[dict[str, Any]]:
     for lyr in spec.get("layer", []):
         enc = lyr.get("encoding", {})
         data = lyr.get("data")
-        if "xOffset" in enc and isinstance(data, dict) and "values" in data:
+        if _is_step_band_offset(enc) and isinstance(data, dict) and "values" in data:
             return data["values"]
     return spec.get("data", {}).get("values", [])
 
@@ -543,7 +555,7 @@ def test_area_halo_tracks_the_edge_cap_and_join():
     well against the hardcoded ``"round"`` literals this replaced; only a
     distinctive value makes this a real detector.
     """
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     area = compiled.charts.area
     # A partial stroke: the inherit cascade refills width/color from the global
     # marks.line.stroke, so only cap/join diverge from the theme.
@@ -588,7 +600,7 @@ def test_stacked_area_perimeter_keeps_its_cap_and_join(stack: str):
     background-knockout separator between bands falls back to SVG's butt/miter
     — spiking every band vertex.
     """
-    board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+    board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
     chart = AreaChart(
         id=f"stacked-{stack}",
         type="area",
@@ -627,7 +639,7 @@ def test_stacked_stroke_without_cap_or_join_raises():
     # The theme declares the stacked recipe on the GLOBAL marks slot; the area
     # family's own copy is a cascade sentinel (None) until resolve fills it, so
     # crippling the family copy would just be refilled from here.
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     marks = compiled.charts.marks
     stacked = marks.area.stacked
     assert stacked is not None and stacked.stroke is not None
@@ -663,7 +675,7 @@ def test_non_stacked_area_tolerates_an_authored_null_cap():
     """The guard must NOT fire on the non-stacked path: marks.line.stroke
     survives intact there, and ResolvedStrokeStyle documents None as the legal
     "use the VL default" state. A board authoring `cap: null` renders."""
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     marks = compiled.charts.marks
     line = marks.line.model_copy(
         update={"stroke": StrokeStyle(cap=None, join=None, width=2.5)}
@@ -916,7 +928,7 @@ def test_v2_step_on_continuous_x_does_not_raise():
 # Per-layer-query overlay is painted in authored order: layers[0] paints
 # first (behind), the base chart's own series always paints first of all —
 # the authored order is the z-order, the emitter never reorders layers. See
-# render/chart/AGENTS.md's "Paint order is a Dataface contract".
+# render/chart/AGENTS.md's "Paint order is a dbt charts contract".
 # ─────────────────────────────────────────────────────────────────────────────
 
 _PL_ACTUALS = [{"m": "2025-01-01", "actual": 30}, {"m": "2025-02-01", "actual": 55}]

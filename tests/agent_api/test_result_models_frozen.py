@@ -1,6 +1,6 @@
 """Every agent_api result model is frozen=True: mutation raises, never silently applies.
 
-Companion to the C8 pydantic-conventions audit (dft-core task
+Companion to the C8 pydantic-conventions audit (workstream dft-core task
 audit-pydantic-models-for-configdict-frozen-true-candidates-c8). Result models are
 constructed once by a verb function and consumed read-only by CLI/MCP callers;
 freezing catches an accidental in-place mutation that would otherwise silently
@@ -100,7 +100,6 @@ FROZEN_RESULT_INSTANCES: list[tuple[BaseModel, str]] = [
             success=True,
             columns=[],
             data=[],
-            error=None,
             errors=[],
             row_count=0,
             truncated=False,

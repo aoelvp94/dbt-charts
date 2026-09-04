@@ -45,6 +45,7 @@ rows:
           - **Region Dropdown** — Filter by region (null = show all)
           - **Category Dropdown** — Filter by category (null = show all)
           - **Product Dropdown** — Filter by product (null = show all)
+          - **As Of Date** — Show orders up to a date (unset = all dates)
           - **Text Input** — Search products by name
           - **Number** — Set minimum revenue threshold
           - **Slider** — Adjust results limit
@@ -72,6 +73,12 @@ rows:
         options:
           static: [Widget A, Widget B, Gadget X, Gadget Y, Tool Z]
         # No default - starts null, shows all products
+
+      # Date input - starts unset, so it shows its resting state
+      as_of:
+        label: As Of
+        input: date
+        # No default - starts unset, shows all dates
 
       # Text input
       search:
@@ -109,6 +116,7 @@ rows:
             WHERE ({{ region }} IS NULL OR region = {{ region }})
               AND ({{ category }} IS NULL OR category = {{ category }})
               AND ({{ product }} IS NULL OR product = {{ product }})
+              AND ({{ as_of }} IS NULL OR date <= {{ as_of }})
             GROUP BY product
             ORDER BY revenue DESC
         x: product

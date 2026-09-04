@@ -1,9 +1,9 @@
 title: Incident Queue
-description: Table-heavy ops dashboard pattern — formatted table with per-column labels and types
+notes: Table-heavy ops dashboard pattern — formatted table with per-column labels and types
 
 queries:
   open_incidents:
-    description: Open and in-progress incidents with severity and impact
+    notes: Open and in-progress incidents with severity and impact
     columns: [ticket_id, priority, status, assignee, revenue_impact]
     values:
       - ["T-001", "P1", "Open",        "Alice", 15000]
@@ -14,7 +14,7 @@ queries:
 
 charts:
   incidents_table:
-    description: Triageable incident list with priority, owner, and revenue impact
+    notes: Triageable incident list with priority, owner, and revenue impact
     type: table
     query: open_incidents
     title: Open Incidents

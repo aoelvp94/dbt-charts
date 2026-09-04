@@ -184,14 +184,14 @@ charts:
 _BOARD_WIDTH_BY_TITLE_TIER = {"tiny_11px": 900, "medium_14px": 1400, "wide_18px": 1900}
 
 
-@pytest.mark.parametrize("theme", ["editorial", "stark"])
+@pytest.mark.parametrize("theme", ["clarity", "stark"])
 @pytest.mark.parametrize("tier", list(_BOARD_WIDTH_BY_TITLE_TIER))
 def test_table_subtitle_chrome_matches_chart_family_chrome(
     tier: str, theme: str, local_project: Callable[..., FilesystemProject]
 ):
     """A table tile and its line/bar siblings, same row, same authored title +
     subtitle: subtitle font size, subtitle fill, and the title->subtitle
-    baseline gap must all agree — serif (editorial) and sans (stark), at each
+    baseline gap must all agree — serif (clarity) and sans (stark), at each
     of the three title-size tiers a chart/table object title can resolve to."""
     svg = _render_svg(
         _THREE_COL_ROW.format(
@@ -238,7 +238,7 @@ def test_table_subtitle_chrome_matches_chart_family_chrome(
 
 _SOLO_ROW = """
 title: Tile chrome probe (solo)
-extends: editorial
+extends: clarity
 style:
   frame:
     width: 700
@@ -300,7 +300,7 @@ def test_table_without_subtitle_title_baseline_unchanged(
     width = _BOARD_WIDTH_BY_TITLE_TIER[tier]
     title_only = f"""
 title: Table title only
-extends: editorial
+extends: clarity
 style:
   frame:
     width: {width}
@@ -320,7 +320,7 @@ charts:
 """
     with_subtitle = f"""
 title: Table title and subtitle
-extends: editorial
+extends: clarity
 style:
   frame:
     width: {width}
@@ -367,7 +367,7 @@ def test_table_subtitle_wraps_without_disturbing_first_line_gap(
     )
     narrow_board = f"""
 title: Table subtitle wrap probe
-extends: editorial
+extends: clarity
 style:
   frame:
     width: 1500
@@ -461,7 +461,7 @@ charts:
 """
 
 
-@pytest.mark.parametrize("theme", ["editorial", "stark"])
+@pytest.mark.parametrize("theme", ["clarity", "stark"])
 def test_chrome_matches_per_tile_width_not_board_width(
     theme: str, local_project: Callable[..., FilesystemProject]
 ):

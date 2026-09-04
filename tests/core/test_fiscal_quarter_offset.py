@@ -103,7 +103,7 @@ class TestBucketAnchoring:
 
 
 def _step_band_board():
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     fam_style = compiled.charts.line
     base_mark = fam_style.marks.line
     new_mark = base_mark.model_copy(update={"halo_multiplier": 0.0, "curve": "step"})
@@ -205,7 +205,7 @@ class TestFiscalOffsetForcesOrdinalOnTemporalScale:
         calendar quarters, discarding the authored offset. A non-default
         offset must force the same ordinal/pre-bucketed path step-band uses,
         regardless of curve."""
-        rs, ctx = resolve_style_and_context(get_theme_style("editorial"))
+        rs, ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = TypeAdapter(Chart).validate_python(
             {
                 "id": "plain",
@@ -242,7 +242,7 @@ class TestFiscalOffsetForcesOrdinalOnTemporalScale:
         """Sanity check: at the default offset, temporal-scale behavior for
         line/area is unchanged — this would fail if the override fired
         unconditionally instead of gating on a non-default offset."""
-        rs, ctx = resolve_style_and_context(get_theme_style("editorial"))
+        rs, ctx = resolve_style_and_context(get_theme_style("clarity"))
         chart = TypeAdapter(Chart).validate_python(
             {
                 "id": "plain_default",
@@ -307,7 +307,7 @@ class TestCoarserLabelCadenceOverlapWidth:
         """label.time_unit: yearquarter over monthly data must look the same
         as encoding time_unit: yearquarter — same font size, same angle —
         because both display the same ~6 visible quarterly labels."""
-        rs, ctx = resolve_style_and_context(get_theme_style("editorial"))
+        rs, ctx = resolve_style_and_context(get_theme_style("clarity"))
         data = _monthly_data()
 
         encoding_chart = _area_chart({"time_unit": "yearquarter"})
@@ -329,7 +329,7 @@ class TestCoarserLabelCadenceOverlapWidth:
 # ── Authored label cadence also sets the default tick cadence ───────────────
 class TestTemporalPathUsesAuthoredLabelTicks:
     def test_tick_values_follow_fiscal_quarters(self) -> None:
-        rs, ctx = resolve_style_and_context(get_theme_style("editorial"))
+        rs, ctx = resolve_style_and_context(get_theme_style("clarity"))
         data = _monthly_data(n_months=17)  # starts 2024-03-01
         chart = _area_chart(
             {"labels": {"time_unit": "yearquarter"}, "fiscal_year_start_month": 3}
@@ -360,7 +360,7 @@ class TestTemporalPathUsesAuthoredLabelTicks:
 
         import vl_convert as vlc
 
-        rs, ctx = resolve_style_and_context(get_theme_style("editorial"))
+        rs, ctx = resolve_style_and_context(get_theme_style("clarity"))
         data = _monthly_data(n_months=17)
         chart = _area_chart(
             {"labels": {"time_unit": "yearquarter"}, "fiscal_year_start_month": 3}

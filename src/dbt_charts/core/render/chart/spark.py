@@ -11,10 +11,17 @@ Variants:
 - column:        single vertical bar, bottom-anchored, scaled to max, no track
 - columns:       mini vertical bar chart from an array of values
 
+`bar`, `column`, and `columns` grow from a column/array midline instead of
+their edge/baseline once a negative value is present — positives right/up,
+negatives left/down. `bar-normalize` keeps the plain edge/baseline clamp
+(negatives clamp to zero) regardless of sign; its background track is a
+fixed "% of max" ruler that a midline split would silently rescale.
+
 All functions return SVG strings that can be embedded directly in table cells.
 """
 
 import html
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -44,6 +51,56 @@ def _resolve_spark_color(call_site_color: str | None, spark_cfg: SparkStyle) -> 
             "caller must pass color=... explicitly"
         )
     return resolved
+
+
+@dataclass
+class SignedFraction:
+    """A clamped value's magnitude as a fraction of ``max_value``, plus sign.
+
+    ``fraction`` is always in ``[0, 1]`` (0 when ``max_value <= 0``).
+    ``is_negative`` is always False when the caller declines signed layout —
+    see ``_signed_fraction``.
+    """
+
+    fraction: float
+    is_negative: bool
+
+
+def _signed_fraction(value: float, max_value: float, signed: bool) -> SignedFraction:
+    """Clamp ``value`` against ``max_value``, honoring sign only when ``signed``.
+
+    The clamp/scale computation used by standalone and in-cell spark bars and
+    columns for fill geometry,
+    called once per value with the caller's actual ``has_negative``.
+    `render_spark_bar` and `render_spark_column` each keep a second, separate
+    inline ``max(0.0, min(value, max_value))`` for the threshold-bucket clamp
+    (thresholds are unsigned magnitude buckets, independent of the column's
+    midline layout) — that clamp must compare the raw value, not this
+    function's ``fraction * max_value`` round trip, which is not an
+    IEEE-754 identity and can undershoot an exact threshold value by a ULP.
+
+    ``signed=False`` reproduces the original all-positive clamp: negatives
+    clamp to zero. ``signed=True`` clamps symmetrically to
+    ``[-max_value, max_value]`` and reports which side of zero the value
+    landed on, so the caller can grow the mark from a midline instead of an
+    edge.
+
+    Non-finite ``value`` (NaN, ±Infinity) reports ``fraction=0.0,
+    is_negative=False`` — the same null rule as every other numeric-cell
+    consumer (``utils.coerce_numeric_cell``): no colour, no domain
+    contribution. Without this, ``min()``/``max()`` propagate NaN
+    asymmetrically and a null cell would paint as the most-negative value in
+    the column.
+    """
+    if not math.isfinite(value):
+        return SignedFraction(fraction=0.0, is_negative=False)
+    if not signed:
+        clamped = max(0.0, min(value, max_value))
+        fraction = (clamped / max_value) if max_value > 0 else 0.0
+        return SignedFraction(fraction=fraction, is_negative=False)
+    clamped = max(-max_value, min(value, max_value))
+    fraction = (abs(clamped) / max_value) if max_value > 0 else 0.0
+    return SignedFraction(fraction=fraction, is_negative=clamped < 0)
 
 
 @dataclass
@@ -239,9 +296,21 @@ def render_spark_columns(
     color: str | None = None,
     gap: float | None = None,
     *,
+    negative_color: bool = False,
     resolved_style: ResolvedChartDefaults,
 ) -> str:
-    """Render a multi-value vertical bar sparkline (`spark.type: columns`) as SVG."""
+    """Render a multi-value vertical bar sparkline (`spark.type: columns`) as SVG.
+
+    A cell's own values decide the layout — there is no cross-cell state to
+    consult, unlike `bar`/`column`'s table-column-wide midline decision.
+    Without a negative, bars keep the original min-rebased layout (baseline
+    at the array's own minimum). The moment a negative appears, min-rebasing
+    would erase it — ``(val - min) / range`` scales `-40 -30 -20 -10`
+    identically to `10 20 30 40` — so the layout switches to a zero
+    baseline: bars grow from the midline, up for positive values and down
+    for negative ones, scaled by magnitude against the array's largest
+    absolute value.
+    """
     spark_cfg = resolved_style.spark
     width = width if width is not None else _SPARK_WIDTH
     height = height if height is not None else _SPARK_HEIGHT
@@ -251,10 +320,6 @@ def render_spark_columns(
     if not values:
         return _render_empty_spark(width, height, spark_cfg)
 
-    min_val = min(values)
-    max_val = max(values)
-    value_range = max_val - min_val
-
     padding = spark_cfg.columns.padding
     plot_height = height - (2 * padding)
 
@@ -263,23 +328,60 @@ def render_spark_columns(
     bar_width = (width - total_gap) / num_bars
 
     escaped_color = html.escape(color or "")
+    escaped_negative = (
+        html.escape(resolved_style.tones.negative) if negative_color else None
+    )
     bars: list[str] = []
+    # Non-finite values (NaN, ±Infinity) follow the same null rule as every
+    # other numeric-cell consumer (utils.coerce_numeric_cell): no colour, no
+    # domain contribution. They still occupy their x-slot — the loops below
+    # skip drawing a rect for them rather than letting them corrupt max()/
+    # min() (NaN propagates through both asymmetrically and silently wrecks
+    # every other bar's scale).
+    finite_values = [v for v in values if math.isfinite(v)]
+    has_negative = any(v < 0 for v in finite_values)
 
-    for i, val in enumerate(values):
-        x = i * (bar_width + gap)
-        if value_range > 0:
-            bar_height = max(
-                spark_cfg.columns.min_bar_height,
-                ((val - min_val) / value_range) * plot_height,
+    if has_negative:
+        max_abs = max((abs(v) for v in finite_values), default=0.0)
+        half = plot_height / 2
+        mid_y = padding + half
+        for i, val in enumerate(values):
+            if not math.isfinite(val):
+                continue
+            x = i * (bar_width + gap)
+            signed = _signed_fraction(float(val), max_abs, True)
+            bar_height = max(spark_cfg.columns.min_bar_height, signed.fraction * half)
+            y = mid_y if signed.is_negative else mid_y - bar_height
+            fill = (
+                escaped_negative
+                if (signed.is_negative and escaped_negative)
+                else escaped_color
             )
-        else:
-            bar_height = plot_height / 2
+            bars.append(
+                f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" '
+                f'height="{bar_height:.1f}" fill="{fill}" rx="{spark_cfg.columns.border.radius}"/>'
+            )
+    else:
+        min_val = min(finite_values, default=0.0)
+        max_val = max(finite_values, default=0.0)
+        value_range = max_val - min_val
+        for i, val in enumerate(values):
+            if not math.isfinite(val):
+                continue
+            x = i * (bar_width + gap)
+            if value_range > 0:
+                bar_height = max(
+                    spark_cfg.columns.min_bar_height,
+                    ((val - min_val) / value_range) * plot_height,
+                )
+            else:
+                bar_height = plot_height / 2
 
-        y = height - padding - bar_height
-        bars.append(
-            f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" '
-            f'height="{bar_height:.1f}" fill="{escaped_color}" rx="{spark_cfg.columns.border.radius}"/>'
-        )
+            y = height - padding - bar_height
+            bars.append(
+                f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" '
+                f'height="{bar_height:.1f}" fill="{escaped_color}" rx="{spark_cfg.columns.border.radius}"/>'
+            )
 
     return _svg_wrapper("".join(bars), width, height)
 
@@ -311,6 +413,8 @@ def render_spark_bar(
     font: FontStyle | None = None,
     *,
     normalize: bool = False,
+    has_negative: bool = False,
+    negative_color: bool = False,
     resolved_style: ResolvedChartDefaults,
 ) -> str:
     """Render a single horizontal bar as SVG.
@@ -327,6 +431,15 @@ def render_spark_bar(
             `default_max` when None.
         normalize: True → `bar-normalize` (with background track);
             False → `bar` (no track, magnitude only).
+        has_negative: True when the table column this bar belongs to
+            contains at least one negative value. Switches the fill to grow
+            from the column midline (positive right, negative left) instead
+            of the left edge — a per-table-column decision, not per-value,
+            so every row in the column shares one anchor. False (the
+            default) reproduces the original left-edge, clamped-to-zero
+            layout.
+        negative_color: Opt-in — paint negative fills with the theme's
+            `tones.negative` token instead of the shared bar color.
         Other args: see field docs.
     """
     spark_cfg = resolved_style.spark
@@ -338,11 +451,36 @@ def render_spark_bar(
     background = spark_cfg.bar.background if background is None else background
     border_radius = bar_config.border.radius if border_radius is None else border_radius
 
-    clamped_value = max(0, min(value, max_value))
-    fill_pct = (clamped_value / max_value) if max_value > 0 else 0
-    fill_width = fill_pct * width
+    # Thresholds are magnitude buckets (e.g. 30/70/90) authored for a
+    # non-negative scale; keep their input clamped to [0, max_value]
+    # regardless of has_negative so a negative value's threshold color never
+    # changes out from under existing bar-normalize configs. A dedicated
+    # inline clamp, not `_signed_fraction(...).fraction * max_value` — that
+    # round trip is not an IEEE-754 identity and can undershoot an exact
+    # threshold value by a ULP (e.g. value=15, max_value=22).
+    clamped_value = max(0.0, min(float(value), max_value))
+    signed = _signed_fraction(float(value), max_value, has_negative)
 
-    if color:
+    if has_negative:
+        half_width = width / 2
+        fill_width = signed.fraction * half_width
+        fill_x = (
+            f"{(half_width - fill_width) if signed.is_negative else half_width:.1f}"
+        )
+    else:
+        # Literal "0", not f"{0.0:.1f}" — keeps the emitted SVG byte-identical
+        # to the pre-signed-layout renderer for every existing all-positive
+        # column (golden-stable).
+        fill_width = signed.fraction * width
+        fill_x = "0"
+
+    if signed.is_negative and negative_color:
+        # Wins over an authored `color` — the field description promises
+        # negatives paint with tones.negative "instead of the shared spark
+        # color," and render_spark_columns already gives negative_color this
+        # same precedence; the three in-cell surfaces must agree.
+        fill_color = resolved_style.tones.negative
+    elif color:
         fill_color = color
     elif thresholds:
         fill_color = _get_threshold_color(clamped_value, thresholds, spark_cfg)
@@ -359,7 +497,7 @@ def render_spark_bar(
             f'fill="{escaped_bg}" rx="{border_radius}"/>'
         )
     fill_rect = (
-        f'<rect x="0" y="0" width="{fill_width:.1f}" height="{height}" '
+        f'<rect x="{fill_x}" y="0" width="{fill_width:.1f}" height="{height}" '
         f'fill="{escaped_fill}" rx="{border_radius}"/>'
         if fill_width > 0
         else ""
@@ -411,6 +549,8 @@ def render_spark_column(
     thresholds: dict[int | float, str] | None = None,
     border_radius: float | None = None,
     *,
+    has_negative: bool = False,
+    negative_color: bool = False,
     resolved_style: ResolvedChartDefaults,
 ) -> str:
     """Render a single vertical bar (`spark.type: column`) as SVG.
@@ -422,6 +562,15 @@ def render_spark_column(
     data max the way `bar` does. Reuses `spark.bar.*` theme tokens (color,
     default_max, border) so authors don't need to theme the two marks
     separately.
+
+    Args:
+        has_negative: True when the table column this bar belongs to
+            contains at least one negative value. Switches the fill to grow
+            from the vertical midline (positive up, negative down) instead
+            of the bottom edge. False (the default) reproduces the original
+            bottom-anchored, clamped-to-zero layout.
+        negative_color: Opt-in — paint negative fills with the theme's
+            `tones.negative` token instead of the shared bar color.
     """
     spark_cfg = resolved_style.spark
     assert spark_cfg.bar.color is not None
@@ -432,11 +581,24 @@ def render_spark_column(
     height = column_config.height if height is None else height
     border_radius = bar_config.border.radius if border_radius is None else border_radius
 
-    clamped_value = max(0, min(value, max_value))
-    fill_pct = (clamped_value / max_value) if max_value > 0 else 0
-    fill_height = fill_pct * height
+    # See render_spark_bar: thresholds stay on the original non-negative
+    # clamp, computed directly rather than through _signed_fraction's
+    # fraction*max_value round trip.
+    clamped_value = max(0.0, min(float(value), max_value))
+    signed = _signed_fraction(float(value), max_value, has_negative)
 
-    if color:
+    if has_negative:
+        half_height = height / 2
+        fill_height = signed.fraction * half_height
+        fill_y = half_height if signed.is_negative else (half_height - fill_height)
+    else:
+        fill_height = signed.fraction * height
+        fill_y = height - fill_height
+
+    if signed.is_negative and negative_color:
+        # See render_spark_bar: negative_color wins over an authored color.
+        fill_color = resolved_style.tones.negative
+    elif color:
         fill_color = color
     elif thresholds:
         fill_color = _get_threshold_color(clamped_value, thresholds, spark_cfg)
@@ -446,7 +608,7 @@ def render_spark_column(
     escaped_fill = html.escape(fill_color)
 
     fill_rect = (
-        f'<rect x="0" y="{(height - fill_height):.1f}" '
+        f'<rect x="0" y="{fill_y:.1f}" '
         f'width="{width}" height="{fill_height:.1f}" '
         f'fill="{escaped_fill}" rx="{border_radius}"/>'
         if fill_height > 0
@@ -464,6 +626,7 @@ def render_spark(
     color: str | None = None,
     *,
     font: FontStyle | None = None,
+    has_negative: bool = False,
     resolved_style: ResolvedChartDefaults,
     **options: Any,
 ) -> str:
@@ -472,6 +635,11 @@ def render_spark(
     Args:
         spark_type: One of "line", "area", "bar", "bar-normalize", "column",
             "columns".
+        has_negative: For "bar"/"bar-normalize"/"column" only — True when the
+            table column this mark belongs to contains a negative value
+            somewhere, switching the mark to midline-anchored layout. Not
+            consulted for "columns", which decides its own layout from its
+            own value array.
     """
     spark_cfg = resolved_style.spark
     if spark_type in ("bar", "bar-normalize"):
@@ -517,7 +685,17 @@ def render_spark(
             )
         else:  # spark_type == "columns"
             return render_spark_columns(
-                values, width=w, height=h, color=c, resolved_style=resolved_style
+                values,
+                width=w,
+                height=h,
+                color=c,
+                # options is **kwargs from a direct render_spark() call; same
+                # pattern as last_visible/value_visible above, for callers
+                # (tests, non-table sites) that omit the key entirely.
+                negative_color=options.get(
+                    "negative_color", False
+                ),  # type-state: silent_fallback — see comment above
+                resolved_style=resolved_style,
             )
 
     if spark_type in ("bar", "bar-normalize", "column"):
@@ -547,6 +725,10 @@ def render_spark(
                 color=c if color else None,
                 thresholds=options.get("thresholds"),
                 border_radius=options.get("border_radius"),
+                has_negative=has_negative,
+                negative_color=options.get(
+                    "negative_color", False
+                ),  # type-state: silent_fallback — see columns branch above
                 resolved_style=resolved_style,
             )
 
@@ -563,6 +745,10 @@ def render_spark(
             value_suffix=options.get("value_suffix"),
             font=font,
             normalize=(spark_type == "bar-normalize"),
+            has_negative=has_negative,
+            negative_color=options.get(
+                "negative_color", False
+            ),  # type-state: silent_fallback — see columns branch above
             resolved_style=resolved_style,
         )
 

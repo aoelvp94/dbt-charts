@@ -1,7 +1,7 @@
-"""Pure D3-format number formatting, with Dataface's SI notation extension.
+"""Pure D3-format number formatting, with dbt charts' SI notation extension.
 
 Delegates spec parsing/formatting to ``libs/d3-format/`` and post-processes
-SI (``s``-type) specs into Dataface's ``analytic``/``narrative`` notations
+SI (``s``-type) specs into dbt charts' ``analytic``/``narrative`` notations
 when the caller explicitly passes ``notation``. Callers that want house
 notation (predefined format members) pass ``notation="analytic"`` or
 ``notation="narrative"``; callers on the native-d3 path (inline specs,
@@ -200,7 +200,7 @@ def portable_strftime(d: date | datetime, fmt: str) -> str:
     return d.strftime(_apply_padding_modifiers(d, fmt))
 
 
-# d3 SI prefix → Dataface analytic suffix mapping
+# d3 SI prefix → dbt charts analytic suffix mapping
 _D3_TO_ANALYTIC: dict[str, str] = {
     "k": " K",
     "M": " M",
@@ -212,7 +212,7 @@ _D3_TO_ANALYTIC: dict[str, str] = {
     "Y": " Y",
 }
 
-# d3 SI prefix → Dataface narrative suffix mapping. No accepted narrative
+# d3 SI prefix → dbt charts narrative suffix mapping. No accepted narrative
 # form exists above trillions (English financial writing stops at "trn"), so
 # peta/exa/zetta/yotta borrow the analytic suffix rather than leave d3's
 # bare, unmapped letter ("1P") to reach a shipped artifact — read from
@@ -239,7 +239,7 @@ def format_d3(
     """Format a value using D3-style format specification.
 
     Delegates to ``libs/d3-format/`` for spec parsing and formatting.
-    Applies Dataface-specific analytic/narrative notation post-processing for
+    Applies dbt charts-specific analytic/narrative notation post-processing for
     SI (``s``-type) specs after the lib produces d3-standard output.
 
     Args:
@@ -260,7 +260,7 @@ def format_d3(
 
     formatted = _d3_format(format_spec)(float(value))
 
-    # Dataface-specific SI notation post-processing — only when the caller
+    # dbt charts-specific SI notation post-processing — only when the caller
     # explicitly requests a notation register. Callers on the predefined-format
     # path pass notation="analytic" or "narrative"; callers on the native-d3
     # path (inline specs, user aliases) omit it so no post-process runs.
@@ -288,7 +288,7 @@ def is_d3_si_spec(spec: str) -> bool:
     predicate a caller outside this module reaches for, and its whole job
     is to answer that question without parsing.
 
-    A predefined format member name (``percent_number``, ``compact``, …) or a
+    A predefined format member name (``percent_number``, ``number``, …) or a
     strftime directive (``%b %Y``) shares the ``format:`` authoring surface
     with real d3-format specs -- ``validate.formats._validate_spec`` whitelists
     both explicitly -- but neither is d3 grammar, and ``_is_si_spec`` calls

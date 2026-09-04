@@ -56,6 +56,18 @@ def focus_on_chart(board: Board, chart_id: str) -> Board:
       a chart not placed in the layout keeps its preferred width
     - All sources and queries unchanged (they're lazy-loaded anyway)
 
+    WYSIWYG covers geometry, not color. Narrowing the layout happens before
+    board-wide category colors are planned, so a focused chart falls under the
+    two-chart threshold and colors itself locally — it can differ from the same
+    chart in the dashboard. Planning over the unfocused layout would mean
+    executing the sibling queries focusing exists to skip.
+
+    PINNED values are the exception, and the board's pins ride along for it:
+    an authored field bypasses the threshold, and a pin addresses a slot, so
+    the pinned value lands on the same swatch whether or not its siblings were
+    executed. Wiping the pins here would make the one case that costs nothing
+    diverge too.
+
     This is called automatically when `chart_focus` is set in the YAML.
     It can also be called directly for programmatic chart focusing.
 
@@ -103,13 +115,39 @@ def focus_on_chart(board: Board, chart_id: str) -> Board:
     )
     simple_layout = Layout(type=LayoutType.ROWS, items=[chart_item])
 
-    # Create new board with focused content
-    # No title - this is a focused view, not a board
+    # Create new board with focused content.
+    # No title - this is a focused view, not a board. The focused container is
+    # the pinned slot plus margins — an exact width, so a slot wider than
+    # max_width is never clamped down and a slot narrower than the board's own
+    # width never inherits a full-board canvas. An unplaced chart has no slot
+    # to pin, so its board drops any exact width and hugs the chart's
+    # preferred width instead. The style cascade re-runs on the edited patch.
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+    from dbt_charts.core.compile.normalize.dispatch import compile_board_resolved_style
+
+    authored = board.authored_style
+    patch_data = authored.model_dump(exclude_unset=True) if authored is not None else {}
+    frame_data = dict(patch_data["frame"]) if "frame" in patch_data else {}
+    if slot_width is None:
+        frame_data.pop("width", None)
+    else:
+        frame_data["width"] = slot_width + 2 * float(board.resolved_style.frame.margin)
+    if frame_data:
+        patch_data["frame"] = frame_data
+    else:
+        patch_data.pop("frame", None)
+    authored = StylePatch.model_validate(patch_data) if patch_data else None
+    resolved_style, chart_style_context = compile_board_resolved_style(
+        authored, None, None, theme_name=board.theme
+    )
     focused_board = board.model_copy(
         update={
             "variables": focused_variables,
             "layout": simple_layout,
             "title": "",
+            "authored_style": authored,
+            "resolved_style": resolved_style,
+            "chart_style_context": chart_style_context,
         }
     )
 

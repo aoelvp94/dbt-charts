@@ -19,6 +19,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style_and_context,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.render.chart.emitters._cartesian import companion_color_for_fill
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
@@ -264,16 +265,12 @@ def resolve_area_chart(make_chart, seed_with_area_endpoint_labels):
 
 
 def _three_series_stacked_data() -> list[dict[str, Any]]:
-    """Three-series, two-x dataset where Vega-Lite's own default stack order
-    (descending string sort of the raw series-name field — confirmed by
-    compiling this exact shape with vl-convert and inspecting the emitted
-    ``stack`` transform's ``sort``) differs from a by-value convention, so a
-    test can tell the two apart.
+    """Three-series data whose global-total order differs from alphabetical.
 
     Trailing x = 2024-02-01: Alpha=10, Beta=50, Gamma=30 -> total 90.
-    Native order (descending string sort of the series field): Gamma, Beta, Alpha.
-      Gamma at baseline: 0..30   -> midpoint 15
-      Beta:              30..80  -> midpoint 55
+    Global totals: Beta=70, Gamma=45, Alpha=15.
+      Beta at baseline: 0..50   -> midpoint 25
+      Gamma:            50..80  -> midpoint 65
       Alpha at top:      80..90  -> midpoint 85
     """
     return [
@@ -300,9 +297,7 @@ def _area_label_rows(spec: dict[str, Any]) -> list[dict[str, Any]]:
 def test_stacked_area_anchors_are_cumulative_midpoints_not_raw_values(
     resolve_area_chart,
 ):
-    """Stacked area (stack='zero'): labels sit at cumulative segment midpoints,
-    matching Vega-Lite's own default stack order — not the raw per-series
-    value at the trailing x.
+    """Stacked area labels follow the emitted global-total stack order.
 
     Regression for stacked-area-endpoint-labels-place-at-raw-y-not-band-midpoints:
     before the fix, labels anchored at the raw values {Alpha: 10, Beta: 50,
@@ -313,19 +308,40 @@ def test_stacked_area_anchors_are_cumulative_midpoints_not_raw_values(
     spec = _render_area(rc, data)
     rows = _area_label_rows(spec)
     by_series = {r["series"]: r["__y"] for r in rows}
-    assert by_series == {"Gamma": 15.0, "Beta": 55.0, "Alpha": 85.0}
+    assert by_series == {"Beta": 25.0, "Gamma": 65.0, "Alpha": 85.0}
+
+    main_scale = spec["hconcat"][0]["encoding"]["color"]["scale"]
+    label_scale = spec["hconcat"][1]["encoding"]["color"]["scale"]
+    fill_by_series = dict(zip(main_scale["domain"], main_scale["range"], strict=True))
+    label_fill_by_series = dict(
+        zip(label_scale["domain"], label_scale["range"], strict=True)
+    )
+    assert label_fill_by_series == {
+        series: companion_color_for_fill(
+            fill,
+            list(rc.palette),
+            rc.style.series_label.dark_companion_palette,
+        )
+        for series, fill in fill_by_series.items()
+    }
 
 
 def _series_missing_from_final_column_data() -> list[dict[str, Any]]:
-    """Three series where Beta has no row at the trailing x.
+    """Three series where Beta has no row at the trailing x, but has a real
+    row at Jan — it anchors on its own last real segment there, not a
+    zero-height seam at the trailing column.
 
-    Area stacks in Vega-Lite's native order (descending string sort), so
-    Gamma sits at the baseline and Beta lands between Gamma and Alpha.
+    Area stacks by descending chart-global total:
+    series_order = [Gamma, Beta, Alpha].
 
-    Trailing x = 2024-02-01: Gamma=300, Alpha=100, Beta absent.
-      Gamma at baseline: 0..300   → midpoint 150
-      Beta zero-height:  300..300 → seam at 300
-      Alpha on top:      300..400 → midpoint 350
+    Beta anchors at Jan (its own last real value), where the stack is
+    {Alpha: 50, Beta: 200, Gamma: 150} in series_order [Gamma, Beta, Alpha]:
+      Gamma at baseline: 0..150    → midpoint 75 (Gamma's own anchor is
+                                      still Feb, below — this is only Jan's
+                                      column shape for computing Beta's cum)
+      Beta:               150..350 → midpoint 250
+    Gamma and Alpha still anchor at the trailing x (Feb, where both have
+    real values): Gamma stays at 150, Alpha at 350.
     """
     return [
         {"date": "2024-01-01", "value": 50, "series": "Alpha"},
@@ -345,7 +361,7 @@ def test_stacked_area_labels_name_series_absent_from_final_column(
     spec = _render_area(rc, data)
     rows = _area_label_rows(spec)
     by_series = {r["series"]: r["__y"] for r in rows}
-    assert by_series == {"Gamma": 150.0, "Beta": 300.0, "Alpha": 350.0}
+    assert by_series == {"Gamma": 150.0, "Beta": 250.0, "Alpha": 350.0}
 
 
 def test_normalize_stacked_area_anchors_on_unit_scale(resolve_area_chart):
@@ -355,8 +371,8 @@ def test_normalize_stacked_area_anchors_on_unit_scale(resolve_area_chart):
     spec = _render_area(rc, data)
     rows = _area_label_rows(spec)
     by_series = {r["series"]: r["__y"] for r in rows}
-    assert by_series["Gamma"] == pytest.approx(15.0 / 90)
-    assert by_series["Beta"] == pytest.approx(55.0 / 90)
+    assert by_series["Beta"] == pytest.approx(25.0 / 90)
+    assert by_series["Gamma"] == pytest.approx(65.0 / 90)
     assert by_series["Alpha"] == pytest.approx(85.0 / 90)
 
 
@@ -419,8 +435,8 @@ def test_area_center_stack_anchors_at_offset_midpoints(resolve_area_chart):
     Final x (2024-02-01) is ALSO the max-column-total x in this fixture
     (both 90), so offset = (90-90)/2 = 0 here — center-stack anchors land
     exactly on the plain cumulative midpoints, same as zero-stack.
-      Gamma: mid 15, offset: 15 + 0 = 15
-      Beta:  mid 55, offset: 55 + 0 = 55
+      Beta:  mid 25, offset: 25 + 0 = 25
+      Gamma: mid 65, offset: 65 + 0 = 65
       Alpha: mid 85, offset: 85 + 0 = 85
     """
     data = _three_series_stacked_data()
@@ -429,7 +445,7 @@ def test_area_center_stack_anchors_at_offset_midpoints(resolve_area_chart):
     assert "hconcat" in spec, "Center-stack area must wrap in an endpoint-label pane"
     rows = _area_label_rows(spec)
     by_series = {r["series"]: r["__y"] for r in rows}
-    assert by_series == {"Gamma": 15.0, "Beta": 55.0, "Alpha": 85.0}
+    assert by_series == {"Beta": 25.0, "Gamma": 65.0, "Alpha": 85.0}
 
 
 def test_center_stack_pins_pane0_y_scale_domain_to_stacked_extent(

@@ -5,7 +5,7 @@ feature fixes:
 - endpoint labels never fire for multi-y bar (currently broken)
 - legend title is hardcoded 'Series' in _wide.py (currently a bug)
 - multi-y line ignores style.legend.visible: false (currently a bug)
-- multi-y line/bar silently drops authored color: / layers: (should error)
+- multi-y line/bar silently drops a gradient color: / layers: (should error)
 """
 
 from __future__ import annotations
@@ -208,7 +208,7 @@ class TestMultiYAxisTitle:
         assert isinstance(rc, ResolvedBarChart)
         artifact = render_resolved_chart(rc, data, _BOARD_STYLE, width=400)
         spec = artifact.payload
-        expected = wide_measures_title(("rev", "cost"), rc.style.axis_y.title.font)
+        expected = wide_measures_title(("rev", "cost"))
         titles = _find_field_titles(spec, "__dbt_charts_wide_value__")
         assert titles == [expected], titles
 
@@ -226,7 +226,7 @@ class TestMultiYAxisTitle:
         assert isinstance(rc, ResolvedAreaChart)
         artifact = render_resolved_chart(rc, data, _BOARD_STYLE, width=400)
         spec = artifact.payload
-        expected = wide_measures_title(("rev", "cost"), rc.style.axis_y.title.font)
+        expected = wide_measures_title(("rev", "cost"))
         titles = _find_field_titles(spec, "__dbt_charts_wide_value__")
         assert titles == [expected], titles
 
@@ -244,7 +244,7 @@ class TestMultiYAxisTitle:
         assert isinstance(rc, ResolvedLineChart)
         artifact = render_resolved_chart(rc, data, _BOARD_STYLE, width=400)
         spec = artifact.payload
-        expected = wide_measures_title(("rev", "cost"), rc.style.axis_y.title.font)
+        expected = wide_measures_title(("rev", "cost"))
         titles = _find_field_titles(spec, "__dbt_charts_wide_value__")
         assert titles == [expected], titles
 
@@ -312,20 +312,50 @@ class TestMultiYFoldRowOrder:
         assert folds == [["cost", "rev"]], folds
 
 
+@pytest.mark.parametrize("orientation", ["vertical", "horizontal"])
+def test_multi_y_stacked_bar_baseline_measure_receives_first_palette_slot(
+    make_chart: Any, orientation: str
+) -> None:
+    data = _multi_measure_bar_data()
+    chart = make_chart(
+        "bar",
+        x="month",
+        y=["rev", "cost"],
+        stack="zero",
+        style={"orientation": orientation},
+    )
+    rc = resolve(chart, data, chart_style_context=_BOARD_CTX)
+    assert isinstance(rc, ResolvedBarChart)
+    spec = render_resolved_chart(rc, data, _BOARD_STYLE, width=400).payload
+    pane = spec["hconcat"][0] if "hconcat" in spec else spec.get("vconcat", [spec])[-1]
+    color = pane["encoding"]["color"]
+    color_by_measure = dict(
+        zip(color["scale"]["domain"], color["scale"]["range"], strict=True)
+    )
+
+    assert color_by_measure["rev"] == rc.palette[0]
+    assert color_by_measure["cost"] == rc.palette[1]
+
+
 # ---------------------------------------------------------------------------
 # Bar: multi-y with color: or layers: raises at resolve time
 # ---------------------------------------------------------------------------
 
 
 class TestMultiYBarValidation:
-    def test_multi_y_bar_with_authored_color_raises(self, make_chart):
-        """y: [a, b] + color: raises CompilationError at resolve time.
-
-        Currently this silently ignores the authored color: field.
-        """
+    def test_multi_y_bar_with_gradient_color_raises(self, make_chart):
+        """y: [a, b] + a gradient color: raises at resolve time — a series
+        column crosses the measures into composite series, a gradient names
+        no series (test_wide_measures_with_dimension.py covers the column case)."""
         from dbt_charts.core.compile.errors import CompilationError
 
-        chart = make_chart("bar", x="month", y=["rev", "cost"], color="category")
+        chart = make_chart(
+            "bar",
+            x="month",
+            y=["rev", "cost"],
+            color="rev",
+            style={"color": {"gradient": {"palette": ["#ffffff", "#0000ff"]}}},
+        )
         data = [{"month": "Jan", "rev": 100, "cost": 40, "category": "A"}]
         ctx = resolve_chart_style_context(get_theme_style("stark"))
         with pytest.raises(CompilationError):
@@ -405,11 +435,17 @@ class TestMultiYLineLegend:
             "Multi-y line is not respecting style.legend.visible: false."
         )
 
-    def test_multi_y_line_with_authored_color_raises(self, make_chart):
-        """y: [a, b] + color: raises for line (currently silently ignored)."""
+    def test_multi_y_line_with_gradient_color_raises(self, make_chart):
+        """y: [a, b] + a gradient color: raises for line, same as bar."""
         from dbt_charts.core.compile.errors import CompilationError
 
-        chart = make_chart("line", x="date", y=["rev", "cost"], color="category")
+        chart = make_chart(
+            "line",
+            x="date",
+            y=["rev", "cost"],
+            color="rev",
+            style={"color": {"gradient": {"palette": ["#ffffff", "#0000ff"]}}},
+        )
         data = [{"date": "2024-01-01", "rev": 100, "cost": 40, "category": "A"}]
         ctx = resolve_chart_style_context(get_theme_style("stark"))
         with pytest.raises(CompilationError):

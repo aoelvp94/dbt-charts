@@ -526,6 +526,32 @@ rows: []
         assert "type" in error.hint
         assert "See: dct docs queries" in error.hint
 
+    def test_inline_chart_query_unknown_field_lists_allowed_keys(self):
+        yaml_content = """title: Test
+charts:
+  c1:
+    type: bar
+    query: {sq: "select 1"}
+    x: a
+    y: b
+rows:
+  - c1
+"""
+        result = compile(yaml_content)
+
+        assert not result.success
+        assert len(result.errors) == 1
+        error = result.errors[0]
+
+        assert error.message.startswith("Unknown field 'sq' at charts.c1.bar.query")
+        assert "QueryRef" not in error.message
+        assert "tagged-union" not in error.message
+        assert error.hint is not None
+        assert "QueryRef" not in error.hint
+        assert "tagged-union" not in error.hint
+        assert "Allowed keys:" in error.hint
+        assert "notes" in error.hint
+
     def test_chart_style_unknown_field_lists_keys_at_nested_style_level(self):
         yaml_content = """title: Test
 queries:
@@ -571,7 +597,7 @@ charts:
     query: q1
     x: x
     y: x
-    format: currency_compact
+    format: currency
 rows:
   - c1
 """
@@ -629,7 +655,7 @@ rows:
                     "query": "q1",
                     "x": "x",
                     "y": "x",
-                    "format": "currency_compact",
+                    "format": "currency",
                 },
             },
             "rows": [chart_id],
@@ -645,27 +671,26 @@ rows:
     @pytest.mark.parametrize(
         "axis_x_style",
         [
-            pytest.param({"format": "%b"}, id="bare-format"),
+            pytest.param({"formatter": "%b"}, id="bare-formatter"),
             pytest.param({"labels": {"formatter": "%b"}}, id="labels-formatter"),
         ],
     )
     def test_axis_x_format_hint_points_at_axis_x_labels_format(self, axis_x_style):
         """An extra format-ish field anywhere under ``style.axis_x`` — bare
-        ``format:`` (skipping the ``labels:`` nesting) or ``formatter:`` at
-        the right nesting but the wrong leaf name — is unsupported. The hint
-        must name the field an x-axis author would actually reach for, not
-        the y-axis one, regardless of how deep the offending field sits
-        (``_chart_type_from_error_path``'s reverse-scan finds the chart tag
-        at any depth; the axis-name lookup for this hint must do the same)."""
+        (skipping the ``labels:`` nesting) or at the right nesting but the
+        wrong leaf name — is unsupported. The hint must name the field an
+        x-axis author would actually reach for, not the y-axis one, regardless
+        of how deep the offending field sits (``_chart_type_from_error_path``'s
+        reverse-scan finds the chart tag at any depth; the axis-name lookup for
+        this hint must do the same).
+
+        ``formatter:`` rather than ``format:`` because ``format:`` under an
+        axis is a retired spelling that migrates itself away before Pydantic
+        ever sees it — the hint only has to cover spellings no migration
+        recognizes.
+        """
         import yaml
 
-        # scale.continuous.zero is a current-schema-only field (added in the
-        # v0.4.0 migration); pairing it with the axis's format-ish field is
-        # what makes the 0.3.1-spelling migration recognizer fail to match
-        # this chart's style, so the offending field reaches Pydantic as a
-        # genuine extra-field error instead of being silently migrated away
-        # first — the only state that exercises this hint at all.
-        axis_x_style = {**axis_x_style, "scale": {"continuous": {"zero": False}}}
         body = {
             "title": "Test",
             "queries": {
@@ -710,17 +735,14 @@ charts:
     y: v
     style:
       axis_y:
-        format: ",.0f"
-        scale:
-          continuous:
-            zero: false
+        formatter: ",.0f"
 rows:
   - c1
 """
         result = compile(yaml_content)
 
         assert not result.success
-        err = next(e for e in result.errors if e.path.endswith("format"))
+        err = next(e for e in result.errors if e.path.endswith("formatter"))
         assert err.hint is not None
         assert "style.axis_y.labels.format" in err.hint
 
@@ -753,19 +775,14 @@ rows:
                         "query": "q1",
                         "x": "d",
                         "y": "v",
-                        "style": {
-                            axis: {
-                                "format": value,
-                                "scale": {"continuous": {"zero": False}},
-                            }
-                        },
+                        "style": {axis: {"formatter": value}},
                     }
                 },
                 "rows": ["c1"],
             }
             result = compile(yaml.dump(body, sort_keys=False))
             assert not result.success
-            err = next(e for e in result.errors if e.path.endswith("format"))
+            err = next(e for e in result.errors if e.path.endswith("formatter"))
             assert err.hint is not None
             return err.hint
 
@@ -816,7 +833,7 @@ charts:
   t1:
     type: table
     query: q1
-    format: currency_compact
+    format: currency
 rows:
   - t1
 """
@@ -874,6 +891,254 @@ rows:
         err = next(e for e in result.errors if e.hint and "height" in e.hint.lower())
         assert "chart.height must be set at the chart root" in err.hint
         assert "not under style:" in err.hint
+
+    def test_heatmap_board_level_axis_quantitative_gets_the_hint_when_migration_cannot_finish(
+        self,
+    ):
+        """The board-level position surfaces as an error, and needs the hint too.
+
+        A board carrying BOTH the theme-level key (which has a Deletion) and the
+        chart-local one (which has none) recognizes as the older grammar, applies
+        deletions, still fails the current-schema check, and reports the ORIGINAL
+        mapping -- so the theme-level key reaches Pydantic after all and this
+        branch fires. Any other current-schema violation elsewhere in the board
+        reaches it the same way. Same shape as the font/border precedent in
+        test_card_style_hint_font_border.py.
+        """
+        yaml_content = """title: Test
+queries:
+  q1:
+    sql: SELECT 1 AS x, 'A' AS y
+    source: test
+style:
+  charts:
+    heatmap:
+      axis_quantitative:
+        scale:
+          continuous:
+            zero: false
+charts:
+  c1:
+    type: heatmap
+    query: q1
+    x: x
+    y: y
+    style:
+      axis_quantitative:
+        scale:
+          continuous:
+            zero: false
+rows:
+  - c1
+"""
+        result = compile(yaml_content)
+
+        assert not result.success
+        board_level = [
+            e
+            for e in result.errors
+            if (e.fields or {}).get("field_path", "").startswith("style.charts.")
+        ]
+        assert board_level, [e.message for e in result.errors]
+        hint = board_level[0].hint or ""
+        # The distinctive clause, not just "axis_band"/"heatmap": the generic
+        # unknown-field fallback also names heatmap in its path and lists
+        # axis_band among the allowed keys, so asserting on those alone passes
+        # with this branch deleted.
+        assert "no quantitative axis to style" in hint, hint
+        assert "axis_band" in hint
+
+    def test_heatmap_chart_local_axis_quantitative_names_axis_band(self):
+        """Heatmap's axes are both nominal -- axis_quantitative has nothing to
+        style. The chart-local position has no Deletion available (the tail
+        is still live on the other five cartesian families), so it must fail
+        loud with a hint naming the real alternative, axis_band."""
+        yaml_content = """title: Test
+queries:
+  q1:
+    sql: SELECT 1 AS x, 'A' AS y
+    source: test
+charts:
+  c1:
+    type: heatmap
+    query: q1
+    x: x
+    y: y
+    style:
+      axis_quantitative:
+        scale:
+          continuous:
+            zero: false
+rows:
+  - c1
+"""
+        result = compile(yaml_content)
+
+        assert not result.success
+        err = next(e for e in result.errors if e.path.endswith("axis_quantitative"))
+        assert err.hint is not None
+        assert "not supported on `type: heatmap`" in err.hint
+        assert "axis_band" in err.hint
+
+    def test_heatmap_theme_level_axis_quantitative_migrates_silently(self):
+        """Same field, board-level slot -- but this position DOES have a
+        Deletion (see compile/migrations/versions/current.py), so it never
+        reaches the parser as an unknown field. A Deletion strips the key
+        before Pydantic ever sees it, so this compiles clean via the same
+        in-memory migration `dct migrate` would apply to the file -- there is
+        no way to tell a "just authored" board from a "written under 0.5.0"
+        one, so both take the same path. Migration coverage (source/target
+        schema, sibling families untouched) lives in
+        test_heatmap_axis_quantitative_migration.py; this test only pins
+        that the theme-level position is NOT the parse-error one."""
+        yaml_content = """title: Test
+queries:
+  q1:
+    sql: SELECT 1 AS x, 'A' AS y
+    source: test
+charts:
+  c1:
+    type: heatmap
+    query: q1
+    x: x
+    y: y
+style:
+  charts:
+    heatmap:
+      axis_quantitative:
+        scale:
+          continuous:
+            zero: false
+rows:
+  - c1
+"""
+        with pytest.warns(match="migrated this YAML in memory"):
+            result = compile(yaml_content)
+
+        assert result.success, result.errors
+
+    def test_bar_axis_quantitative_still_validates(self):
+        """The removal is heatmap-only -- a family with a real quantitative
+        axis keeps accepting the field."""
+        yaml_content = """title: Test
+queries:
+  q1:
+    sql: SELECT 1 AS x, 2.0 AS y
+    source: test
+charts:
+  c1:
+    type: bar
+    query: q1
+    x: x
+    y: y
+    style:
+      axis_quantitative:
+        scale:
+          continuous:
+            zero: false
+rows:
+  - c1
+"""
+        result = compile(yaml_content)
+        assert result.success, result.errors
+
+
+class TestDescriptionRenamedHintNamesTheRealParent:
+    """``description:`` -> ``notes:`` hint must name the key's actual parent,
+    not a union-tag-laden schema path (regression: the hint used to reuse
+    the same ``parent_path`` as the generic diagnostic, which legitimately
+    carries Pydantic discriminator tags like ``@inline``/``bar``/``sql`` --
+    see ``test_query_unknown_field_lists_allowed_keys`` above, which pins
+    that tag-carrying path for the *generic* message. The rename hint must
+    not repeat that path: 'Rename the key at queries.q.sql' names a
+    schema-internal position nobody authored, not the actual `queries.q`
+    mapping the key lives in.
+
+    Every fixture here authors ``description:`` inside a sub-board nested
+    under ``rows:``. That is deliberate: at a top-level position the rename
+    is migrated transparently by ``NOTES_RENAMES`` and no error is raised at
+    all (``test_description_notes_migration.py``), so the sub-board's own
+    ``charts:``/``queries:``/``variables:`` maps -- which the resolved move
+    set does not reach -- are the positions where this hint still fires.
+    """
+
+    def test_chart_level_description_hint_names_the_chart_not_the_union_tags(self):
+        yaml_content = """title: Test
+queries:
+  q1: {sql: "SELECT 1 AS a, 2 AS b"}
+rows:
+  - charts:
+      c1: {type: bar, query: q1, x: a, y: b, description: "x"}
+    rows: [c1]
+"""
+        result = compile(yaml_content)
+
+        assert not result.success
+        error = next(e for e in result.errors if e.hint and "notes:" in e.hint)
+        assert "Rename the key at rows.0.charts.c1 to `notes:`" in error.hint
+
+    def test_query_level_description_hint_names_the_query_not_the_type_tag(self):
+        yaml_content = """title: Test
+rows:
+  - queries:
+      q1: {sql: "SELECT 1 AS a, 2 AS b", description: "x"}
+    charts:
+      c1: {type: bar, query: q1, x: a, y: b}
+    rows: [c1]
+"""
+        result = compile(yaml_content)
+
+        assert not result.success
+        error = next(e for e in result.errors if e.hint and "notes:" in e.hint)
+        assert "Rename the key at rows.0.queries.q1 to `notes:`" in error.hint
+
+    def test_inline_chart_query_description_hint_names_the_chart_query(self):
+        yaml_content = """title: Test
+rows:
+  - charts:
+      c1: {type: bar, query: {sql: "SELECT 1 AS a, 2 AS b", description: "x"}, x: a, y: b}
+    rows: [c1]
+"""
+        result = compile(yaml_content)
+
+        assert not result.success
+        error = next(e for e in result.errors if e.hint and "notes:" in e.hint)
+        assert "Rename the key at rows.0.charts.c1.query to `notes:`" in error.hint
+
+    def test_variable_level_description_hint_names_the_variable_not_the_inline_tag(
+        self,
+    ):
+        yaml_content = """title: Test
+rows:
+  - variables:
+      v1: {input: text, description: "x"}
+    text: hi
+"""
+        result = compile(yaml_content)
+
+        assert not result.success
+        error = next(e for e in result.errors if e.hint and "notes:" in e.hint)
+        assert "Rename the key at rows.0.variables.v1 to `notes:`" in error.hint
+
+    def test_callout_chart_has_no_notes_field_so_hint_falls_through(self):
+        """CalloutChart has no ``notes`` field, so ``description:`` on
+        ``type: callout`` correctly gets the generic diagnostic instead of a
+        replacement that doesn't exist there."""
+        yaml_content = """title: Test
+rows: [c1]
+charts:
+  c1:
+    type: callout
+    description: "x"
+    message: "hello"
+"""
+        result = compile(yaml_content)
+
+        assert not result.success
+        error = result.errors[0]
+        assert error.hint is not None
+        assert "notes:" not in error.hint
+        assert "Allowed keys:" in error.hint
 
 
 class TestNormalizationExtraForbiddenErrors:
@@ -1051,7 +1316,7 @@ class TestIntegration:
     def test_full_error_message_format(self):
         """Test complete error message has all components."""
         yaml_content = """title: Test Dashboard
-description: Testing error messages
+notes: Testing error messages
 
 queries:
   sales_query:
@@ -1424,3 +1689,104 @@ charts:
         assert "not a scalar" not in hint, (
             f"Hint must not say 'not a scalar' for list input, got: {hint!r}"
         )
+
+
+class TestSchemaVersionUpgradeHint:
+    """A newer _schema_version than this build knows about should append an
+    upgrade hint (never overwrite an existing one, never crash)."""
+
+    @staticmethod
+    def _errors(yaml_content: str):
+        import yaml
+        from pydantic import ValidationError as PydanticValidationError
+
+        from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+        from dbt_charts.core.compile.parse.yaml_error_formatter import (
+            format_validation_errors_structured,
+        )
+
+        data = yaml.safe_load(yaml_content)
+        with pytest.raises(PydanticValidationError) as excinfo:
+            AuthoredBoard(**data)
+        return format_validation_errors_structured(excinfo.value, yaml_content)
+
+    @staticmethod
+    def _latest_frozen_version() -> str:
+        from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
+            load_yaml_schema_catalog,
+        )
+
+        return load_yaml_schema_catalog().latest.version
+
+    def test_newer_schema_version_appends_an_upgrade_hint(self):
+        errors = self._errors(
+            '_schema_version: "99.0.0"\ntitle: T\nnot_a_real_field: oops\n'
+        )
+        assert errors
+        assert any("99.0.0" in (e.hint or "") for e in errors)
+        assert any("Upgrade dbt charts" in (e.hint or "") for e in errors)
+
+    def test_schema_version_at_latest_gets_no_hint(self):
+        latest = self._latest_frozen_version()
+        errors = self._errors(
+            f'_schema_version: "{latest}"\ntitle: T\nnot_a_real_field: oops\n'
+        )
+        assert errors
+        assert not any("Upgrade dbt charts" in (e.hint or "") for e in errors)
+
+    def test_no_schema_version_gets_no_hint(self):
+        errors = self._errors("title: T\nnot_a_real_field: oops\n")
+        assert errors
+        assert not any("Upgrade dbt charts" in (e.hint or "") for e in errors)
+
+    @pytest.mark.parametrize(
+        "yaml_snippet",
+        [
+            "_schema_version: 1.0",  # bare YAML scalar -> float, not a string
+            "_schema_version: abc",  # non-numeric string
+            "_schema_version: 0.5.0-rc1",  # trailing suffix, not X.Y.Z
+            '_schema_version: "1.2"',  # a genuine string, but only two segments
+            '_schema_version: " 99.0.0"',  # leading whitespace int() would strip
+            '_schema_version: "+99.0.0"',  # leading + int() would accept
+            '_schema_version: "1_0.2.3"',  # underscore digit-group int() would accept
+            '_schema_version: "٩٩.٠.٠"',  # non-ASCII (Arabic-Indic) decimal digits
+            f'_schema_version: "{"1" * 5000}.0.0"',  # a segment past int()'s digit-count limit
+        ],
+    )
+    def test_malformed_schema_version_never_crashes_and_never_hints(self, yaml_snippet):
+        errors = self._errors(f"{yaml_snippet}\ntitle: T\nnot_a_real_field: oops\n")
+        assert errors
+        assert not any("Upgrade dbt charts" in (e.hint or "") for e in errors)
+
+    def test_hint_is_composed_with_an_existing_extra_field_hint_not_overwritten(self):
+        # "titel" (typo of "title") triggers _extra_field_diagnostic's own
+        # "Did you mean 'title'?" hint -- the _schema_version hint must append
+        # to it, not replace it. Checking only substrings from the new text
+        # can't detect an overwrite; this checks the original hint's own
+        # content survives too.
+        errors = self._errors('_schema_version: "99.0.0"\ntitel: T\n')
+        assert errors
+        hint = errors[0].hint or ""
+        assert "Did you mean 'title'?" in hint, (
+            f"the original extra-field hint must survive composition, got: {hint!r}"
+        )
+        assert "99.0.0" in hint
+        assert "Upgrade dbt charts" in hint
+
+    def test_empty_and_missing_yaml_content_never_raise(self):
+        """compile_authored_board's `_yaml_content: str = ""` default reaches
+        this formatter on a live render path -- it must never crash."""
+        import yaml as yaml_module
+        from pydantic import ValidationError as PydanticValidationError
+
+        from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+        from dbt_charts.core.compile.parse.yaml_error_formatter import (
+            format_validation_errors_structured,
+        )
+
+        data = yaml_module.safe_load("title: T\nnot_a_real_field: oops\n")
+        with pytest.raises(PydanticValidationError) as excinfo:
+            AuthoredBoard(**data)
+
+        assert format_validation_errors_structured(excinfo.value, "") is not None
+        assert format_validation_errors_structured(excinfo.value, None) is not None

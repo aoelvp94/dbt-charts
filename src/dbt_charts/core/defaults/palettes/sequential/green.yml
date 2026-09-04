@@ -4,7 +4,7 @@
 
 name: dbt-seq-green
 family: sequential
-description: Single-hue green. Sits between cat-10 green and editorial-10 sage via chroma alone.
+description: Single-hue green. Harmonizes with vivid-10 green and editorial-10 green.
 design_notes: |
   Monotonic L* from 0.95 → 0.25. Hue anchored on cat-10 green (H≈161.3°); c_max=0.10 (down from 0.13). Session 8 retune.
 

@@ -11,6 +11,18 @@ stack (``stack != "none"`` — a grouped bar subdivides width, not height),
 rendered vertically (a horizontal stack's plot height comes from its category
 count, not its series count), whose legend has actually moved to a top,
 multi-column layout (a side legend costs width, not plot height).
+
+A separate, broader measurement (``plot_height_below_floor``,
+``plot_height_floor.py``) also watches narrow cartesian plots, but never
+touches any chrome -- it only flags ``WARN-PLOT-HEIGHT-BELOW-MINIMUM`` when
+the estimated plot height falls below a calibrated floor. It deliberately
+never removes the legend either: for bar, the legend is typically a chart's
+only series-naming mechanism, and hiding it with nothing to replace it would
+violate the series-naming invariant (``tests/visual/
+test_series_naming_invariant.py``). That measurement's own height accounting
+still charges the legend's height against its floor; it just never acts on
+the result. This file's assertions are unaffected by that measurement's
+existence.
 """
 
 from __future__ import annotations
@@ -135,6 +147,38 @@ def _resolved_wide(
     return resolved
 
 
+def _resolved_wide_by_dimension(
+    dimension_count: int, measure_count: int, width: float
+) -> ResolvedBarChart:
+    fields = _wide_measure_fields(measure_count)
+    data = [
+        {"x_time": month, "series": f"Series {s:02d}", **dict.fromkeys(fields, 10 + s)}
+        for month in ("2024-01-01", "2024-02-01", "2024-03-01")
+        for s in range(1, dimension_count + 1)
+    ]
+    chart = BarChart(
+        id="t",
+        query=SqlQuery(sql="SELECT 1", source="t"),
+        query_name="q",
+        type="bar",
+        x="x_time",
+        y=fields,
+        color="series",
+        style=BarChartStylePatch(stack="zero"),
+    )
+    resolved = resolve(chart, data, _CTX, width=width)
+    assert isinstance(resolved, ResolvedBarChart)
+    return resolved
+
+
+def test_wide_by_dimension_counts_every_composite_series() -> None:
+    """`y: [a, b]` + `color:` renders dims x measures entries; the classifier
+    must count those, not the dimension's cardinality alone (6 x 2 = 12
+    keeps the legend at the floor width, 7 x 2 = 14 drops it)."""
+    assert _resolved_wide_by_dimension(6, 2, _FLOOR_WIDTH).legend.visible is True
+    assert _resolved_wide_by_dimension(7, 2, _FLOOR_WIDTH).legend.visible is False
+
+
 def test_low_series_count_keeps_the_legend() -> None:
     assert _resolved(3, _NARROW_WIDTH).legend.visible is True
 
@@ -151,6 +195,30 @@ def test_nineteen_series_drops_the_legend() -> None:
 
 def test_twenty_five_series_drops_the_legend() -> None:
     assert _resolved(25, _NARROW_WIDTH).legend.visible is False
+
+
+def test_authored_legend_position_never_beats_the_yield() -> None:
+    """An authored ``position:`` outranks the automatic legend policies, but not
+    this guard. The tiny-tier ternary still resolves the legend to top/compact
+    regardless of the authored position, so honouring ``visible`` here would
+    hand the author a chart that raises ERR-CHART-PAINTED-NO-MARKS *and* a
+    legend in a position they did not ask for. The marks always win.
+    """
+    for position in ("right", "bottom"):
+        resolved = _resolved(
+            25, _NARROW_WIDTH, legend=LegendStylePatch(position=position)
+        )
+        assert resolved.legend.visible is False, position
+
+
+def test_authored_legend_visible_true_never_beats_the_yield() -> None:
+    """The explicit signal must not lose where the weaker one wins."""
+    assert (
+        _resolved(
+            25, _NARROW_WIDTH, legend=LegendStylePatch(visible=True)
+        ).legend.visible
+        is False
+    )
 
 
 def test_authored_height_escapes_the_yield_at_twenty_five_series() -> None:

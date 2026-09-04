@@ -10,6 +10,7 @@ read the collected dict via ``WarningContext.text_truncations``.
   "axis_title"   — cartesian x/y axis title (emitters/_cartesian.py)
   "chart_title"  — chart title or subtitle (title_overflow.py)
   "kpi_label"    — KPI card label (kpi.py)
+  "kpi_inline_fallback" — inline KPI variant fell back to stacked (kpi.py)
   "table_header" — table column header (table.py)
   "table_cell"   — table body cell (table.py)
   "callout_text" — callout title, message, or hint (callout.py)
@@ -17,7 +18,10 @@ read the collected dict via ``WarningContext.text_truncations``.
 
 ``authored_field`` is the YAML key or column name the squiggle should point
 at, e.g. "x_label", "title", "label", or a column name for tables.
-``authored_text`` is the full text before truncation.
+``authored_text`` is the full text before truncation — except on
+"kpi_inline_fallback", where the record isn't a text cut but a whole-variant
+degradation (inline -> stacked); there ``authored_field`` is "variant" and
+``authored_text`` is the variant the author wrote ("inline").
 """
 
 from __future__ import annotations
@@ -33,6 +37,8 @@ TruncationSurface = Literal[
     "axis_title",
     "chart_title",
     "kpi_label",
+    "kpi_inline_fallback",
+    "kpi_align_overflow",
     "table_header",
     "table_cell",
     "callout_text",

@@ -1,10 +1,10 @@
 title: Greek and Math Coverage — Sans
-description: >
+notes: >
   Evidence board for the widened font subset, sans half. Every glyph below must be
   painted by Inter Variable, not by a system font. Serif half:
   `greek-and-math-coverage`.
 
-theme: stark
+theme: vivid
 
 text: |
   ## What to check

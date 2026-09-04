@@ -17,6 +17,7 @@ from pydantic import TypeAdapter
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.diagnostics import (
     WARN_ENDPOINT_LABEL_GAP_OVERFLOW,
+    WARN_ENDPOINT_LABEL_RAIL_OVERFLOW,
     WARN_ENDPOINT_LABEL_RAIL_TIED,
 )
 from dbt_charts.core.render.chart.endpoint_label_overflow import (
@@ -33,7 +34,10 @@ from ...core._board_utils import (
 )
 
 
-def _ctx(cause: Literal["gap_did_not_fit", "no_slope"]) -> WarningContext:
+def _ctx(
+    cause: Literal["gap_did_not_fit", "no_slope", "rail_overflow"],
+    dropped_series: tuple[str, ...] = (),
+) -> WarningContext:
     chart = TypeAdapter(Chart).validate_python(
         {"id": "c1", "type": "line", "query_name": "q", "title": ""}
     )
@@ -44,7 +48,12 @@ def _ctx(cause: Literal["gap_did_not_fit", "no_slope"]) -> WarningContext:
         chart_results={"c1": []},
         vega_specs={},
         endpoint_label_gap_overflows={
-            "c1": EndpointLabelGapOverflow(series_count=5, gap_px=18.0, cause=cause)
+            "c1": EndpointLabelGapOverflow(
+                series_count=5,
+                gap_px=18.0,
+                cause=cause,
+                dropped_series=dropped_series,
+            )
         },
     )
 
@@ -57,3 +66,9 @@ def test_gap_did_not_fit_is_the_height_code() -> None:
 def test_no_slope_is_the_tied_code() -> None:
     diags = detector.detect(_ctx("no_slope"))
     assert [d.code for d in diags] == [WARN_ENDPOINT_LABEL_RAIL_TIED.code]
+
+
+def test_rail_overflow_is_the_dropped_code() -> None:
+    diags = detector.detect(_ctx("rail_overflow", dropped_series=("s3", "s4")))
+    assert [d.code for d in diags] == [WARN_ENDPOINT_LABEL_RAIL_OVERFLOW.code]
+    assert "2 of 5" in diags[0].message

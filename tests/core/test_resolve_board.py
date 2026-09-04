@@ -316,7 +316,7 @@ class TestResolveBoardRoot:
             assert isinstance(item, ResolvedLayoutItem)
 
     def test_width_fallback_to_config_when_unsized(self, config):
-        """When layout.width is 0 (unsized), falls back to get_theme_style().frame.width."""
+        """When layout.width is 0 (unsized), falls back to get_theme_style().frame.max_width."""
         from dbt_charts.core.render.board_resolve import (
             build_resolved_board_static as resolve_board,
         )
@@ -325,7 +325,7 @@ class TestResolveBoardRoot:
 
         board = make_test_board(id="t")
         assert not board.layout.width  # 0.0 — no sizing run
-        assert resolve_board(board).width == float(get_theme_style().frame.width)
+        assert resolve_board(board).width == float(get_theme_style().frame.max_width)
 
 
 # ---------------------------------------------------------------------------

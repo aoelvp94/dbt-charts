@@ -137,7 +137,13 @@ def _is_zero_extent(d: str) -> bool:
 def _categorical_axis_order(svg: str, axis: str) -> list[str]:
     """Rendered category order along the given VL axis ('x' or 'y'), read
     from the axis-label text nodes in DOM order (paint order — left-to-right
-    for x, top-to-bottom for y)."""
+    for x, top-to-bottom for y).
+
+    Scoped to ``role-axis-label`` groups specifically, not every text node
+    under the axis group — the axis also carries a ``role-axis-title`` text
+    node (the axis title, visible by default) that is not a category tick
+    and must not be picked up as one.
+    """
     root = ET.fromstring(svg)
     prefix = "X-axis" if axis == "x" else "Y-axis"
     for g in root.iter(f"{{{_SVG_NS}}}g"):
@@ -145,7 +151,14 @@ def _categorical_axis_order(svg: str, axis: str) -> list[str]:
             g.get("aria-label", "").startswith(prefix)
             and g.get("aria-roledescription") == "axis"
         ):
-            return [t.text for t in g.iter(f"{{{_SVG_NS}}}text") if t.text]
+            labels: list[str] = []
+            for label_g in g.iter(f"{{{_SVG_NS}}}g"):
+                if "role-axis-label" not in label_g.get("class", ""):
+                    continue
+                labels.extend(
+                    t.text for t in label_g.iter(f"{{{_SVG_NS}}}text") if t.text
+                )
+            return labels
     raise AssertionError(f"no {axis}-axis found in svg")
 
 
@@ -153,10 +166,10 @@ def _categorical_axis_order(svg: str, axis: str) -> list[str]:
 def test_vertical_bar_zero_gets_direct_label_no_mark(width: int) -> None:
     svg = _render_svg(_bar_board(orientation="vertical", width=width), _ROWS_ZERO_NULL)
     bars = dict(_bar_marks(svg))
-    zero_bar = next(d for label, d in bars.items() if "V: 0" in label)
+    zero_bar = next(d for label, d in bars.items() if "v: 0" in label)
     assert _is_zero_extent(zero_bar), zero_bar
-    assert any("V: 12" in label for label in bars), bars
-    assert any("V: 7" in label for label in bars), bars
+    assert any("v: 12" in label for label in bars), bars
+    assert any("v: 7" in label for label in bars), bars
     labels = _value_label_texts(svg)
     assert labels == ["0"], labels
 
@@ -167,10 +180,10 @@ def test_horizontal_bar_zero_gets_direct_label_no_mark(width: int) -> None:
         _bar_board(orientation="horizontal", width=width), _ROWS_ZERO_NULL
     )
     bars = dict(_bar_marks(svg))
-    zero_bar = next(d for label, d in bars.items() if "V: 0" in label)
+    zero_bar = next(d for label, d in bars.items() if "v: 0" in label)
     assert _is_zero_extent(zero_bar), zero_bar
-    assert any("V: 12" in label for label in bars), bars
-    assert any("V: 7" in label for label in bars), bars
+    assert any("v: 12" in label for label in bars), bars
+    assert any("v: 7" in label for label in bars), bars
     labels = _value_label_texts(svg)
     assert labels == ["0"], labels
 
@@ -280,8 +293,8 @@ def test_negative_value_alongside_zero() -> None:
     svg = _render_svg(_bar_board(orientation="vertical", width=600), rows)
     bars = dict(_bar_marks(svg))
     assert any(label.startswith("⁡A;") for label in bars), bars
-    assert any("V: 7" in label for label in bars), bars
-    zero_bar = next(d for label, d in bars.items() if "V: 0" in label)
+    assert any("v: 7" in label for label in bars), bars
+    zero_bar = next(d for label, d in bars.items() if "v: 0" in label)
     assert _is_zero_extent(zero_bar), zero_bar
     assert _value_label_texts(svg) == ["0"]
 

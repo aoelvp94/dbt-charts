@@ -157,7 +157,7 @@ class MeasureGridStyle(BaseAxisGridStyle):
 
 
 class AxisLineStyle(BaseModel):
-    """Axis domain/baseline line style. Renamed from ``AxisDomainStyle`` —
+    """Axis domain/baseline line style. Renamed from ``AxisDomainStyle``:
     same 3 fields, no shape change; ``domain`` collided too easily with
     scale-domain terminology."""
 
@@ -193,9 +193,12 @@ class AxisTicksStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # Nullable so the cascade can fill `visible` from parent `axis`.
+    # Nullable so the cascade can fill `visible` from parent `axis`. "auto"
+    # (the tick-stub geometry rule) is axis_x-only -- see DimensionTicksStyle's
+    # own override below, which is the one slot that actually resolves it.
     visible: bool | None = Field(
-        default=None, description="Show axis ticks; None inherits from parent axis."
+        default=None,
+        description="Show axis ticks; None inherits from parent axis.",
     )
     color: Annotated[str | None, Color()] = Field(
         default=None, description="Tick color; None uses Vega-Lite's default."
@@ -216,7 +219,7 @@ class AxisTicksStyle(BaseModel):
     count: Annotated[int | None, SkipInheritSlots()] = Field(
         default=None,
         description=(
-            "Target number of axis ticks — a target everywhere, never an exact "
+            "Target number of axis ticks: a target everywhere, never an exact "
             "count. On the measure axis (axis_y) the renderer computes an "
             "explicit round-numbered ladder of at most this many ticks. On "
             "axis_x it passes through as VL's axis.tickCount: a temporal scale "
@@ -252,6 +255,18 @@ class DimensionTicksStyle(AxisTicksStyle):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    # Override base's `visible` type: "auto" (the tick-stub geometry rule) is
+    # meaningful only on the bottom axis -- build_cartesian_axes resolves it
+    # from the y-axis's own baked ladder/domain, which axis_y/axis_quantitative/
+    # axis_band have no equivalent question for.
+    visible: bool | Literal["auto"] | None = Field(  # type: ignore[assignment]  # type-state: type_ignore — deliberate widening of AxisTicksStyle.visible on axis_x's own tick slot only; mirrors the accepted _GeoChartStyle.color override pattern in _chart_base.py
+        default=None,
+        description=(
+            'Show axis ticks. "auto" shows the tick only where the '
+            "gridlines can't reach all the way to the labels on their own; "
+            "None inherits from parent axis."
+        ),
+    )
     time_unit: _TIME_UNIT_LITERAL | None = Field(
         default=None,
         description="Step-anchored tick cadence unit; None disables step-anchored ticks.",
@@ -277,7 +292,7 @@ class DimensionTicksStyle(AxisTicksStyle):
 
 
 class AxisTitleStyle(BaseModel):
-    """Axis title typography — deliberately thin. A title is one short static
+    """Axis title typography, deliberately thin. A title is one short static
     string, not a per-tick label stream, so it doesn't need the label-overlap
     strategy machinery or VL passthrough knobs (bound/flush/offset/line_height)
     that only make sense for a repeated per-tick label. padding is kept
@@ -311,7 +326,7 @@ class AxisTitleStyle(BaseModel):
         default=None,
         description=(
             "Show the axis title; None uses Vega-Lite's default (title shown). "
-            "An explicit value you set — on the board or on a single chart — "
+            "An explicit value you set, on the board or on a single chart, "
             "wins over the title an authored x_label/y_label would force on."
         ),
     )
@@ -429,6 +444,23 @@ class DimensionLabelStyle(AxisLabelStyle):
         default=None,
         description="Label cadence for temporal axes; None inherits from the parent axis time_unit.",
     )
+    # Sub-day clock register — the only new authoring key the time-notation
+    # vocabulary adds (no separate register enum). The house theme default
+    # (12: the Noon/Midnight vocabulary, not the meridiem-free 24-hour clock)
+    # lives in the theme cascade (_base.yaml's axis_x.labels.clock), not as a
+    # Python literal here — None on this field means "not authored at this
+    # layer", same as every other passthrough field. See
+    # ``time_unit_detect.default_subday_label_expr_for``, which reads this
+    # field on a genuinely continuous (non-bucketed) temporal x-axis.
+    clock: Literal[24, 12] | None = Field(
+        default=None,
+        description=(
+            "Sub-day clock register for a continuous temporal x-axis: 24 for "
+            "the unambiguous, meridiem-free 24-hour clock, or 12 for the "
+            "12-hour clock with the Noon/Midnight word vocabulary. None "
+            "leaves the value to the theme cascade."
+        ),
+    )
     # Descending tilt ladder consulted by the "tilt" strategy on discrete x-axes.
     # The picker walks this list and returns the first angle whose label widths
     # fit at the chart's drawable width; fall-through uses the last entry (steepest).
@@ -449,7 +481,7 @@ class DimensionLabelStyle(AxisLabelStyle):
     # itself, author ``axis_x.scale.values``. None labels every tick per the
     # existing smart cadence/format. Temporal x-axes only — the render layer
     # raises when authored on a non-temporal axis, on axis_y (the measure
-    # axis is never temporal in Dataface's model), or on a bar chart whose
+    # axis is never temporal in dbt charts' model), or on a bar chart whose
     # categorical axis renders horizontal (that axis is always nominal,
     # regardless of orientation being forced or auto-inferred).
     values: Annotated[list[Any] | None, Merge(Strategy.OVERRIDE)] = Field(
@@ -458,7 +490,7 @@ class DimensionLabelStyle(AxisLabelStyle):
         description=(
             "Dates to keep label text on, chosen from among the axis's ticks "
             "(whatever axis_x.scale.values or the auto-fill cadence already "
-            "produced) — this filters which ticks show text, it does not "
+            "produced): this filters which ticks show text, it does not "
             "add or remove ticks. Every tick not in this list keeps its "
             "position and gridline but has its label blanked. Set "
             "axis_x.scale.values separately to change tick/grid density itself. "
@@ -623,7 +655,7 @@ class ScaleContinuousStyle(ScaleDomainValidationMixin):
         default=None,
         description=(
             'Force scale zero-baseline: True/False pins it; "auto" runs the '
-            "Dataface smart-zero heuristic; None passes through to Vega-Lite."
+            "dbt charts smart-zero heuristic; None passes through to Vega-Lite."
         ),
     )
     type: Literal["linear", "log", "pow", "sqrt", "symlog", "temporal"] | None = Field(
@@ -631,11 +663,11 @@ class ScaleContinuousStyle(ScaleDomainValidationMixin):
         description=(
             "Scale type override. 'linear'/'log'/'pow'/'sqrt'/'symlog' pass "
             "straight through to Vega-Lite's quantitative scale.type. "
-            "'temporal' is a Dataface escape hatch for a cartesian x-axis: it "
+            "'temporal' is a dbt charts escape hatch for a cartesian x-axis: it "
             "forces a continuous temporal scale instead of the auto-inferred "
             "ordinal/nominal bucketed type, which is required before an "
             "authored ``domain`` of ISO dates can extend the visible range "
-            "past the data extent. None lets Dataface/Vega-Lite infer from "
+            "past the data extent. None lets dbt charts/Vega-Lite infer from "
             "the field type."
         ),
     )
@@ -669,10 +701,10 @@ class ScaleContinuousStyle(ScaleDomainValidationMixin):
         default=None,
         description=(
             "Explicit [low, high] scale domain; None lets Vega-Lite "
-            "auto-determine from data. Must have exactly 2 elements — "
-            "Dataface only wires a continuous range override through to "
+            "auto-determine from data. Must have exactly 2 elements: "
+            "dbt charts only wires a continuous range override through to "
             "Vega-Lite, not an explicit category enumeration. Neither element "
-            "may be null — pin both bounds, or omit the key to fit the data. "
+            "may be null; pin both bounds, or omit the key to fit the data. "
             "When ``type: temporal`` is set, both elements must be ISO-8601 "
             "date/datetime strings."
         ),
@@ -773,7 +805,7 @@ class BaseScaleStyle(BaseModel):
             "Fractional breathing room at measure-axis edges, exact (never nice-rounded). "
             "Zero-anchored axes (bar; line/area/scatter near zero): "
             "domain_max = data_max * (1 + headroom). "
-            "Zoomed axes (line/area/scatter far from zero): both edges expand — "
+            "Zoomed axes (line/area/scatter far from zero): both edges expand: "
             "domain_max = data_max + headroom * span; "
             "domain_min = data_min - headroom * span. "
             "None inherits the theme default; 0 disables headroom. "
@@ -827,7 +859,7 @@ class TooltipSlotStyle(BaseModel):
 
 
 class TooltipBorderStyle(BaseModel):
-    """Tooltip box border — all fields required; theme YAML supplies defaults."""
+    """Tooltip box border: all fields required; theme YAML supplies defaults."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -849,7 +881,7 @@ class TooltipShadowStyle(BaseModel):
 
 
 class TooltipSwatchStyle(BaseModel):
-    """Series colour swatch in the tooltip — the mark-coloured chip next to each
+    """Series colour swatch in the tooltip: the mark-coloured chip next to each
     series row. All fields required; theme YAML supplies defaults."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -861,7 +893,7 @@ class TooltipSwatchStyle(BaseModel):
 
 
 class TooltipStyle(BaseModel):
-    """Tooltip box style — all cascade keys for the hover bubble.
+    """Tooltip box style: all cascade keys for the hover bubble.
 
     Required scalars have no in-code defaults; theme YAML (via _base.yaml) supplies
     every value so the cascade fails loudly if a theme is incomplete.
@@ -961,7 +993,7 @@ class AxisMirrorStyle(BaseModel):
 
 
 class BaseAxisStyle(BaseModel):
-    """Universal axis surface — grid/line/ticks/labels/title/scale.
+    """Universal axis surface: grid/line/ticks/labels/title/scale.
 
     Channel-agnostic: used for the theme's ``axis:`` slot (applies to all axes)
     and for AxisXStyle/AxisYStyle/QuantitativeAxisStyle/BandAxisStyle subclasses.
@@ -988,7 +1020,8 @@ class BaseAxisStyle(BaseModel):
         default_factory=AxisLabelStyle, description="Axis label style."
     )
     title: AxisTitleStyle = Field(
-        default_factory=AxisTitleStyle, description="Axis title style."
+        default_factory=AxisTitleStyle,
+        description="Axis title style.",
     )
     # SkipInheritSlots: scale is not inherited — axis family variants each own their scale config.
     scale: Annotated[BaseScaleStyle | None, SkipInheritSlots()] = Field(
@@ -1008,11 +1041,13 @@ class AxisXStyle(BaseAxisStyle):
 
     # Override base's ticks type to add step-anchored cadence's unit field.
     ticks: DimensionTicksStyle = Field(
-        default_factory=DimensionTicksStyle, description="Dimension axis tick style."
+        default_factory=DimensionTicksStyle,
+        description="Dimension axis tick style.",
     )
     # Override base's labels type to add dimension-only label fields.
     labels: DimensionLabelStyle = Field(
-        default_factory=DimensionLabelStyle, description="Dimension axis label style."
+        default_factory=DimensionLabelStyle,
+        description="Dimension axis label style.",
     )
     position: Annotated[Literal["top", "bottom"] | None, SkipInheritSlots()] = Field(
         default=None,
@@ -1129,8 +1164,8 @@ class AxisYStyle(BaseAxisStyle):
         description=(
             "Draw the y-scale on both left and right edges (wide charts). "
             "true mirrors the primary axis's label verbatim; an object (format/expr) "
-            "relabels only the mirrored edge — e.g. a percent-of-total right axis "
-            "next to an absolute-value left axis — while ticks stay aligned to the "
+            "relabels only the mirrored edge (e.g. a percent-of-total right axis "
+            "next to an absolute-value left axis) while ticks stay aligned to the "
             "single shared scale. Only meaningful on axis_y."
         ),
     )

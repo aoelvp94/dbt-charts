@@ -148,7 +148,8 @@ def test_compiled_style_board_dimensions():
     """Style.frame has dimension fields with defaults."""
 
     s = get_theme_style()
-    assert isinstance(s.frame.width, float)
+    assert s.frame.width is None
+    assert isinstance(s.frame.max_width, float)
     assert isinstance(s.frame.min_height, float)
     assert isinstance(s.frame.margin, float)
     assert isinstance(s.frame.card_padding, float)
@@ -191,7 +192,6 @@ def test_compiled_style_charts_table_nested():
     assert s.charts.table.header is not None
     assert isinstance(s.charts.table.header.font, FontStyle)
     assert s.charts.table.row is not None
-    assert s.charts.table.border is not None
 
 
 def test_compiled_style_charts_kpi_nested():
@@ -455,7 +455,7 @@ def test_style_to_vega_lite_maps_title_subtitle_fields():
     assert title.get("subtitleFont", "").startswith("Inter")
     assert title.get("subtitleFontSize") == 14.0
     assert title.get("subtitleFontWeight") == 400
-    assert "subtitlePadding" not in title  # VL-specific, no Dataface field
+    assert "subtitlePadding" not in title  # VL-specific, no dbt charts field
 
 
 def test_style_to_vega_lite_maps_view_fields():
@@ -574,20 +574,20 @@ def test_histogram_has_border_style():
     assert isinstance(bar_mark.border, BorderStyle)
 
 
-def test_spark_columns_has_border_style():
-    """SparkColumnsStyle.border is a BorderStyle."""
-    from dbt_charts.core.compile.models.primitives import BorderStyle
+def test_spark_columns_has_corner_style():
+    """SparkColumnsStyle.border is a radius-only CornerStyle (no live stroke)."""
+    from dbt_charts.core.compile.models.primitives import CornerStyle
 
     b = get_theme_style().charts.table.spark.columns
-    assert isinstance(b.border, BorderStyle)
+    assert isinstance(b.border, CornerStyle)
 
 
-def test_spark_bar_has_border_style():
-    """SparkBarCellStyle.border is a BorderStyle."""
-    from dbt_charts.core.compile.models.primitives import BorderStyle
+def test_spark_bar_has_corner_style():
+    """SparkBarCellStyle.border is a radius-only CornerStyle (no live stroke)."""
+    from dbt_charts.core.compile.models.primitives import CornerStyle
 
     p = get_theme_style().charts.table.spark.bar
-    assert isinstance(p.border, BorderStyle)
+    assert isinstance(p.border, CornerStyle)
 
 
 # =============================================================================
@@ -692,7 +692,11 @@ def test_cascade_root_to_kpi_font():
 
 
 def test_cascade_kpi_font_to_value_font():
-    """kpi.font cascades into kpi.value.font for unset fields."""
+    """kpi.font cascades into kpi.value.font for unset fields.
+
+    `color` is the exception — kpi.value.font excludes it from the fill so it
+    stays a sentinel meaning "no author named the headline's ink".
+    """
     from dbt_charts.core.compile.models.primitives import FontStyle
 
     base = get_theme_style()
@@ -701,14 +705,15 @@ def test_cascade_kpi_font_to_value_font():
             "charts": base.charts.model_copy(
                 update={
                     "kpi": base.charts.kpi.model_copy(
-                        update={"font": FontStyle(color="#kpi-color")}
+                        update={"font": FontStyle(weight=771.0)}
                     )
                 }
             )
         }
     )
     cascaded = apply_inherit(seed, get_inherit_graph())
-    assert cascaded.charts.kpi.value.font.color == "#kpi-color"
+    assert cascaded.charts.kpi.value.font.weight == 771.0
+    assert cascaded.charts.kpi.value.font.color is None
 
 
 def test_cascade_charts_font_to_in_cell_spark_bar():

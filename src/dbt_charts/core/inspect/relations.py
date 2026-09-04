@@ -23,15 +23,16 @@ from dbt_charts.core.compile.models.query.normalized import (
     SqlQuery,
 )
 from dbt_charts.core.compile.sql_guard import (
+    SKELETON_PLACEHOLDER_PREFIX,
     UnparseableSqlError,
     as_expression,
     build_skeleton,
 )
 
-# `build_skeleton` names every `{{ expr }}` it replaces `__dft_j<n>__`. A relation
-# part carrying that prefix is Jinja in a position that decides which relation is
-# read — the one place this module must not guess.
-_JINJA_PREFIX = "__dft_j"
+# A relation part carrying the skeleton's placeholder prefix is Jinja in a
+# position that decides which relation is read — the one place this module
+# must not guess.
+_JINJA_PREFIX = SKELETON_PLACEHOLDER_PREFIX
 
 
 @dataclass(frozen=True)

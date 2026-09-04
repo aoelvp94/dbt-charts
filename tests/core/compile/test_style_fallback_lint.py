@@ -14,7 +14,7 @@ banned:
    "not set at this tier").  A non-None literal bypasses the cascade and reintroduces
    the very defaults this sweep removed.
 
-Scope: compile and render sub-packages of the dataface core package.
+Scope: compile and render sub-packages of the dbt charts core package.
 
 No D-NN tokens in this file.
 """

@@ -6,7 +6,7 @@ of truth every dbt charts editor surface derives its highlighting from:
 
 | Surface | Consumes | Derived artifact |
 |---|---|---|
-| VS Code extension | `top_level_keys`, `enum_values_by_key` | `apps/ide/vscode-extension/syntaxes/dataface.tmLanguage.json` (generated) |
+| VS Code extension | `top_level_keys`, `enum_values_by_key` | `apps/ide/vscode-extension/syntaxes/dbt-charts.tmLanguage.json` (generated) |
 | Cloud + Playground web editors | `sql_block_scalar_keys` | `libs/codemirror-dbt-charts/src/{language,highlight}.ts` (hand-written, manifest passed in) |
 
 Renderers live in `dbt-charts/src/dbt_charts/core/compile/schema/renderers/`
@@ -25,7 +25,7 @@ Renderers live in `dbt-charts/src/dbt_charts/core/compile/schema/renderers/`
   distinctions YAML wrong-foots the reader on: `no` is a boolean, `1.10` is a float,
   `"1.10"` is not.
 - **Multi-line plain scalars carry their scope onto every continuation line.** Coloring
-  line 1 of a folded `description:` and dropping to default text on line 2 is worse than
+  line 1 of a folded `notes:` and dropping to default text on line 2 is worse than
   coloring neither. Ship a multi-line test case with every tokenizer change.
 - **Token classes are the contract across surfaces.** The same board resolves to the same
   classes in VS Code and the web editors; change one without the other and the two dbt charts

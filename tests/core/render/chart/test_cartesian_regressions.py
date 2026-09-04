@@ -85,6 +85,11 @@ def _v2_vl(
     size_target["width"] = _DEFAULT_BOX.width
     if "hconcat" in vl:
         vl["$df_target_width"] = _DEFAULT_BOX.width
+    # Same mirroring rule for the axis-label identity sentinel that
+    # _render_vl_artifact plants unconditionally on the production path.
+    from dbt_charts.core.render.chart.vega_lite import _stamp_axis_label_kind_sentinel
+
+    _stamp_axis_label_kind_sentinel(resolved, vl)
     return vl
 
 

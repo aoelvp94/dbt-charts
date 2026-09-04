@@ -1,6 +1,6 @@
 """Measurement and painting must read the same glyph metrics.
 
-Dataface measures text with fontTools to decide where lines wrap; the browser paints
+dbt charts measures text with fontTools to decide where lines wrap; the browser paints
 that text from the ``@font-face`` files embedded in the board SVG. When the two read
 different files the wrap points are computed against the wrong advance widths, and a
 full-width prose line overflows its nested ``<svg>`` viewport — which clips by default,
@@ -39,7 +39,7 @@ def assert_same_metrics(measured_path: str, painted_path: str) -> None:
 
     Scoped to the shared cmap on purpose: the shipped ``.woff2`` files are subset to
     the shared text recipe (``fonts.TEXT_SUBSET_RANGES``) while the measured TTFs are
-    the full boards, so Dataface can measure codepoints the browser will not paint from
+    the full boards, so dbt charts can measure codepoints the browser will not paint from
     our file. For those the browser falls through to the next family in the CSS stack,
     which we cannot measure and do not claim to. That the served file covers every
     recipe codepoint its TTF measures is a separate guard, in

@@ -5,7 +5,7 @@
     "resize": true,
     "type": "fit"
   },
-  "background": "#FAFAFA",
+  "background": "#FFFFFF",
   "config": {
     "circle": {
       "opacity": 1.0
@@ -13,16 +13,16 @@
     "font": "'Inter Variable', 'Noto Emoji', Inter, system-ui, sans-serif",
     "range": {
       "category": [
-        "#3164a3",
+        "#40639c",
         "#779bc9",
-        "#ad9c7f",
-        "#7a8895",
-        "#8a576f",
-        "#5c7b5c",
+        "#608470",
+        "#775770",
         "#d49656",
         "#ae6349",
-        "#609f9e",
-        "#232f3a"
+        "#a0b6b7",
+        "#ad9c7f",
+        "#7a8895",
+        "#5c6668"
       ]
     },
     "rule": {
@@ -75,7 +75,7 @@
   "encoding": {
     "description": {
       "value": {
-        "expr": "\"\\u2061\" + (datum[\"month\"]) + '; ' + \"Revenue: \" + (format(datum[\"revenue\"], \",.2~f\"))"
+        "expr": "\"\\u2061\" + (datum[\"month\"]) + '; ' + \"revenue: \" + (format(datum[\"revenue\"], \",.2~f\"))"
       }
     },
     "x": {
@@ -99,7 +99,7 @@
         "tickColor": "#EDEFF2",
         "tickSize": 6.0,
         "tickWidth": 1.0,
-        "ticks": true,
+        "ticks": false,
         "title": null
       },
       "field": "month",
@@ -107,7 +107,7 @@
         "padding": 0.0
       },
       "sort": null,
-      "title": "Month",
+      "title": "month",
       "type": "nominal"
     },
     "y": {
@@ -121,7 +121,7 @@
         "gridOpacity": 1.0,
         "gridWidth": 1.5,
         "labelAlign": "right",
-        "labelColor": "#626366",
+        "labelColor": "#222222",
         "labelExpr": "format(datum.value,\",.0~f\")",
         "labelFont": "'dbt Sans Tabular', 'Noto Emoji', Inter, system-ui, sans-serif",
         "labelFontSize": 11.0,
@@ -149,18 +149,19 @@
         "domainMin": 92.0,
         "zero": false
       },
-      "title": "Revenue",
+      "title": "revenue",
       "type": "quantitative"
     }
   },
   "layer": [
     {
+      "encoding": {},
       "mark": {
         "aria": false,
         "clip": true,
         "interpolate": "linear",
         "opacity": 1,
-        "stroke": "#FAFAFA",
+        "stroke": "#FFFFFF",
         "strokeCap": "round",
         "strokeJoin": "round",
         "strokeOpacity": 1,
@@ -171,9 +172,23 @@
     },
     {
       "mark": {
+        "fill": "#FFFFFF",
+        "fillOpacity": 1,
+        "filled": true,
+        "opacity": 1,
+        "size": 92.47999999999999,
+        "stroke": "#FFFFFF",
+        "strokeOpacity": 1,
+        "tooltip": false,
+        "type": "point"
+      }
+    },
+    {
+      "encoding": {},
+      "mark": {
         "aria": false,
         "interpolate": "linear",
-        "stroke": "#203c65",
+        "stroke": "#23467f",
         "strokeCap": "round",
         "strokeJoin": "round",
         "strokeWidth": 4.0,
@@ -183,11 +198,24 @@
     },
     {
       "mark": {
+        "color": "#23467f",
+        "fillOpacity": 1,
+        "filled": true,
+        "opacity": 1,
+        "size": 46.239999999999995,
+        "strokeOpacity": 1,
+        "strokeWidth": 4.0,
+        "tooltip": true,
+        "type": "point"
+      }
+    },
+    {
+      "mark": {
         "clip": true,
-        "fill": "#203c65",
+        "fill": "#23467f",
         "filled": true,
         "opacity": 0,
-        "size": 300,
+        "size": 320.0,
         "tooltip": true,
         "type": "point"
       }

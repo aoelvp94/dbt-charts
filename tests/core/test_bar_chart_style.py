@@ -1,7 +1,7 @@
 """Tests for BarStyle field wiring through the VL emit and render pipeline.
 
 Covers:
-- size → VL continuousBandSize
+- size → VL mark.width (literal pixel width, any scale)
 - padding → VL encoding.x.scale.paddingInner (band-scale gutter)
 - bar.axis_x.labels.padding → categorical axis labelPadding (vertical x, horizontal y after swap)
 - bar.axis_x.labels.align → categorical axis labelAlign (vertical x, horizontal y after swap)
@@ -43,7 +43,7 @@ _BOARD_RS, _BOARD_STYLE = resolve_style_and_context(get_theme_style())
 
 def _mark(spec: dict) -> dict:
     """Get mark dict from single-spec, layered spec, or hconcat-wrapped spec."""
-    # When endpoint labels are enabled (editorial default), line/area charts emit
+    # When endpoint labels are enabled (clarity default), line/area charts emit
     # hconcat with the main chart pane as hconcat[0].
     main = spec.get("hconcat", [spec])[0] if "hconcat" in spec else spec
     m = main.get("mark", {})
@@ -95,7 +95,7 @@ def _board_with_bar_axis_x_label(*, theme: str | None = None, **label_overrides)
     Uses the distinctive-value-plus-propagation pattern: sets a recognizable
     value via the cascade, then asserts it reaches the VL encoding.
 
-    ``theme`` defaults to the project default (editorial), which ships
+    ``theme`` defaults to the project default (clarity), which ships
     ``axis_x.labels.align: inward`` — the own-side measured gutter overrides
     an authored ``label.padding`` on that theme, since own-side align always
     fires once it resolves to the axis's own edge. Callers asserting a plain
@@ -134,7 +134,7 @@ MULTI_SERIES_DATA = [
 
 
 class TestChartSortOrderEmitsCanonicalVLValues:
-    """``ChartSort.order`` is stored as ``"asc" | "desc"`` (Dataface canonical
+    """``ChartSort.order`` is stored as ``"asc" | "desc"`` (dbt charts canonical
     form), but Vega-Lite's ``sort.order`` accepts only ``"ascending"`` or
     ``"descending"``. The emit layer must translate at the boundary; passing
     raw ``"asc"``/``"desc"`` to VL silently falls back to ascending — the
@@ -223,15 +223,15 @@ class TestHorizontalBarValueDescDefaultSort:
         }
 
     def test_grouped_horizontal_bar_does_not_get_value_desc_default(self):
-        """Grouped horizontal bars need explicit authoring for category order."""
+        """Grouped horizontal bars preserve query-owned category order."""
         chart = _bar_chart(orientation="horizontal", color="region")
         resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
         spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
 
-        assert "sort" not in spec["encoding"]["y"]
+        assert spec["encoding"]["y"]["sort"] is None
 
     def test_stacked_horizontal_bar_does_not_get_value_desc_default(self):
-        """Stacked horizontal bars need explicit authoring for category order."""
+        """Stacked horizontal bars preserve query-owned category order."""
         chart = _bar_chart(
             orientation="horizontal",
             color="region",
@@ -240,7 +240,7 @@ class TestHorizontalBarValueDescDefaultSort:
         resolve(chart, MULTI_SERIES_DATA, chart_style_context=_BOARD_STYLE)
         spec = generate_vega_lite_spec(chart, MULTI_SERIES_DATA)
 
-        assert "sort" not in chart_pane(spec)["encoding"]["y"]
+        assert chart_pane(spec)["encoding"]["y"]["sort"] is None
 
     def test_vertical_bar_does_not_get_value_desc_default(self):
         """The horizontal-bar default does not apply to vertical bars."""
@@ -249,6 +249,27 @@ class TestHorizontalBarValueDescDefaultSort:
         spec = generate_vega_lite_spec(chart, SAMPLE_DATA)
 
         assert spec["encoding"]["x"].get("sort") is None
+
+    def test_wide_stacked_horizontal_bar_preserves_query_category_order(self):
+        """Folded measures keep the first category row at the top."""
+        data = [
+            {"category": "Before", "revenue": 40, "cost": 60},
+            {"category": "After", "revenue": 10, "cost": 90},
+        ]
+        chart = BarChart(
+            id="wide_horizontal",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            type="bar",
+            x="category",
+            y=["revenue", "cost"],
+            stack="zero",
+            style=BarChartStylePatch(orientation="horizontal"),
+        )
+        resolve(chart, data, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, data)
+
+        assert chart_pane(spec)["encoding"]["y"]["sort"] is None
 
 
 def _board_with_family_override(family: str, **mark_overrides):
@@ -442,36 +463,107 @@ class TestBarStrokeEmitsInVLConfig:
         assert _mark(spec_a)["stroke"] != _mark(spec_b)["stroke"]
 
 
-class TestBarSizeEmitsContinuousBandSize:
-    """bar.size → VL config.bar.continuousBandSize."""
+class TestBarSizeIsALiteralFixedWidth:
+    """bar.size → VL mark.width, a literal pixel width, on ANY x scale."""
 
-    def test_distinctive_size_appears_in_vl_config(self):
+    def test_distinctive_size_appears_as_mark_width_on_band_scale(self):
+        # _bar_chart() authors x="category" (string data) -> band scale.
         board_rs, board_ctx = _board_with_bar(size=42.0)
-        chart = _bar_chart()
+        chart = _bar_chart(orientation="vertical")
         resolve(chart, SAMPLE_DATA, chart_style_context=board_ctx)
         spec = generate_vega_lite_spec(
             chart, SAMPLE_DATA, board_style=board_rs, chart_style_context=board_ctx
         )
-        assert _mark(spec)["continuousBandSize"] == 42.0
+        assert _mark(spec)["width"] == 42.0
 
     def test_different_size_produces_different_output(self):
         rs_a, ctx_a = _board_with_bar(size=10.0)
         rs_b, ctx_b = _board_with_bar(size=30.0)
         spec_a = generate_vega_lite_spec(
-            _bar_chart(),
+            _bar_chart(orientation="vertical"),
             SAMPLE_DATA,
             board_style=rs_a,
             chart_style_context=ctx_a,
         )
         spec_b = generate_vega_lite_spec(
-            _bar_chart(),
+            _bar_chart(orientation="vertical"),
             SAMPLE_DATA,
             board_style=rs_b,
             chart_style_context=ctx_b,
         )
-        assert (
-            _mark(spec_a)["continuousBandSize"] != _mark(spec_b)["continuousBandSize"]
+        assert _mark(spec_a)["width"] != _mark(spec_b)["width"]
+
+    def test_continuousBandSize_never_emitted(self):
+        # Dead VL key (measured: Vega-Lite's bar mark never reads it, on
+        # any scale) — must never appear in the emitted spec.
+        board_rs, board_ctx = _board_with_bar(size=42.0)
+        chart = _bar_chart(orientation="vertical")
+        resolve(chart, SAMPLE_DATA, chart_style_context=board_ctx)
+        spec = generate_vega_lite_spec(
+            chart, SAMPLE_DATA, board_style=board_rs, chart_style_context=board_ctx
         )
+        assert "continuousBandSize" not in _mark(spec)
+
+
+NUMERIC_X_DATA = [
+    {"hour": 0, "count": 3},
+    {"hour": 1, "count": 5},
+    {"hour": 2, "count": 2},
+    {"hour": 3, "count": 8},
+]
+
+
+def _numeric_x_bar_chart(**kwargs) -> Chart:
+    return BarChart(
+        id="test_numeric_bar",
+        query=SqlQuery(sql="SELECT 1", source="test"),
+        query_name="q",
+        type="bar",
+        x="hour",
+        y="count",
+        **kwargs,
+    )
+
+
+class TestBarWidthOnContinuousXScale:
+    """A numeric x resolves to a quantitative (continuous) VL scale — no VL
+    band exists for band_width/continuousBandSize to size against. bar.size
+    (authored) is a literal width; unauthored, mark.width is a Vega
+    expression computed from bar.gap/min_size/max_size.
+    """
+
+    def test_authored_size_is_a_literal_mark_width(self):
+        board_rs, board_ctx = _board_with_bar(size=8.0)
+        chart = _numeric_x_bar_chart()
+        resolve(chart, NUMERIC_X_DATA, chart_style_context=board_ctx)
+        spec = generate_vega_lite_spec(
+            chart, NUMERIC_X_DATA, board_style=board_rs, chart_style_context=board_ctx
+        )
+        assert _mark(spec)["width"] == 8.0
+
+    def test_unauthored_size_emits_a_scale_based_expr(self):
+        board_rs, board_ctx = _board_with_bar(gap=5.0, min_size=1.0, max_size=15.0)
+        chart = _numeric_x_bar_chart()
+        resolve(chart, NUMERIC_X_DATA, chart_style_context=board_ctx)
+        spec = generate_vega_lite_spec(
+            chart, NUMERIC_X_DATA, board_style=board_rs, chart_style_context=board_ctx
+        )
+        width = _mark(spec)["width"]
+        assert isinstance(width, dict) and "expr" in width
+        expr = width["expr"]
+        assert "scale('x'" in expr
+        assert "- 5.0" in expr
+        assert "1.0, 15.0)" in expr
+
+    def test_continuousBandSize_never_emitted(self):
+        board_rs, board_ctx = _board_with_bar()
+        chart = _numeric_x_bar_chart()
+        resolve(chart, NUMERIC_X_DATA, chart_style_context=board_ctx)
+        spec = generate_vega_lite_spec(
+            chart, NUMERIC_X_DATA, board_style=board_rs, chart_style_context=board_ctx
+        )
+        assert "continuousBandSize" not in _mark(spec)
+        assert "band" not in _mark(spec).get("width", {})
 
 
 class TestBarPaddingEmitsPaddingInner:
@@ -535,7 +627,7 @@ class TestBarAxisXLabelPadding:
     def test_horizontal_bar_categorical_y_labelPadding_from_cascade(self):
         """bar.axis_x.labels.padding flows to horizontal bar's categorical y-axis.
 
-        stark theme: editorial's default align: inward would resolve to
+        stark theme: clarity's default align: inward would resolve to
         own-side align and override the authored padding with a measured
         gutter (see TestBarAxisXLabelAlignInward) — this test isolates the
         plain passthrough.
@@ -563,7 +655,7 @@ class TestBarAxisXLabelPadding:
     def test_padding_delta_horizontal_bar(self):
         """Delta between two padding values equals delta in labelPadding.
 
-        stark theme: isolates the plain padding passthrough from editorial's
+        stark theme: isolates the plain padding passthrough from clarity's
         default align: inward (own-side align would override both values
         with the same measured gutter, collapsing the delta to 0).
         """
@@ -599,7 +691,7 @@ class TestBarAxisXLabelAlign:
 
         ``align="left"`` on the default left-orient categorical axis (matching
         the deleted ``categorical_orient`` field's static default) is the
-        own-side/invading case — Dataface computes a measured labelPadding
+        own-side/invading case — dbt charts computes a measured labelPadding
         for it rather than clipping (symmetric to the y-axis quantitative
         guard in vl_field_maps.py); see
         ``test_horizontal_bar_categorical_y_labelAlign_center_falls_back``
@@ -749,7 +841,7 @@ class TestBarAxisXLabelAlignInward:
         must fall back to the away-from-plot default (no own-side align, no
         RenderError), not invade with nothing to size the gutter from.
 
-        Regression: editorial's default axis_x.labels.align: inward turned a
+        Regression: clarity's default axis_x.labels.align: inward turned a
         valid empty render into an error card on any zero-row horizontal bar.
         """
         board_rs, board_ctx = _board_with_bar_axis_x_label(align="inward")
@@ -761,8 +853,8 @@ class TestBarAxisXLabelAlignInward:
         y_axis = spec["encoding"]["y"]["axis"]
         assert y_axis.get("labelAlign") is None
 
-    def test_editorial_default_theme_horizontal_bar_empty_data_no_error(self):
-        """Same regression, exercised through the actual shipped editorial
+    def test_clarity_default_theme_horizontal_bar_empty_data_no_error(self):
+        """Same regression, exercised through the actual shipped clarity
         theme default (not a synthetic align=inward board)."""
         chart = _bar_chart(orientation="horizontal")
         resolve(chart, [], chart_style_context=_BOARD_STYLE)
@@ -772,11 +864,11 @@ class TestBarAxisXLabelAlignInward:
         y_axis = spec["encoding"]["y"]["axis"]
         assert y_axis.get("labelAlign") is None
 
-    def test_editorial_default_theme_horizontal_bar_label_expr_no_error(self):
+    def test_clarity_default_theme_horizontal_bar_label_expr_no_error(self):
         """An authored label.expr means VL renders that expression instead of
         the raw category value — measuring the raw value while a wider expr
         output actually renders would silently under-reserve the gutter, so
-        own-side align must not invade here either. Under editorial's default
+        own-side align must not invade here either. Under clarity's default
         axis_x.labels.align: inward, this must render cleanly (no
         RenderError), falling back to the away-from-plot default rather than
         raising.
@@ -807,7 +899,7 @@ class TestBarAxisXLabelAlignInward:
 # ── Horizontal bar value-axis labelFont: axis_y cascade ─────────────────────
 #
 # After upstream routing, horizontal bar's measure axis is VL x, driven by the
-# axis_y cascade (dataface semantic: axis_y = measure axis regardless of
+# axis_y cascade (dbt charts semantic: axis_y = measure axis regardless of
 # orientation). The axis_quantitative layer within axis_y cascade applies to the
 # measure axis, so labelFont from axis_quantitative reaches horizontal bar's VL x
 # directly — no post-hoc pop. Authors control the measure-axis font via
@@ -884,7 +976,7 @@ class TestHorizontalBarValueAxisLabelFont:
     def test_horizontal_bar_value_axis_font_from_axis_y_cascade(self):
         """style.axis_y.labels.font.family reaches horizontal bar's measure axis.
 
-        Under dataface semantics axis_y = measure axis.  For horizontal bar the
+        Under dbt charts semantics axis_y = measure axis.  For horizontal bar the
         measure axis is VL x, so an authored style.axis_y.labels.font.family
         override flows directly to encoding.x.axis.labelFont.
         """

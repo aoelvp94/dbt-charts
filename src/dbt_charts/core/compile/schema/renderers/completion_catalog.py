@@ -1,4 +1,4 @@
-"""Assemble the Dataface YAML completion catalog for editor autocomplete.
+"""Assemble the dbt charts YAML completion catalog for editor autocomplete.
 
 The catalog is the generated VS Code JSON Schema (``render_vscode_schema``),
 which already carries the built-in theme enum. Both the Cloud dashboard
@@ -18,5 +18,5 @@ from dbt_charts.core.compile.schema.renderers.vscode_schema import render_vscode
 
 @lru_cache(maxsize=1)
 def build_completion_catalog() -> dict[str, Any]:
-    """Return the generated Dataface YAML schema used by editor completions."""
+    """Return the generated dbt charts YAML schema used by editor completions."""
     return render_vscode_schema(introspect())

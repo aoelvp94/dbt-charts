@@ -253,3 +253,53 @@ rows:
     focused_width = _chart_item_width(focused_sized, "inner_bar")
 
     assert focused_width == slot_width
+
+
+def test_focused_chart_on_authored_width_board_hugs_the_pinned_slot(
+    tmp_path, local_project: Callable[..., Project]
+):
+    """An authored board width must not carry into the focused export: the
+    focused board pins the dashboard slot and hugs it, rather than rendering
+    one chart on a full-board canvas."""
+    from dbt_charts.core.compile.sizing import board_container_width
+
+    yaml = "style:\n  frame:\n    width: 1800\n" + _THREE_COL_YAML
+    dashboard = compile(yaml)
+    assert dashboard.success and dashboard.board is not None, dashboard.errors
+    assert board_container_width(dashboard.board) == 1800.0
+    dashboard_sized = _sized_layout(dashboard.board, local_project)
+    slot_width = _chart_item_width(dashboard_sized, "small_bar")
+
+    focused_board = focus_on_chart(dashboard.board, "small_bar")
+    focused_sized = _sized_layout(focused_board, local_project)
+    focused_width = _chart_item_width(focused_sized, "small_bar")
+
+    assert focused_width == slot_width
+    assert board_container_width(focused_board) < 1800.0
+
+
+def test_focused_chart_from_wide_board_keeps_its_wide_slot(
+    tmp_path, local_project: Callable[..., Project]
+):
+    """WYSIWYG must survive a slot wider than the theme's max_width: the
+    focused container is the pinned slot plus margins, never the hug bound."""
+    from dbt_charts.core.compile.sizing import board_container_width, chart_slot_width
+
+    yaml = (
+        "style:\n  frame:\n    width: 1800\n"
+        "queries:\n  q:\n    type: values\n    rows:\n"
+        "      - {cat: a, val: 10}\n      - {cat: b, val: 20}\n"
+        "charts:\n  wide_bar:\n    query: q\n    type: bar\n    x: cat\n    y: val\n"
+        "rows:\n  - wide_bar\n"
+    )
+    dashboard = compile(yaml)
+    assert dashboard.success and dashboard.board is not None, dashboard.errors
+    slot_width = chart_slot_width(dashboard.board, "wide_bar")
+    assert slot_width is not None
+    margin = float(dashboard.board.resolved_style.frame.margin)
+    assert slot_width > float(dashboard.board.resolved_style.frame.max_width)
+
+    focused_board = focus_on_chart(dashboard.board, "wide_bar")
+    focused_sized = _sized_layout(focused_board, local_project)
+    assert _chart_item_width(focused_sized, "wide_bar") == slot_width
+    assert board_container_width(focused_board) == slot_width + 2 * margin

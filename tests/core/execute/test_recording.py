@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from itertools import cycle
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from pydantic import ValidationError
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.compiler import compile as compile_board
+from dbt_charts.core.compile.models.chart.resolved import ResolvedPieChart
+from dbt_charts.core.compile.resolve.chart.label_data import (
+    pie_presentation_fingerprint,
+)
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.executor import Executor
@@ -104,6 +110,94 @@ def test_load_board_recording_raises_on_malformed_json() -> None:
 def test_load_board_recording_raises_on_schema_mismatch() -> None:
     with pytest.raises(DbtChartsError):
         load_board_recording(b'{"unexpected_field": true}')
+
+
+_TIED_PIE_YAML = """
+title: Tied Pie
+queries:
+  industry_counts:
+    sql: SELECT industry, count(*) AS n FROM accounts GROUP BY 1 ORDER BY 2 DESC
+    source: test_profile
+charts:
+  industry_pie:
+    query: industry_counts
+    type: pie
+    theta: n
+    color: industry
+rows:
+  - industry_pie
+"""
+
+# Two valid results for the same ORDER BY n DESC query: the three n=2 rows
+# (and the two n=1 rows) are ties, so a warehouse is free to return either
+# order on any given execution.
+_TIE_ORDER_A = [
+    {"industry": "Tech", "n": 2},
+    {"industry": "Retail", "n": 2},
+    {"industry": "Media", "n": 2},
+    {"industry": "Energy", "n": 1},
+    {"industry": "Bio", "n": 1},
+]
+_TIE_ORDER_B = [
+    {"industry": "Media", "n": 2},
+    {"industry": "Tech", "n": 2},
+    {"industry": "Retail", "n": 2},
+    {"industry": "Bio", "n": 1},
+    {"industry": "Energy", "n": 1},
+]
+
+
+def _tie_flipping_registry() -> Mock:
+    """Adapter registry returning a different tie order on every execution."""
+    orders = cycle([_TIE_ORDER_A, _TIE_ORDER_B])
+
+    def _execute(*args: object, **kwargs: object) -> Mock:
+        ok = Mock()
+        ok.is_success = True
+        ok.data = [dict(row) for row in next(orders)]
+        ok.column_descriptions = None
+        ok.resolved_relations = None
+        ok.truncated_reason = None
+        return ok
+
+    registry = Mock()
+    registry.execute.side_effect = _execute
+    return registry
+
+
+def test_record_board_records_the_rows_resolve_saw_even_with_cache_off() -> None:
+    """Regression: resolve and record must come from one execution.
+
+    A query with tied ORDER BY values may return a different row order on each
+    execution. With the persistent cache off, ``record_board`` must still get
+    the exact rows ``build_resolved_board`` baked the pie's
+    ``presentation_fingerprint`` from — a second execution would flake replay
+    with ERR-RESOLVED-PIE-DATA-MISMATCH whenever the tie order shifted.
+    """
+    result = compile_board(_TIED_PIE_YAML)
+    assert result.success, result.errors
+    assert result.board is not None
+    registry = _tie_flipping_registry()
+    executor = Executor(
+        result.board,
+        adapter_registry=registry,
+        query_registry=result.query_registry,
+        use_cache=False,
+    )
+    variables: dict[str, object] = {}
+
+    resolved, _ = build_resolved_board(
+        result.board, executor, variables, render_first=False
+    )
+    recording = record_board(resolved, executor, variables)
+
+    pie = resolved.charts["industry_pie"]
+    assert isinstance(pie, ResolvedPieChart)
+    assert (
+        pie_presentation_fingerprint(recording.rows_by_query["industry_counts"])
+        == pie.presentation_fingerprint
+    )
+    assert registry.execute.call_count == 1
 
 
 def test_board_recording_rejects_unknown_fields() -> None:

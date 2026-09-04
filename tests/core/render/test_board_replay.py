@@ -36,6 +36,7 @@ from dbt_charts.core.render.board_replay import (
 )
 from dbt_charts.core.render.board_resolve import build_resolved_board
 from dbt_charts.core.render.boards import render_board_svg
+from dbt_charts.core.render.controls import interactive_controls
 
 _CLIP_ID = re.compile(r"clip\d+")
 _RENDER_TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
@@ -189,7 +190,7 @@ def test_pie_attachment_round_trips_in_board_artifact(tmp_path: Path) -> None:
     ]
     assert "attached_rows" not in pie_document
     assert "slice_label_lines" not in pie_document
-    assert "__dft_label" not in json.dumps(pie_document)
+    assert "__dbt_label" not in json.dumps(pie_document)
 
 
 def test_pie_artifact_replays_the_same_recording(tmp_path: Path) -> None:
@@ -398,14 +399,14 @@ charts:
     title: Revenue
     style:
       orientation: vertical
-    data_table:
+    support_table:
       - source: revenue
 rows:
   - dt_chart
 """
 
 
-def test_render_board_from_artifact_calibrates_title_offset_for_data_table(
+def test_render_board_from_artifact_calibrates_title_offset_for_support_table(
     tmp_path: Path,
 ) -> None:
     """render_board_from_artifact must apply title-offset calibration like dct render.
@@ -505,3 +506,92 @@ def test_render_board_from_artifact_raises_on_variable_mismatch(
 
     assert exc_info.value.code is not None
     assert exc_info.value.code.code == "ERR-BOARD-RECORDING-MISMATCH"
+
+
+_PAGINATED_TABLE_YAML = """
+title: Paginated Table Replay
+queries:
+  rows_q:
+    columns: [name]
+    values:
+      - [row_1]
+      - [row_2]
+      - [row_3]
+      - [row_4]
+      - [row_5]
+      - [row_6]
+      - [row_7]
+      - [row_8]
+      - [row_9]
+      - [row_10]
+charts:
+  t:
+    query: rows_q
+    type: table
+    style:
+      pagination:
+        enabled: true
+        page_rows: 5
+rows:
+  - t
+"""
+
+
+def _paginated_table_live(
+    tmp_path: Path, variables: dict[str, object]
+) -> tuple[bytes, BoardRecording, str]:
+    result = compile_board(_PAGINATED_TABLE_YAML)
+    assert result.success, result.errors
+    assert result.board is not None
+    executor = Executor(
+        result.board,
+        build_adapter_registry(FilesystemProject(tmp_path)),
+        query_registry=result.query_registry,
+    )
+    resolved, render_cache = build_resolved_board(result.board, executor, variables)
+    background = resolved.style.background
+    with interactive_controls(True):
+        live_svg = render_board_svg(
+            resolved,
+            executor,
+            variables,
+            background=None if background == "transparent" else background,
+            render_cache=render_cache,
+        )
+    return (
+        dump_board_artifact(resolved),
+        record_board(resolved, executor, variables),
+        live_svg,
+    )
+
+
+def test_render_board_from_artifact_reproduces_a_paginated_table_page(
+    tmp_path: Path,
+) -> None:
+    """A replay must land on the same page a live render shows.
+
+    board_replay.py's render_board_from_artifact calls render_board_svg
+    directly (not through renderer.render()), so the page variable must
+    reach the table renderer via that call too -- not just the live render()
+    entry point. Regression for the gap where render_board_svg had no
+    board_variables() scope of its own and silently painted page 1
+    regardless of what `variables` it was handed. interactive_controls(True)
+    forces the interactive (not static_multi_page) path, so only the
+    requested page's rows actually appear in the SVG.
+    """
+    artifact_bytes, recording, live_svg = _paginated_table_live(tmp_path, {"t_page": 2})
+
+    # Guard against a false pass: both live and replay landing on the WRONG
+    # page (1) would still satisfy string equality below.
+    assert "row_6" in live_svg
+    assert not re.search(r"\brow_1\b", live_svg)
+
+    reloaded = load_board_artifact(artifact_bytes)
+    with interactive_controls(True):
+        replay_svg = render_board_from_artifact(
+            reloaded, recording, recording.variables
+        )
+
+    assert "row_6" in replay_svg
+    assert not re.search(r"\brow_1\b", replay_svg)
+    assert _normalize(replay_svg) == _normalize(live_svg)

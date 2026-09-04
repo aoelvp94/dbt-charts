@@ -5,9 +5,10 @@ from __future__ import annotations
 import datetime as dt
 import re
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 from dbt_charts.core.compile.config import get_chart_rendering
+from dbt_charts.core.compile.resolve.chart.tick_values import zero_anchor_floor
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.vl_field_maps import emit_resolved_scale_vl
@@ -138,18 +139,79 @@ def resolve_authored_x_type(axis: ResolvedAxisStyle) -> str | None:
     return authored_type
 
 
+# Matches emitters/_cartesian.py's alias: keeps the Any (and its marker) on one
+# short line, where `ruff format` cannot reflow the marker off it.
+_CellValue = Any  # type-state: explicit_any — raw query result cell value
+
+
+def _panelled_x_values(
+    data: list[dict[str, Any]],  # type-state: explicit_any — raw query rows
+    x_field: str,
+    panel_fields: tuple[str, ...],
+) -> list[list[_CellValue]]:
+    """Group *data*'s x cells by panel key — one inner list per panel.
+
+    With no ``panel_fields`` this is the one-panel case and returns a single
+    group — exactly the pooled list the non-faceted path has always measured.
+
+    A declared panel field is always present on every row: ``all_rows()``
+    re-stamps the partition columns unconditionally, and ``regroup`` raises
+    ``ERR-MULTIPLES-ROW-MISSING-PARTITION-FIELD`` before this runs otherwise.
+    So there is no "field missing" branch to fall back on — silently pooling
+    there would be the exact measurement this grouping exists to prevent.
+    """
+    if not panel_fields:
+        return [[row.get(x_field) for row in data if x_field in row]]
+    groups: dict[tuple[_CellValue, ...], list[_CellValue]] = {}
+    for row in data:
+        if x_field not in row:
+            continue
+        key = tuple(row.get(f) for f in panel_fields)
+        groups.setdefault(key, []).append(row[x_field])
+    return list(groups.values())
+
+
 def resolve_cartesian_x_type(
     data: ChartRenderData,
     x_field: str,
     axis: ResolvedAxisStyle,
     mark_type: str,
     is_band_step: bool,
+    panel_fields: tuple[str, ...],
 ) -> tuple[str, str, DetectedTimeUnit]:
-    """Return the emitted VL x type, data type, and calendar bucket grain."""
+    """Return the emitted VL x type, data type, and calendar bucket grain.
+
+    An auto-detected fine grain (yearweek/yearmonthdate) is additionally
+    gated by ``ordinal_scaffold_within_budget``: past the budget the data is
+    sparser than its detected grain, so the bar branch resolves temporal
+    instead of ordinal, and the grain itself is dropped (returned time_unit
+    None) so no caller bands mark widths or label cadences to a bucket the
+    data doesn't actually have. The gate is scoped to the families that band
+    mark widths — line/area/scatter never band, so their grain and labels
+    resolve exactly as before at any sparsity. An authored ``time_unit`` is
+    an instruction, not a guess — never gated.
+
+    ``panel_fields`` names the chart's partition (small-multiples) columns.
+    The scaffold is built per panel, so the budget must be measured per
+    panel. This stays a pure function of its arguments — same rows, same
+    fields, same verdict — which is what lets the gate-reaching call sites
+    agree. It does NOT mean every site sees one verdict chart-wide:
+    ``_channels.py`` resolves on PRE-gap-fill rows to route gap-fill, while
+    ``bar.py`` and the warning detector resolve on the POST-fill rows, and an
+    authored ``fill`` makes those inputs differ by construction (see the
+    re-sort note in ``_channels.py``). Omitting it is the non-faceted case;
+    It is REQUIRED on ``resolve_cartesian_x_type`` — the function that owns
+    the gate — so a new caller cannot take the pooled-span verdict by
+    omission. ``build_cartesian_x_encoding`` keeps a ``()`` default (it is the
+    wrapper every emitter test constructs directly); its production callers
+    all pass explicitly, and it forwards whatever it is given.
+    """
     from dbt_charts.core.render.chart.time_unit_detect import (
         BUCKETED_CALENDAR_UNITS,
+        FINE_BUCKET_UNITS,
         TIME_PART_UNITS,
         detect_time_unit,
+        ordinal_scaffold_within_budget,
     )
 
     x_type_from_data = infer_vega_type_from_data(data, x_field)
@@ -177,6 +239,18 @@ def resolve_cartesian_x_type(
         # labelExpr/tick-thinning enrichment the ordinal branch gives bar.
         return "nominal", x_type_from_data, time_unit
 
+    # line/area/scatter never band mark widths, so the scaffold budget has
+    # nothing to protect there — skip the verdict, not just the drop below.
+    scaffold_ok = (
+        ordinal_scaffold_within_budget(
+            _panelled_x_values(data, x_field, panel_fields), time_unit
+        )
+        if authored_time_unit is None
+        and time_unit in FINE_BUCKET_UNITS
+        and mark_type not in ("line", "area", "scatter")
+        else True
+    )
+
     if (
         authored_type == "temporal"
         or authored_time_unit == "none"
@@ -190,14 +264,25 @@ def resolve_cartesian_x_type(
             vl_type = "ordinal"
         elif mark_type in ("line", "area", "scatter"):
             vl_type = "temporal"
-        elif time_unit in {"yearweek", "yearmonthdate"}:
-            vl_type = "ordinal"
+        elif time_unit in FINE_BUCKET_UNITS:
+            vl_type = "ordinal" if scaffold_ok else "temporal"
         else:
             n_buckets = len({row.get(x_field) for row in data if x_field in row})
             max_ordinal = get_chart_rendering().type_inference.max_ordinal_buckets
             vl_type = "temporal" if n_buckets > max_ordinal else "ordinal"
     else:
         vl_type = x_type_from_data
+
+    # A continuous scale carrying an over-budget fine grain must not keep the
+    # grain either: the bar emitter bands mark widths to the timeUnit (a
+    # "daily" bar is one sub-pixel day wide on a multi-year span) and the
+    # label ladder paints one tick per bucket. Dropping it hands the axis to
+    # VL's own continuous-temporal defaults. `scaffold_ok` is only ever False
+    # for the families that band mark widths (the guard above), so
+    # line/area/scatter keep their grain — the timeUnit's UTC day-flooring
+    # and the curated label ladder — exactly as it resolves today.
+    if vl_type == "temporal" and not scaffold_ok:
+        time_unit = None
 
     if (
         vl_type == "temporal"
@@ -307,6 +392,149 @@ def apply_x_tick_cadence(
         axis_vl.setdefault(key, value)
 
 
+HEATMAP_FORMAT_REMEDY = (
+    "Remove the format — a heatmap has no measure axis. Both axes are grid "
+    "dimensions and the value lives on the color channel, which carries no "
+    "label format of its own."
+)
+
+
+# Spellings Python's float() accepts and JS's unary + does not, so the two
+# disagree on whether a tick paints as a number: digit separators, and the
+# non-finite words (JS reads "nan"/"inf" as NaN and paints exactly that).
+_NOT_JS_NUMERIC_RE = re.compile(r"_|^[+-]?(nan|inf(inity)?)$", re.IGNORECASE)
+
+
+def _reads_as_number(value: Any) -> bool:  # type-state: explicit_any — a raw query cell
+    """Whether d3 can read this tick value as a number, i.e. JS ``+value``.
+
+    Neither of the two numeric predicates this repo already has answers this
+    question, which is why it is a third one:
+
+    - ``coerce_numeric_cell`` is the shared *null* rule ("no colour, no domain
+      contribution") and excludes ``bool``, a contract this question does not
+      share — d3 reads ``+true`` as ``1`` and paints ``0``/``1`` over a boolean
+      dimension rather than NaN.
+    - ``is_vega_numeric_value`` (below) is the "what VL type is this column"
+      rule and deliberately rejects numeric *strings*. d3 coerces those, so
+      rejecting them here would refuse a column that formats perfectly.
+
+    Do not consolidate this into either of them: each rejection above is a
+    board that renders today.
+    """
+    if isinstance(value, (int, float, Decimal)):
+        return True
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return True  # JS reads +"" and +" " as 0
+        if _NOT_JS_NUMERIC_RE.search(text):
+            return False
+        try:
+            float(text)
+        except ValueError:
+            return False
+        return True
+    return False
+
+
+def gate_label_format(
+    fmt: str | None,
+    field: str,
+    data: list[dict[str, Any]],  # type-state: explicit_any — raw query rows
+    vl_type: str,
+    *,
+    setting: Literal[
+        "axis_x.labels.format",
+        "axis_y.labels.format",
+        "axis_y.mirror.format",
+    ],
+    remedy: str | None = None,
+) -> None:
+    """Raise when a d3 number format is authored over ticks it cannot paint.
+
+    The one gate for every axis-format surface: ``axis_x``, ``axis_y``, the
+    mirror ghost, and heatmap's y all call this rather than each inventing
+    its own drop/NaN/literal-text behavior. Two failures share the code:
+
+    - **A band scale** (``vl_type`` nominal or ordinal) whose **ticks d3
+      cannot read as numbers**, per ``_reads_as_number`` — JS ``+value``,
+      the only rule that decides whether a tick paints as a number or as
+      ``NaN``. Numeric categories (``stage_id: 1, 2, 3``), numeric strings
+      and booleans all format cleanly, so they stay legal: a misaddressed
+      format is indistinguishable from a wanted one there. Date-like buckets
+      (``2024-01``, ``Q1 2024``) do NOT coerce and are the case worth
+      naming: "revenue by quarter as a horizontal bar" is routine, and it
+      NaNs like any other category.
+    - **A temporal scale** with a non-time spec, unconditionally — Vega reads
+      the spec as a time spec and paints its literal text (e.g. repeated
+      ``$,.0f``) across the axis instead of the date. Unlike the band case
+      there is no numeric-tick exemption: no reading of a number format over
+      dates was ever the author's intent, so this half skips the row walk
+      entirely.
+
+    A quantitative axis, or any axis with no authored format, is a no-op —
+    the axis paints exactly what was authored, format included.
+
+    ``setting`` is the authored keypath the caller is gating, verbatim, and
+    the error message opens with it. It is the whole path rather than just
+    the channel because a mirror ghost gates ``axis_y.mirror.format`` — a
+    different key from ``axis_y.labels.format``, and naming the latter would
+    send the author to a setting they never wrote.
+
+    ``remedy`` overrides the "what to do instead" half for a caller whose
+    axis needs a better answer than the field type alone can give — the same
+    shape ``apply_x_tick_cadence`` already takes. A caller whose axis has no
+    "move it to the other channel" fix (heatmap, the mirror ghost, a scatter
+    dot plot whose measure sibling is ``axis_x``) MUST pass one: the band
+    default names ``axis_y``, and following that advice anywhere else sends
+    the author straight back into the failure this raises for. Temporal is
+    the exception that needs NO caller remedy — the gate answers it with the
+    ``style.time_format`` text below, which is right on every family, so a
+    temporal call site passing ``remedy=None`` is correct rather than lazy.
+    """
+    if fmt is None or is_time_format(fmt):
+        return
+    if vl_type not in ("nominal", "ordinal", "temporal"):
+        return
+    # EVERY row, not a sample: Vega paints a tick per domain value, so ten
+    # numeric rows followed by one "AAA" is exactly the NaN this exists to
+    # catch. `all` short-circuits on the first non-numeric cell, and an
+    # all-numeric column is one cheap pass over rows the renderer already
+    # walks several times. An empty generator — no rows, or the field
+    # absent from all of them — is missing evidence, not a category axis,
+    # and `all` answers True for it.
+    if vl_type != "temporal" and all(
+        _reads_as_number(value)
+        for value in (row.get(field) for row in data)
+        if value is not None
+    ):
+        return
+    from dbt_charts.core.diagnostics.chart_data import ChartDataError
+    from dbt_charts.core.diagnostics.codes_render import (
+        ERR_LABEL_FORMAT_AXIS_MISMATCH,
+    )
+
+    default_remedy = (
+        "This axis is temporal — d3's number grammar doesn't read over "
+        'dates. Author a time spec here (e.g. "%b %Y"), or set '
+        "style.time_format instead."
+        if vl_type == "temporal"
+        else (
+            "axis_x addresses the dimension channel — author the number "
+            "format on style.axis_y.labels.format, the measure axis."
+        )
+    )
+    raise ChartDataError.from_code(
+        ERR_LABEL_FORMAT_AXIS_MISMATCH,
+        setting=setting,
+        field=field,
+        fmt=fmt,
+        remedy=remedy
+        or default_remedy,  # type-state: silent_fallback — None means the default text
+    )
+
+
 def build_cartesian_x_encoding(
     data: list[dict[str, Any]],
     x_field: str,
@@ -318,6 +546,10 @@ def build_cartesian_x_encoding(
     visibility_time_unit: str | None = None,
     label_anchor_index: int = 0,
     domain_values: list[Any] | None = None,
+    outer_chart_width: float | None = None,
+    plot_width: float | None = None,
+    *,
+    panel_fields: tuple[str, ...] = (),
 ) -> tuple[str, dict[str, Any], DetectedTimeUnit]:
     """Return (vl_type, merged_ax_vl, detected_time_unit) for a cartesian x encoding.
 
@@ -352,36 +584,69 @@ def build_cartesian_x_encoding(
     domains, so the tick values must be derived from that union and THEN
     thinned to the label cadence; deriving them from the base's rows leaves
     every extra band unlabelled. Unset means the base's rows are the domain.
+
+    outer_chart_width is the card's own outer pixel width — the same basis
+    ``typography.width_tier`` classifies — used only to pick the sub-day
+    clock vocabulary's narrow-width fallback (rule 4 of the time-notation
+    vocabulary). Unset treats the card as not narrow.
+
+    plot_width is the horizontal space known to Python before the spec is
+    compiled — the card width minus chrome our OWN code already reserves
+    (endpoint rail, reserved axis space — the caller already subtracted
+    this before ``resolve_axis_x_overlap``), not the real plot rectangle
+    vl_convert's ``autosize: fit`` will draw into (that also subtracts the
+    y-axis's own rendered chrome, a data-dependent amount only Vega's
+    layout engine measures — see ``predicted_tick_count`` in
+    ``time_unit_detect.py``). It feeds the sub-day clock vocabulary's
+    tick-cadence gate ONLY when nothing authored a tick cadence — an
+    authored ``ticks.count``/``ticks.time_unit`` is read straight off the
+    axis's own resolved cadence instead, with no width or prediction
+    involved. Unset falls back to outer_chart_width (no known chrome to
+    subtract); both unset disables the width-predicted half of the
+    vocabulary for a genuinely continuous sub-day axis with no authored
+    cadence (no basis to predict from — see
+    ``default_subday_label_expr_for``).
     """
+    from dbt_charts.core.compile.resolve.style.typography import width_tier
     from dbt_charts.core.render.chart.step_band import BAND_STEP_CURVE
     from dbt_charts.core.render.chart.time_unit_detect import (
         BUCKETED_CALENDAR_UNITS,
         default_label_expr_for,
+        default_subday_label_expr_for,
         enumerated_axis_values,
         label_opener_values,
         ordinal_axis_values,
+        predicted_tick_count,
+        predicted_tick_count_ceiling,
         resolve_label_time_unit,
     )
 
     vl_type, x_type_from_data, time_unit = resolve_cartesian_x_type(
-        data, x_field, axis, mark_type, curve == BAND_STEP_CURVE
+        data, x_field, axis, mark_type, curve == BAND_STEP_CURVE, panel_fields
     )
     from dbt_charts.core.render.chart.vl_field_maps import _n
 
     label_values: list[Any] | None = _n(axis, "labels", "values")
 
-    # label_tu is the resolved label cadence for a bucketed grain — computed once
-    # so both the density gate below and the axis-values/labelExpr enrichment
-    # further down agree on the same cadence.
+    # label_tu is the resolved label VOCABULARY — what a visible tick's text
+    # says (fed to default_label_expr_for's format_time_unit param below).
+    # authored_label_grain is a different question: whether the AUTHOR asked
+    # for a coarser tick grain via labels.time_unit, which is what decides
+    # whether the axis genuinely re-grains (label_tick_cadence, below). The
+    # two agree whenever nothing was authored — but the cadence ladder can
+    # promote label_tu to "year" as a render-local vocabulary decision (every
+    # visible tick is a January; see resolve_temporal_label_visibility)
+    # without the author having asked for a coarser grain at all, so using
+    # label_tu for the grain question would wrongly re-grain (and, on a bar
+    # axis, drop the monthly tick marks _LABEL_THINNING_TICK_MARK_TYPES exists
+    # to restore) whenever the ladder — not the author — reaches year.
     label_tu: str | None = None
     authored_label_tu: str | None = None
+    authored_label_grain: str | None = None
     if time_unit and time_unit in BUCKETED_CALENDAR_UNITS:
         authored_label_tu = getattr(getattr(axis, "labels", None), "time_unit", None)
-        label_tu = (
-            format_time_unit
-            if format_time_unit
-            else resolve_label_time_unit(time_unit, authored_label_tu)
-        )
+        authored_label_grain = resolve_label_time_unit(time_unit, authored_label_tu)
+        label_tu = format_time_unit if format_time_unit else authored_label_grain
 
     fiscal_year_start_month = axis.fiscal_year_start_month
     all_axis_values = (
@@ -410,8 +675,8 @@ def build_cartesian_x_encoding(
         else all_axis_values
     )
     label_tick_cadence = (
-        label_tu in BUCKETED_CALENDAR_UNITS
-        and label_tu != time_unit
+        authored_label_grain in BUCKETED_CALENDAR_UNITS
+        and authored_label_grain != time_unit
         and axis.ticks.count is None
         and axis.ticks.time_unit is None
         and "values" not in ax_vl
@@ -419,7 +684,7 @@ def build_cartesian_x_encoding(
     label_tick_values: list[Any] = []
     if (
         label_tick_cadence
-        and label_tu is not None
+        and authored_label_grain is not None
         and time_unit is not None
         and label_cadence_values
     ):
@@ -427,7 +692,7 @@ def build_cartesian_x_encoding(
             label_opener_values(
                 label_cadence_values,
                 time_unit,
-                label_tu,
+                authored_label_grain,
                 fiscal_year_start_month,
             )
             or label_cadence_values[:1]
@@ -506,18 +771,50 @@ def build_cartesian_x_encoding(
         and time_unit
         and time_unit in BUCKETED_CALENDAR_UNITS
     ):
+        visibility_thinned = (
+            visibility_time_unit in BUCKETED_CALENDAR_UNITS
+            and visibility_time_unit != authored_label_grain
+        )
+        # Bar/histogram get the missing-positional-cue restoration
+        # (_LABEL_THINNING_TICK_MARK_TYPES, below): `values` keeps every
+        # bucket and `ticks: True` draws them, so a render-local promotion
+        # never re-grains the axis. Every other mark type reaching this
+        # branch — in practice, heatmap's grid, plus line/area/scatter with
+        # an authored ordinal x-axis (`curve: step`, `axis_x.type: ordinal`,
+        # or a non-Jan fiscal year start) — has no such restoration:
+        # collapsing `values` to the render-local thinned grain keeps ticks
+        # and labels in lockstep instead of a tick under every unlabeled band.
+        restores_ticks = mark_type in _LABEL_THINNING_TICK_MARK_TYPES
         if "values" not in result:
-            tick_values = label_tick_values if label_tick_cadence else all_axis_values
+            # `| None`: `all_axis_values` (below) is None when the field has
+            # no non-null values at all (`ordinal_axis_values` — empty data),
+            # a real, exercised case (`test_no_data_no_values_injected`), not
+            # dead code — `if tick_values:` below correctly leaves `values`
+            # unset in that case rather than injecting an empty list.
+            tick_values: list[Any] | None  # type-state: explicit_any — raw row type
+            if label_tick_cadence:
+                tick_values = label_tick_values
+            elif (
+                visibility_thinned
+                and not restores_ticks
+                and visibility_time_unit is not None
+                and label_cadence_values
+            ):
+                tick_values = (
+                    label_opener_values(
+                        label_cadence_values,
+                        time_unit,
+                        visibility_time_unit,
+                        fiscal_year_start_month,
+                    )
+                    or label_cadence_values[:1]
+                )
+            else:
+                tick_values = all_axis_values
             if tick_values:
                 result["values"] = tick_values
 
-        visibility_thinned = (
-            visibility_time_unit in BUCKETED_CALENDAR_UNITS
-            and visibility_time_unit != label_tu
-        )
-        if mark_type in _LABEL_THINNING_TICK_MARK_TYPES and (
-            label_tick_cadence or visibility_thinned
-        ):
+        if restores_ticks and (label_tick_cadence or visibility_thinned):
             result["ticks"] = True
 
         # Apply the smart cadence labelExpr whenever the grain was derived from
@@ -539,19 +836,95 @@ def build_cartesian_x_encoding(
                     0 if label_tick_cadence or "values" in ax_vl else label_anchor_index
                 ),
                 anchor_value="" if "values" in ax_vl else temporal_anchor_value,
+                # This is the ordinal/bucket branch: `datum.value` is always a
+                # real per-row bucket key (never a Vega-computed continuous
+                # tick), so ticks_are_buckets stays True unconditionally —
+                # that is what keeps the yearweek day-shift rule inside
+                # default_label_expr_for off for bar/histogram, thinned or
+                # not (see its docstring).
                 ticks_are_buckets=True,
+                # The anchor must compare at whichever grain `values` (above)
+                # actually landed at: the authored grain when `values`
+                # collapsed to `label_tick_values`, the render-local
+                # visibility grain when it collapsed to visibility openers,
+                # or the encoding grain when it kept every native bucket
+                # (restores_ticks, or no thinning at all) — comparing at a
+                # coarser grain than `values` holds would match every tick in
+                # that period (e.g. all 12 months of the anchor's year), the
+                # same bug the continuous-temporal branch below guards
+                # against via its own encoding-grain comparison.
+                anchor_grain=(
+                    authored_label_grain
+                    if label_tick_cadence
+                    else (
+                        visibility_time_unit
+                        if (visibility_thinned and not restores_ticks)
+                        else time_unit
+                    )
+                ),
                 steep_tilt=steep_tilt,
             )
             if smart_expr is not None:
                 result["labelExpr"] = smart_expr
 
     elif vl_type == "temporal" and time_unit and time_unit in BUCKETED_CALENDAR_UNITS:
-        if "values" not in result and label_tick_cadence and label_tick_values:
-            # A coarser display grain uses source openers so short domains keep
-            # every represented period (for example, a six-week Jan–Feb domain
-            # gets both month ticks rather than only Vega's interior Feb tick).
-            # Visibility thinning remains independent and never changes these.
-            result["values"] = label_tick_values
+        # Tracks which grain `values` actually landed at when this branch
+        # injects them, so the anchor comparison below can match it exactly
+        # (see anchor_grain on the default_label_expr_for call). None means
+        # this branch injected nothing — either `values` pre-existed in
+        # ax_vl (an authored explicit list) or no thinning applies — and the
+        # anchor falls back to the two-way ticks_are_buckets choice.
+        injected_values_grain: str | None = None
+        if "values" not in result:
+            if label_tick_cadence and label_tick_values:
+                # A coarser display grain uses source openers so short domains
+                # keep every represented period (for example, a six-week
+                # Jan–Feb domain gets both month ticks rather than only
+                # Vega's interior Feb tick). Visibility thinning remains
+                # independent and never changes these.
+                result["values"] = label_tick_values
+                injected_values_grain = authored_label_grain
+            elif (
+                visibility_time_unit in BUCKETED_CALENDAR_UNITS
+                and visibility_time_unit != time_unit
+                and axis.ticks.count is None
+                and axis.ticks.time_unit is None
+                and label_cadence_values
+            ):
+                # Render-local (ladder) thinning, never authored: Vega's own
+                # tick generator places ticks only on true calendar
+                # boundaries within the domain (e.g. Feb 1), so a domain
+                # start that isn't itself a calendar boundary (a weekly
+                # series opening Jan 5) never gets a tick at all — not
+                # merely hidden, absent from the DOM. Injecting the real
+                # opener values (including the domain-start one) keeps the
+                # leading label, and its year context, on screen.
+                result["values"] = (
+                    label_opener_values(
+                        label_cadence_values,
+                        time_unit,
+                        visibility_time_unit,
+                        fiscal_year_start_month,
+                    )
+                    or label_cadence_values[:1]
+                )
+                injected_values_grain = visibility_time_unit
+        # The continuous half of the _LABEL_THINNING_TICK_MARK_TYPES
+        # restoration: a bar past `max_ordinal_buckets` resolves temporal, so
+        # the ordinal branch above never sees it — yet that is where the cue
+        # matters most (densest bars, sparsest labels). `values` above already
+        # collapsed to the label cadence, so this marks one period, not one
+        # bucket. Gated on THIS branch having injected them, which is what an
+        # authored cadence (`ticks.count`, `ticks.time_unit`, explicit `values`)
+        # opts out of. `ticks.visible` is NOT an opt-out: it arrives already
+        # cascaded, so an authored `false` is indistinguishable from the bar
+        # family's own `false` — overriding that default is this guard's job.
+        # The ordinal branch above overrides it the same way.
+        if (
+            injected_values_grain is not None
+            and mark_type in _LABEL_THINNING_TICK_MARK_TYPES
+        ):
+            result["ticks"] = True
         # Temporal escape-hatch with a bucketed time_unit: emit smart labelExpr so the
         # axis reads human-friendly cadence labels (e.g. "Jan 2024") instead of the
         # raw ISO tick values that Vega emits for utc temporal domains. An authored
@@ -578,7 +951,23 @@ def build_cartesian_x_encoding(
                         else ""
                     )
                 ),
-                ticks_are_buckets=False,
+                # True whenever this branch injected explicit `values` above:
+                # `datum.value` is then one of our own real per-row bucket
+                # dates, not a tick Vega computed itself, so the yearweek
+                # Sunday-anchor correction below must stay off (it would
+                # shift an already-exact date to a real date nothing was
+                # plotted on). False only when no explicit `values` exists
+                # and Vega's own continuous tick generator is still in play.
+                ticks_are_buckets="values" in result,
+                # Mirrors the ordinal branch above: the anchor must compare
+                # at whichever grain `values` actually landed at just above —
+                # the authored grain when it collapsed to `label_tick_values`,
+                # the render-local visibility grain when it collapsed to
+                # visibility openers. `None` (no thinning injected here)
+                # falls back to the two-way ticks_are_buckets choice, which
+                # already covers pre-existing authored `values` and the
+                # genuinely continuous, un-thinned case correctly.
+                anchor_grain=injected_values_grain,
                 steep_tilt=steep_tilt,
             )
             if smart_expr_t is not None:
@@ -608,9 +997,22 @@ def build_cartesian_x_encoding(
     # vl_type, a data-dependent answer no compile-time check can reach.
     apply_x_tick_cadence(result, axis, x_field, vl_type)
 
+    # The same shape for labels.format, which is why it sits alongside: only
+    # the data says whether this axis's field can carry a number spec. A
+    # heatmap needs its own remedy — it has no measure axis for the default
+    # text to point at.
+    gate_label_format(
+        axis.labels.format,
+        x_field,
+        data,
+        vl_type,
+        setting="axis_x.labels.format",
+        remedy=HEATMAP_FORMAT_REMEDY if mark_type == "heatmap" else None,
+    )
+
     # The temporal-only half: ticks.time_unit becomes VL's own
     # axis.tickCount: {interval, step} (VL's wire format says "interval"
-    # regardless of Dataface's field name), and absent any authored cadence
+    # regardless of dbt charts' field name), and absent any authored cadence
     # the resolved label grain supplies a default one. Both need the label
     # grain, which is why they stay here rather than in apply_x_tick_cadence.
     if vl_type == "temporal" and "tickCount" not in result and "values" not in result:
@@ -635,6 +1037,70 @@ def build_cartesian_x_encoding(
             if tick_time_unit in _TEMPORAL_TICK_INTERVAL:
                 interval, step = _TEMPORAL_TICK_INTERVAL[tick_time_unit]
                 result["tickCount"] = {"interval": interval, "step": step}
+
+    # Genuinely continuous temporal (no calendar-bucketed grain applies) —
+    # the sub-day clock vocabulary lives here, after cadence resolution
+    # above, rather than beside the BUCKETED_CALENDAR_UNITS branches earlier
+    # in this function, because it answers a different question (clock
+    # rules, not calendar-opener rules) and its gate needs the axis's
+    # RESOLVED tick cadence — the same `result["tickCount"]` the cadence
+    # block above just finished writing (or left absent). Continuous
+    # line/bar/scatter axes already clear tick collisions on their own
+    # (Vega-Lite's overlap avoidance) at every width tested — this only
+    # supplies the label vocabulary, never tick positions.
+    if vl_type == "temporal" and time_unit is None:
+        if "labelExpr" not in result and "format" not in result:
+            # An authored scale domain is what Vega actually renders across —
+            # cartesian_x_scale_domain applies axis.scale.continuous.domain to
+            # the compiled spec AFTER this function returns, so the gate must
+            # read it here or it decides span/midnight-count against the
+            # data's own extent while a wider (or narrower) authored domain
+            # silently renders something else entirely (e.g. two distinct
+            # calendar days both reading bare "Midnight" with no date row).
+            authored_domain = (
+                axis.scale.continuous.domain
+                if axis.scale is not None and axis.scale.continuous is not None
+                else None
+            )
+            subday_values = (
+                domain_values
+                if domain_values is not None
+                else [row.get(x_field) for row in data]
+            )
+            resolved_tick_count = result.get("tickCount")
+            subday_tick_count_ceiling: int | None
+            if isinstance(resolved_tick_count, int):
+                # Authored ticks.count: the axis's real tick count, exact —
+                # no floor/ceiling split needed.
+                subday_tick_count: int | None = resolved_tick_count
+                subday_tick_count_ceiling = resolved_tick_count
+            elif isinstance(resolved_tick_count, dict):
+                # Authored ticks.time_unit: _TEMPORAL_TICK_INTERVAL's finest
+                # entry is "day", so this axis's ticks always land on local
+                # midnight or coarser — the vocabulary never applies.
+                subday_tick_count = None
+                subday_tick_count_ceiling = None
+            else:
+                available_width = (
+                    plot_width if plot_width is not None else outer_chart_width
+                )
+                subday_tick_count = predicted_tick_count(available_width)
+                subday_tick_count_ceiling = predicted_tick_count_ceiling(
+                    available_width
+                )
+            subday_expr = default_subday_label_expr_for(
+                subday_values,
+                _n(axis, "labels", "clock"),
+                narrow=(
+                    outer_chart_width is not None
+                    and width_tier(outer_chart_width) == "tiny"
+                ),
+                tick_count=subday_tick_count,
+                tick_count_ceiling=subday_tick_count_ceiling,
+                authored_domain=authored_domain,
+            )
+            if subday_expr is not None:
+                result["labelExpr"] = subday_expr
 
     # Case injection runs last so it wraps any temporal smart-cadence labelExpr
     # that was set above (test: test_temporal_yearmonth_axis_upper_wraps_smart_cadence_expr).
@@ -673,8 +1139,7 @@ def y_zero_scale(
         out.pop("zero", None)  # zero is computed below, not passed through raw
 
     if is_zero_anchored(scale):
-        domain_min = tick_values[0] if tick_values else 0.0
-        out["domainMin"] = domain_min
+        out["domainMin"] = zero_anchor_floor(tick_values)
         out["zero"] = True
     else:
         out["zero"] = False

@@ -77,6 +77,14 @@ THREE_SERIES_DATA = [
 ]
 
 
+NUMERIC_X_DATA = [
+    {"x_num": 1, "revenue": 100, "region": "North"},
+    {"x_num": 1, "revenue": 80, "region": "South"},
+    {"x_num": 2, "revenue": 120, "region": "North"},
+    {"x_num": 2, "revenue": 90, "region": "South"},
+]
+
+
 def _get_encoding(spec: dict) -> dict:
     """Return encoding from a single-layer or layered spec.
 
@@ -119,6 +127,24 @@ class TestGroupedBarOverlap:
             width=width,
             height=height,
         )
+
+    def test_wide_by_dimension_counts_composites(self):
+        """``y: [a, b]`` + ``color:`` with two values is four series, not
+        two: positive overlap is refused, as it is for any four-series group."""
+        chart = BarChart(
+            id="test_bar",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            type="bar",
+            x="category",
+            y=["revenue", "cost"],
+            color="region",
+            stack="none",
+            style=BarChartStylePatch(orientation="vertical", overlap=0.5),
+        )
+        data = [dict(row, cost=row["revenue"] // 2) for row in MULTI_SERIES_DATA]
+        with pytest.raises(ChartDataError, match="exactly 2 series \\(got 4\\)"):
+            generate_vega_lite_spec(chart, data)
 
     def test_auto_two_series_uses_partial_band(self):
         # auto + 2 series, vertical → partial (0.25) → width band 1.25.
@@ -512,6 +538,344 @@ class TestGroupedBarWithLayers:
             "overlap='none' must change the horizontal bar's size/height on a "
             f"layered grouped bar chart; both were {default_size!r}"
         )
+
+    def test_layered_bar_authored_size_survives_step_curve_band_rewrite(self) -> None:
+        """An authored `marks.bar.size` must survive `_fix_bar_band_width`'s
+        rewrite even with NO color/xOffset grouping on the bar itself.
+
+        A sibling layer's own step-curve adds an xOffset scale of its own
+        (`step_band_present`, `_overlay.py`), which is enough on its own to
+        make `_fix_bar_band_width` run against the bar mark despite the bar
+        never carrying an xOffset channel — and `apply_grouped_bar_spacing`
+        never fires here (no color channel), isolating `_fix_bar_band_width`
+        itself as the only place the authored width could be lost.
+
+        `bar_mark_to_vl` emits an authored `size` as a literal pixel float on
+        ANY scale, band or continuous — "authored beats computed, always".
+        `_fix_bar_band_width` used to treat any non-dict `width` as nothing to
+        preserve and replace it wholesale with a bare `bandwidth('x')`
+        expression, discarding both the authored width and the band gutter.
+        """
+        data = [
+            {"category": "Alpha", "revenue": 100, "target": 90},
+            {"category": "Beta", "revenue": 120, "target": 110},
+        ]
+        chart = BarChart(
+            id="test_bar",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            type="bar",
+            x="category",
+            y="revenue",
+            style=BarChartStylePatch.model_validate(
+                {"orientation": "vertical", "marks": {"bar": {"size": 6.0}}}
+            ),
+            layers=[
+                LineLayer.model_validate(
+                    {
+                        "type": "line",
+                        "y": "target",
+                        "style": {
+                            "marks": {"line": {"curve": "step", "connect": False}}
+                        },
+                    }
+                )
+            ],
+        )
+        resolve(chart, data, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, data)
+        width = _get_mark(spec)["width"]
+        assert width == 6.0, (
+            f"authored bar.size=6.0 must survive the step-curve-triggered "
+            f"band-width rewrite verbatim, got {width!r}"
+        )
+
+    def test_layered_bar_null_band_width_still_gets_explicit_bandwidth(self) -> None:
+        """A cleared `marks.bar.band_width` must still get the explicit
+        `bandwidth('x')` expression when a step-curve layer degrades VL's
+        width shorthand.
+
+        `bar_mark_to_vl` emits NO width at all when both `size` and
+        `band_width` are None, and a chart-local `marks.bar.band_width: null`
+        genuinely clears the theme value through the style InheritSlot (the
+        same escape hatch `..._survives_null_bar_size` exercises for `size`).
+        VL's degraded-shorthand quirk applies to an absent width just as it
+        does to a `{band: f}` one, so `_fix_bar_band_width` must rewrite this
+        case rather than skip it — skipping collapses the bar to VL's ~18px
+        internal default instead of the full band.
+
+        Pins the absent-width arm of the guard that keeps a literal authored
+        width untouched: narrowing that guard back to "any non-dict returns"
+        silently shrinks these bars, and no other test can tell.
+        """
+        data = [
+            {"category": "Alpha", "revenue": 100, "target": 90},
+            {"category": "Beta", "revenue": 120, "target": 110},
+        ]
+
+        def build(with_layer: bool) -> BarChart:
+            return BarChart(
+                id="test_bar",
+                query=SqlQuery(sql="SELECT 1", source="test"),
+                query_name="q",
+                type="bar",
+                x="category",
+                y="revenue",
+                style=BarChartStylePatch.model_validate(
+                    {
+                        "orientation": "vertical",
+                        "marks": {"bar": {"band_width": None}},
+                    }
+                ),
+                layers=[
+                    LineLayer.model_validate(
+                        {
+                            "type": "line",
+                            "y": "target",
+                            "style": {
+                                "marks": {"line": {"curve": "step", "connect": False}}
+                            },
+                        }
+                    )
+                ]
+                if with_layer
+                else [],
+            )
+
+        layered = build(True)
+        resolve(layered, data, chart_style_context=_BOARD_STYLE)
+        layered_width = _get_mark(generate_vega_lite_spec(layered, data)).get("width")
+
+        plain = build(False)
+        resolve(plain, data, chart_style_context=_BOARD_STYLE)
+        plain_width = _get_mark(generate_vega_lite_spec(plain, data)).get("width")
+
+        assert layered_width == {"expr": "bandwidth('x')"}, (
+            f"a cleared band_width under a step-curve layer must be rewritten to "
+            f"an explicit bandwidth('x'), not left absent for VL to default, "
+            f"got {layered_width!r}"
+        )
+        assert plain_width is None, (
+            f"without the degrading layer the same chart emits no width at all "
+            f"and VL resolves the band itself, got {plain_width!r}"
+        )
+
+
+class TestGroupedBarQuantitativeX:
+    """A grouped bar (color + stack: none) on a quantitative x has no band for
+    xOffset to sub-divide — xOffset is still emitted (bar.py keeps it for the
+    bucketed-temporal case), but it must not be trusted as a real band scale
+    when sizing the mark.
+    """
+
+    def _chart_with_line_layer(self, **kwargs) -> Chart:
+        return BarChart(
+            id="test_bar",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            type="bar",
+            x="x_num",
+            y="revenue",
+            color="region",
+            stack=None,
+            style=BarChartStylePatch(orientation="vertical"),
+            layers=[LineLayer(type="line", y="revenue")],
+            **kwargs,
+        )
+
+    def test_non_layered_grouped_bar_quantitative_x_scale_has_no_group_padding(self):
+        """The grouped-bar band gutter must not leak onto a quantitative x scale.
+
+        ``apply_grouped_bar_spacing`` unconditionally overwrote paddingOuter
+        with the grouped-bar band gutter (``bar_cfg.grouped_bar_padding_outer``)
+        whenever xOffset was present — meaningless on a quantitative scale,
+        which has no bands to pad between.
+        """
+        bar_cfg = get_chart_rendering().bar
+        chart = BarChart(
+            id="test_bar",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            type="bar",
+            x="x_num",
+            y="revenue",
+            color="region",
+            stack=None,
+            style=BarChartStylePatch(orientation="vertical"),
+        )
+        resolve(chart, NUMERIC_X_DATA, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, NUMERIC_X_DATA)
+        x_scale = self._bar_scale_from_flat_or_layered(spec)
+        assert x_scale.get("paddingOuter") != bar_cfg.grouped_bar_padding_outer, (
+            f"quantitative x scale must not carry the grouped-bar band gutter: {x_scale}"
+        )
+
+    @pytest.mark.parametrize("overlap", ["none", "flush", 0.5, "full"])
+    def test_authored_overlap_on_a_continuous_x_raises(self, overlap):
+        """An authored overlap must not evaporate on a continuous x.
+
+        `overlap` is a fraction of the categorical BAND width, and a
+        quantitative x has no band — so the setting is inapplicable rather
+        than merely unused. Silently emitting a spec that ignores it is the
+        failure mode this pins; the author gets a clear error instead.
+        """
+        chart = BarChart(
+            id="test_bar",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            type="bar",
+            x="x_num",
+            y="revenue",
+            color="region",
+            stack=None,
+            style=BarChartStylePatch(orientation="vertical", overlap=overlap),
+        )
+        resolve(chart, NUMERIC_X_DATA, chart_style_context=_BOARD_STYLE)
+        with pytest.raises(ChartDataError, match="continuous x-axis"):
+            generate_vega_lite_spec(chart, NUMERIC_X_DATA)
+
+    @pytest.mark.parametrize("overlap", [None, "auto"])
+    def test_renderer_default_overlap_on_a_continuous_x_does_not_raise(self, overlap):
+        """The renderer default must render, under BOTH its spellings.
+
+        `BarChartStyle.overlap` documents None as "uses the renderer default
+        ('auto')", and `_resolve_overlap_fraction` treats the two identically —
+        so an explicit `overlap: auto` is a documented no-op, not an authored
+        request the guard should reject.
+        """
+        chart = BarChart(
+            id="test_bar",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            type="bar",
+            x="x_num",
+            y="revenue",
+            color="region",
+            stack=None,
+            style=BarChartStylePatch(orientation="vertical", overlap=overlap),
+        )
+        resolve(chart, NUMERIC_X_DATA, chart_style_context=_BOARD_STYLE)
+        assert generate_vega_lite_spec(chart, NUMERIC_X_DATA)
+
+    @staticmethod
+    def _bar_scale_from_flat_or_layered(spec: dict) -> dict:
+        for layer in spec.get("layer", []):
+            mark = layer.get("mark", {})
+            if isinstance(mark, dict) and mark.get("type") == "bar":
+                enc = layer.get("encoding", {})
+                if "x" in enc:
+                    return enc["x"].get("scale", {})
+        return spec.get("encoding", {}).get("x", {}).get("scale", {})
+
+    @staticmethod
+    def _rendered_bar_widths(spec: dict) -> list[float]:
+        """Real bar widths from a vl_convert render of `spec`.
+
+        Corner-radius bars emit curved (M/L/C) paths, square-cornered bars emit
+        straight (M/h/v) ones — every coordinate pair's x is captured either
+        way, so the path's own bounding-box width is format-agnostic evidence
+        of the mark's rendered width.
+        """
+        import re
+
+        from dbt_charts.core.render.converters.chart import render_vega_spec
+
+        svg = render_vega_spec(
+            spec,
+            "svg",
+            _RESOLVED_STYLE,
+            width=400.0,
+            height=300.0,
+            is_placeholder=False,
+            chart_id="chart",
+        )
+        mark_group = re.search(
+            r'<g class="mark-rect[^"]*"[^>]*>(.*?)</g>', svg, re.DOTALL
+        )
+        assert mark_group, "no bar mark group found in rendered SVG"
+        paths = re.findall(r'<path[^>]*d="([^"]+)"', mark_group.group(1))
+        assert paths, "no bar path 'd' attributes matched — regex is stale"
+        widths = []
+        for p in paths:
+            xs = [float(x) for x in re.findall(r"(-?[0-9.]+),-?[0-9.]+", p)]
+            assert xs, f"no coordinate pairs matched in path {p!r} — regex is stale"
+            widths.append(max(xs) - min(xs))
+        return widths
+
+    def test_layered_grouped_bar_quantitative_x_renders_nonzero_width(self):
+        """Render the layered spec through vl_convert and check real bar geometry.
+
+        Before the fix, `_fix_bar_band_width` rewrote `mark.width` to
+        `bandwidth('xOffset')` unconditionally whenever any sibling layer
+        carried an xOffset channel. On a quantitative x, xOffset has no band
+        scale to size against, so `bandwidth('xOffset')` evaluates to 0 and
+        every bar path degenerates to a zero-width sliver (an `h0` segment).
+        """
+        try:
+            import vl_convert as vlc  # noqa: F401 — skip marker
+        except ImportError:
+            pytest.skip("vl_convert not installed")
+
+        chart = self._chart_with_line_layer()
+        resolve(chart, NUMERIC_X_DATA, chart_style_context=_BOARD_STYLE)
+        widths = self._rendered_bar_widths(
+            generate_vega_lite_spec(chart, NUMERIC_X_DATA)
+        )
+        assert all(w > 1.0 for w in widths), (
+            f"bar widths {widths} include a near-zero bar — "
+            "bandwidth('xOffset') resolved to ~0 against a quantitative x"
+        )
+
+        # The real invariant: adding `layers:` must not change how wide the
+        # bars are. Compared against the same chart's own unlayered render
+        # rather than any literal or theme value, so it holds whatever
+        # `bar.size`/`band_width` resolve to.
+        flat = BarChart(
+            id="test_bar",
+            query=SqlQuery(sql="SELECT 1", source="test"),
+            query_name="q",
+            type="bar",
+            x="x_num",
+            y="revenue",
+            color="region",
+            stack=None,
+            style=BarChartStylePatch(orientation="vertical"),
+        )
+        resolve(flat, NUMERIC_X_DATA, chart_style_context=_BOARD_STYLE)
+        flat_widths = self._rendered_bar_widths(
+            generate_vega_lite_spec(flat, NUMERIC_X_DATA)
+        )
+        assert widths == pytest.approx(flat_widths), (
+            f"layered grouped bar renders at {widths}, but the same chart "
+            f"without layers renders at {flat_widths} — the layer wrap "
+            "changed the bar geometry"
+        )
+
+    def test_layered_grouped_bar_quantitative_x_survives_null_bar_size(self):
+        """chart-local `style.marks.bar.size: null` must still render.
+
+        `BarChartStyle.marks` carries an InheritSlot and only the board-tier
+        merge runs before `apply_inherit` refills it, so the chart-local tier
+        can genuinely clear `bar.size` — leaving the emitted mark with no
+        `continuousBandSize` key at all. Reading that key unguarded crashed
+        the whole render with a KeyError.
+        """
+        chart = _chart(
+            layers=[LineLayer(type="line", y="revenue")],
+        )
+        chart.x = "x_num"
+        chart.style = BarChartStylePatch.model_validate(
+            {"orientation": "vertical", "marks": {"bar": {"size": None}}}
+        )
+        resolve(chart, NUMERIC_X_DATA, chart_style_context=_BOARD_STYLE)
+        assert chart.style.marks.bar.size is None, (
+            "premise broken: bar.size was refilled, so this no longer covers "
+            "the missing-continuousBandSize path"
+        )
+        widths = self._rendered_bar_widths(
+            generate_vega_lite_spec(chart, NUMERIC_X_DATA)
+        )
+        assert all(w > 1.0 for w in widths), f"degenerate bars: {widths}"
 
 
 class TestGroupedBarTopRuleOffset:

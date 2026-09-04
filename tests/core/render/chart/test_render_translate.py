@@ -80,6 +80,30 @@ def test_translate_geoshape_returns_vl_dict() -> None:
     assert "$schema" in result
 
 
+def test_line_and_area_layers_always_carry_an_encoding_key() -> None:
+    """Vega-Lite 6.x crashes compiling a line or area unit that has no
+    `encoding` key at all — its point/line-overlay normalization reads
+    `encoding.shape` unconditionally (`TypeError: Cannot read properties of
+    undefined`). An empty object means the same thing and is accepted, and a
+    parent-level encoding does not substitute. The reachable authored shape is
+    a line/area chart with neither `x:` nor `y:`: every sub-layer encoding is
+    empty, and dropping the key handed VL the crashing form (ERR-INTERNAL)."""
+    layered = ChartSpec(
+        mark="layered",
+        encoding={},
+        layers=[
+            _spec("line"),
+            _spec("area"),
+            _spec("point"),
+        ],
+        config={},
+    )
+    result = translate_to_vl(layered)
+    line_layer, area_layer, _point_layer = result["layer"]
+    assert line_layer["encoding"] == {}
+    assert area_layer["encoding"] == {}
+
+
 # ---------------------------------------------------------------------------
 # Mark name — family-level VL mark mapping
 # ---------------------------------------------------------------------------
@@ -223,6 +247,119 @@ def test_right_pane_layout_produces_hconcat() -> None:
     assert pane["mark"]["type"] == "text"
 
 
+def test_right_pane_requalifies_x_scale_probes_in_mark_exprs() -> None:
+    """Wrapping into hconcat renames the chart pane's independent x scale to
+    Vega's child-qualified name (concat_0_x), so mark expressions
+    that probe a scale by name — continuous_bar_size_prop's min-gap width,
+    bandwidth() sizing — must be requalified or they evaluate NaN and paint
+    zero-width marks. y stays unqualified: the wrapper shares it."""
+    label_data = _make_label_data("right_pane")
+    width_expr = "clamp(abs(scale('x', 200.0) - scale('x', 100.0)) - 3.0, 4.0, 20.0)"
+    spec = ChartSpec(
+        mark="bar",
+        encoding={"x": {"field": "d", "type": "temporal"}},
+        mark_props={
+            "width": {"expr": width_expr},
+            "size": {"expr": "1.25 * bandwidth('yOffset')"},
+            "opacity": {"expr": "scale('y', 1) > 0 ? 1 : 0"},
+        },
+        endpoint_label_layout="right_pane",
+        endpoint_label_data=label_data,
+    )
+    result = translate_to_vl(spec)
+    main, _pane = result["hconcat"]
+    mark = main["mark"]
+    assert (
+        mark["width"]["expr"]
+        == "clamp(abs(scale('concat_0_x', 200.0) - scale('concat_0_x', 100.0)) - 3.0, 4.0, 20.0)"
+    )
+    # Offset channels are NOT concat-qualified: the label pane has no offset
+    # channel, so Vega leaves xOffset/yOffset top-level under their own names.
+    assert mark["size"]["expr"] == "1.25 * bandwidth('yOffset')"
+    # Shared y is compiled top-level under its own name — untouched.
+    assert mark["opacity"]["expr"] == "scale('y', 1) > 0 ? 1 : 0"
+
+
+def test_right_pane_requalifies_step_band_offset_scale_range() -> None:
+    """The walk covers every ``expr``, not only mark props — step-band's
+    ``xOffset.scale.range`` probes ``bandwidth('x')`` too.
+
+    ``step_band.apply_step_band`` sizes each plateau off the x band, so a
+    step-curve bar wrapped for endpoint labels needs that probe qualified
+    exactly like a mark expression: unqualified, it addresses a scale the
+    concat no longer has and every plateau collapses to zero width. Narrowing
+    the regex to ``scale`` only — the same narrowing this line has already
+    taken once — leaves every other bandwidth assertion in the suite green,
+    because they all sit on charts without endpoint labels.
+    """
+    label_data = _make_label_data("right_pane")
+    spec = ChartSpec(
+        mark="bar",
+        encoding={
+            "x": {"field": "d", "type": "ordinal"},
+            "xOffset": {
+                "field": "__step_band_edge",
+                "type": "ordinal",
+                "scale": {"range": [0, {"expr": "bandwidth('x')"}]},
+            },
+            "y": {"field": "v", "type": "quantitative"},
+        },
+        endpoint_label_layout="right_pane",
+        endpoint_label_data=label_data,
+    )
+    main, _pane = translate_to_vl(spec)["hconcat"]
+    assert main["encoding"]["xOffset"]["scale"]["range"] == [
+        0,
+        {"expr": "bandwidth('concat_0_x')"},
+    ]
+
+
+def test_right_pane_scale_names_match_vl_convert() -> None:
+    """Pin the child-qualification contract against a real vl_convert compile.
+
+    ``_requalify_concat_scale_probes`` rewrites scale-name probes on the
+    assumption that Vega renames the chart pane's scales. That assumption is
+    only true for the channels the wrapper leaves independent, so assert it
+    against what vl_convert actually emits rather than against the rewrite's
+    own output: ``x`` is qualified, the offset channels are not.
+    """
+    import json
+
+    import vl_convert as vlc
+
+    label_data = _make_label_data("right_pane")
+    for offset_channel, dim in (("xOffset", "x"), ("yOffset", "y")):
+        spec = ChartSpec(
+            mark="bar",
+            data=[{"c": "A", "g": "u", "v": 1.0}, {"c": "B", "g": "w", "v": 2.0}],
+            encoding={
+                dim: {"field": "c", "type": "nominal"},
+                offset_channel: {"field": "g", "type": "nominal"},
+                "y" if dim == "x" else "x": {"field": "v", "type": "quantitative"},
+                "color": {"field": "g", "type": "nominal"},
+            },
+            endpoint_label_layout="right_pane",
+            endpoint_label_data=label_data,
+        )
+        vega = vlc.vegalite_to_vega(translate_to_vl(spec))
+        if isinstance(vega, str):
+            vega = json.loads(vega)
+
+        def _scale_names(node: dict[str, Any], out: list[str]) -> list[str]:
+            for scale in node.get("scales") or []:
+                out.append(scale["name"])
+            for mark in node.get("marks") or []:
+                _scale_names(mark, out)
+            return out
+
+        names = _scale_names(vega, [])
+        assert offset_channel in names, (
+            f"{offset_channel} should stay top-level, got {names}"
+        )
+        assert f"concat_0_{offset_channel}" not in names
+        assert "concat_0_x" in names, f"x should be concat-qualified, got {names}"
+
+
 def test_right_pane_hoists_schema_and_config() -> None:
     """$schema and config must be hoisted out of main_vl into the hconcat root."""
     label_data = _make_label_data("right_pane")
@@ -361,6 +498,33 @@ def test_structured_tooltip_reaches_vconcat_main_panel() -> None:
     assert "description" not in rail.get("encoding", {})
 
 
+def test_structured_tooltip_disabled_on_a_dual_axis_zero_rule_nested_one_level_deep() -> (
+    None
+):
+    """`_disable_private_data_channel` is a shared recursive helper used by
+    both `_apply_href_link` and `_apply_structured_tooltip` -- this pins the
+    generalization directly, at the `_translate_to_vl` level, rather than
+    only through the specific pipeline shape (StructuredTooltipFeature
+    writes `tooltip_description` onto the inner base entry, not the outer
+    wrapper) that would otherwise be the only path exercising this arm."""
+    base_entry = ChartSpec(mark="bar", encoding={"x": {"field": "month"}})
+    rule = ChartSpec(
+        mark="rule",
+        encoding={"y": {"datum": 0}},
+        data=[{"y": 0}],
+    )
+    wrapped = ChartSpec(mark="layered", layers=[base_entry, rule])
+    spec = ChartSpec(
+        mark="layered",
+        layers=[wrapped],
+        tooltip_description="datum.month",
+    )
+    result = translate_to_vl(spec)
+    nested_rule = result["layer"][0]["layer"][1]
+    assert nested_rule["data"] == {"values": [{"y": 0}]}
+    assert nested_rule["encoding"]["description"] is None
+
+
 # ---------------------------------------------------------------------------
 # FIX-3: href_link wiring
 # ---------------------------------------------------------------------------
@@ -390,6 +554,36 @@ def test_href_link_not_set_produces_no_transform() -> None:
         isinstance(t, dict) and t.get("as") == "__df_href__"
         for t in result.get("transform", [])
     )
+
+
+def test_href_link_disabled_on_a_dual_axis_zero_rule_nested_one_level_deep() -> None:
+    """A rule sub-layer with its own private data must get `href: None` even
+    when it sits nested one level inside a `nest_zero_rule` wrapper (a
+    dual-axis base/layer's zero-baseline rule), not only at the top level of
+    `spec.layers`.
+
+    Without the recursive guard, the wrapper itself has no `data` key (so
+    the single-level scan skips it) and the rule's own private single-row
+    data is never reached -- the rule inherits `href` bound to
+    `__df_href__`, which is undefined on its row, and Vega-Lite base-URL
+    joins the undefined value into a broken link.
+    """
+    base_entry = ChartSpec(mark="bar", encoding={"x": {"field": "month"}})
+    rule = ChartSpec(
+        mark="rule",
+        encoding={"y": {"datum": 0}},
+        data=[{"y": 0}],
+    )
+    wrapped = ChartSpec(mark="layered", layers=[base_entry, rule])
+    spec = ChartSpec(
+        mark="layered",
+        layers=[wrapped],
+        href_link="'https://example.com/' + datum['month']",
+    )
+    result = translate_to_vl(spec)
+    nested_rule = result["layer"][0]["layer"][1]
+    assert nested_rule["data"] == {"values": [{"y": 0}]}
+    assert nested_rule["encoding"]["href"] is None
 
 
 # Endpoint labels in _translate_layered

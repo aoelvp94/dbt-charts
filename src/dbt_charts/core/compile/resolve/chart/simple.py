@@ -37,7 +37,6 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     _title_font,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
-    _effective_requested_alias_palette,
     _with_color_tokens,
 )
 from dbt_charts.core.compile.resolve.style.board import _callout_tone_colors_patch
@@ -91,9 +90,11 @@ def _resolve_kpi(
             chart_style_context,
             channels,
             None,
-            requested_alias_palette=_effective_requested_alias_palette(
-                chart_style_context, primary
-            ),
+            # KPI has no series axis and no categorical color channel — no
+            # per-chart color.categorical override is possible, so this is
+            # always the board-level value, unlike the cartesian/radial
+            # families which route through _effective_requested_alias_palette.
+            requested_alias_palette=chart_style_context.requested_alias_palette,
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=kpi.padding,
         ),

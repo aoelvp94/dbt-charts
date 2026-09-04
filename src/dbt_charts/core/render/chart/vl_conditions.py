@@ -1,6 +1,6 @@
 """Vega-Lite conditional color encoding helpers.
 
-Converts Dataface ``ConditionalRule`` / ``ResolvedStyleChannel`` (mode="conditional")
+Converts dbt charts ``ConditionalRule`` / ``ResolvedStyleChannel`` (mode="conditional")
 into Vega-Lite ``condition`` arrays.  Shared by ``emitters/_channels.py`` and
 ``emitters/geo.py`` so the logic lives in one place.
 """

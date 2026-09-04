@@ -161,7 +161,7 @@ def test_reconcile_x_domain_noop_when_x_encoding_carries_sort() -> None:
     layer_x_columns: list[tuple[str, list[VLDict]]] = [
         ("month", [{"month": "Jan"}, {"month": "Feb"}, {"month": "Apr"}])
     ]
-    _reconcile_x_domain(x_enc, base_data, layer_x_columns)
+    _reconcile_x_domain(x_enc, base_data, layer_x_columns, "c1")
     assert "scale" not in x_enc
 
 
@@ -175,7 +175,7 @@ def test_reconcile_x_domain_still_pins_domain_without_sort() -> None:
     layer_x_columns: list[tuple[str, list[VLDict]]] = [
         ("month", [{"month": "Feb"}, {"month": "Mar"}])
     ]
-    _reconcile_x_domain(x_enc, base_data, layer_x_columns)
+    _reconcile_x_domain(x_enc, base_data, layer_x_columns, "c1")
     assert x_enc["scale"]["domain"] == ["Jan", "Feb", "Mar"]
 
 

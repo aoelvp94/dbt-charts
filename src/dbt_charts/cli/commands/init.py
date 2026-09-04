@@ -1,4 +1,4 @@
-"""Init command — wizard that bootstraps a Dataface project."""
+"""Init command — wizard that bootstraps a dbt charts project."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def _resolve_init_root(project_dir: Path | None, *, yes: bool) -> Path:
     if git_root is None:
         return resolution.root
 
-    typer.echo(f"  No Dataface or dbt project found above {cwd}.")
+    typer.echo(f"  No dbt charts or dbt project found above {cwd}.")
     typer.echo(f"  git root: {git_root}")
     typer.echo(f"  current directory: {cwd}")
 
@@ -71,7 +71,7 @@ def run_wizard(
         do_skills = _resolve(
             None,
             yes=yes,
-            prompt="Install Dataface workflow skills for AI assistants?",
+            prompt="Install dbt charts workflow skills for AI assistants?",
             default=True,
         )
 
@@ -79,7 +79,7 @@ def run_wizard(
     do_mcp = _resolve(
         mcp,
         yes=yes,
-        prompt="Set up the Dataface MCP server for AI assistants?",
+        prompt="Set up the dbt charts MCP server for AI assistants?",
         default=True,
     )
 
@@ -109,7 +109,7 @@ def run_wizard(
         do_vscode = _resolve(
             None,
             yes=yes,
-            prompt="Install the Dataface extension into VS Code?",
+            prompt="Install the dbt charts extension into VS Code?",
             default=True,
         )
     else:
@@ -121,7 +121,7 @@ def run_wizard(
         do_cursor = _resolve(
             None,
             yes=yes,
-            prompt="Install the Dataface extension into Cursor?",
+            prompt="Install the dbt charts extension into Cursor?",
             default=True,
         )
     else:

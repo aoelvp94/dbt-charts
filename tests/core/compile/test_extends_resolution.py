@@ -71,14 +71,14 @@ def test_merge_extends_none_returns_empty(
 def test_merge_extends_theme_name_loads_style(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """extends: cream (built-in theme) → patch with style data from the theme YAML."""
+    """extends: paper (built-in theme) → patch with style data from the theme YAML."""
     from dbt_charts.core.compile.merge import merge_extends
 
     _write(tmp_path, "board.yaml", "")
     board_file = _board_file(tmp_path, "board.yaml", local_project)
-    node = _node({"extends": "cream"})
+    node = _node({"extends": "paper"})
     result = merge_extends(node, board_file)
-    # Theme name resolves to the actual cream YAML — style is set, not a theme bridge.
+    # Theme name resolves to the actual paper YAML — style is set, not a theme bridge.
     assert "style" in result.model_fields_set  # type: ignore[union-attr]
 
 
@@ -102,7 +102,7 @@ def test_merge_extends_theme_name_never_checks_migration_currency(
 
     _write(tmp_path, "board.yaml", "")
     board_file = _board_file(tmp_path, "board.yaml", local_project)
-    node = _node({"extends": "cream"})
+    node = _node({"extends": "paper"})
     result = merge_extends(node, board_file)
     assert "style" in result.model_fields_set  # type: ignore[union-attr]
 
@@ -192,8 +192,8 @@ def test_merge_extends_list_merges_disjoint_fields(
     """[theme_fragment, title_fragment] — both fields end up in the patch."""
     from dbt_charts.core.compile.merge import merge_extends
 
-    # theme: cream desugars to extends: cream → loads the cream theme YAML → style set.
-    _write(tmp_path, "themed.yaml", "theme: cream\n")
+    # theme: paper desugars to extends: paper → loads the paper theme YAML → style set.
+    _write(tmp_path, "themed.yaml", "theme: paper\n")
     _write(tmp_path, "titled.yaml", "title: MyTitle\n")
     _write(tmp_path, "board.yaml", "")
     board_file = _board_file(tmp_path, "board.yaml", local_project)
@@ -206,15 +206,15 @@ def test_merge_extends_list_merges_disjoint_fields(
 def test_merge_extends_recursive_chain(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """A extends B extends cream theme: A's patch carries style from the theme YAML."""
+    """A extends B extends paper theme: A's patch carries style from the theme YAML."""
     from dbt_charts.core.compile.merge import merge_extends
 
-    _write(tmp_path, "base.yaml", "extends: cream\n")
+    _write(tmp_path, "base.yaml", "extends: paper\n")
     _write(tmp_path, "board.yaml", "")
     board_file = _board_file(tmp_path, "board.yaml", local_project)
     node = _node({"extends": "./base.yaml"})
     result = merge_extends(node, board_file)
-    # cream YAML loads its style; the patch carries style, not a theme bridge.
+    # paper YAML loads its style; the patch carries style, not a theme bridge.
     assert "style" in result.model_fields_set  # type: ignore[union-attr]
 
 
@@ -224,13 +224,30 @@ def test_merge_extends_extends_not_forwarded_into_patch(
     """The 'extends' field itself is consumed, never propagated to the patch."""
     from dbt_charts.core.compile.merge import merge_extends
 
-    _write(tmp_path, "base.yaml", "extends: cream\ntitle: BaseTitle\n")
+    _write(tmp_path, "base.yaml", "extends: paper\ntitle: BaseTitle\n")
     _write(tmp_path, "board.yaml", "")
     board_file = _board_file(tmp_path, "board.yaml", local_project)
     node = _node({"extends": "./base.yaml"})
     result = merge_extends(node, board_file)
     # 'extends' must not appear in model_fields_set of the returned patch
     assert "extends" not in result.model_fields_set  # type: ignore[union-attr]
+
+
+def test_merge_extends_schema_version_not_forwarded_into_patch(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """A base carrying _schema_version (dct migrate-written, identity-scoped
+    to its own file) must not leak into a board that extends it -- same
+    reasoning as id/aliases, same _EXTENDS_STRIP mechanism."""
+    from dbt_charts.core.compile.merge import merge_extends
+
+    _write(tmp_path, "base.yaml", '_schema_version: "0.5.0"\ntitle: BaseTitle\n')
+    _write(tmp_path, "board.yaml", "")
+    board_file = _board_file(tmp_path, "board.yaml", local_project)
+    node = _node({"extends": "./base.yaml"})
+    result = merge_extends(node, board_file)
+    assert "schema_version" not in result.model_fields_set  # type: ignore[union-attr]
+    assert result.title == "BaseTitle"  # type: ignore[union-attr]
 
 
 # ===========================================================================
@@ -410,8 +427,8 @@ def test_merge_metas_single_meta(
 ) -> None:
     from dbt_charts.core.compile.merge import merge_metas
 
-    # theme: cream desugars to extends: cream → loads cream YAML → style set.
-    _write(tmp_path, "charts/meta.yaml", "theme: cream\n")
+    # theme: paper desugars to extends: paper → loads paper YAML → style set.
+    _write(tmp_path, "charts/meta.yaml", "theme: paper\n")
     board_dir = _directory(tmp_path, "charts", local_project)
     boards_root = _directory(tmp_path, "charts", local_project)
     result = merge_metas(board_dir, boards_root)
@@ -424,8 +441,8 @@ def test_merge_metas_root_to_leaf_chain(
     """Root meta sets theme via extends, leaf meta sets title — both in final patch."""
     from dbt_charts.core.compile.merge import merge_metas
 
-    # theme: cream desugars to extends: cream → style set.
-    _write(tmp_path, "charts/meta.yaml", "theme: cream\n")
+    # theme: paper desugars to extends: paper → style set.
+    _write(tmp_path, "charts/meta.yaml", "theme: paper\n")
     _write(tmp_path, "charts/sub/meta.yaml", "title: SubTitle\n")
     board_dir = _directory(tmp_path, "charts/sub", local_project)
     boards_root = _directory(tmp_path, "charts", local_project)
@@ -454,8 +471,8 @@ def test_merge_metas_meta_with_extends(
     """Meta file's own extends chain is resolved before merging."""
     from dbt_charts.core.compile.merge import merge_metas
 
-    # base_theme.yaml has theme: cream → desugars to extends: cream → style set.
-    _write(tmp_path, "charts/base_theme.yaml", "theme: cream\n")
+    # base_theme.yaml has theme: paper → desugars to extends: paper → style set.
+    _write(tmp_path, "charts/base_theme.yaml", "theme: paper\n")
     _write(tmp_path, "charts/meta.yaml", "extends: ./base_theme.yaml\n")
     board_dir = _directory(tmp_path, "charts", local_project)
     boards_root = _directory(tmp_path, "charts", local_project)
@@ -511,3 +528,50 @@ def test_merge_metas_raises_if_outside_boards_root(
     boards_root = _directory(tmp_path, "charts", local_project)
     with pytest.raises(ValueError, match="not under"):
         merge_metas(outside, boards_root)
+
+
+def test_merged_patch_link_false_survives_extends_in_both_directions(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """The merge property that makes false (not an explicit null) the per-chart
+    auto_link opt-out: a child board's link: false suppresses a template chart's
+    link, and a child's string link re-links a template's link: false."""
+    from dbt_charts.core.compile.merge import merged_patch
+
+    _write(
+        tmp_path,
+        "_template.yaml",
+        "charts:\n  t:\n    type: table\n    query: orders\n    link: /rows\n",
+    )
+    _write(tmp_path, "board.yaml", "")
+    board_file = _board_file(tmp_path, "board.yaml", local_project)
+    boards_root = _directory(tmp_path, ".", local_project)
+
+    suppressed = merged_patch(
+        _node(
+            {
+                "extends": "./_template.yaml",
+                "charts": {"t": {"type": "table", "link": False}},
+            }
+        ),
+        board_file,  # type: ignore[arg-type]
+        boards_root,  # type: ignore[arg-type]
+    )
+    assert suppressed.charts["t"].link is False  # type: ignore[union-attr]
+
+    _write(
+        tmp_path,
+        "_unlinked.yaml",
+        "charts:\n  t:\n    type: table\n    query: orders\n    link: false\n",
+    )
+    relinked = merged_patch(
+        _node(
+            {
+                "extends": "./_unlinked.yaml",
+                "charts": {"t": {"type": "table", "link": "/x"}},
+            }
+        ),
+        board_file,  # type: ignore[arg-type]
+        boards_root,  # type: ignore[arg-type]
+    )
+    assert relinked.charts["t"].link == "/x"  # type: ignore[union-attr]

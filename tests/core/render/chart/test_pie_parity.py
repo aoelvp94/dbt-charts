@@ -5,7 +5,7 @@ Covers:
 - format() Jinja filter in label templates produces formatted strings.
 - Center total layers (joinaggregate value + text label) emitted when chart.total is set.
 - No leader-line label layer when style.slice_mark.labels is None (attached-table mode).
-- __dft_label / __dft_label_lines absent from augmented data when labels is None.
+- __dbt_label / __dbt_label_lines absent from augmented data when labels is None.
 """
 
 from __future__ import annotations
@@ -85,8 +85,8 @@ def test_augment_pie_data_attaches_finalized_label_lines() -> None:
         {"segment": "B", "value": 47120},
     ]
     rows = _augment_pie_data("value", data, (("62% A", "$77k"), ("38% B", "$47k")))
-    assert rows[0]["__dft_label"] == ["62% A", "$77k"], rows[0]["__dft_label"]
-    assert rows[1]["__dft_label"] == ["38% B", "$47k"], rows[1]["__dft_label"]
+    assert rows[0]["__dbt_label"] == ["62% A", "$77k"], rows[0]["__dbt_label"]
+    assert rows[1]["__dbt_label"] == ["38% B", "$47k"], rows[1]["__dbt_label"]
 
 
 def test_augment_pie_data_attaches_suppressed_label_facts() -> None:
@@ -95,11 +95,11 @@ def test_augment_pie_data_attaches_suppressed_label_facts() -> None:
     data = [{"segment": "A", "value": 100}, {"segment": "B", "value": 50}]
     rows = _augment_pie_data("value", data, ((), ()))
     for row in rows:
-        assert row["__dft_label"] is None
-        assert row["__dft_label_lines"] == 0
+        assert row["__dbt_label"] is None
+        assert row["__dbt_label_lines"] == 0
     # Angle meta must still be present.
-    assert "__dft_pct" in rows[0]
-    assert "__dft_row_idx" in rows[0]
+    assert "__dbt_pct" in rows[0]
+    assert "__dbt_row_idx" in rows[0]
 
 
 def test_augment_pie_data_rejects_stale_resolved_labels() -> None:
@@ -156,7 +156,7 @@ def test_pie_emitter_uses_finalized_labels(pie_style: Any) -> None:
     spec = PieEmitter().emit(chart, _DEFAULT_BOX, regroup((), data))
     # Data rows in the spec must carry formatted labels, not raw numbers.
     assert spec.data is not None
-    labels_in_data = [row.get("__dft_label") for row in spec.data]
+    labels_in_data = [row.get("__dbt_label") for row in spec.data]
     assert [
         "62%",
         "$77k",
@@ -466,9 +466,9 @@ def test_pie_emitter_total_emits_joinaggregate_layer(pie_style: Any) -> None:
             total_value_layer = layer
             break
     assert total_value_layer is not None, "No layer with joinaggregate transform found"
-    # Must encode __dft_arc_total as quantitative text
+    # Must encode __dbt_arc_total as quantitative text
     text_enc = total_value_layer.encoding.get("text", {})
-    assert text_enc.get("field") == "__dft_arc_total"
+    assert text_enc.get("field") == "__dbt_arc_total"
     assert text_enc.get("type") == "quantitative"
     # Format must be propagated
     assert text_enc.get("format") == "$,.0f"
@@ -568,6 +568,6 @@ def test_pie_emitter_no_leader_labels_when_labels_none() -> None:
     )
     # Suppression is a resolved row fact; no label layer consumes it.
     for row in spec.data or []:
-        assert row["__dft_label"] is None
+        assert row["__dbt_label"] is None
     # No resolve: scale: color: independent when no label color encoding
     assert spec.resolve is None or "color" not in str(spec.resolve)

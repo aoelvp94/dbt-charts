@@ -1,7 +1,7 @@
-"""Unified Dataface server.
+"""Unified dbt charts server.
 
 Stage: SERVE
-Purpose: Single HTTP server for all Dataface rendering.
+Purpose: Single HTTP server for all dbt charts rendering.
 
 Routes:
 - /health - Health check
@@ -731,7 +731,7 @@ def _render_directory_listing(
     result_cache: QueryResultCache | None = None,
     include_nav: bool = True,
 ) -> HTMLResponse:
-    """Render a directory listing through a built-in dataface board."""
+    """Render a directory listing through a built-in board."""
     from dbt_charts.core.compile import compile
     from dbt_charts.core.compile.template.jinja import resolve_jinja_template
     from dbt_charts.core.render.dir_context import list_dir_entries
@@ -867,10 +867,10 @@ def create_server(
     no_cache: bool = False,
     cache_path: Path | None = None,
 ) -> FastAPI:
-    """Create unified Dataface server.
+    """Create unified dbt charts server.
 
     Args:
-        project: The Dataface project — resolved before this call by the CLI edge.
+        project: The dbt charts project — resolved before this call by the CLI edge.
         dialect: SQL dialect for board rendering (duckdb, postgres, etc.).
             The /inspect/* HTML path is always DuckDB — dialect is not forwarded there.
         target: dbt target name override for DbtAdapter
@@ -947,8 +947,8 @@ def create_server(
                     cache.close()
 
     app = FastAPI(
-        title="Dataface Server",
-        description="Unified server for Dataface rendering",
+        title="dbt charts Server",
+        description="Unified server for dbt charts rendering",
         version="0.1.0",
         debug=server_config.debug,
         lifespan=_lifespan,
@@ -968,7 +968,7 @@ def create_server(
     _refresh_lock = asyncio.Lock()
 
     @app.exception_handler(DbtChartsError)
-    async def _dataface_error_handler(request: Request, exc: DbtChartsError) -> Response:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
+    async def _dbt_charts_error_handler(request: Request, exc: DbtChartsError) -> Response:  # pyright: ignore[reportUnusedFunction]  # decorator-registered — pyright cannot model runtime registration  # fmt: skip
         logger.error(
             "Unhandled DbtChartsError serving %s",
             request.url.path,

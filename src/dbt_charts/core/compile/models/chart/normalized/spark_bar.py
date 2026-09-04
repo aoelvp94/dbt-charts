@@ -16,8 +16,12 @@ class SparkBarChart(_SharedChartFields):
     """Normalized spark bar chart."""
 
     type: Literal["spark_bar"]
-    x: str | None = Field(default=None, description="Field mapped to x-axis.")
-    y: str | list[str] | None = Field(default=None, description="Field(s) for bars.")
+    x: str | None = Field(
+        default=None, description="Bar-magnitude (numeric) column name."
+    )
+    y: str | list[str] | None = Field(
+        default=None, description="Bar-label (category) column name(s)."
+    )
     color: str | None = Field(default=None, description="Color-encoding field.")
     sort: ChartSort | None = Field(default=None, description="Chart-level sort config.")
     style: SparkBarChartStylePatch | None = Field(

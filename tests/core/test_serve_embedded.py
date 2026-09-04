@@ -65,7 +65,7 @@ def test_build_embedded_server_raises_import_error_on_uvicorn_missing(
     surface it as ImportError, not as a None return that the caller has to
     pattern-match.
 
-    The remediation names uvicorn and a plain Dataface reinstall: uvicorn is a
+    The remediation names uvicorn and a plain dbt charts reinstall: uvicorn is a
     runtime dependency, so pointing at the `mcp` extra (which ships `mcp`
     alone) would send the user somewhere that cannot fix it.
     """

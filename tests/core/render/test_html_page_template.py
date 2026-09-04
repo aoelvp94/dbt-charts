@@ -178,14 +178,14 @@ class TestHtmlPageTemplateStructure:
         assert "margin: 0" in html
         assert "padding: 0" in html
 
-    def test_html_has_dataface_wrapper(self, compiled_board_and_executor) -> None:
+    def test_html_has_dbt_charts_wrapper(self, compiled_board_and_executor) -> None:
         from dbt_charts.core.render import render
 
         board, executor = compiled_board_and_executor
         result = render(board, executor, format="html")
         html = result.output
         assert isinstance(html, str)
-        assert 'class="dataface-wrapper"' in html
+        assert 'class="dbt-charts-wrapper"' in html
 
     def test_html_has_svg_container(self, compiled_board_and_executor) -> None:
         from dbt_charts.core.render import render
@@ -194,14 +194,14 @@ class TestHtmlPageTemplateStructure:
         result = render(board, executor, format="html")
         html = result.output
         assert isinstance(html, str)
-        assert "dataface-svg-container" in html
+        assert "dbt-charts-svg-container" in html
 
     def test_svg_sizing_rule_targets_only_the_root_svg(
         self, compiled_board_and_executor
     ) -> None:
         """The responsive sizing rule must use the child combinator.
 
-        A descendant selector (`.dataface-svg-container svg`) also matches the
+        A descendant selector (`.dbt-charts-svg-container svg`) also matches the
         nested per-row/per-chart `<svg>` elements inside the board. CSS geometry
         properties override their width/height attributes, so `height: auto`
         inflates every nested viewport to the full board height and the default
@@ -214,8 +214,8 @@ class TestHtmlPageTemplateStructure:
         result = render(board, executor, format="html")
         html = result.output
         assert isinstance(html, str)
-        assert ".dataface-svg-container > svg" in html
-        assert ".dataface-svg-container svg" not in html
+        assert ".dbt-charts-svg-container > svg" in html
+        assert ".dbt-charts-svg-container svg" not in html
 
     def test_root_svg_fills_the_page_width(self, compiled_board_and_executor) -> None:
         """The HTML page is a fit-width host: the board scales to the window.
@@ -233,7 +233,7 @@ class TestHtmlPageTemplateStructure:
         result = render(board, executor, format="html")
         html = result.output
         assert isinstance(html, str)
-        rule_start = html.index(".dataface-svg-container > svg")
+        rule_start = html.index(".dbt-charts-svg-container > svg")
         rule = html[rule_start : html.index("}", rule_start)]
         assert re.search(r"(?m)^\s*width: 100%;", rule)
 
@@ -247,15 +247,15 @@ class TestHtmlPageTemplateStructure:
         html = result.output
         assert isinstance(html, str)
         # With no chrome, the body should open directly to the wrapper div
-        # (no extra content between <body> and <div class="dataface-wrapper">)
+        # (no extra content between <body> and <div class="dbt-charts-wrapper">)
         body_start = html.index("<body>")
-        wrapper_start = html.index('<div class="dataface-wrapper">')
+        wrapper_start = html.index('<div class="dbt-charts-wrapper">')
         between = html[body_start + len("<body>") : wrapper_start].strip()
         assert between == "", f"Unexpected content before wrapper: {between!r}"
 
 
 class TestChromeSlot:
-    """chrome= value must appear raw at the top of <body>, before dataface-wrapper."""
+    """chrome= value must appear raw at the top of <body>, before dbt-charts-wrapper."""
 
     def test_chrome_appears_in_body(self, compiled_board_and_executor) -> None:
         from dbt_charts.core.render import render
@@ -288,8 +288,8 @@ class TestChromeSlot:
         html = result.output
         assert isinstance(html, str)
         chrome_pos = html.index(chrome_html)
-        wrapper_pos = html.index('class="dataface-wrapper"')
-        assert chrome_pos < wrapper_pos, "chrome must appear before dataface-wrapper"
+        wrapper_pos = html.index('class="dbt-charts-wrapper"')
+        assert chrome_pos < wrapper_pos, "chrome must appear before dbt-charts-wrapper"
 
     def test_chrome_appears_after_body_tag(self, compiled_board_and_executor) -> None:
         from dbt_charts.core.render import render
@@ -326,7 +326,7 @@ class TestChromeSlot:
         assert isinstance(svg, str)
         html = to_html(svg)
         body_start = html.index("<body>")
-        wrapper_start = html.index('<div class="dataface-wrapper">')
+        wrapper_start = html.index('<div class="dbt-charts-wrapper">')
         between = html[body_start + len("<body>") : wrapper_start].strip()
         assert between == ""
 
@@ -359,7 +359,7 @@ class TestHtmlPageEscaping:
 
         # charset and structural elements must be present
         assert 'charset="UTF-8"' in html
-        assert 'class="dataface-wrapper"' in html
+        assert 'class="dbt-charts-wrapper"' in html
         assert "Noto Emoji" in html
 
         # Security-critical: the <title> element specifically must not contain raw

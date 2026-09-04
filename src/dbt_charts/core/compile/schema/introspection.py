@@ -10,13 +10,15 @@ Entry point: introspect() -> AuthorableSchema
 from __future__ import annotations
 
 import dataclasses
+import functools
+import types
 import typing
 from enum import Enum
-from typing import Any, ForwardRef, Literal, get_args, get_origin
+from typing import Annotated, Any, ForwardRef, Literal, Union, get_args, get_origin
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, StringConstraints, Tag, ValidationError
 from pydantic.fields import FieldInfo
-from pydantic_core import PydanticUndefinedType
+from pydantic_core import PydanticUndefined, PydanticUndefinedType
 
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.chart.authored import (
@@ -28,7 +30,6 @@ from dbt_charts.core.compile.models.markers import Facet
 from dbt_charts.core.compile.models.query.authored import (
     AuthoredCompactValuesQuery,
     AuthoredHttpQuery,
-    AuthoredMetricflowQuery,
     AuthoredQuery,
     AuthoredSchemaQuery,
     AuthoredSqlQuery,
@@ -67,7 +68,18 @@ class SchemaField:
     extra_union_types: list[str] = dataclasses.field(
         default_factory=list
     )  # primitive type names alongside models or enums in a union
+    # Regex pattern for a pattern-constrained primitive in extra_union_types
+    # (e.g. {"str": VAR_REF_RE.pattern}) — keyed by the same name so the
+    # renderer can look up a constraint for a name it already has.
+    extra_union_type_patterns: dict[str, str] = dataclasses.field(default_factory=dict)
     container_mapping_models: list[str] = dataclasses.field(default_factory=list)
+    # Item-type branch names (models and/or primitives) for a list[...] sibling
+    # arm beside a non-container arm in the same union — the mirror of
+    # container_mapping_models for a list rather than a dict sibling.
+    container_list_models: list[str] = dataclasses.field(default_factory=list)
+    # minItems for the container_list_models array shape, from a Field(min_length=...)
+    # on the list[...] sibling arm (e.g. ChartSupportTableOrList's bare-list shorthand).
+    container_list_min_items: int | None = None
     # Per-position type_repr strings for a FIXED-length tuple field (e.g.
     # tuple[int, float] -> ("int", "float")); None for every other shape,
     # including a variadic tuple[X, ...] (which is list-shaped, not fixed).
@@ -81,7 +93,7 @@ class SchemaField:
         frozenset()
     )  # leaf names InheritSlot excludes
     # Semantic facets declared on the field — what the value *means*, which the
-    # type and the description cannot say. Today: `Color` and `Channel`.
+    # type and the description cannot say. See `Facet`'s subclasses.
     facets: tuple[Facet, ...] = ()
 
 
@@ -137,18 +149,115 @@ _UNION_ALIASES = {
 }
 
 
+def _union_alias_variant_classes(
+    alias: Any,  # type-state: explicit_any — arbitrary typing construct, matches _nested_model_names/_extra_union_types
+) -> list[type]:
+    """Concrete variant classes behind a `_UNION_ALIASES` entry, in declared order.
+
+    `AuthoredChart`/`AuthoredQuery` resolve to one opaque IR name so a field
+    typed with the alias doesn't flatten into every variant (that is the
+    whole point of `_UNION_ALIASES`) -- but `_collect_models` still needs to
+    walk each variant's own fields eventually. `_find_nested_class` can't do
+    that for an alias name (it searches for a *class* literally named
+    "AuthoredChart", and there is no such class -- the name is synthetic).
+    Deriving the variants directly from the alias's own raw union keeps
+    traversal order (and therefore which class wins an ambiguous shared name
+    like `TableChartStylePatch`) identical regardless of which field reaches
+    the alias, or how.
+    """
+    raw_union = alias.__origin__
+    variants: list[type] = []
+    for arm in get_args(raw_union):
+        # A Tag-wrapped arm has __origin__ (its bare class); a bare class
+        # has none at all, so arm itself is already what we want.
+        cls = getattr(
+            arm, "__origin__", arm
+        )  # type-state: silent_fallback — duck-typed
+        if not isinstance(cls, type):
+            raise TypeError(
+                f"{alias!r} union arm {arm!r} did not resolve to a class — "
+                "a shape _union_alias_variant_classes cannot handle silently "
+                "dropped it from the collected variant list"
+            )
+        if cls not in variants:
+            variants.append(cls)
+    return variants
+
+
+_UNION_ALIAS_VARIANTS: dict[str, list[type]] = {
+    name: _union_alias_variant_classes(alias) for alias, name in _UNION_ALIASES.items()
+}
+assert {cls.__name__ for cls in _UNION_ALIAS_VARIANTS["AuthoredChart"]} == set(
+    AUTHORED_CHART_VARIANTS.values()
+), "AuthoredChart's derived variants drifted from its own declared tag->class mapping"
+
+# Public: renderers/prompt.py's BFS needs the same variant names (not the
+# classes themselves — the renderer walks the IR by name, never touching a
+# live model class) to descend an alias edge without giving the alias itself
+# a heading.
+UNION_ALIAS_VARIANT_NAMES: dict[str, list[str]] = {
+    name: [cls.__name__ for cls in variants]
+    for name, variants in _UNION_ALIAS_VARIANTS.items()
+}
+
+
+def _without_tag(
+    annotation: Any,  # type-state: explicit_any — arbitrary typing construct, matches _nested_model_names
+) -> Any:  # type-state: explicit_any — same boundary as the parameter above
+    """Reconstruct annotation with any `Tag` metadata stripped, recovering a
+    union alias buried one level deeper than `_UNION_ALIASES` looks.
+
+    A discriminated-union arm like `Annotated[AuthoredChart, Tag("@inline")]`
+    (authored.py's ChartOrRef's "@inline" arm) flattens at construction time
+    into `Annotated[<raw chart union>, Discriminator(...), Tag("@inline")]` —
+    AuthoredChart's own Discriminator metadata and the outer Tag share one
+    metadata tuple, so the wrapped object no longer equals bare AuthoredChart
+    by identity or structural equality. Stripping Tag and reconstructing
+    `Annotated[<raw union>, Discriminator(...)]` from what's left recovers
+    something structurally identical to AuthoredChart itself (same origin,
+    same remaining metadata), which `_UNION_ALIASES` can match by equality.
+    """
+    if not hasattr(annotation, "__metadata__"):
+        return annotation
+    kept = tuple(m for m in annotation.__metadata__ if not isinstance(m, Tag))
+    if not kept or len(kept) == len(annotation.__metadata__):
+        # A bare origin with no metadata can never match a _UNION_ALIASES entry.
+        return annotation
+    return Annotated[(annotation.__origin__, *kept)]
+
+
 def _unwrap_annotated(annotation: Any) -> Any:
-    """Strip Annotated[X, *metadata] → X. Idempotent on plain types."""
-    if hasattr(annotation, "__metadata__"):
-        return annotation.__origin__
-    return annotation
+    """Strip Annotated[X, *metadata] → X. Idempotent on plain types.
+
+    A `BeforeValidator` carrying `json_schema_input_type` describes a
+    `mode="before"` coercion JSON Schema cannot otherwise see (e.g. a bare
+    string desugared into a query/ref dict — refs.py, authored.py's
+    QueryOrRef/ChartOrRef/VariableOrRef). When present, that widened input
+    type is what gets walked instead of the bare output type `X`, so the
+    coercion's accepted shapes surface as real anyOf/$ref/primitive arms
+    everywhere this IR is consumed — including the migrator's schema gate.
+    """
+    if not hasattr(annotation, "__metadata__"):
+        return annotation
+    for meta in annotation.__metadata__:
+        # Most metadata objects (Merge, Content, Tag, ...) have no
+        # json_schema_input_type attribute at all; PydanticUndefined is the same
+        # "unset" sentinel pydantic itself uses for BeforeValidator's own default.
+        input_type = getattr(
+            meta, "json_schema_input_type", PydanticUndefined
+        )  # type-state: silent_fallback — sentinel check, not a data fallback (see comment above)
+        if not isinstance(input_type, PydanticUndefinedType):
+            return input_type
+    return annotation.__origin__
 
 
 def _is_authored_model(cls: Any) -> bool:
     """Return True if cls should be included in the IR.
 
     Includes authored.* models, primitives, _PatchBase subclasses, compiled
-    style models from style/theme/, and *Patch models from models.cache (CachePatch is the authored
+    style models from style/theme/, models.refs (VariableRef/QueryRef/ChartRef —
+    the cross-file ref pointer models, authored wherever a "@ref" union arm
+    admits one), and *Patch models from models.cache (CachePatch is the authored
     overlay for the cache block — same role as *StylePatch, different module).
     """
     if not (isinstance(cls, type) and issubclass(cls, BaseModel)):
@@ -161,6 +270,7 @@ def _is_authored_model(cls: Any) -> bool:
         or module.endswith("primitives")
         or module.endswith("style.theme")
         or ".style.theme." in module
+        or module.endswith(".models.refs")
         or (module.endswith(".models.cache") and cls.__name__.endswith("Patch"))
     )
 
@@ -206,6 +316,9 @@ def _nested_model_names(annotation: Any) -> list[str]:
     """
     if annotation in _UNION_ALIASES:
         return [_UNION_ALIASES[annotation]]
+    stripped = _without_tag(annotation)
+    if stripped in _UNION_ALIASES:
+        return [_UNION_ALIASES[stripped]]
     annotation = _unwrap_annotated(annotation)
     if annotation in _UNION_ALIASES:
         return [_UNION_ALIASES[annotation]]
@@ -221,9 +334,25 @@ def _nested_model_names(annotation: Any) -> list[str]:
     if origin is dict and len(args) == 2:
         return _nested_model_names(args[1])
 
-    # list[SomeModel] or Union/Optional — collect all authored branches, dedup by class name
+    # list[SomeModel] or Union/Optional — collect all authored branches, dedup by class name.
+    # A list[...]/dict[...] arm sitting beside another *non-container* arm (not
+    # the Optional-single-container case: len(non_none_args) > 1) is a mixed
+    # union like `list[ChartSupportTableEntry] | ChartSupportTable` — its
+    # item/value models are handled separately (_container_list_models /
+    # _container_mapping_models); flattening them here would make them look
+    # like bare arms of the outer field (accepting `support_table: {source:
+    # ...}` directly, which is not a valid shape — only wrapped in a list or
+    # under the ChartSupportTable object form).
+    non_none_args = [a for a in args if a is not type(None)]
+    skip_containers = len(non_none_args) > 1
     result: list[str] = []
     for arg in args:
+        # Unwrap before checking origin: a constrained container sibling
+        # (`Annotated[list[X], Field(min_length=1)]`, e.g. ChartSupportTableOrList's
+        # json_schema_input_type) reports get_origin() == Annotated, not list,
+        # until the Field wrapper is stripped.
+        if skip_containers and get_origin(_unwrap_annotated(arg)) in (list, dict):
+            continue
         result.extend(_nested_model_names(arg))
     return list(dict.fromkeys(result))
 
@@ -379,7 +508,13 @@ def _extra_union_types(annotation: Any) -> list[str]:
     Returns the names (e.g. ["str", "bool"]) so the renderer can include
     them in anyOf alongside $ref or enum branches.
     Container values recurse because ``list[str | AuthoredChart]`` needs the
-    same scalar branch on its item schema as a bare union does.
+    same scalar branch on its item schema as a bare union does. A union arm
+    can itself unwrap to another union (a `json_schema_input_type` widening
+    nested inside one arm of an outer discriminated union, e.g.
+    `ChartSupportTableEntry`'s "source" arm, or a chart-level `ChartQuery`
+    reached through an outer `ChartQuery | None`) — recursing on any arg with
+    an origin, not just list/dict, flattens that case the same way; skipping
+    it would silently drop a bare `str` sibling arm.
     """
     annotation = _unwrap_annotated(annotation)
     origin = get_origin(annotation)
@@ -389,6 +524,17 @@ def _extra_union_types(annotation: Any) -> list[str]:
 
     if origin in (list, dict):
         return _extra_union_types(args[-1])
+
+    # A list[...]/dict[...] sibling beside another *non-container* arm (not the
+    # Optional-single-container case) that itself carries authored models is a
+    # mixed union like `list[ChartSupportTableEntry] | ChartSupportTable`: its
+    # item type's primitive arms belong inside that container's items, handled
+    # by _container_list_models, not as a bare sibling of the outer field. A
+    # scalar-only container sibling (`ThemeName | str | list[str]`) keeps the
+    # existing recurse-and-flatten behaviour — that one has no separate
+    # container-model mechanism to hand it off to.
+    non_none_args = [a for a in args if a is not type(None)]
+    skip_containers = len(non_none_args) > 1
 
     result: list[str] = []
     for arg in args:
@@ -402,8 +548,7 @@ def _extra_union_types(annotation: Any) -> list[str]:
         if _is_authored_model(arg):
             continue
         arg_origin = get_origin(arg)
-        if arg_origin in (list, dict):
-            result.extend(_extra_union_types(arg))
+        if skip_containers and arg_origin in (list, dict) and _nested_model_names(arg):
             continue
         if arg_origin is Literal:
             continue
@@ -415,7 +560,84 @@ def _extra_union_types(annotation: Any) -> list[str]:
             and arg.__name__ in _PRIMITIVE_NAMES
         ):
             result.append(arg.__name__)
+            continue
+        # Recurse into a container (list/dict — a sibling arm one level
+        # further in than the top-level early-return covers) or a genuine
+        # nested union (a json_schema_input_type widening surfaced one arm
+        # deeper, e.g. ChartSupportTableEntry's "source" arm) — never a tuple:
+        # fixed-length tuple positions are covered by tuple_item_reprs, a
+        # wholly separate SchemaField mechanism.
+        if arg_origin in (list, dict, Union, types.UnionType):
+            result.extend(_extra_union_types(arg))
     return list(dict.fromkeys(result))
+
+
+def _string_constraint_pattern(
+    annotation: Any,  # type-state: explicit_any — arbitrary typing construct, matches _nested_model_names/_extra_union_types
+) -> str | None:
+    """Return the regex pattern if annotation is `Annotated[str, StringConstraints(pattern=...)]`."""
+    if not hasattr(annotation, "__metadata__"):
+        return None
+    for meta in annotation.__metadata__:
+        if isinstance(meta, StringConstraints) and isinstance(meta.pattern, str):
+            return meta.pattern
+    return None
+
+
+def _extra_union_type_patterns(
+    annotation: Any,  # type-state: explicit_any — arbitrary typing construct, matches _extra_union_types
+) -> dict[str, str]:
+    """Regex pattern for a pattern-constrained string arm in extra_union_types.
+
+    Mirrors _extra_union_types' traversal exactly (same skip_containers guard,
+    same container recursion) but collects the `StringConstraints.pattern` a
+    `str` arm carries — e.g. VariableOrRef/ChartOrRef's cross-file-ref string
+    arm (`VAR_REF_PATTERN_STR`/`CHART_REF_PATTERN_STR`, board/authored.py). A
+    plain (unconstrained) `str` arm — queries: has one on purpose, since
+    normalize_query_value treats any string failing QUERY_REF_RE as SQL —
+    contributes nothing here.
+    """
+    annotation = _unwrap_annotated(annotation)
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    if not args:
+        return {}
+
+    if origin in (list, dict):
+        return _extra_union_type_patterns(args[-1])
+
+    non_none_args = [a for a in args if a is not type(None)]
+    skip_containers = len(non_none_args) > 1
+
+    result: dict[str, str] = {}
+    for arg in args:
+        raw_arg = arg
+        arg = _unwrap_annotated(arg)
+        if arg is type(None):
+            continue
+        if _is_authored_model(arg):
+            continue
+        arg_origin = get_origin(arg)
+        if skip_containers and arg_origin in (list, dict) and _nested_model_names(arg):
+            continue
+        if arg_origin is Literal:
+            continue
+        if isinstance(arg, type) and issubclass(arg, Enum):
+            continue
+        if (
+            arg_origin is None
+            and isinstance(arg, type)
+            and arg.__name__ in _PRIMITIVE_NAMES
+        ):
+            pattern = _string_constraint_pattern(raw_arg)
+            if pattern is not None:
+                result[arg.__name__] = pattern
+            continue
+        # Same container/union-only recursion as _extra_union_types — a tuple
+        # arm's positions are not union members to widen through.
+        if arg_origin in (list, dict, Union, types.UnionType):
+            result.update(_extra_union_type_patterns(arg))
+    return result
 
 
 def _container_mapping_models(annotation: type) -> list[str]:
@@ -431,6 +653,92 @@ def _container_mapping_models(annotation: type) -> list[str]:
     for arg in args:
         result.extend(_container_mapping_models(arg))
     return list(dict.fromkeys(result))
+
+
+def _container_list_models(
+    annotation: Any,  # type-state: explicit_any — arbitrary typing construct, matches _nested_model_names/_extra_union_types
+) -> list[str]:
+    """Return item-type branch names for a list[...] sibling arm in a union.
+
+    Symmetric to _container_mapping_models (dict-sibling), for a mixed union
+    like `list[ChartSupportTableEntry] | ChartSupportTable` — the
+    `json_schema_input_type` widening on `support_table:`
+    (chart/authored/_support_table.py's `ChartSupportTableOrList`). Includes
+    both authored model names (rendered as $ref) and primitive type names
+    (rendered via `_PRIMITIVES`), since the list item type can itself be a
+    union of both (`ChartSupportTableEntry`'s "source" tag admits a bare
+    string) — `_nested_model_names`/`_extra_union_types` never collide on
+    naming, so the renderer can dispatch each name by checking `_PRIMITIVES`.
+    """
+    annotation = _unwrap_annotated(annotation)
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    if origin is list and args:
+        item = args[0]
+        return list(
+            dict.fromkeys([*_nested_model_names(item), *_extra_union_types(item)])
+        )
+    if origin is dict and len(args) == 2:
+        return []
+    result: list[str] = []
+    for arg in args:
+        result.extend(_container_list_models(arg))
+    return list(dict.fromkeys(result))
+
+
+def _min_len_constraint(
+    annotation: Any,  # type-state: explicit_any — arbitrary typing construct, matches _nested_model_names/_extra_union_types
+) -> int | None:
+    """Return a `Field(min_length=...)` constraint's value, if annotation carries one.
+
+    `Annotated[X, Field(min_length=N)]` stores the FieldInfo itself in
+    `__metadata__`, unprocessed — pydantic only expands it into an
+    annotated_types marker (`MinLen`) when building the runtime CoreSchema,
+    which introspection never does. `FieldInfo.metadata` is where that
+    unexpanded constraint list lives, so this reads it directly instead.
+    """
+    if not hasattr(annotation, "__metadata__"):
+        return None
+    for meta in annotation.__metadata__:
+        if isinstance(meta, FieldInfo):
+            for sub in meta.metadata:
+                # Duck-typed on purpose: annotated_types markers (MinLen here) are
+                # the only objects FieldInfo.metadata ever carries with a
+                # min_length attribute; anything else falls through correctly.
+                min_length = getattr(
+                    sub, "min_length", None
+                )  # type-state: silent_fallback — duck-typed, see comment above
+                if isinstance(min_length, int):
+                    return min_length
+    return None
+
+
+def _container_list_min_items(
+    annotation: Any,  # type-state: explicit_any — arbitrary typing construct, matches _container_list_models
+) -> int | None:
+    """`minItems` for the list[...] sibling arm _container_list_models finds.
+
+    Mirrors the same traversal, capturing the arm's `annotated_types.MinLen`
+    before `_unwrap_annotated` drops it (a bare validator marker, invisible
+    to `json_schema_input_type`'s own lookup) — e.g. `ChartSupportTableOrList`
+    (chart/authored/_support_table.py) wraps `list[ChartSupportTableEntry]` in
+    `MinLen(1)` to mirror `ChartSupportTable.entries`'s own
+    `Field(min_length=1)`, so the bare-list shorthand's derived schema rejects
+    an empty list the same way the object form does.
+    """
+    raw = annotation
+    annotation = _unwrap_annotated(annotation)
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    if origin is list and args:
+        return _min_len_constraint(raw)
+    if origin is dict and len(args) == 2:
+        return None
+    for arg in args:
+        found = _container_list_min_items(arg)
+        if found is not None:
+            return found
+    return None
 
 
 def _build_schema_field(
@@ -455,7 +763,10 @@ def _build_schema_field(
         nested_models=_nested_model_names(annotation),
         container=_get_container(annotation),
         extra_union_types=_extra_union_types(annotation),
+        extra_union_type_patterns=_extra_union_type_patterns(annotation),
         container_mapping_models=_container_mapping_models(annotation),
+        container_list_models=_container_list_models(annotation),
+        container_list_min_items=_container_list_min_items(annotation),
         tuple_item_reprs=_tuple_item_reprs(annotation),
         inherit_from=(inherit.from_path,) if inherit is not None else (),
         inherit_slot=inherit_slot.from_path if inherit_slot is not None else None,
@@ -535,13 +846,21 @@ def _collect_models(
         empty_is_valid=_empty_is_valid(model_cls),
     )
 
-    # Recurse into nested authored models
+    # An alias name (e.g. "AuthoredChart") has no single class
+    # _find_nested_class could locate -- expand it to its known variants
+    # instead, so traversal order from this field is identical to a field
+    # that names the variants directly.
     for sf in fields:
         for model_name in sf.nested_models:
-            if model_name not in collected:
-                nested_cls = _find_nested_class(model_cls, model_name)
-                if nested_cls is not None and _is_authored_model(nested_cls):
-                    _collect_models(nested_cls, collected)
+            if model_name in collected:
+                continue
+            if model_name in _UNION_ALIAS_VARIANTS:
+                for variant_cls in _UNION_ALIAS_VARIANTS[model_name]:
+                    _collect_models(variant_cls, collected)
+                continue
+            nested_cls = _find_nested_class(model_cls, model_name)
+            if nested_cls is not None and _is_authored_model(nested_cls):
+                _collect_models(nested_cls, collected)
 
 
 def _empty_is_valid(model_cls: type[BaseModel]) -> bool:
@@ -581,20 +900,25 @@ def _find_in_annotation(annotation: Any, class_name: str) -> type | None:
     return None
 
 
+@functools.lru_cache(maxsize=1)
 def introspect() -> AuthorableSchema:
     """Walk AuthoredBoard and all reachable authored models, returning an IR.
 
     The returned AuthorableSchema is the single source of truth consumed by
     render_json_schema, render_prompt, render_markdown, and render_erd.
+
+    Memoized: the walk depends only on the installed dbt_charts code, not on
+    any input, so the result is a shared read-only instance for the life of
+    the process. Callers that need to mutate it must deep-copy first.
     """
     collected: dict[str, AuthorableModel] = {}
     _collect_models(AuthoredBoard, collected)
-    # Walk extra roots not reachable via AuthoredBoard type annotations.
-    # Per-type authored query models are not reachable via AuthoredBoard annotations
-    # (AuthoredQuery is a discriminated union alias, like AuthoredChart).
-    # Source connector configs are reached via sources: dict[str, Any] — no type annotation.
-    # Per-family chart patch classes are not reachable via AuthoredBoard annotations either
-    # (AuthoredChart is a discriminated union alias, not a typed field on AuthoredBoard).
+    # Walk extra roots: some (chart/query family classes) already arrived via
+    # _UNION_ALIAS_VARIANTS expansion above and are no-ops here (_collect_models
+    # returns immediately for a name already in `collected`); others — source
+    # connector configs (reached via sources: dict[str, Any], no type
+    # annotation to walk) and per-family chart *patch* classes — have no
+    # annotation path to AuthoredBoard at all and are only ever reached here.
     from dbt_charts.core.compile.models.chart.authored import (  # noqa: PLC0415
         AreaChart,
         BarChart,
@@ -633,7 +957,6 @@ def introspect() -> AuthorableSchema:
         CalloutChart,
         SparkBarChart,
         AuthoredSqlQuery,
-        AuthoredMetricflowQuery,
         AuthoredHttpQuery,
         AuthoredValuesQuery,
         AuthoredCompactValuesQuery,
@@ -677,7 +1000,6 @@ def introspect() -> AuthorableSchema:
     # requirement from one variant (such as HTTP url) into a global requirement.
     query_variants = (
         "AuthoredSqlQuery",
-        "AuthoredMetricflowQuery",
         "AuthoredHttpQuery",
         "AuthoredValuesQuery",
         "AuthoredCompactValuesQuery",
@@ -689,7 +1011,7 @@ def introspect() -> AuthorableSchema:
             doc=(
                 "Union of per-type authored query shapes. "
                 "type: is inferred from key presence when omitted (bare SQL string, "
-                "sql: -> sql; metrics: -> metricflow; "
+                "sql: -> sql; "
                 "url: -> http; rows:/values: -> values)."
             ),
             fields=[],

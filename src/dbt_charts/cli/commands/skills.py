@@ -66,7 +66,7 @@ def _print_skills_table(result: _api.SkillList) -> None:
     patterns = [s for s in result.skills if s.kind == "pattern"]
 
     typer.echo(
-        "Agent skills — workflows and layout patterns for building Dataface dashboards."
+        "Agent skills — workflows and layout patterns for building dbt charts dashboards."
     )
     typer.echo("YAML field reference is `dct docs`, not skills.\n")
 

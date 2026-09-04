@@ -1,5 +1,5 @@
 title: "Prose right edge — measured vs painted"
-description: >
+notes: >
   Specimen for the font-measurement fix. Every block below runs prose hard against
   the right edge of a full-width slot, which is where the defect showed: mdsvg
   measured a static cut of Source Serif while the browser painted the variable

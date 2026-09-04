@@ -143,16 +143,19 @@ def test_area_halo_disabled_when_multiplier_zero(make_chart):
     spec = _render_spec(resolved, data)
 
     layers = spec.get("layer", [])
-    # backdrop stays: [halo_fill, fg_fill, fg_line, point_overlay] — 4 layers.
-    assert len(layers) == 4, (
+    # backdrop stays: [halo_fill, fg_fill, zero_rule, fg_line, point_overlay]
+    # — 5 layers. Area always zero-anchors this all-positive data, so the
+    # baseline rule is inserted after the last area fill (see _insert_rule).
+    assert len(layers) == 5, (
         f"halo_multiplier=0 must drop only the halo LINE (backdrop stays), "
         f"got {len(layers)}: {[layer.get('mark', {}).get('type') for layer in layers]}"
     )
     assert layers[0].get("mark", {})["type"] == "area"
     assert layers[1].get("mark", {})["type"] == "area"
-    assert layers[2].get("mark", {})["type"] == "line"
-    assert layers[3].get("mark", {})["type"] == "point"
-    assert layers[3].get("mark", {})["opacity"] == 0
+    assert layers[2].get("mark", {})["type"] == "rule"
+    assert layers[3].get("mark", {})["type"] == "line"
+    assert layers[4].get("mark", {})["type"] == "point"
+    assert layers[4].get("mark", {})["opacity"] == 0
 
     # No background-colored stroke layer
     halo_mark = _halo_line_mark(spec)
@@ -182,11 +185,14 @@ def test_area_backdrop_disabled_when_backdrop_false(make_chart):
 
     layers = spec.get("layer", [])
     layer_types = [layer.get("mark", {}).get("type") for layer in layers]
-    # No backdrop: [halo_line, fg_fill, fg_line, point_overlay] — the edge
-    # halo line stays (halo_multiplier untouched, still non-zero).
+    # No backdrop: [halo_line, fg_fill, zero_rule, fg_line, point_overlay] —
+    # the edge halo line stays (halo_multiplier untouched, still non-zero).
+    # Area always zero-anchors this all-positive data, so the baseline rule
+    # is inserted after the last area fill (see _insert_rule).
     assert layer_types == [
         "line",
         "area",
+        "rule",
         "line",
         "point",
     ], f"backdrop=false must drop only the fill backdrop; got {layer_types}"
@@ -204,9 +210,11 @@ def test_area_halo_fill_survives_zero_stroke_width(make_chart):
 
     layers = spec.get("layer", [])
     layer_types = [layer.get("mark", {}).get("type") for layer in layers]
-    # [halo_fill (area), fg_fill (area), hover (point)] — no line marks at all
-    # (no edge stroke, no halo line to knock it out).
-    assert layer_types == ["area", "area", "point"], (
+    # [halo_fill (area), fg_fill (area), zero_rule, hover (point)] — no line
+    # marks at all (no edge stroke, no halo line to knock it out). Area
+    # always zero-anchors this all-positive data, so the baseline rule is
+    # inserted after the last area fill (see _insert_rule).
+    assert layer_types == ["area", "area", "rule", "point"], (
         f"stroke.width=0 must keep the halo fill area, drop the edge/halo "
         f"lines; got {layer_types}"
     )

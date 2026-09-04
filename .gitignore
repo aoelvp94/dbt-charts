@@ -2,15 +2,18 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+.smoke-venv/
 dist/
+# dct render output
+renders/
 build/
 .uv-cache/
 uv.lock.bak
 .DS_Store
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 htmlcov/
 .coverage
 # just demo's scratch project (justfile's demo_dir)
 .demo/
-.mypy_cache/

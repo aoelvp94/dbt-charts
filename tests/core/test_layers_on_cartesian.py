@@ -433,7 +433,10 @@ def test_emit_line_layer_returns_halo_fg_hover() -> None:
         PointLabelsStyle,
         PointMarkStyle,
     )
-    from dbt_charts.core.render.chart.emitters._layers import emit_line_layer
+    from dbt_charts.core.render.chart.emitters._layers import (
+        HOVER_TARGET_SIZE,
+        emit_line_layer,
+    )
 
     line_mark = ResolvedLineMarkStyle(
         stroke=ResolvedStrokeStyle(width=2.0),
@@ -456,7 +459,7 @@ def test_emit_line_layer_returns_halo_fg_hover() -> None:
     hover = layers[-1]
     assert hover.mark == "point"
     assert hover.mark_props["opacity"] == 0
-    assert hover.mark_props["size"] == 300
+    assert hover.mark_props["size"] == HOVER_TARGET_SIZE
 
 
 # ── MS4: emit_bar_layer / emit_area_layer / emit_scatter_layer ────────────
@@ -495,6 +498,8 @@ def test_emit_bar_layer_returns_chart_spec() -> None:
         measure_field="revenue",
         config={},
         transforms=[],
+        x_is_banded=True,
+        cat_field="month",
     )
     assert isinstance(result, ChartSpec)
     assert result.mark in ("bar", "layered")
@@ -865,6 +870,7 @@ def test_numeric_overlay_color_uses_an_independent_scale_and_line_glyph() -> Non
     assert "<svg" in svg
     assert vl["resolve"]["scale"]["color"] == "independent"
     assert overlay["color"]["legend"]["symbolType"] == "stroke"
+    assert "symbolStrokeColor" not in overlay["color"]["legend"]
 
 
 def test_categorical_overlay_color_cycles_the_palette() -> None:
@@ -1497,6 +1503,7 @@ def test_categorical_overlay_color_extends_shared_scale_and_legend_glyph() -> No
     assert "datum" not in overlay_color
     assert "West" in overlay_color["legend"]["symbolType"]["expr"]
     assert "stroke" in overlay_color["legend"]["symbolType"]["expr"]
+    assert "symbolStrokeColor" not in overlay_color["legend"]
 
 
 def test_stacked_color_base_layer_paint_matches_legend_scale() -> None:
@@ -1529,13 +1536,19 @@ def test_stacked_color_base_layer_paint_matches_legend_scale() -> None:
         for path in group.iter()
         if path.tag.endswith("path")
     ]
-    assert legend_symbol_paths
-    assert all(
-        "stroke" in path.attrib or "fill" in path.attrib for path in legend_symbol_paths
-    )
+    goal_paths = [
+        path for path in legend_symbol_paths if path.attrib.get("fill") == goal_color
+    ]
+    assert len(goal_paths) == 1
+    assert goal_paths[0].attrib.get("stroke") == goal_color
 
 
 def test_authored_layer_stroke_drives_paint_and_legend_scale() -> None:
+    import json
+    from xml.etree import ElementTree
+
+    import vl_convert as vlc
+
     from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
 
     layer = LineLayer(
@@ -1552,23 +1565,54 @@ def test_authored_layer_stroke_drives_paint_and_legend_scale() -> None:
     assert goal_color == authored_color
     assert _overlay_line_stroke(vl) == authored_color
 
+    svg = ElementTree.fromstring(vlc.vegalite_to_svg(json.dumps(vl)))
+    target_paths = [
+        path
+        for group in svg.iter()
+        if "role-legend-symbol" in group.attrib.get("class", "")
+        for path in group.iter()
+        if path.tag.endswith("path") and path.attrib.get("fill") == authored_color
+    ]
+    assert len(target_paths) == 1
+    assert target_paths[0].attrib.get("stroke") == authored_color
 
-def test_color_field_base_raises_when_layer_has_no_palette_slot() -> None:
+
+def test_color_field_base_layer_recycles_palette_when_exhausted() -> None:
+    """A layer past the last available palette slot recycles via modulo, matching
+    the base's own field-color scale and the non-field-color-base layer branch."""
     from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
     from dbt_charts.core.compile.resolve import resolve
-    from dbt_charts.core.diagnostics.chart_data import ChartDataError
     from dbt_charts.core.render.chart.emitters.bar import BarEmitter
+    from dbt_charts.core.render.chart.translate import translate_to_vl
 
+    # 3 distinct `kind` values against a 2-color palette: the base already
+    # occupies both slots, so the "Goal" layer lands at layer_ord 3 -- 3 % 2 == 1,
+    # a genuine wraparound (not slot 0), so this can't pass by returning a
+    # constant.
+    palette = ("red", "blue")
+    data = [
+        {"month": "Jan", "revenue": 100.0, "target": 90.0, "kind": "Named"},
+        {"month": "Jan", "revenue": 50.0, "target": 90.0, "kind": "Non-Named"},
+        {"month": "Jan", "revenue": 30.0, "target": 90.0, "kind": "Other"},
+        {"month": "Feb", "revenue": 200.0, "target": 180.0, "kind": "Named"},
+        {"month": "Feb", "revenue": 80.0, "target": 180.0, "kind": "Non-Named"},
+        {"month": "Feb", "revenue": 60.0, "target": 180.0, "kind": "Other"},
+    ]
     chart = _bar_normalized(
         color="kind",
         layers=[LineLayer(type="line", y="target", label="Goal")],
     )
-    resolved = resolve(chart, _COLOR_LAYER_DATA, _default_board_style()).model_copy(
-        update={"palette": ("red", "blue")}
+    resolved = resolve(chart, data, _default_board_style()).model_copy(
+        update={"palette": palette}
     )
 
-    with pytest.raises(ChartDataError, match="no available color palette slot"):
-        BarEmitter().emit(resolved, _DEFAULT_BOX, regroup((), _COLOR_LAYER_DATA))
+    vl = translate_to_vl(BarEmitter().emit(resolved, _DEFAULT_BOX, regroup((), data)))
+    scale = vl["layer"][0]["encoding"]["color"]["scale"]
+    goal_index = scale["domain"].index("Goal")
+
+    assert goal_index == 3
+    assert scale["range"][goal_index] == "blue"
+    assert _overlay_line_stroke(vl) == "blue"
 
 
 def test_color_field_base_rejects_layer_label_collision() -> None:

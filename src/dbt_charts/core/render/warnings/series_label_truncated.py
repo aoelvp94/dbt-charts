@@ -3,8 +3,8 @@
 
 Detection rule:
   ``WarningContext.series_label_truncations`` is non-empty for a chart — the
-  endpoint-label feature capped the rail (``_measure_label_pane_width`` in
-  ``render/chart/features/endpoint_labels.py``) on a layout that honours that
+  endpoint-label feature capped the rail (``measure_label_pane_width`` in
+  ``render/chart/emitters/_endpoint_rail.py``) on a layout that honours that
   width, so Vega will ellipsize the recorded names.
 
 One ``Diagnostic`` fires per (chart, authored field): a chart with thirty long

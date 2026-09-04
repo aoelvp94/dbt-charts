@@ -2,7 +2,7 @@
 
 Purpose: Choose which columns to expose as board variables in a generated
          entity view, and produce ordinary Variable instances that pass
-         through the normal Dataface validate/normalize/render pipeline.
+         through the normal dbt charts validate/normalize/render pipeline.
 
 Public API:
 - ``PlannerColumn`` — typed column descriptor (name + db type).

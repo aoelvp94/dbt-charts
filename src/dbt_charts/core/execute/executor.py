@@ -31,12 +31,17 @@ import re
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal
 
-# Regex that detects __dft_cache_ref__NAME__ sentinels produced by
+import sqlglot
+import sqlglot.errors
+import sqlglot.expressions as exp
+
+# Regex that detects __dct_cache_ref__NAME__ sentinels produced by
 # {{ queries.X.cache }} in a composing query's SQL.
-_CACHE_REF_RE: re.Pattern[str] = re.compile(r"__dft_cache_ref__(\w+)__")
+_CACHE_REF_RE: re.Pattern[str] = re.compile(r"__dct_cache_ref__(\w+)__")
 
 # Regex that matches {{ queries.NAME.cache }} in authored SQL so we can
 # pre-substitute it to its sentinel form before passing the SQL to the
@@ -57,13 +62,16 @@ from dbt_charts.core.compile.models.cache import CachePolicy
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.query.normalized import (
     AnyQuery,
+    SqlQuery,
     is_sql_query,
 )
+from dbt_charts.core.compile.sql_guard import sqlglot_dialect
 from dbt_charts.core.compile.template.variables import (
     coerce_variable_values,
     parse_variable_json_strings,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.codes_execute import ERR_FILE_SOURCE_NOT_FOUND
 from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
 from dbt_charts.core.execute.adapters.base import (
     apply_row_limit_truncation,
@@ -95,6 +103,173 @@ def _query_name_for(query: AnyQuery, registry: dict[str, AnyQuery]) -> str | Non
         if q is query:
             return name
     return None
+
+
+def _compute_watermark(
+    rows: list[dict[str, Any]],  # type-state: explicit_any — cache rows are Any-valued
+    key_col: str,
+    query_name: str,
+) -> (
+    Any | None  # type-state: explicit_any — MAX watermark; source-dialect-typed
+):
+    """Return MAX(key_col) over rows, or None when rows are empty.
+
+    The watermark's type is whatever the cache handed back for *rows* — never
+    guessed from string shape here. ``QueryResultCache.get()`` is contractually
+    required to return each column with the same Python type its ``put()``
+    received (``cache_backend.py``'s ``QueryResultCache`` docstring); a backend
+    that cannot uphold that (e.g. one that serializes to JSON) must carry
+    enough metadata to restore the original type itself. Guessing from a
+    string's shape here previously misclassified a genuinely-VARCHAR
+    incremental watermark column holding ISO-date-shaped values
+    ('2026-08-22') as a DATE, emitting a CAST that a VARCHAR column rejects
+    outright — see the incremental-chart-tail task history.
+
+    Raises QueryError if key_col is absent from any row or if the column
+    values are not orderable — a misspelled incremental watermark column is a
+    hard error, not a silent fallback to full refresh.
+    """
+    if not rows:
+        return None
+    try:
+        return max(row[key_col] for row in rows)
+    except KeyError as exc:
+        raise QueryError(
+            f"incremental watermark column {key_col!r} not found in cached rows for query {query_name!r}",
+            query_name,
+        ) from exc
+    except TypeError as exc:
+        raise QueryError(
+            f"incremental watermark column {key_col!r} values are not orderable for query {query_name!r}",
+            query_name,
+        ) from exc
+
+
+def _watermark_to_sql_node(
+    watermark: Any,  # type-state: explicit_any — MAX value from cached row; type is source-dialect-specific
+    query_name: str,
+) -> exp.Expression:
+    """Return a sqlglot expression node for the watermark value.
+
+    Builds a typed node only — no dialect. Dialect-correct rendering happens
+    where the caller composes the full predicate (identifier + this node) and
+    calls ``.sql(dialect=...)`` on it, so the same node renders correctly
+    under any dialect.
+
+    Uses sqlglot expressions so the output is properly quoted/cast rather
+    than Python repr, which breaks for datetime, date, Decimal, and strings
+    containing apostrophes.
+    """
+    # bool must be checked before int because bool is a subclass of int.
+    if isinstance(watermark, bool):
+        return exp.true() if watermark else exp.false()
+    if isinstance(watermark, int):
+        return exp.Literal.number(watermark)
+    if isinstance(watermark, float | Decimal):
+        return exp.Literal.number(str(watermark))
+    if isinstance(watermark, datetime):
+        # A naive datetime has no source-dialect offset to encode, so TIMESTAMP
+        # is correct; a tz-aware one (BigQuery TIMESTAMP, Postgres timestamptz,
+        # Snowflake TIMESTAMP_TZ) must CAST to a timezone-aware SQL type or the
+        # embedded offset in the literal is silently misread as local time.
+        cast_type = (
+            exp.DataType.Type.TIMESTAMPTZ
+            if watermark.tzinfo is not None
+            else exp.DataType.Type.TIMESTAMP
+        )
+        return exp.Cast(
+            this=exp.Literal.string(watermark.isoformat()),
+            to=exp.DataType(this=cast_type),
+        )
+    if isinstance(watermark, date):
+        return exp.Cast(
+            this=exp.Literal.string(watermark.isoformat()),
+            to=exp.DataType(this=exp.DataType.Type.DATE),
+        )
+    if isinstance(watermark, str):
+        return exp.Literal.string(watermark)
+    raise QueryError(
+        f"incremental watermark has unsupported type {type(watermark).__name__!r}",
+        query_name,
+    )
+
+
+def _incremental_safety_reason(sql: str, dialect_name: str | None) -> str | None:
+    """Return a reason string if SQL is unsafe for incremental tail, else None.
+
+    Queries with a top-level LIMIT (including dialect-specific top-N spellings
+    like T-SQL's TOP and the ANSI FETCH FIRST n ROWS ONLY, which sqlglot parses
+    as exp.Fetch rather than exp.Limit), ORDER BY (on a bare Select or a set
+    operation), a
+    window function, or a bare aggregate/DISTINCT with no GROUP BY cannot be
+    safely tail-filtered: a LIMIT would silently cap new rows, ORDER BY is
+    meaningless over a partial range, window functions and ungrouped
+    aggregates produce results whose value depends on the full dataset, and
+    an unparseable statement carries no provable safety at all — every one of
+    these falls back to a full refresh rather than a wrong-looking result.
+    """
+    try:
+        stmts = sqlglot.parse(
+            sql, read=dialect_name, error_level=sqlglot.ErrorLevel.IGNORE
+        )
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
+        return "unparseable"
+    if not stmts or stmts[0] is None:
+        return "unparseable"
+    stmt = stmts[0]
+    if stmt.find(exp.Limit, exp.Fetch):
+        return "limit"
+    if isinstance(stmt, exp.Select | exp.SetOperation) and stmt.args.get("order"):
+        return "order_by"
+    if stmt.find(exp.Window):
+        return "window"
+    if isinstance(stmt, exp.Select):
+        if stmt.args.get("distinct"):
+            return "distinct"
+        if not stmt.args.get("group") and any(
+            e.find(exp.AggFunc) is not None for e in stmt.expressions
+        ):
+            return "aggregate"
+    return None
+
+
+def _merge_incremental_rows(
+    tail_rows: list[dict[str, Any]],  # type-state: explicit_any — cache rows
+    prior_rows: list[dict[str, Any]],  # type-state: explicit_any — cache rows
+    key_col: str,
+    query_name: str,
+) -> list[dict[str, Any]]:  # type-state: explicit_any — row dict values
+    """Merge tail rows over prior cached rows, tail wins on key collision.
+
+    Dedup: tail wins for restated keys (prior rows at the watermark are
+    overwritten by the tail's version). Sorted descending by key so HEAD
+    truncation (_enforce_result_limits uses rows[:max_rows]) keeps the
+    newest rows when the merged set exceeds the limit.
+
+    No re-typing of prior rows happens here: the cache contract
+    (``cache_backend.py``) requires ``get()`` to hand back each column with
+    its original ``put()``-time Python type, so tail rows (freshly executed,
+    never cached) and prior rows (read from a compliant cache) are already
+    comparable. A str-typed prior row against a date/datetime-typed tail row
+    is therefore a genuine contract violation, not a recoverable shape — the
+    sort below raises on exactly that disagreement.
+
+    Raises QueryError if the merged keys are not mutually orderable — a
+    cache backend that lost the key column's type (or a genuinely
+    heterogeneous key) cannot be trusted to sort correctly, and truncating
+    an unsorted list would silently drop the wrong rows.
+    """
+    tail_keys = {row[key_col] for row in tail_rows}
+    merged = tail_rows + [r for r in prior_rows if r[key_col] not in tail_keys]
+    try:
+        merged.sort(key=lambda r: r[key_col], reverse=True)
+    except TypeError as exc:
+        raise QueryError(
+            f"incremental watermark column {key_col!r} values are not mutually "
+            f"orderable across cached and tail rows for query {query_name!r}",
+            query_name,
+        ) from exc
+    return merged
 
 
 def _memo_key(
@@ -298,7 +473,12 @@ class Executor:
                 (``FilesystemProject`` from ``dbt_charts.cli.filesystem_project``);
                 the executor does not invent one from cwd.
             query_registry: Optional query registry for cross-file references
-            use_cache: Default cache behavior for query execution
+            use_cache: Default *persistent-store* participation for query
+                execution. False means no-store: results are neither read from
+                nor written to ``result_cache``. The per-render in-memory memo
+                is unaffected — one execution per query per Executor holds
+                regardless, because resolve and render must see identical rows
+                (see execute_query's Step 3 comment).
             result_cache: Optional cache backend for persistent caching (Suite context)
             file_materializer: Optional pre-built materializer for CSV/JSON/Parquet
                 file sources (the injected path — Cloud, registered views). When
@@ -388,9 +568,12 @@ class Executor:
         Args:
             query_name: Name of query to execute (may include "queries." prefix)
             variables: Variable values for query resolution
-            use_cache: Whether to use cached results if available
+            use_cache: Whether to read/write the persistent result store for
+                this call (defaults to the instance setting). Does not disable
+                the per-render memo — a query already executed by this
+                Executor returns those same rows.
             force_refresh: If True, clear both success and failure caches
-                for this query and re-run it from scratch.
+                (memo included) for this query and re-run it from scratch.
 
         Returns:
             List of dictionaries with query results (each dict is a row)
@@ -411,22 +594,29 @@ class Executor:
 
         # ────────────────────────────────────────────────────────────────
         # Step 3: Check cache (use instance default if not explicitly set).
-        # Two gates, because there are two different caches here.
-        # `memoize` guards the per-render `_cache` dict, which is not a
-        # freshness cache at all — it is the render's identity guarantee, since
-        # every chart consuming a query calls execute_query on top of the
-        # parallel prefetch. `should_use_cache` additionally honors the
-        # resolved policy: a disabled query is never read from nor written to
-        # the *persistent* store (no-store, not store-and-ignore). Folding
-        # `enabled` into the memo *gate* would fan one live query out to a
-        # warehouse round trip per consumer, each at a different instant — two
-        # charts off one query could then disagree. So the policy scopes the
-        # memo *key* instead (_memo_key): a disabled query still memoizes for
-        # its own consumers, it just no longer shares a slot with a query whose
-        # policy differs.
+        # Two different caches here, and only one of them is optional.
+        # The per-render `_cache` dict is not a freshness cache at all — it is
+        # the render's identity guarantee: one execution per query per
+        # Executor, since every chart consuming a query calls execute_query on
+        # top of the parallel prefetch. It is unconditional. A query with tied
+        # ORDER BY values can legally return a different row order on each
+        # execution, so a second execution within one emission would let the
+        # resolve pass and the render/record pass see different rows (the
+        # ERR-RESOLVED-PIE-DATA-MISMATCH flake). `force_refresh` is the one
+        # way to drop it. `use_cache` (call-level, else instance) governs only
+        # the *persistent* store, and `should_use_cache` additionally honors
+        # the resolved policy: a disabled query is never read from nor written
+        # to that store (no-store, not store-and-ignore). Folding `enabled`
+        # into a memo gate would fan one live query out to a warehouse round
+        # trip per consumer, each at a different instant — two charts off one
+        # query could then disagree. So the policy scopes the memo *key*
+        # instead (_memo_key): a disabled query still memoizes for its own
+        # consumers, it just no longer shares a slot with a query whose policy
+        # differs.
         # ────────────────────────────────────────────────────────────────
-        memoize = use_cache if use_cache is not None else self._use_cache
-        should_use_cache = memoize and query.cache.enabled
+        should_use_cache = (
+            use_cache if use_cache is not None else self._use_cache
+        ) and query.cache.enabled
         cache_key = compute_cache_key(
             query,
             variables,
@@ -434,6 +624,15 @@ class Executor:
             source_version=self._source_version(query),
         )
         memo_key = _memo_key(query, cache_key)
+
+        # Saved in step 3c when a persistent cache hit is eligible for
+        # incremental tail; consumed after reference resolution in step 4.
+        _prior_rows: list[dict[str, Any]] | None = (  # type-state: explicit_any — rows
+            None
+        )
+        _wmark: Any | None = (  # type-state: explicit_any — watermark
+            None
+        )
 
         # force_refresh: clear all caches for this key before running
         if force_refresh:
@@ -459,7 +658,7 @@ class Executor:
             # are returned; _query_errors is only consulted when _cache misses,
             # which is the only time it correctly reflects a real query failure.
             # ────────────────────────────────────────────────────────────
-            if memoize and memo_key in self._cache:
+            if memo_key in self._cache:
                 return self._cache[memo_key]
 
             # ────────────────────────────────────────────────────────────
@@ -484,7 +683,7 @@ class Executor:
             # lookup: the backend holds a single entry per key recording
             # either the rows or the error, so a rows miss is never followed
             # by a second probe for a cached failure. The in-memory layer was
-            # already checked in 3a — should_use_cache implies memoize.
+            # already checked in 3a.
             # ────────────────────────────────────────────────────────────
             if should_use_cache:
                 try:
@@ -495,7 +694,32 @@ class Executor:
                     )
                     raise
                 if hit:
-                    return self._cache[memo_key]
+                    if (
+                        is_sql_query(query)
+                        # Same activity gate as the cache-key fold
+                        # (duckdb_cache.py): isinstance, not truthiness, so
+                        # the two can never disagree on what "active" means.
+                        and isinstance(query.incremental, str)
+                        # File-source queries (CSV/JSON/Parquet) have no
+                        # warehouse dialect to tail-wrap against — they always
+                        # take the normal cache path below, exactly like a
+                        # non-incremental query.
+                        and self._resolve_file_source(query) is None
+                    ):
+                        prior_rows = self._cache[memo_key]
+                        # Raises QueryError if key_col absent or values non-orderable.
+                        watermark = _compute_watermark(
+                            prior_rows, query.incremental, query_name
+                        )
+                        if watermark is not None:
+                            # Defer tail until after reference resolution (step 4)
+                            # so the tail SQL wraps the fully resolved query, not
+                            # the authored Jinja template.
+                            _prior_rows = prior_rows
+                            _wmark = watermark
+                        del self._cache[memo_key]
+                    else:
+                        return self._cache[memo_key]
 
         # ────────────────────────────────────────────────────────────────
         # Step 4: Resolve query references in SQL
@@ -512,7 +736,23 @@ class Executor:
         # parameterized) and executed over the upstream rows in an isolated
         # in-process DuckDB — never string-interpolated onto the source adapter
         # or an application-database connection.
+        #
+        # Cache-ref composition is incompatible with incremental tail: the
+        # in-process execution reruns the whole composing query over the already-
+        # cached upstream rows, so no watermark predicate can be appended to the
+        # source SQL. Clear state and let the cache-ref path execute fresh.
         # ────────────────────────────────────────────────────────────────
+        if (
+            _prior_rows is not None
+            and is_sql_query(query)
+            and CACHE_REF_JINJA_RE.search(query.sql)
+        ):
+            logger.debug(
+                "%s: cache-ref query is ineligible for incremental tail; full refresh",
+                query_name,
+            )
+            _prior_rows = None
+            _wmark = None
         if is_sql_query(query) and CACHE_REF_JINJA_RE.search(query.sql):
             composed_rows, cache_ref_reason = self._execute_cache_ref_query(
                 query, variables, query_name
@@ -521,8 +761,7 @@ class Executor:
                 composed_rows, query_name, seed_reason=cache_ref_reason
             )
             data_as_of = datetime.now(timezone.utc)
-            if memoize:
-                self._cache[memo_key] = result_data
+            self._cache[memo_key] = result_data
             if should_use_cache:
                 # Write through to the persistent backend using the original
                 # (authored) query so the cache key matches what _prepare_call /
@@ -545,6 +784,43 @@ class Executor:
             all_queries={**self.board.queries, **self.query_registry},
             query_name=query_name,
         )
+
+        # ────────────────────────────────────────────────────────────────
+        # Incremental tail: execute after reference resolution so the tail
+        # SQL wraps the fully resolved query (no Jinja refs remain).
+        # Safety predicate: LIMIT, ORDER BY, or window functions make the
+        # tail semantically incorrect — fall back to a full refresh.
+        # ────────────────────────────────────────────────────────────────
+        if _prior_rows is not None and _wmark is not None:
+            # Step 3c set _prior_rows/_wmark only when
+            # is_sql_query(query) was True; resolve_query_references preserves the subtype.
+            assert is_sql_query(query) and is_sql_query(original_query)
+            prior_rows, watermark = _prior_rows, _wmark
+            # The dialect the adapter will actually execute against — the
+            # safety predicate and the tail SQL below must agree with it, or a
+            # dialect-specific LIMIT spelling (T-SQL TOP) slips the safety
+            # guard and a non-ANSI identifier quote gets silently misread.
+            dialect = self._query_dialect(original_query, query_name)
+            reason = _incremental_safety_reason(query.sql, dialect)
+            if reason is not None:
+                logger.debug(
+                    "%s: SQL contains %s — ineligible for incremental tail; full refresh",
+                    query_name,
+                    reason,
+                )
+            else:
+                return self._run_incremental_tail(
+                    query_name,
+                    query,
+                    variables,
+                    memo_key,
+                    cache_key,
+                    should_use_cache,
+                    original_query,
+                    prior_rows,
+                    watermark,
+                    dialect,
+                )
 
         # ────────────────────────────────────────────────────────────────
         # Step 4c: File source short-circuit
@@ -591,8 +867,7 @@ class Executor:
                 # file's version token (Project.file_version), so an edited data file
                 # produces a new key and never a stale hit — while an unchanged file
                 # serves warm renders straight from the cache without materializing.
-                if memoize:
-                    self._cache[memo_key] = result_data
+                self._cache[memo_key] = result_data
                 if should_use_cache:
                     self._cache_outcome(
                         query_name, original_query, result_data, variables
@@ -637,8 +912,7 @@ class Executor:
         enforced_data = self._enforce_result_limits(
             result.data, query_name, seed_reason=result.truncated_reason
         )
-        if memoize:
-            self._cache[memo_key] = enforced_data
+        self._cache[memo_key] = enforced_data
 
         # Cache dbt relation lineage (which ref()/source() calls resolved to)
         if result.resolved_relations:
@@ -676,7 +950,8 @@ class Executor:
         Args:
             chart: Chart or chart name string
             variables: Variable values
-            use_cache: Whether to use cache (defaults to instance setting)
+            use_cache: Whether to use the persistent result store
+                (defaults to instance setting)
 
         Returns:
             Query results for the chart
@@ -744,7 +1019,11 @@ class Executor:
         Performs the same variable normalization and cache-key computation as
         execute_query, then reports only a rows outcome as a hit. A cached
         error is not a hit — that query must go through execute_query so the
-        failure is raised rather than silently skipped.
+        failure is raised rather than silently skipped. Likewise, an
+        ExecutionError raised *while computing* the cache key (e.g. a missing
+        file-source file surfacing from _source_version) reports a miss rather
+        than propagating: is_cached must never raise, so a fresh execute_query
+        call is what turns the failure into a proper per-chart diagnostic.
 
         Args:
             query_name: Name of the query (may include "queries." prefix).
@@ -753,18 +1032,11 @@ class Executor:
         Returns:
             True if the result is available in cache; False otherwise.
         """
-        if not self._use_cache:
-            return False
-
         try:
             _, query, merged = self._prepare_call(query_name, variables)
+            return self._lookup_cached(query, merged, query_name)
         except ExecutionError:
             return False
-
-        if not query.cache.enabled:
-            return False
-
-        return self._lookup_cached(query, merged, query_name)
 
     def _prepare_call(
         self,
@@ -796,12 +1068,11 @@ class Executor:
     ) -> bool:
         """Return True if rows for (query, variables) are available without executing.
 
-        Checks in-memory _cache first (microseconds), then the persistent
-        backend (sub-ms). A cached *error* is not a hit: that query must go
-        through execute_query so the failure is raised rather than skipped.
-
-        Does not gate on self._use_cache — callers apply that check before
-        calling (is_cached uses self._use_cache).
+        Checks in-memory _cache first (microseconds) — unconditionally, since
+        the memo serves regardless of cache settings — then the persistent
+        backend (sub-ms), gated on self._use_cache and the query's policy. A
+        cached *error* is not a hit: that query must go through execute_query
+        so the failure is raised rather than skipped.
 
         Args:
             query: The compiled query object (already looked up).
@@ -819,6 +1090,8 @@ class Executor:
         )
         if _memo_key(query, cache_key) in self._cache:
             return True
+        if not self._use_cache or not query.cache.enabled:
+            return False
         try:
             return self._warm_from_cache(cache_key, query, query_name)
         except CachedQueryFailure:
@@ -849,9 +1122,9 @@ class Executor:
         slot for `execute_query` to serve — the no-store guarantee, gone.
 
         Both checks are redundant with today's two callers (`execute_query`
-        gates on `should_use_cache`, `is_cached` returns early on a disabled
-        policy), which is the point: a third caller that forgets cannot
-        reintroduce the bug.
+        gates on `should_use_cache`, `_lookup_cached` gates the probe on
+        `self._use_cache` and the policy), which is the point: a third caller
+        that forgets cannot reintroduce the bug.
 
         Records a cache-hit entry in ``_query_data_ages`` on a successful warm —
         powers both snapshot ``expires_at`` and the "data as of" footer stamp.
@@ -891,6 +1164,84 @@ class Executor:
             (query_name, outcome.written_at, query.cache, True)
         )
         return True
+
+    def _query_dialect(self, query: SqlQuery, query_name: str) -> str | None:
+        """Resolve the sqlglot dialect name for a query's source.
+
+        Used to render incremental-tail SQL (identifier quoting, watermark
+        literals) and to parse the safety predicate — both must see the same
+        dialect the adapter will actually execute against, or an ANSI-quoted
+        identifier or a default-dialect LIMIT check silently misreads
+        MySQL/BigQuery/T-SQL SQL differently than the adapter will.
+        """
+        source_config = self.adapter_registry.resolve_query_source(
+            query, board=self.board, query_name=query_name
+        )
+        if source_config is None:
+            return None
+        return sqlglot_dialect(source_config.type)
+
+    def _run_incremental_tail(
+        self,
+        query_name: str,
+        query: SqlQuery,
+        variables: VariableValues | None,
+        memo_key: tuple[str, str, str, str],
+        cache_key: tuple[str, str, str],
+        should_use_cache: bool,
+        original_query: SqlQuery,
+        prior_rows: list[dict[str, Any]],  # type-state: explicit_any — cache rows
+        watermark: Any,  # type-state: explicit_any — MAX watermark; dialect-typed
+        dialect: str | None,
+    ) -> list[dict[str, Any]]:  # type-state: explicit_any — row dict values
+        """Fetch only new rows (>= watermark) and merge with the prior cached set.
+
+        On success the merged set overwrites the memo entry and is written back
+        to the persistent store under original_query's cache key (the pre-
+        resolution authored key, so the entry survives reference inlining).
+        """
+        key_col = query.incremental
+        assert key_col is not None  # caller checks query.incremental before calling
+
+        # Built entirely via sqlglot expressions (never f-string interpolation)
+        # so the identifier and literal are quoted/cast per the query's actual
+        # dialect — a hardcoded ANSI `"col"` tokenizes as a STRING LITERAL on
+        # MySQL/BigQuery, silently freezing the tail at zero new rows.
+        predicate = exp.column(key_col, quoted=True) >= _watermark_to_sql_node(
+            watermark, query_name
+        )
+        tail_sql = (
+            f"SELECT * FROM ({query.sql}) AS _dct_base "
+            f"WHERE {predicate.sql(dialect=dialect)}"
+        )
+        tail_query = query.model_copy(update={"sql": tail_sql})
+
+        result = self.adapter_registry.execute(
+            tail_query, variables, board=self.board, query_name=query_name
+        )
+        if not result.is_success:
+            raise _query_error_from_result(result, query_name)
+
+        tail_rows: list[dict[str, Any]] = list(  # type-state: explicit_any — rows
+            result.data
+        )
+
+        merged = _merge_incremental_rows(tail_rows, prior_rows, key_col, query_name)
+
+        enforced = self._enforce_result_limits(merged, query_name)
+
+        self._cache[memo_key] = enforced
+        if should_use_cache:
+            truncation = self._truncations.get(query_name)
+            self._cache_outcome(
+                query_name,
+                original_query,
+                enforced,
+                variables,
+                truncated_reason=truncation.reason if truncation else None,
+            )
+
+        return enforced
 
     @property
     def cache_hit_ats(self) -> list[datetime]:
@@ -982,10 +1333,28 @@ class Executor:
                 )
             else:
                 relpaths.append(path_or_glob)
-        parts = sorted(
-            hashlib.sha256(project.file_version(relpath).encode()).hexdigest()
-            for relpath in relpaths
-        )
+        parts = []
+        for relpath in relpaths:
+            try:
+                token = project.file_version(relpath)
+            except OSError as exc:
+                # OSError, not FileNotFoundError: stat() raises
+                # NotADirectoryError when a path component traverses through
+                # an existing file (only absolute paths are rejected at
+                # compile time — this shape compiles clean) and
+                # PermissionError on an unreadable parent. Both must degrade
+                # the same as a missing leaf, or they escape is_cached's
+                # ExecutionError guard and reproduce the exact 500 this code
+                # exists to prevent. exc.strerror carries the specific OS
+                # reason so a permission error doesn't read as "not found".
+                raise QueryError.from_code(
+                    ERR_FILE_SOURCE_NOT_FOUND,
+                    source_name=source_name,
+                    relpath=relpath,
+                    detail=exc.strerror or str(exc),
+                ) from None
+            parts.append(hashlib.sha256(token.encode()).hexdigest())
+        parts.sort()
         version = hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
         self._source_versions[source_name] = version
         return version

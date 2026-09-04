@@ -96,7 +96,7 @@ class TestInitDoesNotWriteAgentMarkdown:
                 catch_exceptions=False,
             )
         assert result.exit_code == 0, result.output
-        assert prompts == ["Install Dataface workflow skills for AI assistants?"]
+        assert prompts == ["Install dbt charts workflow skills for AI assistants?"]
         assert not (dbt_dir / "AGENTS.md").exists()
         assert not (dbt_dir / "CLAUDE.md").exists()
 
@@ -448,7 +448,7 @@ class TestInitWizardFlags:
                 catch_exceptions=False,
             )
         assert result.exit_code == 0, result.output
-        assert "No Dataface or dbt project found" in result.output
+        assert "No dbt charts or dbt project found" in result.output
         assert str(repo_root) in result.output
         assert str(subdir) in result.output
         assert (repo_root / "charts").is_dir()
@@ -525,7 +525,7 @@ class TestInitWizardFlags:
             catch_exceptions=False,
         )
         assert result.exit_code == 0, result.output
-        assert "No Dataface or dbt project found" not in result.output
+        assert "No dbt charts or dbt project found" not in result.output
         assert not (repo_root / "charts").exists()
         assert (subdir / "charts").is_dir()
 
@@ -548,7 +548,7 @@ class TestInitWizardFlags:
             catch_exceptions=False,
         )
         assert result.exit_code == 0, result.output
-        assert "No Dataface or dbt project found" not in result.output
+        assert "No dbt charts or dbt project found" not in result.output
         assert not (repo_root / "charts").exists()
         assert (subdir / "charts").is_dir()
 
@@ -571,11 +571,11 @@ class TestInitWizardFlags:
             catch_exceptions=False,
         )
         assert result.exit_code == 0, result.output
-        assert "No Dataface or dbt project found" not in result.output
+        assert "No dbt charts or dbt project found" not in result.output
         assert (repo_root / "charts").is_dir()
         assert not (subdir / "charts").exists()
 
-    def test_existing_dataface_project_above_cwd_uses_project_root(
+    def test_existing_dbt_charts_project_above_cwd_uses_project_root(
         self, bare_git_subdir: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         repo_root, subdir = bare_git_subdir
@@ -594,7 +594,7 @@ class TestInitWizardFlags:
             catch_exceptions=False,
         )
         assert result.exit_code == 0, result.output
-        assert "No Dataface or dbt project found" not in result.output
+        assert "No dbt charts or dbt project found" not in result.output
         assert (repo_root / "charts").is_dir()
         assert not (subdir / "charts").exists()
 

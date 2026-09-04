@@ -1,7 +1,7 @@
 """Vocabulary guard: reject stale 'catalog' terminology in agent-facing surfaces.
 
 Scans the agent_api, CLI, inspect, AI (Python + SKILL.md files), and AGENTS.md
-surfaces under the dataface package, plus the user-facing docs paths where MCP
+surfaces under the dbt_charts package, plus the user-facing docs paths where MCP
 tool names and schema-cache terminology appear. Legitimate uses are on the
 allow-list; everything else fails so the half-finished-rename antipattern can't
 drift back.

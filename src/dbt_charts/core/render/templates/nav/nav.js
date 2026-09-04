@@ -1,7 +1,7 @@
 (function(){
 function syncInset(){
 var n=document.querySelector('.dbt-nav[data-dbt-content-left]');
-var s=document.querySelector('.dataface-svg-container>svg');
+var s=document.querySelector('.dbt-charts-svg-container>svg');
 if(!n||!s)return;
 var i=parseFloat(n.getAttribute('data-dbt-content-left'));
 var v=s.viewBox&&s.viewBox.baseVal;
@@ -42,7 +42,7 @@ function init(){
 // left alone they pin the board to height:auto and no view mode can resize it. This
 // host owns presentation, so drop the two that conflict and let page.css govern; the
 // artifact itself is untouched, and no golden changes.
-var svg=document.querySelector('.dataface-svg-container>svg');
+var svg=document.querySelector('.dbt-charts-svg-container>svg');
 if(svg){svg.style.removeProperty('height');svg.style.removeProperty('max-width');}
 chrome();
 var s=document.querySelector('select.dbt-nav-view');

@@ -36,7 +36,7 @@ from dbt_charts.core.render import render
 
 _NESTED_STARK_YAML = """
 title: "Root board"
-theme: cream
+theme: paper
 
 queries:
   q:
@@ -81,16 +81,16 @@ _VIVID_10 = {
 # Cream inherits editorial's rebind to editorial-10 — the leak this test
 # guards against.
 _EDITORIAL_10 = {
-    "#3164a3",
+    "#40639c",
     "#779bc9",
-    "#ad9c7f",
-    "#7a8895",
-    "#8a576f",
-    "#5c7b5c",
+    "#608470",
+    "#775770",
     "#d49656",
     "#ae6349",
-    "#609f9e",
-    "#232f3a",
+    "#a0b6b7",
+    "#ad9c7f",
+    "#7a8895",
+    "#5c6668",
 }
 _CREAM_CANVAS = "#FAF7F0"
 _STARK_CANVAS = "#ffffff"

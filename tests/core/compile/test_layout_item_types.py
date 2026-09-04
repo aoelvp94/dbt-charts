@@ -183,7 +183,7 @@ rows:
         assert header_item.type == "board"
         assert header_item.board.title == "Q1 Results"
 
-    def test_section_header_with_description_compiles(
+    def test_section_header_with_notes_compiles(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ):
         content = """
@@ -198,7 +198,7 @@ charts:
     y: revenue
 rows:
   - title: Q1 Results
-    description: "Sales in Q1"
+    notes: "Sales in Q1"
   - revenue
 """
         board = parse_yaml(content)
@@ -208,4 +208,4 @@ rows:
         header_item = compiled.layout.items[0]
         assert header_item.type == "board"
         assert header_item.board.title == "Q1 Results"
-        assert header_item.description == "Sales in Q1"
+        assert header_item.notes == "Sales in Q1"

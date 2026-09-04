@@ -45,7 +45,7 @@ def test_is_plain_output_false_when_tty_and_no_agent(
 # ---------------------------------------------------------------------------
 
 
-def test_dft_console_uses_plain_kwargs_when_plain_true(
+def test_dct_console_uses_plain_kwargs_when_plain_true(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """In plain mode (CLAUDECODE=1), dct_console() builds a no-color, non-terminal Console."""
@@ -56,7 +56,7 @@ def test_dft_console_uses_plain_kwargs_when_plain_true(
     assert console.is_terminal is False
 
 
-def test_dft_console_uses_rich_kwargs_when_plain_false(
+def test_dct_console_uses_rich_kwargs_when_plain_false(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """With no agent var and a TTY, dct_console() builds a color, terminal Console."""
@@ -68,7 +68,7 @@ def test_dft_console_uses_rich_kwargs_when_plain_false(
     assert console.is_terminal is True
 
 
-def test_dft_console_stderr_true_routes_to_stderr() -> None:
+def test_dct_console_stderr_true_routes_to_stderr() -> None:
     """dct_console(stderr=True) writes to sys.stderr."""
     console = dct_console(stderr=True)
     assert console.file is sys.stderr

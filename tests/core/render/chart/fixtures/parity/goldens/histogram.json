@@ -5,7 +5,7 @@
     "resize": true,
     "type": "fit"
   },
-  "background": "#FAFAFA",
+  "background": "#FFFFFF",
   "config": {
     "circle": {
       "opacity": 1.0
@@ -16,16 +16,16 @@
     },
     "range": {
       "category": [
-        "#3164a3",
+        "#40639c",
         "#779bc9",
-        "#ad9c7f",
-        "#7a8895",
-        "#8a576f",
-        "#5c7b5c",
+        "#608470",
+        "#775770",
         "#d49656",
         "#ae6349",
-        "#609f9e",
-        "#232f3a"
+        "#a0b6b7",
+        "#ad9c7f",
+        "#7a8895",
+        "#5c6668"
       ]
     },
     "rule": {
@@ -99,8 +99,22 @@
     "color": {
       "field": "kind",
       "legend": null,
+      "scale": {
+        "domain": [
+          "B",
+          "A"
+        ],
+        "range": [
+          "#779bc9",
+          "#40639c"
+        ]
+      },
       "title": "Kind",
       "type": "nominal"
+    },
+    "order": {
+      "field": "__df_series_order",
+      "sort": "ascending"
     },
     "x": {
       "axis": {
@@ -113,7 +127,7 @@
         "gridOpacity": 1.0,
         "gridWidth": 1.0,
         "labelAngle": 0.0,
-        "labelColor": "#626366",
+        "labelColor": "#222222",
         "labelFont": "'dbt Sans Tabular', 'Noto Emoji', Inter, system-ui, sans-serif",
         "labelFontSize": 11.0,
         "labelFontWeight": "400",
@@ -130,7 +144,7 @@
       },
       "bin": true,
       "field": "price",
-      "title": "Price",
+      "title": "price",
       "type": "quantitative"
     },
     "y": {
@@ -144,7 +158,7 @@
         "gridColor": "#D0D3D9",
         "gridOpacity": 1.0,
         "gridWidth": 1.5,
-        "labelColor": "#626366",
+        "labelColor": "#222222",
         "labelFont": "'dbt Sans Tabular', 'Noto Emoji', Inter, system-ui, sans-serif",
         "labelFontSize": 11.0,
         "labelFontWeight": "400",
@@ -166,7 +180,6 @@
     }
   },
   "mark": {
-    "continuousBandSize": 20.0,
     "cornerRadiusEnd": 2.0,
     "stroke": "transparent",
     "strokeWidth": 0.0,
@@ -181,5 +194,11 @@
     "left": 0,
     "right": 0,
     "top": 0
-  }
+  },
+  "transform": [
+    {
+      "as": "__df_series_order",
+      "calculate": "toString(datum[\"kind\"]) === \"A\" ? 0 : toString(datum[\"kind\"]) === \"B\" ? 1 : -1"
+    }
+  ]
 }

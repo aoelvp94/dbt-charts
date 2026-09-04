@@ -76,7 +76,9 @@ def test_b_add_placeholder_overlay_accepts_fontstyle() -> None:
 def _resolved_spark_bar(chart_id: str = "sb1"):
     from dbt_charts.core.compile.resolve import resolve
 
-    chart = SparkBarChart(id=chart_id, type="spark_bar", x="label", y="count")
+    # x is the magnitude (numeric), y is the label — spark_bar inverts the
+    # cartesian convention.
+    chart = SparkBarChart(id=chart_id, type="spark_bar", x="count", y="label")
     return resolve(chart, [{"label": "A", "count": 10}], chart_style_context=_ctx())
 
 

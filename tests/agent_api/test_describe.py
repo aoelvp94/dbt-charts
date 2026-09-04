@@ -16,7 +16,7 @@ from dbt_charts.core.project import Project
 
 _BOARD_YAML = """
 title: Sales Dashboard
-description: Monthly revenue breakdown
+notes: Monthly revenue breakdown
 
 queries:
   revenue:
@@ -75,7 +75,7 @@ class TestDescribeBoardDescribesQueriesChartsVariablesLayout:
 
         assert result.success is True
         assert result.title == "Sales Dashboard"
-        assert result.description == "Monthly revenue breakdown"
+        assert result.notes == "Monthly revenue breakdown"
 
         # Queries
         assert {q.name for q in result.queries} == {"revenue", "product_list"}
@@ -286,6 +286,22 @@ class TestDescribePaths:
         results = describe_paths([tmp_path], project=local_project(tmp_path))
         assert len(results) == 1
         assert "partial" not in str(results[0].path)
+
+    def test_describe_paths_excludes_meta_yaml(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """meta.yaml is a cascade fragment, not a standalone board — walking
+        it as one (as init_project scaffolds it under charts/) must not
+        surface as an ERR-INTERNAL describe result."""
+        from dbt_charts.agent_api.describe import describe_paths
+
+        (tmp_path / "board.yml").write_text(_BOARD_YAML)
+        (tmp_path / "meta.yaml").write_text("style: {}\n")
+
+        results = describe_paths([tmp_path], project=local_project(tmp_path))
+        assert len(results) == 1
+        assert results[0].success is True
+        assert "meta.yaml" not in str(results[0].path)
 
     def test_describe_paths_results_in_argv_order(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]

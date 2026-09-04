@@ -1,12 +1,12 @@
 title: Area Stack Modes
-description: |
+notes: |
   Side-by-side comparison of how dbt charts renders the three area-chart stack
   modes against the same two-series dataset. This specimen is the iteration
   surface for the "stacked area gets its own visual recipe" change — overlap
   keeps the translucent + halo treatment, stacked/streamgraph move to solid
   fills with a cream hairline separator (analogous to stacked bar's
   background-color knockout border).
-theme: cream
+theme: paper
 source: examples_db
 
 text: |
@@ -40,7 +40,7 @@ charts:
       stack: none
       axis_y:
         labels:
-          format: currency_compact
+          format: currency
 
   area_stacked:
     query: area_two_series
@@ -54,7 +54,7 @@ charts:
       stack: zero
       axis_y:
         labels:
-          format: currency_compact
+          format: currency
 
   area_streamgraph:
     query: area_two_series

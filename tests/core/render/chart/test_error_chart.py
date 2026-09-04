@@ -81,8 +81,8 @@ def test_default_theme_callout_chart_resolves_tone_colors_in_svg(make_chart) -> 
 
     svg = render_chart(
         chart,
-        resolved_style=resolve_style(get_theme_style("editorial")),
-        chart_style_context=resolve_chart_style_context(get_theme_style("editorial")),
+        resolved_style=resolve_style(get_theme_style("clarity")),
+        chart_style_context=resolve_chart_style_context(get_theme_style("clarity")),
         data=[],
         format="svg",
         width=220,

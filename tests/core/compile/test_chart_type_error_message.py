@@ -90,7 +90,7 @@ rows:
 
 
 def test_composable_shape_error_names_the_recipe_instead_of_only_the_tag_list() -> None:
-    """The reported bug: 'streamgraph' read as "Dataface cannot draw one"."""
+    """The reported bug: 'streamgraph' read as "dbt charts cannot draw one"."""
     message = _compile_chart_type("streamgraph")
 
     assert "Unknown chart type 'streamgraph'" in message

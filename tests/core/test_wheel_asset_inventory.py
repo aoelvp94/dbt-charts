@@ -20,7 +20,7 @@ import pytest
 
 # Pin every wheel-consuming test to one xdist worker so `built_dbt_charts_wheel`
 # (session-scoped) only runs `uv build` once across the whole run.
-pytestmark = pytest.mark.xdist_group("dataface_wheel")
+pytestmark = pytest.mark.xdist_group("dbt_charts_wheel")
 
 # Each tuple: (wheel path, reason this asset must be in the wheel).
 # The reason is rendered in the failure message, so keep it specific.
@@ -168,8 +168,8 @@ EXPECTED_ASSETS: list[tuple[str, str]] = [
         "_base theme — structural root, no colors/fonts",
     ),
     (
-        "dbt_charts/core/defaults/themes/editorial.yaml",
-        "editorial theme — required by every render",
+        "dbt_charts/core/defaults/themes/clarity.yaml",
+        "clarity theme — required by every render",
     ),
     (
         "dbt_charts/core/defaults/themes/stark.yaml",
@@ -213,6 +213,10 @@ EXPECTED_ASSETS: list[tuple[str, str]] = [
     (
         "dbt_charts/ai/skills/board-build/SKILL.md",
         "anchor AI skill — proves dbt-charts/ai/skills/ tree is shipped",
+    ),
+    (
+        "dbt_charts/ai/examples/boards/kpi-overview.yml",
+        "anchor board specimen — proves dbt_charts/ai/examples/ tree is shipped",
     ),
     # Surface-macro renderer — wheel skills are authored with `{{ s_X }}`
     # macros expanded at runtime against this alias table.

@@ -1,6 +1,6 @@
 """Tests for layout rendering functions.
 
-Tests the dataface.render.layouts module for rendering different layout types.
+Tests the dbt_charts.core.render.layouts module for rendering different layout types.
 """
 
 import importlib
@@ -90,7 +90,7 @@ rows:
             query_registry=result.query_registry,
         )
 
-        rs = resolve_style(get_theme_style("editorial"))
+        rs = resolve_style(get_theme_style("clarity"))
         from dbt_charts.core.compile.config import reset_config
         from dbt_charts.core.render.board_resolve import (
             build_resolved_board_static as resolve_board,
@@ -177,7 +177,7 @@ cols:
             query_registry=result.query_registry,
         )
 
-        rs = resolve_style(get_theme_style("editorial"))
+        rs = resolve_style(get_theme_style("clarity"))
         from dbt_charts.core.compile.config import reset_config
         from dbt_charts.core.render.board_resolve import (
             build_resolved_board_static as resolve_board,
@@ -239,7 +239,7 @@ grid:
             query_registry=result.query_registry,
         )
 
-        rs = resolve_style(get_theme_style("editorial"))
+        rs = resolve_style(get_theme_style("clarity"))
         from dbt_charts.core.compile.config import reset_config
         from dbt_charts.core.render.board_resolve import (
             build_resolved_board_static as resolve_board,
@@ -316,7 +316,7 @@ tabs:
         # Get tab titles from layout
         tab_titles = resolved_board.layout.tab_titles or []
 
-        rs = resolve_style(get_theme_style("editorial"))
+        rs = resolve_style(get_theme_style("clarity"))
         svg, _actual_height = render_tabs_layout(
             resolved_board.layout.items,
             executor,

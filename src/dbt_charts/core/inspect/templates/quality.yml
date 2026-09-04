@@ -32,6 +32,7 @@ variables:
 queries:
   column_profile:
     type: schema
+    fields: [name, actual_type, null_percentage, distinct_count, completeness, distribution]
     source: "{{ source_name }}"
     schema: "{{ schema_name }}"
     table: "{{ model }}"

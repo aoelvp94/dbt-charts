@@ -47,6 +47,7 @@ from dbt_charts.core.compile.models.style.resolved.callout import (
 from dbt_charts.core.compile.models.style.theme import (
     CalloutChartStyle,
     ChartsStyle,
+    KpiTonesStyle,
     LegendStyle,
     SparkStyle,
     Style,
@@ -266,8 +267,10 @@ def _build_chart_style_context(
     bold_font_weight: str,
     palettes: Mapping[str, str],
     roles: dict[str, str],
+    tones: KpiTonesStyle,
     pre_style: Style,
     charts_board_overrides: ChartsStylePatch,
+    card_padding: float,
     formats: dict[str, str] | None = None,
 ) -> ChartStyleContext:
     # Deferred: a module-level import here would cycle back through
@@ -297,8 +300,10 @@ def _build_chart_style_context(
         "dashes",
         "palettes",
         "roles",
+        "tones",
         "pre_style",
         "charts_board_overrides",
+        "card_padding",
     }
     # Chart-local-only fields that have no representation on ChartsStyle —
     # they're populated only by build_chart_style_context from a chart's
@@ -317,6 +322,14 @@ def _build_chart_style_context(
         "axis_overrides_quantitative",
         "axis_overrides_band",
         "color",
+        # Board-wide, and only knowable after execute — filled in post-resolve
+        # by execute.category_colors, never read off ChartsStyle.
+        "category_colors",
+        # Wired explicitly below: the field is named differently on ChartsStyle
+        # (`category_colors`) than on ChartStyleContext (`category_color_pins`,
+        # to stay distinct from the planned-scales field above), so the
+        # generic same-name passthrough can't reach it.
+        "category_color_pins",
     }
     passthrough = {
         name: getattr(charts, name)
@@ -356,6 +369,7 @@ def _build_chart_style_context(
         single_series_palette=resolved_single_series_palette,
         requested_alias_palette=_categorical_obj.requested_alias_palette,
         dashes=charts.dashes if charts.dashes is not None else [],
+        category_color_pins=charts.category_colors,
         # axis is a raw BaseAxisStyle passthrough — no eager resolution here.
         # resolved_axis_style() in axis_cascade.py merges it with channel-typed
         # axis_x/axis_y at emit time, seeding channel-specific fields from the typed value.
@@ -378,8 +392,10 @@ def _build_chart_style_context(
         formats=formats,
         palettes=palettes,
         roles=roles,
+        tones=tones,
         pre_style=pre_style,
         charts_board_overrides=charts_board_overrides,
+        card_padding=card_padding,
     )
 
 
@@ -456,9 +472,11 @@ def _finalize_chart_style_context(
         bold_font_weight=font_weight_as_css(cascaded.text.bold.weight),
         palettes=cascaded.palettes,
         roles=cascaded.roles,
+        tones=cascaded.tones,
         pre_style=pre_style,
         formats=cascaded.formats,
         charts_board_overrides=charts_board_overrides,
+        card_padding=cascaded.frame.card_padding,
     )
 
 
@@ -524,7 +542,7 @@ def resolve_chart_style_context(base: Style, *patches: Any) -> ChartStyleContext
     """Merge compiled base with patches, apply cascade, return the chart cascade context.
 
     Consumed only by runtime chart resolution (``compile/resolve/chart/``,
-    ``compile/resolve/style/chart_context.py``, ``compile/data_table.py``) — never by render.
+    ``compile/resolve/style/chart_context.py``, ``compile/support_table.py``) — never by render.
     """
     return resolve_style_and_context(base, *patches)[1]
 

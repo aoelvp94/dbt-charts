@@ -304,7 +304,7 @@ class TestExpandDbtProfileSource:
         the dbt project root (where dbt_project.yml lives), NOT the directory that
         contains profiles.yml. When profiles_dir points at a subdir (services/dbt/),
         a relative path: ./warehouse.duckdb must resolve to dbt_project_path/warehouse.duckdb
-        so Dataface opens the same file a real `dbt run` would have written.
+        so dbt charts opens the same file a real `dbt run` would have written.
         """
         monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
         subdir = tmp_path / "services" / "dbt"

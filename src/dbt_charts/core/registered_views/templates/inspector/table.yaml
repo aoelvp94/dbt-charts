@@ -13,9 +13,9 @@
 [%-   for c in cols -%][%- set _ = row.append(c.get(field)) -%][%- endfor -%]
 [%-   set _ = pivot.append(row) -%]
 [%- endfor -%]
-[#- style.columns is an allowlist and fixes column order, so list the label
-    column first, then one styled column per data column (header links to its
-    column page). -#]
+[#- style.columns is styling-only (order comes from the pivoted row shape
+    built above) — one entry per data column attaches its header link to the
+    column page. -#]
 [%- set colstyle = {"Attribute": {"align": "right"}} -%]
 [%- for n in names -%][%- set _ = colstyle.update({n: {"header_link": "/inspector/" ~ path.source ~ "/" ~ path.schema ~ "/" ~ path.table ~ "/" ~ n ~ "/"}}) -%][%- endfor -%]
 extends: neon

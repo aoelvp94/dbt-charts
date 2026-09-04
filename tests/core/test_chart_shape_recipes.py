@@ -9,25 +9,36 @@ one corner. A recipe nobody rendered is worse than no recipe, so each noun in
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style, reset_config
-from dbt_charts.core.compile.models.chart.authored import LayerAxisYStyle, LineLayer
+from dbt_charts.core.compile.models.chart.authored import (
+    BarLayer,
+    LayerAxisYStyle,
+    LineLayer,
+    ScatterLayer,
+)
 from dbt_charts.core.compile.models.chart.authored._base import MultiplesConfig
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
     BarChart,
     LineChart,
+    ScatterChart,
 )
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import (
     AreaChartStylePatch,
     BarChartStylePatch,
+    LineChartStylePatch,
 )
 from dbt_charts.core.compile.parse.yaml_error_formatter import (
     _CHART_SHAPE_RECIPES,
+    _NORMALIZED_UNSUPPORTED_SHAPES,
+    _RECIPE_BY_NORMALIZED_NOUN,
+    _shape_noun_keys,
     get_valid_chart_types,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
@@ -52,6 +63,32 @@ _LAYER_DATA = [
     {"month": "Jan", "revenue": 100.0, "target": 4000.0},
     {"month": "Feb", "revenue": 200.0, "target": 5000.0},
     {"month": "Mar", "revenue": 150.0, "target": 4500.0},
+]
+
+_SHAPE_DATA = [
+    {"region": "West", "revenue": 100.0, "target": 80.0},
+    {"region": "East", "revenue": 60.0, "target": 90.0},
+    {"region": "North", "revenue": 140.0, "target": 110.0},
+]
+
+_SLOPE_DATA = [
+    {"period": p, "region": r, "revenue": v}
+    for p, r, v in (
+        ("Before", "West", 40.0),
+        ("Before", "East", 70.0),
+        ("After", "West", 90.0),
+        ("After", "East", 55.0),
+    )
+]
+
+_RANK_DATA = [
+    {"year": y, "region": r, "rank": rk}
+    for y, r, rk in (
+        (2019, "West", 1),
+        (2019, "East", 2),
+        (2020, "West", 2),
+        (2020, "East", 1),
+    )
 ]
 
 
@@ -221,6 +258,22 @@ def test_multiples_recipe_partitions_into_panels(noun: str) -> None:
     assert _multiples_facet(None) is None
 
 
+def _find_axis_orient(layer: dict) -> str | None:
+    """The y-axis orient this VL layer carries, checking its own encoding and,
+    recursively, any nested sub-layers. A dual-axis zero-baseline rule now
+    nests one level inside the entry whose scale it shares (see
+    ``emitters/_cartesian.py``'s ``nest_zero_rule``), so the base/overlay's
+    own axis config can sit one level deeper than a bare top-level read."""
+    axis = layer.get("encoding", {}).get("y", {}).get("axis")
+    if isinstance(axis, dict) and "orient" in axis:
+        return axis["orient"]
+    for sub in layer.get("layer", []):
+        found = _find_axis_orient(sub)
+        if found is not None:
+            return found
+    return None
+
+
 def _dual_axis_orients(position: str | None) -> tuple[str | None, str | None]:
     board_style, board_ctx = resolve_style_and_context(get_theme_style())
     axis_y = LayerAxisYStyle(position=position) if position else None
@@ -238,8 +291,8 @@ def _dual_axis_orients(position: str | None) -> tuple[str | None, str | None]:
         chart, _LAYER_DATA, board_style=board_style, chart_style_context=board_ctx
     )
     layers = spec["layer"]
-    base_orient = layers[0]["encoding"]["y"]["axis"]["orient"]
-    overlay_orient = layers[1]["encoding"]["y"]["axis"]["orient"]
+    base_orient = _find_axis_orient(layers[0])
+    overlay_orient = _find_axis_orient(layers[1])
     return base_orient, overlay_orient
 
 
@@ -247,12 +300,369 @@ def _dual_axis_orients(position: str | None) -> tuple[str | None, str | None]:
 def test_dual_axis_recipe_splits_the_y_axis(noun: str) -> None:
     base_orient, overlay_orient = _dual_axis_orients("right")
 
+    assert base_orient is not None, noun
+    assert overlay_orient is not None, noun
     assert overlay_orient == "right", noun
     assert base_orient != overlay_orient, f"{noun}: both axes on {base_orient!r}"
     # Load-bearing: omitting axis_y.position collapses both layers onto the
     # same side instead of splitting left/right.
     base_default, overlay_default = _dual_axis_orients(None)
+    assert base_default is not None, noun
+    assert overlay_default is not None, noun
     assert base_default == overlay_default, noun
+
+
+def _spec(chart: Any, data: list[dict[str, Any]]) -> dict[str, Any]:
+    board_style, board_ctx = resolve_style_and_context(get_theme_style())
+    return generate_vega_lite_spec(
+        chart, data, board_style=board_style, chart_style_context=board_ctx
+    )
+
+
+def _transforms(spec: Any) -> list[dict[str, Any]]:
+    """Every transform dict anywhere in the spec tree."""
+    found: list[dict[str, Any]] = []
+    if isinstance(spec, dict):
+        for item in spec.get("transform", []) or []:
+            if isinstance(item, dict):
+                found.append(item)
+        for value in spec.values():
+            found += _transforms(value)
+    elif isinstance(spec, list):
+        for value in spec:
+            found += _transforms(value)
+    return found
+
+
+def _marks(spec: Any, mark_type: str) -> list[dict[str, Any]]:
+    """Every sub-spec drawing ``mark_type``, however deep the layering goes."""
+    found: list[dict[str, Any]] = []
+    if isinstance(spec, dict):
+        mark = spec.get("mark")
+        name = mark if isinstance(mark, str) else (mark or {}).get("type")
+        if name == mark_type:
+            found.append(spec)
+        for value in spec.values():
+            found += _marks(value, mark_type)
+    elif isinstance(spec, list):
+        for value in spec:
+            found += _marks(value, mark_type)
+    return found
+
+
+def _shape_bar(measure: str, **style: Any) -> dict[str, Any]:
+    return _spec(
+        BarChart(
+            id="c",
+            query=SqlQuery(sql="SELECT 1", source="t"),
+            query_name="q",
+            type="bar",
+            x="region",
+            y="revenue",
+            layers=[ScatterLayer(type="scatter", y=measure)],
+            style=BarChartStylePatch.model_validate(
+                {"orientation": "horizontal", **style}
+            ),
+        ),
+        _SHAPE_DATA,
+    )
+
+
+def test_lollipop_recipe_draws_a_stem_and_a_terminal_dot() -> None:
+    """A stem, not a bar: the band fraction must reach the mark, and the dot
+    must sit on the same measure the stem ends at."""
+    spec = _shape_bar("revenue", marks={"bar": {"band_width": 0.06}})
+
+    bars = _marks(spec, "bar")
+    assert len(bars) == 1
+    # Horizontal, so the bar's thickness is its height.
+    assert bars[0]["mark"]["height"] == {"band": 0.06}, (
+        "band_width must thin the bar to a stem; a full-width bar is not a "
+        f"lollipop (got {bars[0]['mark']})"
+    )
+
+    points = _marks(spec, "point")
+    assert len(points) == 1
+    assert points[0]["encoding"]["x"]["field"] == "revenue"
+    assert "y" not in points[0]["encoding"], (
+        "the dot must share the bars' category band, not open its own axis"
+    )
+
+
+def test_lollipop_recipe_size_is_also_a_working_knob() -> None:
+    """`style.marks.bar.size` is a literal fixed-pixel override on ANY scale —
+    it wins outright over band_width, so it's an equally valid way to draw a
+    thin lollipop stem (an exact pixel width rather than a band fraction)."""
+    spec = _shape_bar("revenue", marks={"bar": {"size": 2}})
+
+    assert _marks(spec, "bar")[0]["mark"]["height"] == 2
+
+
+_BULLET_BANDS = [
+    {"region": r, "band": b, "size": sz}
+    for r in ("West", "East")
+    for b, sz in (("Poor", 45.0), ("Satisfactory", 25.0), ("Good", 30.0))
+]
+
+# One row per category — the ranges have three, and a layer sharing their rows
+# would sum each measure three times over.
+_BULLET_MEASURES = [
+    {"region": "West", "actual": 70.0, "goal": 80.0},
+    {"region": "East", "actual": 55.0, "goal": 65.0},
+]
+
+
+def _bullet_spec(*, layer_query: str | None) -> dict[str, Any]:
+    """The bullet recipe, rendered through the emitter so the layers can read
+    their own dataset — which is the clause under test.
+
+    ``layer_query=None`` is the mistake the recipe exists to prevent: the layers
+    fall back to the ranges' rows and each measure accumulates once per band.
+    """
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
+    from dbt_charts.core.render.chart.emitters.bar import BarEmitter
+    from dbt_charts.core.render.chart.spec import RenderBox
+    from dbt_charts.core.render.chart.translate import translate_to_vl
+
+    board_style, board_ctx = resolve_style_and_context(get_theme_style())
+    chart = BarChart(
+        id="c",
+        query=SqlQuery(sql="SELECT 1", source="t"),
+        query_name="ranges",
+        type="bar",
+        x="region",
+        y="size",
+        color="band",
+        layers=[
+            BarLayer.model_validate(
+                {
+                    "type": "bar",
+                    "y": "actual",
+                    "label": "Actual",
+                    "query": layer_query,
+                    "style": {"marks": {"bar": {"band_width": 0.35}}},
+                }
+            ),
+            LineLayer.model_validate(
+                {
+                    "type": "line",
+                    "y": "goal",
+                    "label": "Goal",
+                    "query": layer_query,
+                    "style": {"marks": {"line": {"curve": "step", "connect": False}}},
+                }
+            ),
+        ],
+        style=BarChartStylePatch.model_validate(
+            {"orientation": "vertical", "stack": "zero", "stack_order": "data"}
+        ),
+    )
+    resolved = resolve(
+        chart, _BULLET_BANDS, board_ctx, datasets={"measures": _BULLET_MEASURES}
+    )
+    return translate_to_vl(
+        BarEmitter().emit(
+            resolved,
+            RenderBox(width=400, height=300),
+            regroup((), _BULLET_BANDS),
+            datasets={"measures": _BULLET_MEASURES},
+        )
+    )
+
+
+def _value_bar_rows(spec: Any) -> list[dict[str, Any]] | None:
+    """The rows the value bar actually draws from, or None when it inherits.
+
+    Read off the emitted spec rather than reasoned about: a layer that carries
+    its own ``.data`` draws exactly those rows, and one that does not inherits
+    the ranges' — three rows per category, which Vega-Lite stacks into three
+    times the value.
+    """
+    for sub in _marks(spec, "bar"):
+        if sub.get("encoding", {}).get("y", {}).get("field") != "actual":
+            continue
+        data = sub.get("data")
+        values = data.get("values") if isinstance(data, dict) else None
+        return list(values) if values is not None else None
+    raise AssertionError("no value bar in the spec")
+
+
+def test_bullet_recipe_draws_ranges_a_value_bar_and_a_goal_tick() -> None:
+    """All three parts of a bullet graph, each reading the right rows.
+
+    A bar plus a dot is not a bullet: the qualitative ranges behind the value
+    and the perpendicular goal marker are the shape. The ranges are one row per
+    (category, band), so the value and target layers need their own
+    one-row-per-category source — sharing the ranges' rows stacks each measure
+    once per band and the value bar runs off the top of its own scale.
+    """
+    spec = _bullet_spec(layer_query="measures")
+
+    bars = _marks(spec, "bar")
+    ranges = [b for b in bars if b["encoding"].get("color", {}).get("field") == "band"]
+    assert ranges, "the qualitative ranges must be a colour-split stacked bar"
+    assert _stack_mode(ranges[0]["encoding"]) == "zero"
+
+    # The ramp's order IS its meaning: poor, satisfactory, good. Without
+    # `stack_order: data` the stack falls back to descending global sum, which
+    # on these band sizes (45 / 25 / 30) renders the MIDDLE step on top.
+    order_exprs = [
+        str(t["calculate"])
+        for t in _transforms(spec)
+        if "band" in str(t.get("calculate", ""))
+    ]
+    assert order_exprs, "the stacked ranges must carry a series-order transform"
+    ranks = {
+        band: int(found[0])
+        for band in ("Poor", "Satisfactory", "Good")
+        if (found := re.findall(rf'"{band}" \? (\d+)', order_exprs[0]))
+    }
+    assert (
+        ranks.get("Poor", -1) < ranks.get("Satisfactory", -1) < ranks.get("Good", -1)
+    ), f"bands must stack in the query's own order, got {ranks}"
+
+    value = [b for b in bars if b["encoding"].get("y", {}).get("field") == "actual"]
+    assert len(value) == 1, "expected one value bar"
+    width = value[0]["mark"]["width"]
+    assert "0.35" in str(width.get("expr", "")) or width.get("band") == 0.35, (
+        f"a full-width value bar covers the ranges it is read against: {width}"
+    )
+
+    goal = _marks(spec, "line")
+    assert goal, "the goal marker must be drawn"
+
+
+def test_bullet_recipe_value_bar_reads_its_own_value() -> None:
+    """The value layer draws its measure, not its measure times the band count.
+
+    Sharing the ranges' rows is the natural mistake — a layer inherits the base
+    dataset unless `layers[].query` points it elsewhere — and the ranges are one
+    row per (category, band). West's 70 then stacks into 210 against a scale the
+    engine capped near 108: the bar leaves the plot and is drawn wider than the
+    ranges it is meant to be read against.
+    """
+    own = _value_bar_rows(_bullet_spec(layer_query="measures"))
+    assert own == _BULLET_MEASURES, (
+        f"the value bar must draw its own one-row-per-category source: {own}"
+    )
+
+    # The mistake the clause exists to prevent, pinned so the recipe cannot
+    # quietly drop it again: no own rows means the ranges' three-per-category.
+    assert _value_bar_rows(_bullet_spec(layer_query=None)) is None
+    assert len(_BULLET_BANDS) == 3 * len(_BULLET_MEASURES)
+
+
+@pytest.mark.parametrize("noun", ["slope"])
+def test_slope_recipe_draws_two_point_lines_over_a_category_pair(noun: str) -> None:
+    """Two positions, not a continuous run: a temporal x would fill in the
+    span between the pair and stop being a slope chart."""
+    spec = _spec(
+        LineChart(
+            id="c",
+            query=SqlQuery(sql="SELECT 1", source="t"),
+            query_name="q",
+            type="line",
+            x="period",
+            y="revenue",
+            color="region",
+        ),
+        _SLOPE_DATA,
+    )
+    x_enc = _chart_pane(spec)["encoding"]["x"]
+
+    assert x_enc["field"] == "period", noun
+    assert x_enc["type"] in ("nominal", "ordinal"), (
+        f"{noun}: a two-category x must not be promoted to {x_enc['type']!r}"
+    )
+    assert _chart_pane(spec)["encoding"]["color"]["field"] == "region", noun
+
+
+@pytest.mark.parametrize("noun", ["bump"])
+def test_bump_recipe_puts_rank_one_on_top(noun: str) -> None:
+    """Rank ascends downward, so the domain has to run high-to-low. Without it
+    the chart is upside down and the leader sits at the bottom."""
+    spec = _spec(
+        LineChart(
+            id="c",
+            query=SqlQuery(sql="SELECT 1", source="t"),
+            query_name="q",
+            type="line",
+            x="year",
+            y="rank",
+            color="region",
+            style=LineChartStylePatch.model_validate(
+                {"axis_y": {"scale": {"continuous": {"domain": [2, 1]}}}}
+            ),
+        ),
+        _RANK_DATA,
+    )
+    encoding = _chart_pane(spec)["encoding"]
+
+    assert list(encoding["y"]["scale"]["domain"]) == [2, 1], (
+        f"{noun}: expected a descending domain, got {encoding['y']['scale']['domain']}"
+    )
+    # Named because the recipe has to name it: the data is entity x period x
+    # rank, so without a series channel the rows collide on the period key and
+    # the chart raises rather than drawing.
+    assert encoding["color"]["field"] == "region", noun
+
+
+_LONG_DOT_DATA = [
+    {"region": r, "series": s, "value": v}
+    for r, vals in (("West", (40.0, 60.0, 75.0)), ("East", (35.0, 45.0, 55.0)))
+    for s, v in zip(("2019", "2024", "2029"), vals, strict=True)
+]
+
+
+def _dot_plot(rotated: bool) -> dict[str, Any]:
+    """The multi-series recipe, drawn either way round.
+
+    Long-format rows with a colour split, deliberately not `layers:` — a layer
+    carries its measure on its own channel, so a rotated base leaves each layer
+    opening its own axis across the category labels.
+    """
+    return _spec(
+        ScatterChart(
+            id="c",
+            query=SqlQuery(sql="SELECT 1", source="t"),
+            query_name="q",
+            type="scatter",
+            x="value" if rotated else "region",
+            y="region" if rotated else "value",
+            color="series",
+        ),
+        _LONG_DOT_DATA,
+    )
+
+
+@pytest.mark.parametrize("noun", ["dot_plot", "cleveland_dot_plot"])
+def test_dot_plot_recipe_draws_dots_and_no_bars(noun: str) -> None:
+    encoding = _chart_pane(_dot_plot(rotated=False))["encoding"]
+
+    assert encoding["x"]["type"] in ("nominal", "ordinal"), noun
+    assert encoding["y"]["field"] == "value", noun
+    assert encoding["color"]["field"] == "series", noun
+    assert not _marks(_dot_plot(rotated=False), "bar"), f"{noun}: draws no bars"
+    assert _marks(_dot_plot(rotated=False), "point"), noun
+
+
+@pytest.mark.parametrize("noun", ["dot_plot", "cleveland_dot_plot"])
+def test_dot_plot_recipe_survives_rotation(noun: str) -> None:
+    """Rotating is swapping the two fields, and the recipe has to hold up.
+
+    The layered construction does not: with the category on `y`, each layer
+    opens its own measure axis down the category labels. Carrying the series in
+    the data instead means there are no layers to fall out of step.
+    """
+    spec = _dot_plot(rotated=True)
+    encoding = _chart_pane(spec)["encoding"]
+
+    assert encoding["y"]["type"] in ("nominal", "ordinal"), noun
+    assert encoding["x"]["field"] == "value", noun
+    assert not spec.get("layer"), (
+        f"{noun}: the recipe must not need layers — that is what breaks rotation"
+    )
 
 
 _RENDER_VERIFIED_NOUNS = {
@@ -278,6 +688,12 @@ _RENDER_VERIFIED_NOUNS = {
     "row_chart",
     "vertical_bar",
     "stream_chart",
+    "lollipop",
+    "bullet",
+    "slope",
+    "bump",
+    "dot_plot",
+    "cleveland_dot_plot",
 }
 
 
@@ -301,6 +717,7 @@ _SYNONYM_GROUPS: tuple[tuple[str, ...], ...] = (
     ("column", "vertical_bar"),
     ("small_multiples", "trellis", "faceted"),
     ("dual_axis", "combo", "bar_and_line"),
+    ("dot_plot", "cleveland_dot_plot"),
 )
 
 
@@ -316,3 +733,53 @@ def test_synonym_nouns_hand_out_their_primary_recipe(group: tuple[str, ...]) -> 
     assert len(set(recipes.values())) == 1, (
         f"synonyms disagree, so one of them is unverified: {recipes}"
     )
+
+
+@pytest.mark.parametrize(
+    ("authored", "expected_key"),
+    [
+        ("bullet", "bullet"),
+        ("bullet graph", "bullet"),
+        ("bullet chart", "bullet"),
+        ("Bullet Graph", "bullet"),
+        ("lollipop chart", "lollipop"),
+        ("lollipop-chart", "lollipop"),
+        ("slope chart", "slope"),
+        ("bump chart", "bump"),
+        # Its own last word is a generic tail, and it must not fold to "dot".
+        ("dot plot", "dotplot"),
+        ("Cleveland dot plot", "clevelanddotplot"),
+    ],
+)
+def test_shape_nouns_resolve_however_they_are_spelled(
+    authored: str, expected_key: str
+) -> None:
+    """Nobody types the bare noun. An author asking for a "bullet graph" and one
+    asking for a "bullet chart" have asked the same question, and a table keyed
+    on "bullet" alone answers neither."""
+    keys = _shape_noun_keys(authored)
+    hit = next((k for k in keys if k in _RECIPE_BY_NORMALIZED_NOUN), None)
+
+    assert hit == expected_key, f"{authored!r} resolved to {hit!r}"
+
+
+@pytest.mark.parametrize(
+    "authored",
+    ["dumbbell chart", "barbell graph", "ranged dot plot", "connected dot plot"],
+)
+def test_unsupported_nouns_resolve_however_they_are_spelled(authored: str) -> None:
+    keys = _shape_noun_keys(authored)
+
+    assert any(k in _NORMALIZED_UNSUPPORTED_SHAPES for k in keys), authored
+
+
+def test_generic_tail_stripping_never_invents_a_match() -> None:
+    """The fallback only ever reaches an entry that already exists.
+
+    `box plot` must stay unknown rather than folding onto a `box` entry — the
+    strip is a spelling tolerance, not a fuzzy matcher.
+    """
+    keys = _shape_noun_keys("box plot")
+
+    assert not any(k in _RECIPE_BY_NORMALIZED_NOUN for k in keys)
+    assert not any(k in _NORMALIZED_UNSUPPORTED_SHAPES for k in keys)

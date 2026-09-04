@@ -37,7 +37,6 @@ from dbt_charts.core.compile.models.style.theme import (
     AreaChartStyle,
     AxisMirrorStyle,
     BarChartStyle,
-    DataTableStyle,
     FooterStyle,
     FrameStyle,
     GeoshapeChartStyle,
@@ -45,6 +44,7 @@ from dbt_charts.core.compile.models.style.theme import (
     HeatmapChartStyle,
     HistogramChartStyle,
     KpiChartStyle,
+    KpiTonesStyle,
     LayoutStyle,
     LegendDirection,
     LegendPosition,
@@ -58,6 +58,7 @@ from dbt_charts.core.compile.models.style.theme import (
     SeriesLabelStyle,
     SparkBarChartStyle,
     SparkStyle,
+    SupportTableStyle,
     TableChartStyle,
     TextStyle,
     TimestampStyle,
@@ -105,10 +106,10 @@ class ResolvedRulerAxis:
     # This is a position, not the tick's raw value, and that is deliberate.
     # A value comparison (datum.value === <the tick shared_scale_for_ladder
     # measured the ladder by>) looks more direct, but breaks the moment
-    # Dataface's own nice-rounded tick_values ladder includes an entry Vega
+    # dbt charts' own nice-rounded tick_values ladder includes an entry Vega
     # never actually draws -- which happens routinely (a headroom-expanded
     # domain_max short of the next nice round number; even a plain data
-    # range Vega's own auto-fit trims tighter than Dataface's ladder,
+    # range Vega's own auto-fit trims tighter than dbt charts' ladder,
     # independent of any baked domain_max/domain_min). When that dropped
     # entry is the one a value comparison anchors on, no rendered tick ever
     # matches it, and the suffix silently never appears anywhere -- the
@@ -348,6 +349,11 @@ class ResolvedAxisElementStyle:
     # Sparse label-only cadence override — None labels every tick per
     # the usual smart cadence/format; a list blanks every tick not in it.
     values: list[Any] | None = None
+    # Sub-day clock register (24 or 12) — x-axis only. The theme cascade
+    # defaults this to 12 (_base.yaml's axis_x.labels.clock); None here means
+    # a test stub or a labels-less axis, not an authored choice.
+    # See DimensionLabelStyle.clock.
+    clock: int | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -488,6 +494,15 @@ class ResolvedAxisStyle:
     # None on zero-anchored axes — the bottom stays at 0 (VL auto-fits from
     # the domainMin already set by y_zero_scale).
     domain_min: float | None = None
+    # Whether this axis's channel is quantitative (numeric) rather than
+    # categorical — the same channel classification the cascade already
+    # computes to decide format/label handling, baked here so render reads
+    # one fact instead of re-deriving it per family.
+    is_quantitative: bool = False
+    # Whether this axis's floor is anchored at 0 — an explicit author pin,
+    # or unpinned data close enough to 0 for the axis to reach it on its
+    # own. False on a non-measure axis or when no anchor decision ran.
+    zero_anchored: bool = False
 
     def __post_init__(self) -> None:
         if self.ruler is not None and self.tick_label is not None:
@@ -545,6 +560,14 @@ class ResolvedLegendStyle(BaseModel):
     # Author override for symbol fill. False → symbolFillColor='transparent'
     # in the emitted VL legend, producing hollow glyphs. None = VL default.
     symbol_fill: bool | None = None
+    # Internal, resolved-only fact — never authored, absent from every patch
+    # model (LegendStyle/LegendStylePatch declare no such field). Set to the
+    # author's own `position` when the tiny-width tier forced this legend
+    # back to `top` over it (cartesian_series_naming's
+    # legend_position_overridden_by_width); None otherwise, including a
+    # tiny-width chart that authored no position or authored `top` itself.
+    # Read by the WARN-LEGEND-POSITION-WIDTH-FALLBACK render-stage detector.
+    position_overridden_by_width: LegendPosition | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -556,7 +579,9 @@ class ResolvedChartDefaults:
     the raw ``axis``/``axis_x``/``axis_y``/``axis_quantitative`` theme
     passthroughs; the ``charts_board_overrides`` board-patch accumulator;
     the ``axis_overrides_*``/``scale``/``color`` chart-local patch sentinels;
-    and ``palettes``/``roles``/``pre_style``. Every remaining field is fully
+    ``palettes``/``roles``/``pre_style``; and ``card_padding``, which is a
+    board *frame* value the chart cascade borrows, already reachable here as
+    ``ResolvedStyle.frame.card_padding``. Every remaining field is fully
     concrete and board-wide (never chart-local-patched at this level), so
     this bag is legitimately ``Resolved*`` — a plain passthrough from the
     same theme cascade that builds ``ChartStyleContext``.
@@ -564,7 +589,7 @@ class ResolvedChartDefaults:
     Exists for render call sites that legitimately need a board-level
     chart-family default with no per-chart cascade involved: width fallbacks
     (``render_resolved_chart()``), cross-family embedded presentation (spark
-    cells and KPI tone swatches inside another chart's attached data table),
+    cells and KPI tone swatches inside another chart's attached support table),
     board chrome derived from chart style (table stripe/header colors for
     CSS, tooltip config). Anything requiring a per-chart cascade re-run
     (axis-offset geometry, chart-local overrides) belongs on
@@ -577,6 +602,9 @@ class ResolvedChartDefaults:
     single_series_palette: list[str]
     requested_alias_palette: str | None
     dashes: list[list[int]]
+    # Semantic tone palette (positive/negative/warning/info) — board-level,
+    # shared by KPI support rows and table conditional glyphs.
+    tones: KpiTonesStyle
 
     # --- Board-wide sizing defaults ---
     preferred_width: float
@@ -609,7 +637,7 @@ class ResolvedChartDefaults:
     table: TableChartStyle
     spark: SparkStyle
     spark_bar: SparkBarChartStyle
-    data_table: DataTableStyle
+    support_table: SupportTableStyle
     callout: ResolvedCalloutStyle
     callout_error: ResolvedCalloutStyle
 
@@ -640,6 +668,9 @@ class ResolvedStyle:
     background: str
     accent: str
     muted: str
+    # Semantic tone palette (positive/negative/warning/info) — board level,
+    # shared by KPI support rows and table conditional glyphs.
+    tones: KpiTonesStyle
     font: ResolvedFontStyle
     border: BorderStyle
     box_shadow: str | None  # None = no shadow (valid concrete value)

@@ -80,28 +80,32 @@ class TestStrokeSentinelsViaInherit:
 _DT_COLOR = "#778899"
 
 
-def _theme_with_data_table_font_color(color: str):
+def _theme_with_support_table_font_color(color: str):
     base = get_theme_style("stark")
-    dt = base.charts.data_table
+    dt = base.charts.support_table
     new_dt = dt.model_copy(update={"font": dt.font.model_copy(update={"color": color})})
     return base.model_copy(
-        update={"charts": base.charts.model_copy(update={"data_table": new_dt})}
+        update={"charts": base.charts.model_copy(update={"support_table": new_dt})}
     )
 
 
-class TestDataTableInheritViaSlot:
-    """Per-family data_table fields inherit from charts.data_table via InheritSlot."""
+class TestSupportTableInheritViaSlot:
+    """Per-family support_table fields inherit from charts.support_table via InheritSlot."""
 
-    def test_bar_data_table_font_color_filled_from_charts_data_table(self) -> None:
-        style = _theme_with_data_table_font_color(_DT_COLOR)
+    def test_bar_support_table_font_color_filled_from_charts_support_table(
+        self,
+    ) -> None:
+        style = _theme_with_support_table_font_color(_DT_COLOR)
         resolved = apply_inherit(style, get_inherit_graph())
-        assert resolved.charts.bar.data_table is not None
-        assert resolved.charts.bar.data_table.font is not None
-        assert resolved.charts.bar.data_table.font.color == _DT_COLOR
+        assert resolved.charts.bar.support_table is not None
+        assert resolved.charts.bar.support_table.font is not None
+        assert resolved.charts.bar.support_table.font.color == _DT_COLOR
 
-    def test_line_data_table_font_color_filled_from_charts_data_table(self) -> None:
-        style = _theme_with_data_table_font_color(_DT_COLOR)
+    def test_line_support_table_font_color_filled_from_charts_support_table(
+        self,
+    ) -> None:
+        style = _theme_with_support_table_font_color(_DT_COLOR)
         resolved = apply_inherit(style, get_inherit_graph())
-        assert resolved.charts.line.data_table is not None
-        assert resolved.charts.line.data_table.font is not None
-        assert resolved.charts.line.data_table.font.color == _DT_COLOR
+        assert resolved.charts.line.support_table is not None
+        assert resolved.charts.line.support_table.font is not None
+        assert resolved.charts.line.support_table.font.color == _DT_COLOR

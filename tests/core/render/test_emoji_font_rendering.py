@@ -65,20 +65,20 @@ class TestSVGFontFamilyContainsNotoEmoji:
         assert _QUOTED in ctx.font_family
 
     def test_editorial_cream_title_font(self) -> None:
-        compiled = get_theme_style("cream")
+        compiled = get_theme_style("paper")
         resolved = resolve_style(compiled)
         family = resolved.title.font.family
         assert family is not None
         assert _QUOTED in family
 
     def test_editorial_cream_primary_wins(self) -> None:
-        compiled = get_theme_style("cream")
+        compiled = get_theme_style("paper")
         resolved = resolve_style(compiled)
         family = resolved.title.font.family
         assert family is not None
         assert family.index("Source Serif 4") < family.index(NOTO_EMOJI_FONT_FAMILY)
 
-    def test_dft_sans_tabular_stack_also_has_noto_emoji(self) -> None:
+    def test_dbt_sans_tabular_stack_also_has_noto_emoji(self) -> None:
         """dbt Sans Tabular font stacks (kpi, axis labels) should also include Noto Emoji."""
         compiled = get_theme_style()
         ctx = resolve_chart_style_context(compiled)

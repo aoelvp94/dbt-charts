@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import math
 from decimal import Decimal
 from typing import Any, Literal, NamedTuple
 
@@ -29,6 +30,8 @@ from dbt_charts.core.compile.resolve.chart.tick_values import (
     apply_headroom,
     numeric_domain_bounds,
     stacked_totals_max,
+    zero_anchor_domain_floor,
+    zero_anchor_floor,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
@@ -51,33 +54,35 @@ __all__ = [
     "_resolve_cartesian_ticks",
     "_resolve_stacked_bar_ticks",
     "_shared_y_values",
+    "_y_gridline_caps_bottom",
     "_zero_anchor_floats",
     "resolve_y_zero",
 ]
 
 
 def resolve_y_zero(
-    primary: _CartesianChartStyle | None,
+    ay: AxisYStyle,
     min_val: float | None,
     max_val: float | None,
     chart_type: str,
 ) -> bool | None:
     """Canonical measure-axis zero decision for optional-zero chart families.
 
-    An author-pinned ``axis_y.scale.zero`` bool wins; otherwise the smart-zero
-    heuristic (``compile.enrich._pick_scale``) runs on the (min_val, max_val)
-    extent. Returns None when neither the pin nor the heuristic has an opinion
-    (no extent, or the data spans/touches zero).
+    An author-pinned ``axis_y.scale.continuous.zero`` bool wins — read off the
+    cascaded axis ``ay``, so a pin authored at any level (board, chart,
+    family) is honored identically; otherwise the smart-zero heuristic
+    (``compile.enrich._pick_scale``) runs on the (min_val, max_val) extent.
+    Returns None when neither the pin nor the heuristic has an opinion (no
+    extent, or the data spans/touches zero).
 
     The single source of this decision — consumed by ``_bake_y_zero`` for
     filtered rows and by the family resolvers for a cross-filter stable extent.
     One canonical mapper keeps both paths aligned when anchor rules change.
     """
-    if primary is not None:
-        axis_y_scale = primary.axis_y.scale if primary.axis_y is not None else None
-        cont = axis_y_scale.continuous if axis_y_scale is not None else None
-        if cont is not None and isinstance(cont.zero, bool):
-            return cont.zero
+    axis_y_scale = ay.scale
+    cont = axis_y_scale.continuous if axis_y_scale is not None else None
+    if cont is not None and isinstance(cont.zero, bool):
+        return cont.zero
 
     if min_val is None or max_val is None:
         return None
@@ -112,7 +117,6 @@ def _bake_zero_flag(ay: AxisYStyle, zero: bool) -> AxisYStyle:
 
 def _bake_y_zero(
     ay: AxisYStyle,
-    primary: _CartesianChartStyle | None,
     y_values: list[float],
     chart_type: str,
 ) -> AxisYStyle:
@@ -136,7 +140,7 @@ def _bake_y_zero(
     if _existing_cont is not None and _existing_cont.type == "log":
         return ay
     zero = resolve_y_zero(
-        primary,
+        ay,
         min(y_values) if y_values else None,
         max(y_values) if y_values else None,
         chart_type,
@@ -409,6 +413,134 @@ def _resolve_cartesian_ticks(
             tick_min, tick_max = data_min, raw_max
     ticks = tuple(nice_tick_values(tick_min, tick_max, ay.ticks.count))
     return _CartesianTickResolution(ticks, domain_max, domain_min)
+
+
+def _y_domain_floor(
+    ay: AxisYStyle,
+    ticks: _CartesianTickResolution,
+    zero_anchor: bool,
+    endpoint_rail_may_discard_domain: bool,
+) -> float | None:
+    """The exact data value the y-axis's plot-bottom edge renders, when knowable.
+
+    Reads only facts already baked by ``_resolve_cartesian_ticks``/the axis
+    cascade -- never a prediction of where Vega-Lite's own auto-fit will
+    land, with one narrow exception noted in case 4 below. In priority
+    order:
+
+    1. An authored fixed domain: its own low bound, taken *literally* --
+       ``authored[0]``, not ``min(authored)``. This deliberately does not
+       match render's ``authored_measure_domain``/``effective_measure_domain``,
+       which normalize to ``(lo, hi)`` for a different question ("what range
+       does this axis cover", used for a parity check) -- not "which value
+       renders at the bottom pixel". A reversed ``domain: [100, 0]`` renders
+       100 at the bottom edge; collapsing the two questions into one call
+       would answer this one wrong.
+    2. A baked ``domain_min`` (a zoomed axis with headroom > 0) -- exact,
+       never nice-rounded.
+    3. On a zero-anchored axis: ``zero_anchor_floor`` of the ladder filtered
+       through ``zero_anchor_domain_floor`` -- byte for byte the same
+       formula ``y_zero_scale`` bakes onto the emitted VL scale's
+       ``domainMin``, so this branch always resolves. An authored
+       ``scale.values`` ladder is filtered out (it says nothing about the
+       domain) and falls back to the literal ``0.0``, exactly like render
+       does -- it is NOT sourced from ``min(ticks.ticks)`` unfiltered, which
+       is the bug this replaces (an authored ``[25, 50, 75, 100]``
+       ladder used to compare 25 against itself and always answer "caps").
+    4. Otherwise (zoomed, no authored/baked bound, not zero-anchored -- a
+       ``headroom: 0`` axis with real data): the ladder's own lowest rung,
+       ``ticks.ticks[0]``. This one case IS a prediction rather than a
+       read-back: it assumes Vega-Lite's own "nice" auto-fit (unbaked here)
+       lands on the same floor our ``nice_tick_values`` already computed
+       from the identical data extent -- verified by rendering this exact
+       shape (scatter, headroom 0) and reading the emitted grid/tick pixel
+       positions: the lowest gridline and the plot's bottom edge coincide.
+       An *authored* ladder never reaches this branch un-zero-anchored
+       either (same ``zero_anchor_domain_floor`` filter): its rungs have no
+       relation to the data extent VL will auto-fit, so that combination
+       falls through to the ``None`` below instead of predicting from it.
+
+    ``zero_anchor`` is the SAME bool the caller already passed into
+    ``_resolve_cartesian_ticks`` -- not re-derived from
+    ``ay.scale.continuous.zero``, which stays unbaked (None) for a
+    single-metric line/area/bar: those anchor at render time via
+    ``BaselineFeature``'s ``datum: 0`` rule, not a resolve-time bake, so the
+    scale field alone under-detects the zero-anchored case.
+
+    Returns None only when nothing pins the floor at all: no tick ladder
+    was baked (a log measure axis, a theme that never sets
+    ``axis_quantitative.ticks.count`` such as stark/plain, ``scale:
+    independent`` small multiples, or no data), or a zoomed axis with an
+    authored (never data-related) ladder and no authored/baked bound.
+    ``_y_gridline_caps_bottom`` treats this as the undecidable case.
+
+    ``endpoint_rail_may_discard_domain`` skips case 2 (the baked
+    ``domain_min``) even when it is set. A multi-series (color or wide)
+    area/line with ``endpoint_labels.visible`` and no real stack renders its
+    label pane as a second, unscaled view sharing the y-scale
+    (``resolve.scale.y: shared``) -- Vega-Lite's shared-scale merge then
+    silently drops the main pane's ``domainMin``/``domainMax`` pair and
+    falls back to its own auto-fit of the raw data instead, which in
+    practice lands on the same rounded extremes our own ladder already
+    computed (case 4) -- confirmed by rendering this exact composition
+    through ``vl_convert`` and reading the emitted gridline pixel positions:
+    they span the ladder's own (10000, 50000) extremes exactly, not the
+    headroom-adjusted (14920, 45080) bake. The caller (``area.py``) is the
+    only one that can know whether this composition applies -- it already
+    resolves ``endpoint_labels.visible`` and the stack mode before calling
+    here.
+    """
+    if not ticks.ticks:
+        return None
+    cont = ay.scale.continuous if ay.scale is not None else None
+    authored_domain = numeric_domain_bounds(cont.domain if cont is not None else None)
+    if authored_domain is not None:
+        return authored_domain[0]
+    if ticks.domain_min is not None and not endpoint_rail_may_discard_domain:
+        return ticks.domain_min
+    scale_values = ay.scale.values if ay.scale is not None else None
+    floor_ticks = zero_anchor_domain_floor(scale_values, list(ticks.ticks))
+    if zero_anchor:
+        return zero_anchor_floor(floor_ticks)
+    return floor_ticks[0] if floor_ticks else None
+
+
+def _y_gridline_caps_bottom(
+    ay: AxisYStyle,
+    ticks: _CartesianTickResolution,
+    zero_anchor: bool,
+    endpoint_rail_may_discard_domain: bool,
+) -> bool:
+    """Whether the y-axis's lowest rendered gridline lands on the plot's
+    bottom edge -- the case where an x-axis tick stub bridges a real gap
+    (see the ``axis_x.ticks.visible: "auto"`` rule in the base theme).
+
+    False when the y-axis draws no gridlines at all (nothing to cap the
+    x-gridlines with). **True** -- not False -- when the domain floor can't
+    be determined at compile time at all (see ``_y_domain_floor``'s ``None``
+    case: a log measure axis, a theme with no ``axis_quantitative.ticks.count``,
+    ``scale: independent``, or an authored zoomed ladder unrelated to the
+    data). With no gridline position knowable, hiding the stub risks
+    deleting a mark the reader needs to place the axis at all; showing it
+    unnecessarily only draws a mark they can ignore -- the conservative
+    default is to show it. An earlier revision answered False here by
+    treating "no ladder baked" as if it meant "gridlines already reach the
+    labels" -- confirmed wrong by rendering a log-scale axis and a
+    ``stark``/``plain``-themed chart, where Vega-Lite draws gridlines with
+    no ladder baked on our side at all.
+
+    Otherwise: an exact/near-exact match between the ladder's lowest rung
+    and the floor (a span-relative tolerance, not an absolute one -- a
+    ppm-scale measure column's whole domain span can be smaller than a fixed
+    epsilon, which would call every such axis "close" regardless of the
+    real gap).
+    """
+    if ay.grid.visible is not True:
+        return False
+    floor = _y_domain_floor(ay, ticks, zero_anchor, endpoint_rail_may_discard_domain)
+    if floor is None:
+        return True
+    return math.isclose(ticks.ticks[0], floor, rel_tol=1e-9, abs_tol=1e-9)
 
 
 def _resolve_stacked_bar_ticks(

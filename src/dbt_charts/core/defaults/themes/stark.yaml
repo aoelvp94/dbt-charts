@@ -1,10 +1,11 @@
-# Unified theme: stark
-# Structural root for the built-in theme cascade — every other built-in theme
-# transitively extends this file (`editorial` extends `stark`; `cream` via
-# `editorial`; `plain`/`vivid`/`neon`/`solid` directly).
-# Stark itself is opt-in for users: "stripped-back / utilitarian / sans-only"
-# — pick it when you want the pre-editorial bones without the refined
-# hierarchy that the shipped `editorial` theme adds on top.
+# Theme: stark
+# A minimal, achromatic theme — and the structural root for the built-in
+# theme cascade: every other built-in theme transitively extends this file
+# (`clarity` extends `stark`; `paper` via `clarity`; `vivid`/`neon` directly).
+#
+# Best for: the mono-colour palette, once pattern fills exist to carry series
+# distinction without hue. Stark's own single-series ink is pure black today
+# (`dbt-grays.black`), which is what a hue-free palette needs.
 
 extends: _base
 style:
@@ -19,8 +20,8 @@ style:
   # Secondary text (KPI support rows, table more-rows/empty-state lines —
   # table subtitles read title.subtitle.font.color instead, the same source
   # chart-family subtitles use). Stark is single-tier — every text slot is
-  # the same ink, muted included; multi-tier descendants (editorial, cream,
-  # plain, dark) rebind it to a rung of their own ladders. The fill-grade
+  # the same ink, muted included; multi-tier descendants (clarity, paper,
+  # neon) rebind it to a rung of their own ladders. The fill-grade
   # gray the old value carried lives on the bar-track pins below
   # (spark_bar.bar.background, table.spark.bar.background), which no longer
   # borrow this token.
@@ -48,8 +49,8 @@ style:
         # Single-series ink palette. Today: one element; every single-series
         # chart on the board uses slot 0. Follow-up rhythm pass cycles through
         # multiple slots per chart-id in reading order.
-        # Stark commits to pure black; light-canvas children (light/bi/looker)
-        # inherit. dark/editorial/cream override.
+        # Stark commits to pure black; every named descendant (clarity, paper,
+        # vivid, neon) overrides this with its own single-series ink.
         single_series_palette: [dbt-grays.black]
     axis:
       line:
@@ -80,8 +81,6 @@ style:
           color: *color_ink
 
     table:
-      border:
-        color: dbt-grays.separator
       paginator:
         color_active: dbt-grays.ink
         color_inactive: dbt-grays.inactive
@@ -126,8 +125,9 @@ style:
         fill: dbt-grays.grid-emphasis
 
     # Themed sequential default for heatmap/geoshape gradient color — see
-    # cream.yaml for the contrast-floor rationale (blues' light end fails
-    # WCAG on a light canvas too, just less severely than on cream).
+    # paper.yaml for the contrast-floor rationale (blues' light end fails
+    # WCAG on a light canvas too, just less severely than on paper's cream
+    # surface).
     geoshape:
       color:
         gradient:
@@ -139,8 +139,9 @@ style:
 
     # Tooltip tracks the board's own light ground (was black on a white board --
     # a mismatched ground). Sharp corners + thick black outline + no shadow +
-    # square swatch read as stark's utilitarian voice; the triangle active_marker
-    # (vs. every other theme's background fill) is stark's other tooltip signature.
+    # square swatch read as this theme's utilitarian voice; the triangle
+    # active_marker (vs. every other theme's background fill) is its other
+    # tooltip signature.
     tooltip:
       background: dbt-grays.white
       label:
@@ -163,7 +164,7 @@ style:
       font:
         family: '''dbt Sans Tabular'', Inter, system-ui, sans-serif'
 
-    data_table:
+    support_table:
       font:
         family: '''dbt Sans Tabular'', Inter, system-ui, sans-serif'
         color: *color_ink
@@ -179,9 +180,9 @@ style:
           family: '''dbt Sans Tabular'', Inter, system-ui, sans-serif'
 
     # Direct-label multi-series lines/areas/bars at their endpoints rather
-    # than leaning on a side legend. Set on the structural root so the plain
-    # theme inherits it; the crafted themes (editorial/vivid/neon) already
-    # set their own true.
+    # than leaning on a side legend. Set here so every descendant inherits
+    # it by default; the crafted themes (clarity/vivid/neon) restate their
+    # own true anyway.
     line:
       endpoint_labels:
         visible: true
@@ -244,15 +245,15 @@ style:
         color: dbt-grays.border
         width: 2
         radius: 0
+    # Markdown rules + markdown-table gridlines (was charts.table.border.color).
+    rule:
+      color: dbt-grays.separator
 
   variables:
     font:
       color: *color_ink
     border:
       color: *color_ink
-    input:
-      border:
-        color: *color_ink
 
   page:
     background: dbt-grays.white

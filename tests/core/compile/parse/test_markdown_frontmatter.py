@@ -344,7 +344,7 @@ class TestDiscoveryStaysStrict:
 
         The flat-form backwards-compat path caused markdown files with top-level
         'queries:' (e.g. a research note listing research queries) to be misread
-        as Dataface boards. After removing the flat form, only 'board:' triggers
+        as dbt charts boards. After removing the flat form, only 'board:' triggers
         detection outside charts/.
         """
         from dbt_charts.core.compile.parse.markdown import is_markdown_board_content

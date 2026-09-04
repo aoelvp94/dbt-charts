@@ -1,8 +1,8 @@
 title: Chart-Lab Import Review
-description: |
+notes: |
   Inspection surface for the supported chart families and the dataset shapes
   each one expects.
-theme: cream
+theme: paper
 source: examples_db
 text: |
   One representative chart per family, sized for direct comparison:
@@ -73,7 +73,7 @@ charts:
           continuous:
             zero: false
         labels:
-          format: currency_compact
+          format: currency
       marks:
         point:
           size: 36
@@ -92,7 +92,7 @@ charts:
       axis_y:
         # Tick ladder is derived, not pinned, so it tracks the data.
         labels:
-          format: currency_compact
+          format: currency
       endpoint_labels:
         visible: True
   line_multi_6_review:
@@ -109,7 +109,7 @@ charts:
           time_unit: yearquarter
       axis_y:
         labels:
-          format: currency_compact
+          format: currency
       endpoint_labels:
         visible: True
   area_review:
@@ -132,7 +132,7 @@ charts:
         #fill: linear
       axis_y:
         labels:
-          format: currency_compact
+          format: currency
       endpoint_labels:
         visible: True
   bar_review:
@@ -149,7 +149,7 @@ charts:
       orientation: horizontal
       axis_y:
         labels:
-          format: currency_compact
+          format: currency
   column_timeseries_review:
     query: lab_vertical_bar
     type: bar
@@ -160,7 +160,7 @@ charts:
     style:
       axis_y:
         labels:
-          format: currency_compact
+          format: currency
   column_line_combo_review:
     query: lab_column_line_combo
     type: bar
@@ -187,7 +187,7 @@ charts:
           visible: False
       axis_y:
         labels:
-          format: currency_compact
+          format: currency
   column_difference_review:
     query: lab_column_line_combo
     type: bar
@@ -205,7 +205,7 @@ charts:
       stack: zero
       axis_y:
         labels:
-          format: currency_compact
+          format: currency
   column_stacked_review:
     query: lab_column_stacked
     type: bar
@@ -217,7 +217,7 @@ charts:
     style:
       axis_y:
         labels:
-          format: currency_compact
+          format: currency
       endpoint_labels:
         visible: True
       stack: zero
@@ -254,7 +254,7 @@ charts:
     style:
       axis_y:
         labels:
-          format: currency_compact
+          format: currency
   donut_2_review:
     query: lab_donut_2
     type: pie

@@ -75,9 +75,9 @@ class TestExpandFileRefs:
 
     def test_email_address_preserved(self, tmp_path: Path) -> None:
         result = expand_file_refs(
-            "send results to dave@dataface.com please", project_dir=tmp_path
+            "send results to dave@example.com please", project_dir=tmp_path
         )
-        assert "dave@dataface.com" in result.text
+        assert "dave@example.com" in result.text
         assert result.references == []
 
     def test_parent_traversal_segment_rejected(self, tmp_path: Path) -> None:

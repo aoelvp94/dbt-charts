@@ -36,6 +36,7 @@ from dbt_charts.core.compile.models.style.resolved import (
 from dbt_charts.core.compile.resolve.style.typography import board_is_prose
 from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
 from dbt_charts.core.font_measure import get_font_measurer
+from dbt_charts.core.render.board_variables import board_variables
 from dbt_charts.core.render.chart_interactivity import (
     generate_svg_chart_interactivity_script,
 )
@@ -132,7 +133,7 @@ def _mask_markdown_fenced_code(text: str) -> tuple[str, dict[str, str]]:
         if fence_marker is not None:
             fence_lines.append(line)
             if _is_markdown_fence_close(line, fence_marker):
-                token = f"__DFT_MARKDOWN_FENCE_{len(fences)}__"
+                token = f"__DCT_MARKDOWN_FENCE_{len(fences)}__"
                 fences[token] = "".join(fence_lines)
                 result.append(token)
                 fence_marker = None
@@ -183,7 +184,7 @@ def _render_title_svg(
     # Board body markdown (TextStyle.font.case) is explicitly excluded — case
     # transforms on prose blocks would corrupt code spans, links, and emphasis.
     _title_case = resolved_style.title.font.case
-    if _title_case is not None and _title_case != "none":
+    if _title_case is not None:
         resolved = apply_case(resolved, _title_case)
     return render_title(
         resolved,
@@ -195,26 +196,28 @@ def _render_title_svg(
     )
 
 
-def _prose_authoring_padding(card_padding: float) -> dict[str, float]:
+def _prose_authoring_padding(
+    pad_left: float, pad_right: float, top: float
+) -> dict[str, float]:
     """The 4-sided box a prose block may claim around its own ink.
 
-    Horizontal is real: ``_build_board_content_items`` insets title and text to
-    ``x_offset + card_padding`` so they align with chart content, and that inset
-    is the block's to claim.
+    Horizontal is real on both sides in the common case: ``_build_board_content_items``
+    insets title and text to ``x_offset + card_padding`` so they align with chart
+    content, and that inset is the block's to claim on both edges. The title-inline
+    band is the exception — its right neighbour is the variables column, not the
+    card edge, so its caller passes a narrower ``pad_right`` there instead.
 
-    Vertical is zero, because the layout allocates a prose block no vertical
-    space to claim: title and text stack flush (a deliberate 0 gap — the
-    after-heading rhythm lives in the heading's own margin), and the gaps that do
-    exist separate the band from what follows, not one block from the next. A
-    block that claimed ``card_padding`` here would reach past where its
-    neighbour's glyphs begin and the two selection marks would overlap by twice
-    the padding — which is exactly what synthesising a uniform box did.
+    ``top`` is that same inset on the other axis, and only the block that opens
+    a band gets it — ``compute_board_content_box`` allocates it once, before the
+    first element. Blocks after it stack flush (a deliberate 0 gap — the
+    after-heading rhythm lives in the heading's own margin), so a second block
+    claiming ``card_padding`` would reach past where its neighbour's glyphs
+    begin and the two selection marks would overlap.
 
-    If stacked prose should get vertical breathing room, that is a change to the
-    gap arithmetic that lays the blocks out, not a constant applied at the
-    emission site.
+    Bottom stays zero: the gaps below a band separate it from what follows, and
+    are laid out by the gap arithmetic rather than claimed here.
     """
-    return {"left": card_padding, "right": card_padding, "top": 0.0, "bottom": 0.0}
+    return {"left": pad_left, "right": pad_right, "top": top, "bottom": 0.0}
 
 
 def _tagged_authoring_block(
@@ -224,7 +227,10 @@ def _tagged_authoring_block(
     content_y: float,
     content_width: float,
     content_height: float,
-    card_padding: float,
+    pad_left: float,
+    pad_right: float,
+    top_padding: float,
+    line_box: tuple[float, float] | None = None,
 ) -> str:
     """A tagged authoring group whose own box contains ``content``'s padding.
 
@@ -234,12 +240,26 @@ def _tagged_authoring_block(
     a host traces — is the padded outer one. The two offsets are equal and
     opposite by construction here, which is the point: written out per call site
     they are free to stop cancelling.
+
+    ``pad_left``/``pad_right`` are separate, not one ``card_padding`` for both
+    sides, because a block's neighbours can differ: the two stacked call sites
+    (a standalone title/text/header) have the card edge on both sides and pass
+    the same value twice, but the title-inline band's title column has the
+    variables strip for a right neighbour and must claim no more than the gap
+    to it — passing the same padding on both sides there would let the box
+    reach past where the strip begins.
+
+    ``line_box`` is ``(top, height)`` — the text's own span inside a block that
+    reserved more height than its text fills. A heading is that case, and a mark
+    traced on the reservation rides above the words by the difference. It seats
+    the mark rect alone: the hit target keeps the whole block, and the content
+    keeps its position, so nothing that paints moves.
     """
-    pad = _prose_authoring_padding(card_padding)
+    pad = _prose_authoring_padding(pad_left, pad_right, top_padding)
     return (
         f'<g transform="translate({px(content_x - pad["left"])},'
         f' {px(content_y - pad["top"])})"{attrs}>'
-        f"{padded_authoring_content(content, content_width, content_height, pad)}"
+        f"{padded_authoring_content(content, content_width, content_height, pad, line_box)}"
         f"</g>"
     )
 
@@ -385,6 +405,8 @@ def _render_title_variables_inline_band(
         compute_title_variables_inline_baseline_layout,
         get_title_height,
         resolve_title_variables_inline_widths,
+        title_baseline_offset,
+        title_line_box,
     )
 
     vs = board.style.variables
@@ -424,16 +446,20 @@ def _render_title_variables_inline_band(
     if title_color:
         title_svg_raw = _paint_title_svg_fill(title_svg_raw, str(title_color))
     title_inner = extract_svg_inner_content(title_svg_raw)
-    title_h = max(
-        get_title_height(
-            board.title,
-            title_w,
-            measured_values,
-            level=board.level,
-            resolved_style=board.style,
-            prose=prose,
-        ),
-        float(board.style.title.min_height),
+    # Measure at inner (the same width _render_title_svg draws at) so the
+    # reserved height matches the drawn height when a case transform widens
+    # the title past the wrap threshold at the narrower title_w column.
+    measured_title_h = get_title_height(
+        board.title,
+        inner,
+        measured_values,
+        level=board.level,
+        resolved_style=board.style,
+        prose=prose,
+    )
+    title_h = max(measured_title_h, float(board.style.title.min_height))
+    inline_title_line_box = title_line_box(
+        measured_title_h, board.level, board.style, prose
     )
 
     # The compact band packs its controls against the far edge, opposite the title.
@@ -449,8 +475,14 @@ def _render_title_variables_inline_band(
         variables_path=variables_path,
     )
     assert vs.font.size is not None, "style.variables.font.size must be configured"
+    assert vs.font.family is not None, "style.variables.font.family must be configured"
     title_dy, vars_dy, band_h = compute_title_variables_inline_baseline_layout(
-        title_h, vars_h, float(vs.font.size), float(vs.title_inline_band_bottom_pad)
+        title_h,
+        vars_h,
+        title_baseline_offset(board.style, board.level, prose),
+        float(vs.font.size),
+        vs.font.family,
+        float(vs.title_inline_band_bottom_pad),
     )
     if title_authored_attrs:
         title_group = _tagged_authoring_block(
@@ -461,6 +493,16 @@ def _render_title_variables_inline_band(
             title_w,
             title_h,
             card_pad,
+            # The band's right neighbour is the variables column, not the card
+            # edge — claiming card_pad on the right would reach past col_gap
+            # into the column's own space. min() also covers the (unusual)
+            # case where col_gap exceeds card_pad, where card_pad is still the
+            # honest claim for this side.
+            min(card_pad, col_gap),
+            # The band claims the top inset once, as a whole, where it is placed;
+            # inside it this title's y is baseline alignment, not a card inset.
+            0.0,
+            line_box=inline_title_line_box,
         )
     else:
         # No path here: the band is inside a board's combined header handle, which
@@ -519,6 +561,7 @@ def _build_board_content_items(
     title_authored_attrs: str = "",
     text_authored_attrs: str = "",
     header_authored_attrs: str = "",
+    title_line_box: tuple[float, float] | None = None,
 ) -> tuple[list[str], float]:
     """Build inner content item list; return (items, items_height).
 
@@ -549,13 +592,16 @@ def _build_board_content_items(
         inline_band_height=inline_header_height,
         gap=gap,
         has_layout_items=bool(layout_content),
+        card_padding=card_padding,
     )
 
     items: list[str] = []
     content_x = (
         x_offset + card_padding
     )  # title, text, variables align with chart content
-    y = y_offset
+    # ...and on y for the same reason: box.content_top is the inset a chart's
+    # ink already carries, so the first prose ink starts level with it.
+    y = y_offset + box.content_top
 
     # One handle over the header band when the board owns a path (see docstring);
     # otherwise a handle per key, which is all the root board can address. Pieces
@@ -567,7 +613,13 @@ def _build_board_content_items(
     header_end = y
 
     def header_piece(
-        svg: str, at_x: float, at_y: float, own_attrs: str, own_h: float, kind: str
+        svg: str,
+        at_x: float,
+        at_y: float,
+        own_attrs: str,
+        own_h: float,
+        kind: str,
+        top_inset: float,
     ) -> str:
         if header_authored_attrs:
             # Offset from the *rounded* wrapper origin, not the unrounded one:
@@ -584,12 +636,29 @@ def _build_board_content_items(
         if not own_attrs:
             return f'<g transform="translate({px(at_x)}, {px(at_y)})">{svg}</g>'
         return _tagged_authoring_block(
-            svg, own_attrs, at_x, at_y, content_width, own_h, card_padding
+            svg,
+            own_attrs,
+            at_x,
+            at_y,
+            content_width,
+            own_h,
+            card_padding,
+            card_padding,
+            top_inset,
+            line_box=title_line_box if kind == "title" else None,
         )
 
     if inline_header_svg:
         header.append(
-            header_piece(inline_header_svg, x_offset, y, "", inline_header_height, "")
+            header_piece(
+                inline_header_svg,
+                x_offset,
+                y,
+                "",
+                inline_header_height,
+                "",
+                box.content_top,
+            )
         )
         y += inline_header_height
         header_end = y
@@ -598,7 +667,13 @@ def _build_board_content_items(
     elif title_svg:
         header.append(
             header_piece(
-                title_svg, content_x, y, title_authored_attrs, title_height, "title"
+                title_svg,
+                content_x,
+                y,
+                title_authored_attrs,
+                title_height,
+                "title",
+                box.content_top,
             )
         )
         y += title_height
@@ -609,7 +684,17 @@ def _build_board_content_items(
         md = extract_svg_inner_content(text_svg)
         if md:
             header.append(
-                header_piece(md, content_x, y, text_authored_attrs, text_height, "text")
+                # The band's top inset is claimed once, by whichever block opens
+                # it — the title if there is one, this text if there is not.
+                header_piece(
+                    md,
+                    content_x,
+                    y,
+                    text_authored_attrs,
+                    text_height,
+                    "text",
+                    0.0 if header else box.content_top,
+                )
             )
         y += text_height
         header_end = y
@@ -617,6 +702,18 @@ def _build_board_content_items(
             y += gap  # text → variables: normal gap
 
     if header_authored_attrs and header:
+        # A combined header opening with a title inherits that title's dead top
+        # margin, so its handle is seated the way the standalone title is. It
+        # still ends where the header ends: the heading's trailing margin is only
+        # slack when the title is the whole header, and is otherwise the rhythm
+        # between the heading and the text under it.
+        header_box: tuple[float, float] | None = None
+        if title_line_box and title_svg:
+            line_top, line_height = title_line_box
+            header_box = (
+                line_top,
+                line_height if not text_svg else header_end - header_start - line_top,
+            )
         items.append(
             _tagged_authoring_block(
                 "".join(header),
@@ -626,6 +723,9 @@ def _build_board_content_items(
                 content_width,
                 header_end - header_start,
                 card_padding,
+                card_padding,
+                box.content_top,
+                line_box=header_box,
             )
         )
     else:
@@ -790,7 +890,7 @@ def render_board_svg(
         italic_sink_is_open,
         painted_italic_families,
     )
-    from dbt_charts.core.render.sizing import get_title_height
+    from dbt_charts.core.render.sizing import get_title_height, title_line_box
     from dbt_charts.core.render.svg_utils import (
         create_grid_pattern,
         generate_svg_styles,
@@ -812,7 +912,7 @@ def render_board_svg(
     page_title = (
         resolve_jinja_template(board.title, variables, strict=False)
         if board.title
-        else "Dataface"
+        else "dbt charts"
     )
     font_family = resolved_style.font.family
     page_background = resolved_style.page.background
@@ -860,6 +960,7 @@ def render_board_svg(
     inline_header_height = 0.0
     title_svg = ""
     title_height = 0.0
+    root_title_line_box: tuple[float, float] | None = None
 
     if _board_uses_title_inline_band(board, variables, layout_content_width):
         inline_header_svg, inline_header_height = _render_title_variables_inline_band(
@@ -886,7 +987,7 @@ def render_board_svg(
         title_color = resolved_style.title.font.color
         if title_color:
             title_svg = _paint_title_svg_fill(title_svg, str(title_color))
-        title_height = get_title_height(
+        measured_title_height = get_title_height(
             board.title,
             prose_width,
             _measured_variable_values(board, variables),
@@ -894,7 +995,10 @@ def render_board_svg(
             resolved_style=resolved_style,
             prose=prose,
         )
-        title_height = max(title_height, float(board.style.title.min_height))
+        title_height = max(measured_title_height, float(board.style.title.min_height))
+        root_title_line_box = title_line_box(
+            measured_title_height, board.level, resolved_style, prose
+        )
 
     # Render text (markdown) if present (using shared helper)
     text_svg = ""
@@ -939,6 +1043,7 @@ def render_board_svg(
         inline_band_height=inline_header_height,
         gap=effective_gap,
         has_layout_items=bool(board.layout.items),
+        card_padding=card_pad,
     )
     layout_content_height -= (
         content_box.non_layout_height + content_box.gap_before_layout
@@ -952,19 +1057,26 @@ def render_board_svg(
         resolved_style=resolved_style
     )
 
-    # Render layout (using shared helper)
-    layout_content, actual_layout_height = _render_layout(
-        board,
-        executor,
-        variables,
-        layout_content_width,
-        layout_content_height,
-        card_gap,
-        gap,
-        resolved_style.background,
-        render_cache=render_cache,
-        error_collector=error_collector,
-    )
+    # Render layout (using shared helper). Scoped in board_variables() so any
+    # chart reachable from here (table pagination today) can read the current
+    # page off current_board_variables() without a variables= parameter
+    # threaded down through every render_resolved_chart call site -- this is
+    # the one seam both the live render() pass and dct artifact render's
+    # replay path (board_replay.py) share, so opening it here covers both
+    # rather than at each caller.
+    with board_variables(variables):
+        layout_content, actual_layout_height = _render_layout(
+            board,
+            executor,
+            variables,
+            layout_content_width,
+            layout_content_height,
+            card_gap,
+            gap,
+            resolved_style.background,
+            render_cache=render_cache,
+            error_collector=error_collector,
+        )
 
     # Combine title, content, variables, and layout into positioned SVG groups.
     # Use actual_layout_height (from rendered content) rather than the pre-computed
@@ -987,6 +1099,7 @@ def render_board_svg(
         inline_header_height=inline_header_height,
         title_authored_attrs=authored_attrs("title", "title") if title_svg else "",
         text_authored_attrs=authored_attrs("text", "text") if text_svg else "",
+        title_line_box=root_title_line_box,
     )
 
     # Calculate final dimensions. The two axes are not symmetric:
@@ -1065,7 +1178,7 @@ def render_board_svg(
     svg_id_hash = hashlib.md5(f"{total_width}x{total_height}".encode()).hexdigest()[
         :SVG_ID_HASH_LENGTH
     ]
-    svg_id = f"dataface-svg-{svg_id_hash}"
+    svg_id = f"dbt-charts-svg-{svg_id_hash}"
 
     render_time_utc = datetime.now(timezone.utc)
     render_timestamp_iso = render_time_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1209,6 +1322,7 @@ def render_nested_board(
     inline_header_height = 0.0
     title_svg = ""
     title_height = 0.0
+    nested_title_line_box: tuple[float, float] | None = None
     if _board_uses_title_inline_band(board, variables, layout_content_width):
         inline_header_svg, inline_header_height = _render_title_variables_inline_band(
             board,
@@ -1226,7 +1340,7 @@ def render_nested_board(
             variables_path=_nested_variables_path(source_path),
         )
     elif board.title:
-        from dbt_charts.core.render.sizing import get_title_height
+        from dbt_charts.core.render.sizing import get_title_height, title_line_box
 
         title_svg = _render_title_svg(
             board.title,
@@ -1237,16 +1351,17 @@ def render_nested_board(
             level=board.level,
             prose=prose,
         )
-        title_height = max(
-            get_title_height(
-                board.title,
-                prose_width,
-                _measured_variable_values(board, variables),
-                level=board.level,
-                resolved_style=resolved_style,
-                prose=prose,
-            ),
-            float(board.style.title.min_height),
+        measured_title_height = get_title_height(
+            board.title,
+            prose_width,
+            _measured_variable_values(board, variables),
+            level=board.level,
+            resolved_style=resolved_style,
+            prose=prose,
+        )
+        title_height = max(measured_title_height, float(board.style.title.min_height))
+        nested_title_line_box = title_line_box(
+            measured_title_height, board.level, resolved_style, prose
         )
 
     # Render text (markdown) if present (using shared helper)
@@ -1316,6 +1431,7 @@ def render_nested_board(
         gap=gap,
         title_svg=title_svg,
         title_height=title_height,
+        title_line_box=nested_title_line_box,
         text_svg=text_svg,
         text_height=text_height,
         variables_svg=nested_variables_svg,

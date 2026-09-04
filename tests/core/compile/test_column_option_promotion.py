@@ -135,7 +135,7 @@ class TestNormalizerPromotion:
 
     def test_column_without_dot_carries_the_registered_code(self) -> None:
         """A missing dot is an authoring mistake, not an internal defect —
-        ERR-INTERNAL is a bug signal per `dataface/AGENTS.md`, not a tier."""
+        ERR-INTERNAL is a bug signal per `dbt-charts/AGENTS.md`, not a tier."""
         result = compile_with_board_sources(_INVALID_COLUMN_ONLY_YAML)
 
         assert [e.code for e in result.errors] == ["ERR-VALIDATION-FIELD"]

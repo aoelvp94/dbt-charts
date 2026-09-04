@@ -117,7 +117,7 @@ Read shipped package data via `files("dbt_charts.<pkg>").joinpath(...).read_text
 ### Engine config: narrow getters preferred
 
 `compile/config.py` defines narrow getters for engine config slices:
-- `get_chart_rendering()` — chart engine constants (kpi, spark_bar, facet, pie, bar, type_inference, frame, data_table subsections); `preferred_width` is a theme value on `resolved_style.chart_defaults.preferred_width` (or per-family, on `ChartStyleContext` during runtime chart resolution)
+- `get_chart_rendering()` — chart engine constants (kpi, spark_bar, facet, pie, bar, type_inference, frame, support_table subsections); `preferred_width` is a theme value on `resolved_style.chart_defaults.preferred_width` (or per-family, on `ChartStyleContext` during runtime chart resolution)
 - `get_inspector_config()` — inspector / directory-tree config (e.g. `tree_max_depth`)
 - `get_rendering_config()` — rendering metadata (timestamp, png scale)
 - `get_terminal_config()` — terminal renderer constants
@@ -134,7 +134,7 @@ Markdown prose colors (`code_background`, `blockquote_border_color`, etc.) are n
 
 When you promote a theme-populated field to required, the theme YAML must supply it for every theme. The theme corpus smoke test (`get_theme_style(name)` over every built-in theme) catches misses.
 
-`defaults/themes/stark.yaml` is the structural root that all built-in themes inherit transitively via `extends` (`editorial` → `stark`; `cream` → `editorial` → `stark`; `plain`/`vivid`/`neon`/`solid` → `stark`). Add new defaults there; the cascade propagates them everywhere unless overridden. The shipped user-facing default is `editorial.yaml`, which adds the editorial voice on top of `stark`.
+`defaults/themes/stark.yaml` is the structural root that all built-in themes inherit transitively via `extends` (`clarity` → `stark`; `paper` → `clarity` → `stark`; `vivid`/`neon` → `stark`). Add new defaults there; the cascade propagates them everywhere unless overridden. The shipped user-facing default is `clarity.yaml`, which adds the editorial voice on top of `stark`.
 
 ### Render layer
 
@@ -190,12 +190,21 @@ to replay the partition `resolve()` already baked, not to decide one), `restripe
 (re-splits a render-time-mutated flat row list back into that same baked partition
 by recorded index), `restamp()` (re-stamps a partition field's value onto a panel's
 rows when a caller needs it back on the row dict), and `map_panels()` (runs a
-transform once per panel and reassembles — gap-fill's per-panel completion). All six
-are data types / pure formulas keyed off a `Resolved*` field or an already-baked
-partition, not a reach-back into cascade logic — see `render/chart/AGENTS.md`
-philosophy #3 for why this doesn't reopen the data-belongs-to-queries rule. Don't add
-further reach-backs beyond these six; if you need a dbt charts value at render time,
-add it to `Resolved*` at the resolved boundary.
+transform once per panel and reassembles — gap-fill's per-panel completion). Plus
+`compile.resolve.chart.plot_height_floor` (`plot_height_floor_px()` — the one
+definition of the plot-height floor, shared so the resolver that decides a plot is
+starved and the warning that prints the floor to the author can never disagree;
+same shape as `facet_panel_width()` above). Plus `compile.resolve.chart._wide_fields`
+— the wide fold's synthetic field names and its Python mirror (`unfold_wide_rows()`,
+`wide_series_names()`, `wide_dimension_values()`): the one definition of how
+`y: [a, b]` (crossed with a `color:` dimension) becomes series, shared so the
+resolver's rail-crowding check, the emitters' VL fold, and the endpoint-label
+feature can never name a wide chart's series differently. All eight are data types
+/ pure formulas keyed off a `Resolved*` field or an already-baked partition, not a
+reach-back into cascade logic — see `render/chart/AGENTS.md` philosophy #3 for why
+this doesn't reopen the data-belongs-to-queries rule. Don't add further reach-backs
+beyond these eight; if you need a dbt charts value at render time, add it to
+`Resolved*` at the resolved boundary.
 
 **Enforced, empty, no allowlist.** `dbt-charts/tests/core/render/chart/test_render_boundary.py`
 scans every `.py` file under `render/` (not just `render/chart/`) for the banned
@@ -212,7 +221,7 @@ to apply against there — a structurally different rendering surface, not a
 tracked exception. `sanitize_color`/`is_sanitizable_color` (CSS/SVG color
 validation) and `is_year_shaped` (value-shape classification) live in the
 neutral `dbt_charts.core.colors` and `dbt_charts.core.utils` modules, so render's
-imports of them are not boundary violations. Axis style, data-table format
+imports of them are not boundary violations. Axis style, support-table format
 inheritance, dark-companion palette ink, callout tone colors, table
 pagination, layout padding, and scale-palette hex stops are each a field on a
 `Resolved*` contract (`ResolvedStyle`, `ResolvedChartDefaults`, or a
@@ -247,11 +256,11 @@ Render is a strict consumer of `Resolved*` — it must never construct a mutated
 
 #### Accepted on the authored chart surface
 
-Query selection: `query`, `model` (semantic-layer chart sugar — `source.semantic_model` for a dbt_profile/MetricFlow source; desugars into a synthesized query at compile time with roles inferred from the dbt semantic manifest; mutually exclusive with `query`)
+Query selection: `query`
 
 Channel fields: `x`, `y`, `color`, `size`, `shape`, `theta`, `value`, `latitude`, `longitude`, `geo`, `geo_source`, `lookup`
 
-Presentation: `title`, `subtitle`, `description`, `link`, `sort`, `orientation`, `style`
+Presentation: `title`, `subtitle`, `notes`, `link`, `sort`, `orientation`, `style`
 
 Mirror y-axis: `style.axis_y.mirror: true` (draws the y-scale on both left+right edges of wide cartesian charts; single-series only; distinct from the per-layer `layer.axis_y` dual-scale placement). Object form `mirror: {format: ...}` / `mirror: {expr: ...}` relabels only the mirrored edge (e.g. $ left / % right) off the same shared scale — never a second scale.
 
@@ -263,7 +272,7 @@ KPI: `glyph`, `support` (its `tone` sub-field colors the support row; the headli
 
 Cartesian overlays: `layers` on any bar/line/area/scatter chart (each typed overlay layer accepts: `type`, `query`, `x`, `y`, `label`, `color`, `axis_y`)
 
-Data attachments: `data_table`
+Data attachments: `support_table`
 
 Data attachments (family-scoped): `conditional_formatting` — only on `bar`, `line`, `area`, `scatter`, `kpi`, `table`, `pie`, `geoshape`, `point_map`, `bubble_map` (the families in `_MARK_FILL_CHART_TYPES` plus `table`). Structurally absent on every other family, same mechanism as `size`/`shape` below.
 

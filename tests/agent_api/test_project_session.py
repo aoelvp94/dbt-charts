@@ -390,13 +390,13 @@ def test_project_warnings_ignore_loader_called_with_project_root(
 
 def test_project_sources_caches_until_refresh(tmp_path: Path) -> None:
     """sources is read at open() time; refresh() re-reads and the value reflects disk."""
-    dataface_yml = tmp_path / "dbt_charts.yml"
-    dataface_yml.write_text("sources:\n  x:\n    type: duckdb\n    path: x.duckdb\n")
+    dbt_charts_yml = tmp_path / "dbt_charts.yml"
+    dbt_charts_yml.write_text("sources:\n  x:\n    type: duckdb\n    path: x.duckdb\n")
 
     with ProjectSession.open(tmp_path) as project:
         assert "x" in project.sources.sources
 
-        dataface_yml.write_text(
+        dbt_charts_yml.write_text(
             "sources:\n  y:\n    type: duckdb\n    path: y.duckdb\n"
         )
         project.refresh()
@@ -405,13 +405,13 @@ def test_project_sources_caches_until_refresh(tmp_path: Path) -> None:
 
 def test_project_warnings_ignore_caches_until_refresh(tmp_path: Path) -> None:
     """warnings_ignore is read at open() time; refresh() re-reads and the value reflects disk."""
-    dataface_yml = tmp_path / "dbt_charts.yml"
-    dataface_yml.write_text("warnings:\n  ignore:\n    - WARN-FANOUT-RISK\n")
+    dbt_charts_yml = tmp_path / "dbt_charts.yml"
+    dbt_charts_yml.write_text("warnings:\n  ignore:\n    - WARN-FANOUT-RISK\n")
 
     with ProjectSession.open(tmp_path) as project:
         assert project.warnings_ignore == frozenset({"WARN-FANOUT-RISK"})
 
-        dataface_yml.write_text("warnings:\n  ignore:\n    - WARN-REAGGREGATION\n")
+        dbt_charts_yml.write_text("warnings:\n  ignore:\n    - WARN-REAGGREGATION\n")
         project.refresh()
         assert project.warnings_ignore == frozenset({"WARN-REAGGREGATION"})
 
@@ -510,7 +510,7 @@ def test_project_injected_registry_refresh_skips_registry_rebuild_but_clears_cac
         assert warnings_loader.call_count == 2  # one re-load after refresh
 
 
-def test_refresh_sees_dataface_yml_added_after_open(tmp_path: Path) -> None:
+def test_refresh_sees_dbt_charts_yml_added_after_open(tmp_path: Path) -> None:
     """refresh() must pick up a dbt_charts.yml that didn't exist at open() time.
 
     Regression guard: if `Project` is reused across refresh() calls, its cached
@@ -672,6 +672,10 @@ def test_project_session_migrates_an_in_memory_project(
     tmp_path: Path,
     in_memory_project: Callable[[Path, dict[str, str]], Project],
 ) -> None:
+    """A structurally-current board needs no update -- unstamped and all,
+    since ``_schema_version`` is never written as the sole reason to rewrite
+    an otherwise-untouched file. A regression to stamping every touched file
+    would make this land in ``.updated`` instead."""
     project = in_memory_project(tmp_path, {"charts/remote.yaml": "title: Remote\n"})
     session = ProjectSession(project)
 
@@ -703,6 +707,52 @@ def test_project_injected_registry_close_does_not_close_it(
         "ProjectSession must not close an injected registry it does not own; "
         f"got close_calls={close_calls!r}"
     )
+
+
+def test_project_injected_registry_with_owns_registry_closes_it(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """close() DOES close an injected registry when the caller opts in via owns_registry=True."""
+    close_calls: list[str] = []
+
+    class _SpyRegistry:
+        def close(self) -> None:
+            close_calls.append("close")
+
+    project = ProjectSession(
+        project=local_project(tmp_path),
+        adapter_registry=_SpyRegistry(),  # type: ignore[arg-type]
+        owns_registry=True,
+    )
+    with project:
+        pass
+    assert close_calls == ["close"], (
+        "ProjectSession must close an injected registry when owns_registry=True; "
+        f"got close_calls={close_calls!r}"
+    )
+
+
+def test_project_injected_registry_with_owns_registry_refresh_leaves_it_untouched(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """refresh() must not close or rebuild an injected registry, even when owns_registry=True."""
+    close_calls: list[str] = []
+
+    class _SpyRegistry:
+        def close(self) -> None:
+            close_calls.append("close")
+
+    registry = _SpyRegistry()
+    project = ProjectSession(
+        project=local_project(tmp_path),
+        adapter_registry=registry,  # type: ignore[arg-type]
+        owns_registry=True,
+    )
+
+    project.refresh()
+
+    assert project.adapter_registry is registry
+    assert close_calls == []
 
 
 def test_project_search_boards_forwards_project_and_limit(

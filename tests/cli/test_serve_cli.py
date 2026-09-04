@@ -135,7 +135,7 @@ class TestDftServeDiagnostics:
         assert "ERR-INVALID-DEFAULT-THEME" in combined
         assert "Docs:" in combined
 
-    def test_dataface_yml_theme_key_rejected_with_validation_error(
+    def test_dbt_charts_yml_theme_key_rejected_with_validation_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """dbt_charts.yml: theme: is no longer a valid key — raises pydantic validation error.
@@ -144,7 +144,7 @@ class TestDftServeDiagnostics:
         Serve exits 1 with a ValidationError message.
         """
         monkeypatch.delenv("DCT_DEFAULT_THEME", raising=False)
-        (tmp_path / "dbt_charts.yml").write_text("theme: cream\n", encoding="utf-8")
+        (tmp_path / "dbt_charts.yml").write_text("theme: paper\n", encoding="utf-8")
         result = runner.invoke(app, ["serve", "--project-dir", str(tmp_path)])
         assert result.exit_code == 1
         combined = result.output + (result.stderr or "")

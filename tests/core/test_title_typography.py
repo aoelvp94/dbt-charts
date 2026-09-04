@@ -912,7 +912,10 @@ rows:
         )
 
         assert as_h1 != as_h2, "the fixture must discriminate the two levels"
-        assert non_layout_height == as_h2, (
-            f"sizing reserved {non_layout_height} (h1={as_h1}, h2={as_h2}) — a "
-            "nested title must be measured at the level it is drawn at"
+        # The band's own top inset rides above the title (BoardContentBox.content_top),
+        # so what sizing reserves is that plus the title block itself.
+        assert non_layout_height == card_pad + as_h2, (
+            f"sizing reserved {non_layout_height} (h1={as_h1}, h2={as_h2}, "
+            f"card_padding={card_pad}) — a nested title must be measured at the "
+            "level it is drawn at"
         )

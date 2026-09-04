@@ -747,7 +747,7 @@ charts:
     query: q_broken
     theta: amount
     color: label
-    description: The broken one
+    notes: The broken one
 cols:
   - good
   - broken
@@ -928,7 +928,7 @@ def test_resolve_time_table_chart_data_error_isolates() -> None:
     assert 'data-chart-id="good"' in result.output
 
 
-def test_resolve_time_bare_dataface_error_isolates() -> None:
+def test_resolve_time_bare_dbt_charts_error_isolates() -> None:
     """A bare DbtChartsError — neither ExecutionError nor ChartDataError — isolates.
 
     Every pre-fix call-site guard named a tuple of subclasses, and they had
@@ -1011,7 +1011,7 @@ def test_resolve_time_error_tile_carries_full_chart_identity() -> None:
     Both tiles are the same chart failing the same way at two different
     stages, so the host-facing DOM contract — the variable-dependency
     attributes that drive hover-highlight and loading state, the
-    description — must not depend on which stage failed.
+    notes — must not depend on which stage failed.
     """
     board = _compile_board(_HEALTHY_PLUS_PIE_YAML)
 
@@ -1530,3 +1530,227 @@ def test_render_dashboard_as_link_emits_structural_lint_warning(
     assert len(lint_warnings) == 1, (
         f"as_link=True path must emit exactly one lint warning; got {[w.code for w in result.warnings]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# spark_bar render-time validation must not escape the sizing pass
+# ---------------------------------------------------------------------------
+
+_REVERSED_SPARK_BAR_YAML = """
+title: Reversed spark_bar
+queries:
+  q:
+    type: values
+    rows:
+      - {cat: "Electronics", val: 100}
+      - {cat: "Apparel", val: 50}
+charts:
+  good:
+    query: q
+    type: bar
+    x: cat
+    y: val
+  bad:
+    query: q
+    type: spark_bar
+    x: cat
+    y: val
+rows:
+  - cols: [good, bad]
+"""
+
+
+def test_reversed_spark_bar_is_isolated_to_its_own_card(
+    local_project: Callable[..., Project],
+):
+    """A spark_bar authored with the cartesian x/y order must degrade to one
+    error card, not kill the board.
+
+    spark_bar validates its data at RENDER time, and the render-first sizing
+    pass (layout_sizing._chart_height_provider) calls the renderer with no
+    per-chart isolation of its own. Before this guard the ChartDataError
+    escaped to renderer.py's board-level handler, which returns
+    output=None — a single reversed spark_bar rendered *nothing*, not even
+    the other charts. Deliberately a whole-board render: every other
+    spark_bar test calls render_spark_bar_svg directly and so cannot see
+    this at all.
+    """
+    from dbt_charts.core.execute.adapters import build_adapter_registry
+
+    result = compile(_REVERSED_SPARK_BAR_YAML)
+    assert result.success, result.errors
+    executor = Executor(
+        result.board,
+        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        query_registry=result.query_registry,
+    )
+
+    render_result = render(result.board, executor, format="svg")
+
+    assert render_result.board_error is None, (
+        "one bad spark_bar must not become a board-level failure"
+    )
+    assert render_result.output is not None, "the board must still render"
+    codes = [d.code for d in render_result.chart_errors]
+    assert "ERR-SPARK-BAR-VALUE-NOT-NUMERIC" in codes, (
+        f"expected a per-chart spark_bar diagnostic, got {codes}"
+    )
+    # Both tiles are laid out: the good chart really rendered, and the bad one
+    # occupies its slot as an error card rather than vanishing.
+    assert "chart-good" in render_result.output
+    assert "chart-bad" in render_result.output
+
+
+# ---------------------------------------------------------------------------
+# spark_bar's numeric verdict must not depend on style.spark_bar.max_bars
+# ---------------------------------------------------------------------------
+
+_MAX_BARS_SCOPE_YAML = """
+title: max_bars must not change the numeric verdict
+queries:
+  q:
+    type: values
+    rows:
+      - {cat: "R0", val: null}
+      - {cat: "R1", val: null}
+      - {cat: "R2", val: null}
+      - {cat: "R3", val: null}
+      - {cat: "R4", val: null}
+      - {cat: "R5", val: null}
+      - {cat: "R6", val: null}
+      - {cat: "R7", val: null}
+      - {cat: "R8", val: null}
+      - {cat: "R9", val: null}
+      - {cat: "R10", val: 5}
+      - {cat: "R11", val: 4}
+      - {cat: "R12", val: 3}
+      - {cat: "R13", val: 2}
+      - {cat: "R14", val: 1}
+charts:
+  low_cap:
+    query: q
+    type: spark_bar
+    x: val
+    y: cat
+    style:
+      max_bars: 10
+  high_cap:
+    query: q
+    type: spark_bar
+    x: val
+    y: cat
+    style:
+      max_bars: 15
+rows:
+  - cols: [low_cap, high_cap]
+"""
+
+
+def test_spark_bar_numeric_verdict_is_independent_of_max_bars(
+    local_project: Callable[..., Project],
+):
+    """Same board, same query, two ``style.max_bars`` values — same verdict.
+
+    The query's first 10 rows are NULL and its last 5 are real numbers.
+    Before the fix, ``_validate_spark_bar_value_field`` scanned only
+    ``data[:max_bars]``: at ``max_bars: 10`` (the theme default) the slice is
+    all-NULL and the chart raised ERR-SPARK-BAR-VALUE-NOT-NUMERIC; at
+    ``max_bars: 15`` the identical data rendered fine. A presentational cap
+    decided whether the board errored. Both charts must now render.
+    """
+    from dbt_charts.core.execute.adapters import build_adapter_registry
+
+    result = compile(_MAX_BARS_SCOPE_YAML)
+    assert result.success, result.errors
+    executor = Executor(
+        result.board,
+        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        query_registry=result.query_registry,
+    )
+
+    render_result = render(result.board, executor, format="svg")
+
+    codes = [d.code for d in render_result.chart_errors]
+    assert codes == [], (
+        "low_cap and high_cap read the same column from the same data; the "
+        f"numeric verdict must not depend on style.max_bars. Got errors: {codes}"
+    )
+    assert "chart-low_cap" in render_result.output
+    assert "chart-high_cap" in render_result.output
+
+
+_NON_NUMERIC_BEYOND_CAP_YAML = """
+title: non-numeric value past max_bars must still raise
+queries:
+  q:
+    type: values
+    rows:
+      - {cat: "R0", val: 1}
+      - {cat: "R1", val: 2}
+      - {cat: "R2", val: 3}
+      - {cat: "R3", val: 4}
+      - {cat: "R4", val: 5}
+      - {cat: "R5", val: "oops"}
+      - {cat: "R6", val: 6}
+      - {cat: "R7", val: 7}
+charts:
+  low_cap:
+    query: q
+    type: spark_bar
+    x: val
+    y: cat
+    style:
+      max_bars: 5
+  high_cap:
+    query: q
+    type: spark_bar
+    x: val
+    y: cat
+    style:
+      max_bars: 10
+rows:
+  - cols: [low_cap, high_cap]
+"""
+
+
+def test_spark_bar_non_numeric_value_beyond_max_bars_still_raises(
+    local_project: Callable[..., Project],
+):
+    """A bad value past the display cap is still a real data-shape bug.
+
+    ``low_cap`` (max_bars: 5) only "sees" the first 5 rows, all clean
+    numbers; ``high_cap`` (max_bars: 10) sees row 5's stray string too.
+    Before the fix low_cap silently rendered a chart whose underlying column
+    is not actually clean, while high_cap raised on the same data — the
+    verdict must be the same regardless of the cap, so both must raise once
+    the check reads the whole dataset. Deliberately a whole-board render:
+    each bad chart must degrade to its own error card, not take the board
+    down (the per-chart isolation this task's Context section calls out).
+    """
+    from dbt_charts.core.execute.adapters import build_adapter_registry
+
+    result = compile(_NON_NUMERIC_BEYOND_CAP_YAML)
+    assert result.success, result.errors
+    executor = Executor(
+        result.board,
+        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        query_registry=result.query_registry,
+    )
+
+    render_result = render(result.board, executor, format="svg")
+
+    assert render_result.board_error is None, (
+        "bad spark_bar charts must not become a board-level failure"
+    )
+    assert render_result.output is not None, "the board must still render"
+    chart_error_codes = {
+        d.fields.get("chart_id"): d.code for d in render_result.chart_errors
+    }
+    assert chart_error_codes.get("low_cap") == "ERR-SPARK-BAR-VALUE-NOT-NUMERIC", (
+        f"expected low_cap to raise too once the check reads the full "
+        f"dataset, got {chart_error_codes}"
+    )
+    assert chart_error_codes.get("high_cap") == "ERR-SPARK-BAR-VALUE-NOT-NUMERIC"
+    # Both tiles are laid out as error cards, not a vanished board.
+    assert "chart-low_cap" in render_result.output
+    assert "chart-high_cap" in render_result.output

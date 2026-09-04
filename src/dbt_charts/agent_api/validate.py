@@ -54,6 +54,13 @@ class ValidateResult(BaseModel):
 
     success: bool
     path: str = Field(description="Project-relative path to the validated board.")
+    error: str | None = Field(
+        default=None,
+        description=(
+            "Host refusal (e.g. access denied) reported in-band; compile "
+            "findings go in `errors`, never here."
+        ),
+    )
     errors: list[Diagnostic] = Field(
         default_factory=list, description="Validation errors found in the board file."
     )
@@ -115,10 +122,7 @@ def _validate_one_path(
     adapter_registry: AdapterRegistry | None = None,
 ) -> list[ValidateResult]:
     """Per-argv expansion: ``None`` → charts/, file → [one], dir → walk."""
-    # WHY: dbt_charts.core.inspect.manifest_utils triggers the inspect package
-    # __init__, which eagerly imports TableInspector + grain/quality/semantic
-    # detectors. Keep this lazy so `dct --help` doesn't pay that startup cost.
-    from dbt_charts.core.inspect.manifest_utils import INSPECT_TEMPLATE_MANIFEST
+    from dbt_charts.agent_api._paths import iter_expanded_board_files
 
     raw_path = path if path is not None else Path(CHARTS_SUBDIR)
 
@@ -148,14 +152,7 @@ def _validate_one_path(
     if resolved.is_yaml:
         return [_validate_resolved(resolved, project, adapter_registry)]
 
-    boards = sorted(
-        pf
-        for pf in project.iter_boards(under=resolved.relpath, recursive=True)
-        if pf.is_yaml
-        and not pf.is_private
-        and not pf.is_meta
-        and not (pf.parent / INSPECT_TEMPLATE_MANIFEST).exists()
-    )
+    boards = iter_expanded_board_files(project, resolved.relpath)
     if not boards:
         return [
             ValidateResult(
@@ -240,6 +237,7 @@ def _validate_resolved(
 ) -> ValidateResult:
     """Validate an already-resolved board path — no re-resolution."""
     from dbt_charts.core.compile.compiler import compile_file, validate_compiled_queries
+    from dbt_charts.core.dbt_model_columns import check_model_columns
     from dbt_charts.core.dbt_ref_check import check_manifest_refs
 
     if not resolved.exists():
@@ -280,6 +278,7 @@ def _validate_resolved(
 
     validate_compiled_queries(result)
     check_manifest_refs(result, project)
+    check_model_columns(result, project)
 
     errors = list(result.errors)
     warnings = list(result.warnings)
@@ -288,7 +287,7 @@ def _validate_resolved(
     # it appends to the stateless findings rather than standing in for them.
     if adapter_registry is not None and not errors:
         wh_errors, wh_warnings = _warehouse_findings(
-            result, relpath=resolved.relpath, adapter_registry=adapter_registry
+            result, resolved.relpath, adapter_registry
         )
         errors += wh_errors
         warnings += wh_warnings
@@ -319,6 +318,7 @@ def validate_content(yaml_content: str, *, project: Project) -> ContentValidateR
         compile as _compile,
         validate_compiled_queries,
     )
+    from dbt_charts.core.dbt_model_columns import check_model_columns
     from dbt_charts.core.dbt_ref_check import check_manifest_refs
 
     result = _compile(
@@ -329,6 +329,7 @@ def validate_content(yaml_content: str, *, project: Project) -> ContentValidateR
     )
     validate_compiled_queries(result)
     check_manifest_refs(result, project)
+    check_model_columns(result, project)
     return ContentValidateResult(
         success=result.success,
         errors=list(result.errors),
@@ -385,6 +386,7 @@ def annotate_with_data_lint(
                 path=result.path,
                 errors=new_errors,
                 warnings=result.warnings,
+                error=result.error,
             )
         )
     return annotated
@@ -440,7 +442,6 @@ def _chart_column_refs(chart: Chart) -> list[tuple[str, str, str]]:
 
 def _warehouse_findings(
     compile_result: CompileResult,
-    *,
     relpath: str,
     adapter_registry: AdapterRegistry,
 ) -> tuple[list[Diagnostic], list[Diagnostic]]:

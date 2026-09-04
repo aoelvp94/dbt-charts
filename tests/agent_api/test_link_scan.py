@@ -45,7 +45,7 @@ class TestScanLinks:
     ) -> None:
         project = in_memory_project(
             tmp_path,
-            {"charts/notes.yml": "title: Notes\ndescription: see the rev dashboard\n"},
+            {"charts/notes.yml": "title: Notes\nnotes: see the rev dashboard\n"},
         )
         result = scan_links(project, "finance/rev")
         assert result.exact == []
@@ -133,7 +133,7 @@ class TestRewriteLinks:
         tmp_path: Path,
         in_memory_project: Callable[[Path, dict[str, str]], Project],
     ) -> None:
-        original = "title: Notes\ndescription: see the rev dashboard\n"
+        original = "title: Notes\nnotes: see the rev dashboard\n"
         project = in_memory_project(tmp_path, {"charts/notes.yml": original})
         result = rewrite_links(project, "finance/rev", "growth/rev")
         assert len(result.fuzzy) == 1

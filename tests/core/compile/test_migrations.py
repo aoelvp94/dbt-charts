@@ -6,6 +6,7 @@ from datetime import date
 from typing import cast
 
 import pytest
+import yaml
 from pydantic import BaseModel, ValidationError
 
 from dbt_charts.core.compile.errors import ParseError
@@ -30,39 +31,11 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaEntry,
 )
 
+from ._migration_catalogs import flat_schema, released, synthetic_catalog
+
 V1 = "0.1.0"
 V2 = "0.2.0"
 V3 = "0.3.0"
-
-
-def _catalog(schemas: dict[str, JsonObject]) -> YamlSchemaCatalog:
-    versions = tuple(reversed(schemas))
-    entries = tuple(
-        YamlSchemaEntry(
-            version=version,
-            released_at=date(2026, len(versions) + 4 - index, 1),
-            filename=f"{version}.json",
-            sha256="test",
-            predecessor=None,
-        )
-        for index, version in enumerate(versions)
-    )
-    # In synthetic catalogs the "current" live schema equals the newest frozen
-    # schema — the distinction only matters in the real catalog when a PR has
-    # changed the Pydantic models but hasn't been released yet.
-    current_schema = schemas[versions[0]]
-    return YamlSchemaCatalog(entries, schemas, current_schema)
-
-
-def _schema(*keys: str) -> JsonObject:
-    return cast(
-        JsonObject,
-        {
-            "type": "object",
-            "properties": {key: {"type": "string"} for key in keys},
-            "additionalProperties": False,
-        },
-    )
 
 
 def _chart_schema(type_required: bool) -> JsonObject:
@@ -89,12 +62,12 @@ def _chart_schema(type_required: bool) -> JsonObject:
 
 
 def _required_chart_type_context() -> tuple[YamlSchemaCatalog, MigrationRegistry]:
-    catalog = _catalog({V1: _chart_schema(False), V2: _chart_schema(True)})
+    catalog = synthetic_catalog({V1: _chart_schema(False), V2: _chart_schema(True)})
     return catalog, MigrationRegistry([], catalog=catalog)
 
 
 def test_migrates_a_retired_key_before_current_validation() -> None:
-    catalog = _catalog({V1: _schema("old"), V2: _schema("new")})
+    catalog = synthetic_catalog({V1: flat_schema("old"), V2: flat_schema("new")})
     registry = MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
 
     result = migrate_mapping({"old": "value"}, catalog=catalog, registry=registry)
@@ -103,7 +76,7 @@ def test_migrates_a_retired_key_before_current_validation() -> None:
 
 
 def test_current_mapping_is_not_rewritten() -> None:
-    catalog = _catalog({V1: _schema("old"), V2: _schema("new")})
+    catalog = synthetic_catalog({V1: flat_schema("old"), V2: flat_schema("new")})
     registry = MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
     raw = {"new": "value"}
 
@@ -113,17 +86,105 @@ def test_current_mapping_is_not_rewritten() -> None:
     assert result is not raw
 
 
-def test_uses_the_newest_matching_schema() -> None:
-    catalog = _catalog({V1: _schema("old"), V2: _schema("old", "new")})
-    registry = MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
+def test_rejects_a_move_whose_source_path_survives_the_transition() -> None:
+    """``old`` is declared renamed to ``new``, yet V2 still accepts ``old``.
 
-    result = migrate_mapping({"old": "value"}, catalog=catalog, registry=registry)
+    Recognition reads a surviving source path as proof that a document predates
+    the transition, so a declaration like this would migrate current documents.
+    Caught where it is written, not where it misfires.
+    """
+    catalog = synthetic_catalog({V1: flat_schema("old"), V2: flat_schema("old", "new")})
 
-    assert result == {"old": "value"}
+    with pytest.raises(MigrationError, match="still exists in"):
+        MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
+
+
+def _enum_schema(field: str, values: list[str]) -> JsonObject:
+    """A one-field grammar restricting *field* to *values* -- unlike
+    ``flat_schema`` (bare ``type: string``, so any value validates), this lets
+    a stale value fail current-schema validation and engage recognition."""
+    return cast(
+        JsonObject,
+        {
+            "type": "object",
+            "properties": {field: {"type": "string", "enum": values}},
+            "additionalProperties": False,
+        },
+    )
+
+
+def test_identity_path_move_remaps_a_value_on_a_stable_key() -> None:
+    """A Move whose old_path == new_path remaps a key's *value* without the
+    key ever disappearing -- the shape a permanent authoring-sugar key (like
+    dbt charts' ``theme:``) needs when its legal *values* narrow but the key
+    itself never goes away, so it can never be "renamed" out of a grammar."""
+    catalog = synthetic_catalog(
+        {
+            V1: _enum_schema("color", ["red", "blue"]),
+            V2: _enum_schema("color", ["blue", "crimson"]),
+        }
+    )
+    registry = MigrationRegistry(
+        [
+            Move(
+                V1,
+                V2,
+                ("color",),
+                ("color",),
+                value_map={"red": "crimson", "blue": "blue"},
+            )
+        ],
+        catalog=catalog,
+    )
+
+    result = migrate_mapping({"color": "red"}, catalog=catalog, registry=registry)
+
+    assert result == {"color": "crimson"}
+
+
+def test_identity_path_move_requires_a_value_map() -> None:
+    """An identity-path Move with no value_map would be a silent no-op --
+    rejected at registration, same as any other declaration that can't do
+    anything a caller would notice."""
+    catalog = synthetic_catalog({V1: flat_schema("color"), V2: flat_schema("color")})
+
+    with pytest.raises(MigrationError, match="value_map"):
+        MigrationRegistry([Move(V1, V2, ("color",), ("color",))], catalog=catalog)
+
+
+def test_identity_path_move_rewrites_yaml_text_in_place() -> None:
+    """The text-preserving rewriter must not treat an identity-path Move's
+    source and destination as separate keys -- doing so would stage the key
+    for both a value update and a removal, and dict-merging those two updates
+    together would delete the key's rewritten value instead of setting it."""
+    catalog = synthetic_catalog(
+        {
+            V1: _enum_schema("color", ["red", "blue"]),
+            V2: _enum_schema("color", ["blue", "crimson"]),
+        }
+    )
+    registry = MigrationRegistry(
+        [
+            Move(
+                V1,
+                V2,
+                ("color",),
+                ("color",),
+                value_map={"red": "crimson", "blue": "blue"},
+            )
+        ],
+        catalog=catalog,
+    )
+
+    migrated = migrate_yaml_text("color: red\n", catalog=catalog, registry=registry)
+
+    assert yaml.safe_load(migrated) == {"color": "crimson"}
 
 
 def test_applies_adjacent_moves_in_order() -> None:
-    catalog = _catalog({V1: _schema("old"), V2: _schema("middle"), V3: _schema("new")})
+    catalog = synthetic_catalog(
+        {V1: flat_schema("old"), V2: flat_schema("middle"), V3: flat_schema("new")}
+    )
     registry = MigrationRegistry(
         [
             Move(V1, V2, ("old",), ("middle",)),
@@ -138,11 +199,11 @@ def test_applies_adjacent_moves_in_order() -> None:
 
 
 def test_declared_move_can_reach_current_schema_without_another_move() -> None:
-    catalog = _catalog(
+    catalog = synthetic_catalog(
         {
-            V1: _schema("old"),
-            V2: _schema("middle"),
-            V3: _schema("middle", "optional"),
+            V1: flat_schema("old"),
+            V2: flat_schema("middle"),
+            V3: flat_schema("middle", "optional"),
         }
     )
     registry = MigrationRegistry([Move(V1, V2, ("old",), ("middle",))], catalog=catalog)
@@ -153,7 +214,7 @@ def test_declared_move_can_reach_current_schema_without_another_move() -> None:
 
 
 def test_conflicting_destination_does_not_mutate_input() -> None:
-    catalog = _catalog({V1: _schema("old", "new"), V2: _schema("new")})
+    catalog = synthetic_catalog({V1: flat_schema("old", "new"), V2: flat_schema("new")})
     registry = MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
     raw = {"old": "old value", "new": "new value"}
     original = deepcopy(raw)
@@ -165,7 +226,7 @@ def test_conflicting_destination_does_not_mutate_input() -> None:
 
 
 def test_rejects_unknown_grammar_with_current_diagnostic() -> None:
-    catalog = _catalog({V1: _schema("old"), V2: _schema("new")})
+    catalog = synthetic_catalog({V1: flat_schema("old"), V2: flat_schema("new")})
     registry = MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
 
     with pytest.raises(UnsupportedSchemaError, match="unexpected"):
@@ -194,9 +255,34 @@ def test_explicit_non_structural_migration_uses_current_diagnostic() -> None:
         )
 
 
-def test_rewrites_a_scalar_move_without_reformatting_comments() -> None:
-    catalog = _catalog({V1: _schema("old"), V2: _schema("new")})
-    registry = MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
+def test_rewrites_a_scalar_relocation_to_a_different_parent() -> None:
+    """A move to a genuinely different parent (not a same-position rename)
+    goes through the scalar setter, which renormalizes the value (quotes it
+    here) -- unlike a same-position rename, which never touches the value's
+    original spelling (`test_renames_a_folded_block_scalar_key_in_place_at_root`
+    and friends)."""
+    catalog = synthetic_catalog(
+        {
+            V1: flat_schema("old"),
+            V2: cast(
+                JsonObject,
+                {
+                    "type": "object",
+                    "properties": {
+                        "wrapper": {
+                            "type": "object",
+                            "properties": {"new": {"type": "string"}},
+                            "additionalProperties": False,
+                        }
+                    },
+                    "additionalProperties": False,
+                },
+            ),
+        }
+    )
+    registry = MigrationRegistry(
+        [Move(V1, V2, ("old",), ("wrapper", "new"))], catalog=catalog
+    )
 
     result = migrate_yaml_text(
         "# preserve me\nold: value\n# preserve me too\n",
@@ -235,7 +321,7 @@ def test_renames_a_block_valued_key_in_place_without_reformatting() -> None:
     """A pure rename (old/new path share the same parent) never relocates
     content, so it's not restricted to scalars: the nested mapping under
     `old:` moves to `new:` untouched, and unrelated comments survive."""
-    catalog = _catalog(_object_schema_pair(old_key="old", new_key="new"))
+    catalog = synthetic_catalog(_object_schema_pair(old_key="old", new_key="new"))
     registry = MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
 
     result = migrate_yaml_text(
@@ -251,7 +337,7 @@ def test_rejects_non_scalar_relocation_to_a_different_parent() -> None:
     """A move to a genuinely different parent (not a same-position rename)
     still can't relocate a nested block without a redump, so it still fails
     loudly instead of guessing."""
-    catalog = _catalog(
+    catalog = synthetic_catalog(
         {
             V1: cast(
                 JsonObject,
@@ -292,7 +378,7 @@ def test_current_recognition_schema_accepts_layout_name_shorthand() -> None:
 
 
 def test_current_pydantic_shorthand_is_not_rejected_by_schema_recognition() -> None:
-    raw = {"theme": "cream"}
+    raw = {"theme": "vivid"}
 
     assert prepare_board_mapping(raw) == raw
 
@@ -407,7 +493,7 @@ def test_prepare_mapping_old_schema_patch_still_migrates_under_boardpatch(
 
     old_schema = _schema_with_axis_field("label")
     new_schema = _schema_with_axis_field("labels")
-    catalog = _catalog({V1: old_schema, V2: new_schema})
+    catalog = synthetic_catalog({V1: old_schema, V2: new_schema})
     registry = MigrationRegistry(
         suffix_rename_moves(
             _AxisHolderPatch,
@@ -477,7 +563,7 @@ def _deletion_catalog() -> YamlSchemaCatalog:
             "additionalProperties": False,
         },
     )
-    return _catalog({V1: old, V2: new})
+    return synthetic_catalog({V1: old, V2: new})
 
 
 def test_deletion_strips_key_from_mapping() -> None:
@@ -508,6 +594,58 @@ def test_deletion_absent_key_is_noop() -> None:
     assert result == {"live": "keep"}
 
 
+def test_deletion_reason_is_reported_when_field_present() -> None:
+    catalog = _deletion_catalog()
+    registry = MigrationRegistry(
+        [],
+        [Deletion(V1, V2, ("dead",), reason="never consumed by any renderer")],
+        catalog=catalog,
+    )
+
+    with pytest.warns(SchemaMigrationWarning, match="never consumed by any renderer"):
+        result = migrate_mapping(
+            {"dead": "gone", "live": "keep"}, catalog=catalog, registry=registry
+        )
+
+    assert result == {"live": "keep"}
+
+
+def test_deletion_reason_is_not_reported_when_field_absent() -> None:
+    catalog = _deletion_catalog()
+    registry = MigrationRegistry(
+        [],
+        [Deletion(V1, V2, ("dead",), reason="never consumed by any renderer")],
+        catalog=catalog,
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        migrate_mapping({"live": "keep"}, catalog=catalog, registry=registry)
+
+    assert not any("never consumed" in str(w.message) for w in caught)
+
+
+def test_deletion_without_reason_emits_no_reason_warning() -> None:
+    catalog = _deletion_catalog()
+    registry = MigrationRegistry(
+        [],
+        [Deletion(V1, V2, ("dead",))],
+        catalog=catalog,
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        migrate_mapping(
+            {"dead": "gone", "live": "keep"}, catalog=catalog, registry=registry
+        )
+
+    messages = [str(w.message) for w in caught]
+    assert messages == [
+        "dbt charts migrated this YAML in memory; `dct migrate` may be able to "
+        "update the file."
+    ]
+
+
 def test_deletion_strips_key_from_yaml_text() -> None:
     catalog = _deletion_catalog()
     registry = MigrationRegistry(
@@ -525,6 +663,28 @@ def test_deletion_strips_key_from_yaml_text() -> None:
     assert "dead:" not in result
     assert "live:" in result
     assert "# comment\n" in result
+
+
+def test_deletion_reason_is_reported_from_yaml_text_rewrite() -> None:
+    """The file-rewrite path (dct migrate) must surface a Deletion.reason too,
+
+    not only the in-memory path (migrate_mapping). Before the fix,
+    migrate_yaml_text called _apply_deletions and discarded its returned
+    messages.
+    """
+    catalog = _deletion_catalog()
+    registry = MigrationRegistry(
+        [],
+        [Deletion(V1, V2, ("dead",), reason="never consumed by any renderer")],
+        catalog=catalog,
+    )
+
+    with pytest.warns(SchemaMigrationWarning, match="never consumed by any renderer"):
+        result = migrate_yaml_text(
+            "dead: gone\nlive: keep\n", catalog=catalog, registry=registry
+        )
+
+    assert "dead:" not in result
 
 
 def test_deletion_current_schema_document_untouched() -> None:
@@ -554,7 +714,9 @@ def test_deletion_validates_source_path_must_exist() -> None:
 
 
 def test_deletion_validates_adjacent_schema() -> None:
-    catalog = _catalog({V1: _schema("a"), V2: _schema("a"), V3: _schema("a")})
+    catalog = synthetic_catalog(
+        {V1: flat_schema("a"), V2: flat_schema("a"), V3: flat_schema("a")}
+    )
 
     with pytest.raises(MigrationError, match="immediately succeeding"):
         MigrationRegistry(
@@ -608,7 +770,7 @@ def _legend_catalog() -> YamlSchemaCatalog:
             "additionalProperties": False,
         },
     )
-    return _catalog({V1: old, V2: new})
+    return synthetic_catalog({V1: old, V2: new})
 
 
 def _current_boundary_catalog() -> YamlSchemaCatalog:
@@ -617,26 +779,26 @@ def _current_boundary_catalog() -> YamlSchemaCatalog:
     Simulates an unreleased deletion — the latest frozen schema still has the
     field, but the live Pydantic model has removed it.
     """
-    latest_schema: JsonObject = _schema("dead", "live")
-    current_schema: JsonObject = _schema("live")
+    latest_schema: JsonObject = flat_schema("dead", "live")
+    current_schema: JsonObject = flat_schema("live")
     entries = (
         YamlSchemaEntry(
             version=V2,
-            released_at=date(2026, 6, 1),
+            released_at=released(0),
             filename=f"{V2}.json",
             sha256="test2",
             predecessor=V1,
         ),
         YamlSchemaEntry(
             version=V1,
-            released_at=date(2026, 5, 1),
+            released_at=released(1),
             filename=f"{V1}.json",
             sha256="test1",
             predecessor=None,
         ),
     )
     return YamlSchemaCatalog(
-        entries, {V1: _schema("ancient"), V2: latest_schema}, current_schema
+        entries, {V1: flat_schema("ancient"), V2: latest_schema}, current_schema
     )
 
 
@@ -816,7 +978,7 @@ def test_deletion_strips_nested_list_item_from_yaml_text() -> None:
             "additionalProperties": False,
         },
     )
-    catalog = _catalog({V1: old_schema, V2: new_schema})
+    catalog = synthetic_catalog({V1: old_schema, V2: new_schema})
     registry = MigrationRegistry(
         [],
         [Deletion(V1, V2, ("legend", "dead"))],
@@ -834,6 +996,278 @@ def test_deletion_strips_nested_list_item_from_yaml_text() -> None:
     assert "rows:" in result
 
 
+def test_move_renames_key_inside_list_item_mapping() -> None:
+    """A rename applies inside a list-nested item (rows/cols/grid.items/
+    tabs.items) in migrate_mapping.
+
+    Coverage of a Move whose path crosses a list container, which the
+    board-nesting groups all do. ``_move_value`` handles it: the destination
+    walk substitutes the wildcard bindings ``_source_locations`` collected on
+    the way down, so it re-descends through the same list index rather than
+    needing dict-only ``.get()`` semantics.
+    """
+    item_v1: JsonObject = cast(
+        JsonObject,
+        {
+            "type": "object",
+            "properties": {"description": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    )
+    item_v2: JsonObject = cast(
+        JsonObject,
+        {
+            "type": "object",
+            "properties": {"notes": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    )
+    old_schema: JsonObject = cast(
+        JsonObject,
+        {
+            "type": "object",
+            "properties": {"rows": {"type": "array", "items": item_v1}},
+            "additionalProperties": False,
+        },
+    )
+    new_schema: JsonObject = cast(
+        JsonObject,
+        {
+            "type": "object",
+            "properties": {"rows": {"type": "array", "items": item_v2}},
+            "additionalProperties": False,
+        },
+    )
+    catalog = synthetic_catalog({V1: old_schema, V2: new_schema})
+    registry = MigrationRegistry(
+        [Move(V1, V2, ("rows", "*", "description"), ("rows", "*", "notes"))],
+        catalog=catalog,
+    )
+
+    result = migrate_mapping(
+        {"rows": [{"description": "first"}, {"description": "second"}]},
+        catalog=catalog,
+        registry=registry,
+    )
+
+    assert result == {"rows": [{"notes": "first"}, {"notes": "second"}]}
+
+
+def test_move_renames_key_inside_list_item_mapping_in_yaml_text() -> None:
+    """The same list-nested rename round-trips through the text-preserving
+    writer, leaving each item's value byte-identical rather than renormalizing
+    it through the scalar setter -- a rename changes only the key token, so the
+    writer's ``rename_key_at_path`` path carries no restriction on value shape.
+    """
+    item_v1: JsonObject = cast(
+        JsonObject,
+        {
+            "type": "object",
+            "properties": {"description": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    )
+    item_v2: JsonObject = cast(
+        JsonObject,
+        {
+            "type": "object",
+            "properties": {"notes": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    )
+    old_schema: JsonObject = cast(
+        JsonObject,
+        {
+            "type": "object",
+            "properties": {"rows": {"type": "array", "items": item_v1}},
+            "additionalProperties": False,
+        },
+    )
+    new_schema: JsonObject = cast(
+        JsonObject,
+        {
+            "type": "object",
+            "properties": {"rows": {"type": "array", "items": item_v2}},
+            "additionalProperties": False,
+        },
+    )
+    catalog = synthetic_catalog({V1: old_schema, V2: new_schema})
+    registry = MigrationRegistry(
+        [Move(V1, V2, ("rows", "*", "description"), ("rows", "*", "notes"))],
+        catalog=catalog,
+    )
+
+    yaml_text = "rows:\n  - description: first\n  - description: second\n"
+
+    result = migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+
+    assert result == "rows:\n  - notes: first\n  - notes: second\n"
+
+
+def test_renames_a_folded_block_scalar_key_in_place_at_root() -> None:
+    """A rename must key-rename block scalars in place, never round-trip the
+    value through the scalar setter -- `>` folds the string onto one logical
+    line, but the parsed value is still multi-line (a trailing newline), which
+    the setter used for genuine relocations refuses to write."""
+    catalog = synthetic_catalog({V1: flat_schema("old"), V2: flat_schema("new")})
+    registry = MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
+    yaml_text = "# preserve me\nold: >\n  a folded value\n  spanning two lines\n"
+
+    result = migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+
+    assert "old:" not in result
+    assert "# preserve me\n" in result
+    assert yaml.safe_load(result)["new"] == yaml.safe_load(yaml_text)["old"]
+
+
+def test_renames_a_literal_block_scalar_key_in_place_at_root() -> None:
+    """Same as the folded case but for `|`, which preserves line breaks
+    literally instead of folding them."""
+    catalog = synthetic_catalog({V1: flat_schema("old"), V2: flat_schema("new")})
+    registry = MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
+    yaml_text = "# preserve me\nold: |\n  a literal value\n  spanning two lines\n"
+
+    result = migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+
+    assert "old:" not in result
+    assert "# preserve me\n" in result
+    assert yaml.safe_load(result)["new"] == yaml.safe_load(yaml_text)["old"]
+
+
+def test_renames_a_folded_block_scalar_key_at_a_nested_chart_position() -> None:
+    """The same rename, one level deeper -- a chart's own key, not the
+    board root -- to prove the fast path isn't root-only."""
+    chart_schema = cast(
+        JsonObject,
+        {
+            "type": "object",
+            "properties": {"description": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    )
+    chart_schema_v2 = cast(
+        JsonObject,
+        {
+            "type": "object",
+            "properties": {"notes": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    )
+    catalog = synthetic_catalog(
+        {
+            V1: cast(
+                JsonObject,
+                {
+                    "type": "object",
+                    "properties": {
+                        "charts": {
+                            "type": "object",
+                            "properties": {"c1": chart_schema},
+                            "additionalProperties": False,
+                        }
+                    },
+                    "additionalProperties": False,
+                },
+            ),
+            V2: cast(
+                JsonObject,
+                {
+                    "type": "object",
+                    "properties": {
+                        "charts": {
+                            "type": "object",
+                            "properties": {"c1": chart_schema_v2},
+                            "additionalProperties": False,
+                        }
+                    },
+                    "additionalProperties": False,
+                },
+            ),
+        }
+    )
+    registry = MigrationRegistry(
+        [Move(V1, V2, ("charts", "c1", "description"), ("charts", "c1", "notes"))],
+        catalog=catalog,
+    )
+    yaml_text = (
+        "charts:\n"
+        "  c1:\n"
+        "    description: >\n"
+        "      a folded chart notes\n"
+        "      spanning two lines\n"
+    )
+
+    result = migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+
+    assert "description:" not in result
+    assert "notes:" in result
+    assert (
+        yaml.safe_load(result)["charts"]["c1"]["notes"]
+        == yaml.safe_load(yaml_text)["charts"]["c1"]["description"]
+    )
+
+
+def test_renames_a_block_scalar_key_inside_a_list_item_in_yaml_text() -> None:
+    """The same rename inside a list-nested item (rows/cols/grid.items/
+    tabs.items) -- block scalars must survive there too, not just at a plain
+    mapping position."""
+    item_v1: JsonObject = cast(
+        JsonObject,
+        {
+            "type": "object",
+            "properties": {"description": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    )
+    item_v2: JsonObject = cast(
+        JsonObject,
+        {
+            "type": "object",
+            "properties": {"notes": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    )
+    catalog = synthetic_catalog(
+        {
+            V1: cast(
+                JsonObject,
+                {
+                    "type": "object",
+                    "properties": {"items": {"type": "array", "items": item_v1}},
+                    "additionalProperties": False,
+                },
+            ),
+            V2: cast(
+                JsonObject,
+                {
+                    "type": "object",
+                    "properties": {"items": {"type": "array", "items": item_v2}},
+                    "additionalProperties": False,
+                },
+            ),
+        }
+    )
+    registry = MigrationRegistry(
+        [Move(V1, V2, ("items", "*", "description"), ("items", "*", "notes"))],
+        catalog=catalog,
+    )
+    yaml_text = (
+        "items:\n"
+        "  - description: |\n"
+        "      a literal grid item notes\n"
+        "      spanning two lines\n"
+    )
+
+    result = migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+
+    assert "description:" not in result
+    assert "notes:" in result
+    assert (
+        yaml.safe_load(result)["items"][0]["notes"]
+        == yaml.safe_load(yaml_text)["items"][0]["description"]
+    )
+
+
 def test_deletion_raises_on_flow_style_yaml() -> None:
     """Deletion in a flow-style mapping raises MigrationError instead of silently no-oping.
 
@@ -841,7 +1275,7 @@ def test_deletion_raises_on_flow_style_yaml() -> None:
     editor's line-regex only matches block-mapping key lines, so it cannot remove
     ``dead`` without reformatting the whole mapping.  Without an equality check
     the file comes back byte-identical while the in-memory result has ``dead``
-    gone — the user is told to run ``dft migrate`` on a file that already reports
+    gone — the user is told to run ``dct migrate`` on a file that already reports
     as current.  The equality check catches this before returning a wrong result.
     """
     catalog = _legend_catalog()
@@ -889,7 +1323,7 @@ def test_deletion_raises_on_block_scalar_containing_key() -> None:
             "additionalProperties": False,
         },
     )
-    catalog = _catalog({V1: old, V2: new})
+    catalog = synthetic_catalog({V1: old, V2: new})
     registry = MigrationRegistry(
         [],
         [Deletion(V1, V2, ("dead",))],
@@ -946,7 +1380,7 @@ def _orphan_parent_catalog() -> YamlSchemaCatalog:
             "additionalProperties": False,
         },
     )
-    return _catalog({V1: old, V2: new})
+    return synthetic_catalog({V1: old, V2: new})
 
 
 def test_deletion_cleans_up_orphaned_parent_in_mapping() -> None:
@@ -1028,7 +1462,7 @@ def _sibling_parent_catalog() -> YamlSchemaCatalog:
             "additionalProperties": False,
         },
     )
-    return _catalog({V1: old, V2: new})
+    return synthetic_catalog({V1: old, V2: new})
 
 
 def test_deletion_does_not_affect_sibling_parent_in_mapping() -> None:
@@ -1109,7 +1543,7 @@ def _open_legend_catalog() -> YamlSchemaCatalog:
             "additionalProperties": True,
         },
     )
-    return _catalog({V1: old, V2: new})
+    return synthetic_catalog({V1: old, V2: new})
 
 
 def test_deletion_does_not_remove_null_valued_key_in_yaml_text() -> None:
@@ -1224,7 +1658,7 @@ def test_deletion_prunes_style_parent_with_inline_comment_in_yaml_text() -> None
             "additionalProperties": True,
         },
     )
-    catalog = _catalog({V1: old, V2: new})
+    catalog = synthetic_catalog({V1: old, V2: new})
     registry = MigrationRegistry(
         [],
         [Deletion(V1, V2, ("style", "legend", "dead"))],
@@ -1281,7 +1715,7 @@ def test_deletion_does_not_remove_column_zero_sequence_key_in_yaml_text() -> Non
             "additionalProperties": False,
         },
     )
-    catalog = _catalog({V1: old, V2: new})
+    catalog = synthetic_catalog({V1: old, V2: new})
     registry = MigrationRegistry(
         [],
         [Deletion(V1, V2, ("legend", "dead"))],
@@ -1298,7 +1732,7 @@ def test_deletion_does_not_remove_column_zero_sequence_key_in_yaml_text() -> Non
 def test_deletion_does_not_remove_preexisting_empty_dict_in_mapping() -> None:
     """A pre-existing empty mapping (authored style: {}) must not be silently deleted.
 
-    _delete_tail_recursive only removes a child dict when this deletion caused
+    _delete_tails_recursive only removes a child dict when this deletion caused
     it to become empty.  An empty dict that existed before the migration ran
     must be passed through unchanged.
     """
@@ -1363,7 +1797,7 @@ def test_deletion_does_not_remove_preexisting_empty_dict_in_mapping() -> None:
             "additionalProperties": False,
         },
     )
-    catalog = _catalog({V1: old, V2: new})
+    catalog = synthetic_catalog({V1: old, V2: new})
     registry = MigrationRegistry(
         [],
         [Deletion(V1, V2, ("legend", "dead"))],
@@ -1490,18 +1924,22 @@ def test_pruned_block_does_not_delete_sibling_leading_comment() -> None:
     assert "live: keep" in result
 
 
-def test_pending_moves_are_loaded_and_applied() -> None:
-    """A pending module's (current.py) moves() land in the registry, not just avoid raising.
+def test_a_pending_move_is_validated_against_the_real_catalog() -> None:
+    """A pending module's moves() are validated against the real packaged catalog.
 
-    catalog.current_schema is a fully computed live schema, generated the same
-    way as any frozen snapshot -- Deletion already validates its own _CURRENT
-    carve-out against it. Move gets the same treatment. This deliberately does
-    not borrow whatever rename versions/current.py happens to declare right
-    now (that content gets frozen away at every release, which would break
-    this test on a schedule) -- it uses two real, structural top-level
-    AuthoredBoard fields (title/id) that are certain to keep existing, so the
-    returned Move is genuinely validated against the real packaged catalog,
-    not just accepted because it's empty.
+    ``title``/``id`` are two real, structural top-level fields that are certain
+    to keep existing — which is exactly what makes this Move incoherent: it
+    declares a rename away from a field the target grammar still accepts.
+    Recognition reads a surviving source path as proof that a board predates the
+    transition, so such a declaration would migrate perfectly current boards.
+
+    Asserting the rejection rather than the load is the honest test here.
+    Immediately after a freeze ``current_schema`` equals the newest frozen
+    grammar, so *no* coherent pending Move can exist against the real catalog —
+    correctly, since nothing has been renamed yet. The load-and-apply property
+    is covered on a synthetic boundary by
+    ``test_migrates_old_shape_document_via_pending_move``, which does not
+    depend on where in the freeze cycle the repo happens to sit.
     """
     import sys
     import types
@@ -1518,11 +1956,8 @@ def test_pending_moves_are_loaded_and_applied() -> None:
     sys.modules[pending_dotted] = fake_pending
     _board_migration_context.cache_clear()
     try:
-        catalog, registry = _board_migration_context()
-        moves = registry.transition_from(catalog.latest.version)
-        assert any(
-            move.old_path == ("title",) and move.new_path == ("id",) for move in moves
-        )
+        with pytest.raises(MigrationError, match="still exists in"):
+            _board_migration_context()
     finally:
         if original is not None:
             sys.modules[pending_dotted] = original
@@ -1533,26 +1968,26 @@ def test_pending_moves_are_loaded_and_applied() -> None:
 
 def _current_boundary_move_catalog() -> YamlSchemaCatalog:
     """V2 is latest with 'old'; current_schema has 'new' (unreleased rename)."""
-    latest_schema: JsonObject = _schema("old")
-    current_schema: JsonObject = _schema("new")
+    latest_schema: JsonObject = flat_schema("old")
+    current_schema: JsonObject = flat_schema("new")
     entries = (
         YamlSchemaEntry(
             version=V2,
-            released_at=date(2026, 6, 1),
+            released_at=released(0),
             filename=f"{V2}.json",
             sha256="test2",
             predecessor=V1,
         ),
         YamlSchemaEntry(
             version=V1,
-            released_at=date(2026, 5, 1),
+            released_at=released(1),
             filename=f"{V1}.json",
             sha256="test1",
             predecessor=None,
         ),
     )
     return YamlSchemaCatalog(
-        entries, {V1: _schema("ancient"), V2: latest_schema}, current_schema
+        entries, {V1: flat_schema("ancient"), V2: latest_schema}, current_schema
     )
 
 
@@ -1614,14 +2049,20 @@ def _conditional_move_catalog() -> YamlSchemaCatalog:
 
     Both schemas use additionalProperties: false on the chart so that
     documents with style.tone are recognised as V1 (not V2/current),
-    triggering the ConditionalMove.
+    triggering the ConditionalMove. ``type`` carries an ``enum``, mirroring
+    the real discriminated chart union (`AuthoredChart`'s per-family ``if``/
+    ``then`` branches each declare ``type: {enum: [...]}``) -- the positional
+    gate requires exactly that shape to tell a declared chart position from an
+    open one. ``rows``/``cols`` recurse via a self-``$ref`` so the gate can
+    reach a chart nested under rows -> cols -> charts, the shape real boards
+    use.
     """
     chart_v1: JsonObject = cast(
         JsonObject,
         {
             "type": "object",
             "properties": {
-                "type": {"type": "string"},
+                "type": {"type": "string", "enum": ["kpi", "callout"]},
                 "style": {
                     "type": "object",
                     "properties": {"tone": {"type": "string"}},
@@ -1641,7 +2082,7 @@ def _conditional_move_catalog() -> YamlSchemaCatalog:
         {
             "type": "object",
             "properties": {
-                "type": {"type": "string"},
+                "type": {"type": "string", "enum": ["kpi", "callout"]},
                 "support": {
                     "type": "object",
                     "properties": {
@@ -1659,7 +2100,9 @@ def _conditional_move_catalog() -> YamlSchemaCatalog:
         {
             "type": "object",
             "properties": {
-                "charts": {"type": "object", "additionalProperties": chart_v1}
+                "charts": {"type": "object", "additionalProperties": chart_v1},
+                "rows": {"type": "array", "items": {"$ref": "#"}},
+                "cols": {"type": "array", "items": {"$ref": "#"}},
             },
             "additionalProperties": True,
         },
@@ -1669,12 +2112,14 @@ def _conditional_move_catalog() -> YamlSchemaCatalog:
         {
             "type": "object",
             "properties": {
-                "charts": {"type": "object", "additionalProperties": chart_v2}
+                "charts": {"type": "object", "additionalProperties": chart_v2},
+                "rows": {"type": "array", "items": {"$ref": "#"}},
+                "cols": {"type": "array", "items": {"$ref": "#"}},
             },
             "additionalProperties": True,
         },
     )
-    return _catalog({V1: v1, V2: v2})
+    return synthetic_catalog({V1: v1, V2: v2})
 
 
 def _cond_move(catalog: YamlSchemaCatalog) -> ConditionalMove:
@@ -1756,7 +2201,7 @@ def test_conditional_move_conflict_raises_when_destination_already_set() -> None
     result = deepcopy(document)
 
     with pytest.raises(MigrationConflictError, match="k1"):
-        _apply_conditional_move(result, rule)
+        _apply_conditional_move(result, rule, catalog)
 
 
 def test_conditional_move_skips_non_matching_chart_type() -> None:
@@ -1765,8 +2210,9 @@ def test_conditional_move_skips_non_matching_chart_type() -> None:
     Tests _apply_conditional_move directly — the synthetic V2 schema
     purposely excludes ``style`` to force V1 recognition for KPI documents,
     but the callout test doesn't need schema round-trip.  The important
-    invariant is that _apply_conditional_move_recursive only acts on
-    dicts whose ``type`` equals the rule's chart_type.
+    invariant is that _apply_conditional_move_recursive only acts on dicts
+    whose ``type`` equals the rule's chart_type *and* whose position the
+    source grammar declares as that chart family.
     """
     from copy import deepcopy
 
@@ -1777,7 +2223,7 @@ def test_conditional_move_skips_non_matching_chart_type() -> None:
     document = {"charts": {"c1": {"type": "callout", "style": {"tone": "warning"}}}}
     result = deepcopy(document)
 
-    drop_warnings = _apply_conditional_move(result, rule)
+    drop_warnings = _apply_conditional_move(result, rule, catalog)
 
     # callout's style.tone must survive untouched, no warnings emitted
     assert result["charts"]["c1"]["style"]["tone"] == "warning"
@@ -1798,7 +2244,9 @@ def test_conditional_move_absent_source_key_is_noop() -> None:
 
 def test_conditional_move_validates_wrong_adjacency_raises() -> None:
     """A ConditionalMove must target the immediately succeeding schema."""
-    catalog = _catalog({V1: _schema("a"), V2: _schema("a"), V3: _schema("a")})
+    catalog = synthetic_catalog(
+        {V1: flat_schema("a"), V2: flat_schema("a"), V3: flat_schema("a")}
+    )
 
     with pytest.raises(MigrationError, match="immediately succeeding"):
         MigrationRegistry(
@@ -1889,11 +2337,10 @@ def test_conditional_move_validates_destination_tail_must_exist() -> None:
 def test_conditional_move_nested_board_dict_recurse() -> None:
     """ConditionalMove reaches chart dicts nested under rows/cols dicts.
 
-    Tests _apply_conditional_move directly: the synthetic catalog has
-    additionalProperties:true at document root (rows/cols are unconstrained),
-    so a rows-only document matches both schemas → schema recognition
-    returns _CURRENT → no migration loop.  Testing _apply_conditional_move
-    directly isolates the recursive walk behaviour without the schema gate.
+    Tests _apply_conditional_move directly rather than through migrate_mapping,
+    to isolate the recursive walk's reach from schema recognition -- rows and
+    cols recurse via a self-$ref in the synthetic catalog (matching how real
+    boards nest), but this test's document never exercises recognition at all.
     """
     from copy import deepcopy
 
@@ -1920,7 +2367,7 @@ def test_conditional_move_nested_board_dict_recurse() -> None:
     }
     result = deepcopy(document)
 
-    drop_warnings = _apply_conditional_move(result, rule)
+    drop_warnings = _apply_conditional_move(result, rule, catalog)
 
     chart = result["rows"][0]["cols"][0]["charts"]["nested_kpi"]
     assert chart["support"]["tone"] == "positive"
@@ -2018,7 +2465,7 @@ def _marks_boundary_catalog() -> YamlSchemaCatalog:
         ),
     )
     return YamlSchemaCatalog(
-        entries, {V1: _schema("ancient"), V2: latest_schema}, current_schema
+        entries, {V1: flat_schema("ancient"), V2: latest_schema}, current_schema
     )
 
 
@@ -2058,3 +2505,44 @@ def test_marks_dead_slots_pending_deletions_strip_their_keys() -> None:
     )
 
     assert result == {"marks": {"rule": {"stroke": {}}}}
+
+
+def test_relative_field_paths_does_not_recompute_shared_subtrees() -> None:
+    """`_relative_field_paths` must memoize instead of re-walking per branch.
+
+    A prior implementation threaded ``seen`` per branch rather than
+    memoizing, so a shared model (``FontStyle``, a style-patch tree, every
+    chart family's own fields, ...) was re-walked once per distinct path
+    reaching it, and board self-nesting (``rows``/``cols``/``tabs.items``,
+    all mutually reachable) multiplied the path count combinatorially --
+    a 20s+ cold ``_board_migration_context()`` build and four tests blowing
+    their 30s pytest-timeout inside the walk. A wall-clock assertion here
+    would be flaky under load, so pin the fix with a call-count assertion
+    instead: ``_relative_field_paths`` memoizes on ``(model, seen, tails)``,
+    so the number of distinct subproblems it actually computes is small and
+    bounded (in the hundreds) regardless of how many absolute paths the
+    walk ultimately yields. Both bounds matter: a regression back to
+    per-branch recomputation would blow the upper one by orders of
+    magnitude, and a regression that stopped routing through the memo
+    entirely (e.g. a rewrite that inlines the walk) would pass a
+    misses-only-upper-bound check vacuously at 0 -- the lower bound catches
+    that.
+    """
+    from dbt_charts.core.compile.migrations.migrations import (
+        _closure,
+        _relative_field_paths,
+    )
+    from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+
+    _relative_field_paths.cache_clear()
+    _closure.cache_clear()
+
+    _relative_field_paths(AuthoredBoard, frozenset(), frozenset({("notes",)}))
+
+    misses = _relative_field_paths.cache_info().misses
+    assert 0 < misses < 2000, (
+        f"_relative_field_paths computed {misses} distinct (model, seen, tails) "
+        "subproblems -- expected each reachable model to be walked once, "
+        "not re-derived per branch (and not zero, which would mean the walk "
+        "stopped routing through the memo at all)"
+    )

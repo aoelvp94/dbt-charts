@@ -215,7 +215,7 @@ class TestDashesRenderEmission:
         from dbt_charts.core.compile.config import get_theme_style
 
         # Build a board with dashes on the editorial theme (legend.disable=true).
-        editorial = get_theme_style("editorial")
+        editorial = get_theme_style("clarity")
         charts = editorial.charts.model_copy(update={"dashes": SAMPLE_DASHES})
         board_rs, board_ctx = resolve_style_and_context(
             editorial.model_copy(update={"charts": charts})

@@ -7,6 +7,9 @@ for profiler column cards and value distribution displays.
 import json
 import re
 from typing import TYPE_CHECKING
+from xml.etree import ElementTree
+
+import pytest
 
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
@@ -20,6 +23,11 @@ from dbt_charts.core.render.chart.vega_lite import render_chart
 from dbt_charts.core.render.placeholder import generate_placeholder_data
 
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
+
+
+def _rects(svg: str) -> list[dict[str, str]]:
+    root = ElementTree.fromstring(svg)
+    return [element.attrib for element in root.findall("{*}rect")]
 
 
 class TestSparkBarBasic:
@@ -110,6 +118,110 @@ class TestSparkBarBasic:
         assert "..." in svg
         # Full label should not appear
         assert "This is a very long category name that should be truncated" not in svg
+
+
+class TestSparkBarSignedValues:
+    """Signed magnitude rows use one shared midpoint."""
+
+    def test_reversed_mixed_sign_rows_render_from_shared_midpoint(
+        self, make_chart
+    ) -> None:
+        data = [
+            {"value": "Loss", "frequency": -20},
+            {"value": "Gain", "frequency": 40},
+        ]
+        chart = resolve(
+            make_chart("spark_bar", x="frequency", y="value"),
+            data,
+            chart_style_context=_BOARD_CTX,
+        )
+
+        rects = _rects(
+            render_spark_bar_svg(chart, data, width=300, board_style=_BOARD_STYLE)
+        )
+
+        assert len(rects) == 4
+        negative_track, negative_fill, positive_track, positive_fill = rects
+        midpoint = float(negative_track["x"]) + float(negative_track["width"]) / 2
+        assert float(negative_fill["width"]) > 0
+        assert float(negative_fill["x"]) + float(
+            negative_fill["width"]
+        ) == pytest.approx(midpoint)
+        assert float(positive_fill["x"]) == pytest.approx(midpoint)
+        assert negative_track["x"] == positive_track["x"]
+        assert negative_track["width"] == positive_track["width"]
+
+    def test_all_negative_rows_render_left_of_shared_midpoint(self, make_chart) -> None:
+        data = [
+            {"value": "Small loss", "frequency": -20},
+            {"value": "Large loss", "frequency": -40},
+        ]
+        chart = resolve(
+            make_chart("spark_bar", x="frequency", y="value"),
+            data,
+            chart_style_context=_BOARD_CTX,
+        )
+
+        rects = _rects(
+            render_spark_bar_svg(chart, data, width=300, board_style=_BOARD_STYLE)
+        )
+
+        assert len(rects) == 4
+        first_track, first_fill, second_track, second_fill = rects
+        midpoint = float(first_track["x"]) + float(first_track["width"]) / 2
+        for fill in (first_fill, second_fill):
+            assert float(fill["width"]) > 0
+            assert float(fill["x"]) + float(fill["width"]) == pytest.approx(midpoint)
+        assert first_track["x"] == second_track["x"]
+        assert first_track["width"] == second_track["width"]
+
+    def test_all_nonnegative_rows_keep_left_edge_geometry(self, make_chart) -> None:
+        data = [
+            {"value": "Small gain", "frequency": 20},
+            {"value": "Large gain", "frequency": 40},
+        ]
+        chart = resolve(
+            make_chart("spark_bar", x="frequency", y="value"),
+            data,
+            chart_style_context=_BOARD_CTX,
+        )
+
+        rects = _rects(
+            render_spark_bar_svg(chart, data, width=300, board_style=_BOARD_STYLE)
+        )
+
+        assert len(rects) == 4
+        first_track, first_fill, second_track, second_fill = rects
+        assert float(first_fill["x"]) == pytest.approx(float(first_track["x"]))
+        assert float(second_fill["x"]) == pytest.approx(float(second_track["x"]))
+        assert float(second_fill["width"]) == pytest.approx(
+            float(second_track["width"])
+        )
+
+    def test_positive_finite_row_renders_when_another_value_is_infinite(
+        self, make_chart
+    ) -> None:
+        data = [
+            {"value": "Finite", "frequency": 40},
+            {"value": "Infinite", "frequency": float("inf")},
+        ]
+        chart = resolve(
+            make_chart("spark_bar", x="frequency", y="value"),
+            data,
+            chart_style_context=_BOARD_CTX,
+        )
+
+        rects = _rects(
+            render_spark_bar_svg(chart, data, width=300, board_style=_BOARD_STYLE)
+        )
+
+        assert len(rects) == 3
+        finite_track, finite_fill, infinite_track = rects
+        assert float(finite_fill["x"]) == pytest.approx(float(finite_track["x"]))
+        assert float(finite_fill["width"]) == pytest.approx(
+            float(finite_track["width"])
+        )
+        assert infinite_track["y"] != finite_track["y"]
 
 
 class TestSparkBarDimensions:
@@ -245,16 +357,190 @@ class TestSparkBarEmpty:
         assert svg.startswith("<svg")
 
 
+class TestSparkBarNonNumericValue:
+    """spark_bar's x is the magnitude and y is the label — the reverse of every
+    other cartesian family. Authoring the cartesian order (x: <text>, y: <number>)
+    must raise, not silently render an all-zero-width chart."""
+
+    def test_non_numeric_x_raises_chart_data_error(self, make_chart) -> None:
+        """A text x field (the cartesian-order mistake) raises ChartDataError
+        instead of rendering every bar at zero width."""
+        from dbt_charts.core.diagnostics.chart_data import ChartDataError
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_SPARK_BAR_VALUE_NOT_NUMERIC,
+        )
+
+        data = [
+            {"product": "Widget", "revenue": 100},
+            {"product": "Gadget", "revenue": 50},
+        ]
+        chart = resolve(
+            make_chart("spark_bar", x="product", y="revenue"),
+            data,
+            chart_style_context=_BOARD_CTX,
+        )
+
+        with pytest.raises(ChartDataError) as exc_info:
+            render_spark_bar_svg(chart, data, board_style=_BOARD_STYLE)
+
+        assert exc_info.value.code is ERR_SPARK_BAR_VALUE_NOT_NUMERIC
+        assert "product" in str(exc_info.value)
+        assert "test_spark_bar" in str(exc_info.value)
+
+    def test_numeric_x_with_null_rows_still_renders(self, make_chart) -> None:
+        """A value column mixing real numbers with NULLs is sparse real-world
+        data, not a data-shape error — it must still render."""
+        data = [
+            {"value": "A", "count": 100},
+            {"value": "B", "count": None},
+            {"value": "C", "count": 50},
+        ]
+        chart = resolve(
+            make_chart("spark_bar", x="count", y="value"),
+            data,
+            chart_style_context=_BOARD_CTX,
+        )
+
+        svg = render_spark_bar_svg(chart, data, board_style=_BOARD_STYLE)
+
+        assert svg.startswith("<svg")
+        assert "<rect" in svg
+
+    def test_mixed_numeric_and_text_x_raises_chart_data_error(self, make_chart) -> None:
+        """A value column that is numeric for some rows and text for others is
+        a genuine data-shape bug (not sparse NULLs) — it must raise
+        ChartDataError naming the offending value, not crash inside
+        ``float()`` as a bare, unclassified ValueError."""
+        from dbt_charts.core.diagnostics.chart_data import ChartDataError
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_SPARK_BAR_VALUE_NOT_NUMERIC,
+        )
+
+        data = [
+            {"value": "A", "count": 100},
+            {"value": "B", "count": "N/A"},
+        ]
+        chart = resolve(
+            make_chart("spark_bar", x="count", y="value"),
+            data,
+            chart_style_context=_BOARD_CTX,
+        )
+
+        with pytest.raises(ChartDataError) as exc_info:
+            render_spark_bar_svg(chart, data, board_style=_BOARD_STYLE)
+
+        assert exc_info.value.code is ERR_SPARK_BAR_VALUE_NOT_NUMERIC
+        assert "count" in str(exc_info.value)
+        assert "N/A" in str(exc_info.value)
+
+    def test_typoed_x_column_reports_not_found_not_a_swap(self, make_chart) -> None:
+        """A misspelled x column must say the column is absent and list what the
+        query returned — NOT tell the author to swap x and y.
+
+        A missing key makes every row.get() return None, which by value alone
+        is indistinguishable from an all-NULL column. Without the key check
+        this fell through to the swap hint, confidently prescribing a
+        reordering of already-correct YAML for what is really a typo."""
+        from dbt_charts.core.diagnostics.chart_data import ChartDataError
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_SPARK_BAR_VALUE_FIELD_NOT_FOUND,
+        )
+
+        data = [
+            {"category": "A", "revenue": 100},
+            {"category": "B", "revenue": 50},
+        ]
+        chart = resolve(
+            make_chart("spark_bar", x="revenu", y="category"),
+            data,
+            chart_style_context=_BOARD_CTX,
+        )
+
+        with pytest.raises(ChartDataError) as exc_info:
+            render_spark_bar_svg(chart, data, board_style=_BOARD_STYLE)
+
+        assert exc_info.value.code is ERR_SPARK_BAR_VALUE_FIELD_NOT_FOUND
+        message = str(exc_info.value)
+        assert "revenu" in message
+        # Names what the query actually returned, so the typo is obvious.
+        assert "category" in message and "revenue" in message
+        # Must NOT prescribe the swap — that is the wrong fix for a typo.
+        assert "swap" not in message.lower()
+
+    def test_present_but_all_null_x_reports_non_numeric_not_missing(
+        self, make_chart
+    ) -> None:
+        """The mirror of the typo case: a column that IS present but holds only
+        NULLs is a real magnitude-channel problem, so it keeps the swap hint
+        rather than claiming the column is absent."""
+        from dbt_charts.core.diagnostics.chart_data import ChartDataError
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_SPARK_BAR_VALUE_NOT_NUMERIC,
+        )
+
+        data = [
+            {"category": "A", "revenue": None},
+            {"category": "B", "revenue": None},
+        ]
+        chart = resolve(
+            make_chart("spark_bar", x="revenue", y="category"),
+            data,
+            chart_style_context=_BOARD_CTX,
+        )
+
+        with pytest.raises(ChartDataError) as exc_info:
+            render_spark_bar_svg(chart, data, board_style=_BOARD_STYLE)
+
+        assert exc_info.value.code is ERR_SPARK_BAR_VALUE_NOT_NUMERIC
+        assert "revenue" in str(exc_info.value)
+
+    def test_unset_x_with_no_numeric_column_raises_chart_data_error(
+        self, make_chart
+    ) -> None:
+        """No authored x and no numeric column anywhere in the data leaves
+        auto-detection with x_field=None — there is no legitimate spark_bar
+        with no magnitude field, so this must raise, not silently paint a
+        zero-value bar per row."""
+        from dbt_charts.core.diagnostics.chart_data import ChartDataError
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_SPARK_BAR_VALUE_NOT_NUMERIC,
+        )
+
+        data = [
+            {"product": "Widget", "region": "US"},
+            {"product": "Gadget", "region": "EU"},
+        ]
+        chart = resolve(
+            make_chart("spark_bar", x=None, y=None),
+            data,
+            chart_style_context=_BOARD_CTX,
+        )
+
+        with pytest.raises(ChartDataError) as exc_info:
+            render_spark_bar_svg(chart, data, board_style=_BOARD_STYLE)
+
+        assert exc_info.value.code is ERR_SPARK_BAR_VALUE_NOT_NUMERIC
+
+
 class TestSparkBarFieldAutoDetection:
     """Tests for automatic field detection."""
 
     def test_spark_bar_auto_detect_fields(self, make_chart) -> None:
-        """Fields are auto-detected when not specified."""
+        """Fields are auto-detected when not specified.
+
+        x=None, y=None here (not make_chart's "x_field"/"y_field" defaults) —
+        those literal placeholders aren't columns in this data and previously
+        masked this test never exercising real auto-detection at all.
+        """
         data = [
             {"category": "A", "count": 100},
             {"category": "B", "count": 50},
         ]
-        chart = resolve(make_chart("spark_bar"), data, chart_style_context=_BOARD_CTX)
+        chart = resolve(
+            make_chart("spark_bar", x=None, y=None),
+            data,
+            chart_style_context=_BOARD_CTX,
+        )
 
         svg = render_spark_bar_svg(chart, data, board_style=_BOARD_STYLE)
 

@@ -128,7 +128,7 @@ _FAMILIES: dict[str, dict[str, Any]] = {
     },
     "spark_bar": {
         "chart_id": "s1",
-        "chart_def": {"type": "spark_bar", "query": "q", "x": "month", "y": "value"},
+        "chart_def": {"type": "spark_bar", "query": "q", "x": "value", "y": "month"},
         "query_registry": {
             "q": ValuesQuery(
                 rows=[{"month": "Jan", "value": 10}, {"month": "Feb", "value": 20}]

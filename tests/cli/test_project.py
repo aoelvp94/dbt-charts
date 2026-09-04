@@ -36,13 +36,13 @@ def test_resolve_project_dir_raises_when_no_markers(
     monkeypatch.chdir(tmp_path)
     (tmp_path / "hello.yml").write_text("# not a project marker\n")
 
-    with pytest.raises(ProjectNotFoundError, match="No Dataface project found"):
+    with pytest.raises(ProjectNotFoundError, match="No dbt charts project found"):
         resolve_project_dir(None)
 
 
 def test_resolve_project_dir_explicit_requires_marker(tmp_path: Path) -> None:
     """Explicit --project-dir is validated: a non-project dir fails loud here."""
-    with pytest.raises(ProjectNotFoundError, match="is not a Dataface project"):
+    with pytest.raises(ProjectNotFoundError, match="is not a dbt charts project"):
         resolve_project_dir(tmp_path)
 
 
@@ -209,7 +209,7 @@ def test_resolve_mcp_project_dir_no_project_no_git_falls_back_to_cwd(
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_skill_install_root_uses_git_root_over_dataface_yml(
+def test_resolve_skill_install_root_uses_git_root_over_dbt_charts_yml(
     tmp_path: Path,
 ) -> None:
     """When .git is above the dbt_charts.yml, skill install target is the git root."""
@@ -227,7 +227,7 @@ def test_resolve_skill_install_root_uses_git_root_over_dataface_yml(
 def test_resolve_skill_install_root_falls_back_to_project_root_without_git(
     tmp_path: Path,
 ) -> None:
-    """Without .git anywhere, fall back to the dataface project root."""
+    """Without .git anywhere, fall back to the dbt charts project root."""
     project = tmp_path / "myproject"
     project.mkdir()
     (project / "dbt_charts.yml").write_text("")

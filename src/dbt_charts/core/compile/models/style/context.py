@@ -19,11 +19,11 @@ per-family ``Resolved*Style`` types (``resolved/bar.py`` etc.): final
 per-chart presentation, projected from this context by ``compile/resolve/``.
 
 Consumers: ``compile/resolve/*`` (per-chart resolution), ``compile/resolve/
-style/chart_context.py`` (the per-chart cascade), ``compile/data_table.py``
+style/chart_context.py`` (the per-chart cascade), ``compile/support_table.py``
 (axis-offset geometry). Normalized ``Board``/execute orchestration carry an instance for
 runtime chart resolution via a separately named field
 (``Board.chart_style_context``); ``ResolvedBoard`` and every render API do not
-accept this type — see ``dataface/core/AGENTS.md``'s reach-back section.
+accept this type — see ``dbt-charts/src/dbt_charts/core/AGENTS.md``'s reach-back section.
 """
 
 from __future__ import annotations
@@ -59,12 +59,12 @@ from dbt_charts.core.compile.models.style.theme import (
     AxisYStyle,
     BarChartStyle,
     BaseAxisStyle,
-    DataTableStyle,
     GeoshapeChartStyle,
     GlobalMarksStyle,
     HeatmapChartStyle,
     HistogramChartStyle,
     KpiChartStyle,
+    KpiTonesStyle,
     LineChartStyle,
     PaddingStyle,
     PieChartStyle,
@@ -75,10 +75,15 @@ from dbt_charts.core.compile.models.style.theme import (
     SparkBarChartStyle,
     SparkStyle,
     Style,
+    SupportTableStyle,
     TableChartStyle,
     TitleStyle,
     TooltipStyle,
     ViewStyle,
+)
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    CategoryColorBinding,
+    CategoryColorScale,
 )
 
 
@@ -110,7 +115,7 @@ class ChartStyleContext:
     # calls compile.resolve.style.palette.resolve_dark_companion_stops
     # itself. This is the board palette, not a chart's effective (possibly
     # chart-local-overridden)
-    # one — data_table_attachment.py's strip ink intentionally keys off the
+    # one — support_table_attachment.py's strip ink intentionally keys off the
     # board palette to match pre-refactor render behavior; do not consolidate
     # with ResolvedSeriesLabelStyle.dark_companion_palette (chart-effective)
     # without checking that call site.
@@ -131,12 +136,34 @@ class ChartStyleContext:
     # value (role tokens then fail loudly with UnknownColorError).
     palettes: Mapping[str, str]
     roles: dict[str, str]
+    # Semantic tone palette (positive/negative/warning/info) — board level,
+    # shared by KPI support rows and table conditional glyphs.
+    tones: KpiTonesStyle
+
+    # Authored board-wide value→color pins (``style.charts.category_colors``),
+    # keyed by data field. Passed through from ``ChartsStyle.category_colors``
+    # at construction time — known at compile time, unlike the planned
+    # ``category_colors`` scales below (which need executed rows and are
+    # filled in after execute). Two fields, two lifecycle stages of the same
+    # feature: this one is the INPUT the planner reads, ``category_colors``
+    # is its OUTPUT. Named apart so neither reads as a duplicate of the
+    # other. Empty = no pins authored.
+    category_color_pins: dict[str, CategoryColorBinding]
 
     # --- Board-wide sizing defaults ---
     preferred_width: float
     default_chart_height: float
     default_table_height: float
     label_usable_ratio: float
+    # `style.frame.card_padding`, carried down from the board frame because a
+    # resolver reasoning about a card's total height needs it: the renderer's
+    # card is `aspect-ratio height + 2 * card_padding` (render/sizing.py's
+    # `get_item_content_height`), so a resolver that stops at the aspect-ratio
+    # half is measuring a shorter card than the one that gets drawn. Read by
+    # `_resolve_bar` (resolve/chart/bar.py) for the plot-height floor. Lives
+    # on the frame, not on `charts`, so it is passed in rather than picked up
+    # by the `passthrough` sweep in `_build_chart_style_context`.
+    card_padding: float
     # Board-wide chart dimension defaults (per-chart resolvers seed the
     # concrete ResolvedChart.aspect_ratio/min_height/max_height from these
     # when the author leaves them unset).
@@ -179,7 +206,7 @@ class ChartStyleContext:
     table: TableChartStyle
     spark: SparkStyle
     spark_bar: SparkBarChartStyle
-    data_table: DataTableStyle
+    support_table: SupportTableStyle
     # Callout chart-family style (type: callout charts only — board-level
     # default tone, before any chart-local style.tone override).
     callout: ResolvedCalloutStyle
@@ -230,6 +257,17 @@ class ChartStyleContext:
     # otherwise the board/board background propagated from ResolvedStyle.background
     # at compile time.
     background: str = ""
+
+    # Board-wide value→color scales, one per bound categorical field — the
+    # PLANNED output the planner builds from ``category_color_pins`` plus
+    # executed rows. Unlike the required fields above (including
+    # ``category_color_pins``), this one is NOT knowable at
+    # ``resolve_chart_style_context()`` time — enumerating a field's values
+    # needs executed rows — so it defaults to empty and is filled in after
+    # execute by ``execute.category_colors.with_category_colors()``. Empty is
+    # the honest "no board binding" state: a data-free resolve, or a board
+    # whose categorical fields never meet the two-chart threshold.
+    category_colors: tuple[CategoryColorScale, ...] = ()
 
 
 __all__ = ["ChartStyleContext"]

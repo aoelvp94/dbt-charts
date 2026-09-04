@@ -10,12 +10,14 @@ from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import (
     AreaChartStylePatch,
+    AxisLabelStylePatch,
     AxisYStylePatch,
     BarChartStylePatch,
     BaseScaleStylePatch,
     LineChartStylePatch,
     MeasureGridStylePatch,
     ScaleContinuousStylePatch,
+    ScatterChartStylePatch,
 )
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
@@ -38,7 +40,11 @@ def _reset() -> None:
 def _spec(
     chart_type: str,
     data: list[dict],
-    style: BarChartStylePatch | LineChartStylePatch | AreaChartStylePatch | None = None,
+    style: BarChartStylePatch
+    | LineChartStylePatch
+    | AreaChartStylePatch
+    | ScatterChartStylePatch
+    | None = None,
     color: str | None = None,
     stack: str | bool | None = None,
 ) -> dict:
@@ -463,3 +469,84 @@ def test_zero_anchored_axis_with_authored_ladder_still_floors_at_zero() -> None:
     spec = _spec("line", data, style=style)
 
     assert len(_unity_rule_layers(spec)) == 1
+
+
+def test_ratio_percent_scatter_domain_including_one_emits_unity_rule() -> None:
+    """Percent-format scatter is a live path: ``_apply_unity``'s isinstance
+    tuple widened to ``ResolvedScatterChart`` alongside line and area, and
+    must fire under the same domain-reach rule as its line twin above."""
+    style = ScatterChartStylePatch(
+        number_format="percent_whole",
+        axis_y=AxisYStylePatch(
+            scale=BaseScaleStylePatch(
+                continuous=ScaleContinuousStylePatch(domain=[0.95, 1.2])
+            )
+        ),
+    )
+
+    spec = _spec("scatter", _RATIO_DATA, style=style)
+
+    assert len(_unity_rule_layers(spec)) == 1
+
+
+def test_ratio_percent_scatter_domain_excluding_one_skips_unity_rule() -> None:
+    style = ScatterChartStylePatch(
+        number_format="percent_whole",
+        axis_y=AxisYStylePatch(
+            scale=BaseScaleStylePatch(
+                continuous=ScaleContinuousStylePatch(domain=[1.02, 1.2])
+            )
+        ),
+    )
+
+    spec = _spec("scatter", _RATIO_DATA, style=style)
+
+    assert _unity_rule_layers(spec) == []
+
+
+def test_rotated_dot_plot_scatter_skips_unity_rule_despite_percent_format() -> None:
+    """A rotated (dot-plot) scatter puts the category on y and the measure on
+    x -- a categorical y carries no measure for the unity rule to reference,
+    even with an explicit percent ``axis_y.labels.format`` and an authored
+    domain straddling 1.0 (both of which, on their own, would otherwise pass
+    the earlier gates and let the rule through).
+    ``_y_carries_the_measure`` must gate the unity rule the same way it
+    gates the zero rule.
+
+    ``region`` is a numeric-string category (not ``"a"``/``"b"``):
+    ``gate_label_format`` now raises a percent format on a categorical y
+    whose ticks aren't themselves readable as numbers, and numeric-string
+    categories are the one shape both this test's percent format AND that
+    gate can agree is legal — d3 formats them cleanly."""
+    style = ScatterChartStylePatch(
+        axis_y=AxisYStylePatch(
+            labels=AxisLabelStylePatch(format=".0%"),
+            scale=BaseScaleStylePatch(
+                continuous=ScaleContinuousStylePatch(domain=[0.9, 1.2])
+            ),
+        ),
+    )
+    fields: dict = {
+        "id": "t",
+        "type": "scatter",
+        "x": "value",
+        "y": "region",
+        "query": SqlQuery(sql="SELECT 1", source="src"),
+        "query_name": "q",
+        "style": style,
+    }
+    chart = _CHART_ADAPTER.validate_python(fields)
+    data = [
+        {"region": "1", "value": 1.05},
+        {"region": "2", "value": 1.20},
+    ]
+
+    spec = generate_vega_lite_spec(
+        chart,
+        data,
+        width=400,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_CHART_CTX,
+    )
+
+    assert _unity_rule_layers(spec) == []

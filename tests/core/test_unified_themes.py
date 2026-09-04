@@ -12,14 +12,14 @@ from typing import Any
 
 import pytest
 
-import dbt_charts as _dataface_pkg
+import dbt_charts as _dbt_charts_pkg
 
-DBT_CHARTS_PKG_DIR = Path(_dataface_pkg.__file__).resolve().parent
+DBT_CHARTS_PKG_DIR = Path(_dbt_charts_pkg.__file__).resolve().parent
 
 _THEMES_DIR = DBT_CHARTS_PKG_DIR / "core" / "defaults" / "themes"
 
 
-def test_stark_theme_parses_as_compiled_style():
+def test_structural_root_theme_parses_as_compiled_style():
     """themes/stark.yaml compiles to a valid Style through the inheritance chain.
 
     stark.yaml now extends _base — the raw YAML only contains color/font overrides.
@@ -36,15 +36,15 @@ def test_stark_theme_parses_as_compiled_style():
 
 
 def test_get_theme_style_returns_compiled_style():
-    """get_theme_style('editorial') returns a Style instance."""
+    """get_theme_style('clarity') returns a Style instance."""
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.models.style.theme import Style
 
-    cs = get_theme_style("editorial")
+    cs = get_theme_style("clarity")
     assert isinstance(cs, Style)
 
 
-def test_get_theme_style_default_is_dataface_default():
+def test_get_theme_style_default_is_dbt_charts_default():
     """get_theme_style(None) returns a Style (the default theme)."""
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.models.style.theme import Style
@@ -86,7 +86,7 @@ def test_board_style_fields_reachable():
     from dbt_charts.core.compile.config import get_theme_style, reset_config
 
     reset_config()
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     # Distinctive override — 999.0 cannot be confused with any real theme value.
     updated = base.model_copy(
         update={"frame": base.frame.model_copy(update={"margin": 999.0})}
@@ -101,7 +101,7 @@ def test_charts_dimensions_reachable():
     from dbt_charts.core.compile.config import get_theme_style, reset_config
 
     reset_config()
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     updated = base.model_copy(
         update={"charts": base.charts.model_copy(update={"aspect_ratio": 2.0})}
     )
@@ -109,30 +109,20 @@ def test_charts_dimensions_reachable():
     assert base.charts.aspect_ratio != 2.0
 
 
-def test_default_lifts_surface_background_from_stark():
-    """default lifts page and chart surfaces from stark-white.
+def test_default_background_self_token_propagates_to_knockout_strokes():
+    """The shipped default theme's background feeds knockout strokes.
 
-    The shipped default theme puts its editorial surfaces on the gray scaffold:
-    both the outer page canvas and the chart/card working surface. Chart
-    strokes that knockout against ``theme.background`` (pie/donut slice
-    separator, geoshape/map region halos) must track that editorial surface via
-    the self-token mechanism.
+    Chart strokes that knockout against ``theme.background`` (pie/donut slice
+    separator, geoshape/map region halos) must track the theme's own
+    background via the self-token mechanism, whatever that background is.
     """
     from dbt_charts.core.compile.config import get_theme_style, reset_config
-    from dbt_charts.core.compile.resolve.style.palette import (
-        color as resolve_palette_color,
-    )
 
     reset_config()
-    default = get_theme_style("editorial")
-    stark = get_theme_style("stark")
-    canvas = resolve_palette_color("dbt-grays.canvas")
-    # Surface contract: editorial lifts both page and chart/card backgrounds
-    # from stark's white canvas onto the gray scaffold.
-    assert default.background == canvas
-    assert default.page.background == canvas
-    assert default.background != stark.background
-    assert default.page.background != stark.page.background
+    default = get_theme_style("clarity")
+    # Page and chart/card surfaces agree — a single working surface, not a
+    # card floating on a differently-colored page.
+    assert default.background == default.page.background
     # Self-token cascade: pie.marks.slice stroke is the donut-slice knockout
     # separator; marks.geoshape stroke is the region halo. Both track
     # theme.background at theme-compile time (ADR-015 marks namespace).

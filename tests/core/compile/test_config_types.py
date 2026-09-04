@@ -179,10 +179,10 @@ def test_chart_rendering_frame_defaults() -> None:
     assert cr.frame.footer_timestamp_gap_px == 12
 
 
-def test_chart_rendering_data_table_defaults() -> None:
+def test_chart_rendering_support_table_defaults() -> None:
     cr = get_config().chart_rendering
-    assert cr.data_table.divider_gap == 4.0
-    assert cr.data_table.chart_data_table_max_x_ticks == 40
+    assert cr.support_table.divider_gap == 4.0
+    assert cr.support_table.chart_support_table_max_x_ticks == 40
 
 
 def test_inspector_is_typed_config() -> None:

@@ -303,12 +303,12 @@ def test_arc_resolution_suppresses_label_rows_below_threshold(make_chart):
         for layer in spec.get("layer", [])
         if isinstance(layer.get("mark"), dict)
         and layer["mark"].get("type") == "text"
-        and layer.get("encoding", {}).get("text", {}).get("field") == "__dft_label"
+        and layer.get("encoding", {}).get("text", {}).get("field") == "__dbt_label"
     ]
-    assert label_layers, "Expected a per-wedge label layer with text field __dft_label"
+    assert label_layers, "Expected a per-wedge label layer with text field __dbt_label"
     transforms = label_layers[0].get("transform", [])
     filters = [t.get("filter") for t in transforms if "filter" in t]
-    assert filters == ["datum.__dft_label != null"]
+    assert filters == ["datum.__dbt_label != null"]
 
 
 # --------------------------------------------------------------------------
@@ -723,7 +723,7 @@ def test_arc_layer_not_filtered_by_wedge_threshold(make_chart):
     transforms = arc_layers[0].get("transform", []) or []
     filters = [t.get("filter") for t in transforms if "filter" in t]
     for f in filters:
-        assert not (isinstance(f, str) and "__dft_pct" in f and "0.08" in f), (
+        assert not (isinstance(f, str) and "__dbt_pct" in f and "0.08" in f), (
             "Arc layer must not be filtered by wedge-label threshold. "
             f"Got filter: {f!r}"
         )
@@ -817,7 +817,7 @@ def test_compose_attached_table_svg_right_placement_left_anchored_in_card_width(
     """placement="right" with a card_width wider than the tight group produces
     an outer SVG spanning the full card_width, with the [donut | gap | table]
     content group LEFT-ANCHORED to the card's left edge (donut_x = 0) — content
-    flows from the left like every other Dataface card, with trailing whitespace
+    flows from the left like every other dbt charts card, with trailing whitespace
     on the right, rather than floating as a centered island in the slot."""
     donut_w, table_w, gap = 400.0, 200.0, _PIE_GAP
     card_width = 800.0
@@ -1003,13 +1003,19 @@ def test_narrow_tabled_pie_places_table_below(make_chart):
     assert table_y > 0, "table must sit beneath the donut, not overlapping it"
 
 
-def test_attached_table_modes_suppress_builtin_color_legend(make_chart):
+def test_attached_table_modes_suppress_builtin_color_legend(make_chart, model_copy_at):
     """Hybrid and full-table modes suppress the donut's built-in color legend —
-    the attached table IS the legend, so on a theme that enables it (plain,
-    ``legend.visible=True``) it must not double up (and, in hybrid, alongside the
-    direct labels too). Direct-label pies keep the theme's legend untouched.
+    the attached table IS the legend, so on a theme that enables it
+    (``legend.visible=True``) it must not double up (and, in hybrid, alongside
+    the direct labels too). Direct-label pies keep the theme's legend untouched.
+
+    No shipped theme defaults to a visible legend (every built-in suppresses
+    it for direct labeling), so this forces the override on a real theme
+    rather than depending on a theme's default posture.
     """
-    themed_rs, themed_ctx = resolve_style_and_context(get_theme_style("plain"))
+    themed_rs, themed_ctx = resolve_style_and_context(
+        model_copy_at(get_theme_style("clarity"), "charts.legend.visible", True)
+    )
     assert themed_ctx.legend.visible is True  # guards the premise below
 
     def render(pairs):

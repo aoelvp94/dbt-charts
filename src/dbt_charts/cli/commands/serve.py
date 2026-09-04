@@ -29,7 +29,7 @@ def serve_command(
     no_cache: bool = False,
     cache_path: Path | None = None,
 ) -> None:
-    """Start unified Dataface server.
+    """Start unified dbt charts server.
 
     This command starts a FastAPI server that serves:
     - Any board file at /{path}/?var=value (path.yml → /path/)
@@ -42,7 +42,7 @@ def serve_command(
     Args:
         port: Port number to serve on (auto-resolved if not specified)
         host: Host address to bind to
-        project: The resolved Dataface project (injected by @with_project)
+        project: The resolved dbt charts project (injected by @with_project)
         dialect: SQL dialect (auto-detected from dbt profile, or duckdb)
         target: dbt target name (defaults to DBT_TARGET env var, then profile default)
         no_cache: Skip the query-result cache entirely.

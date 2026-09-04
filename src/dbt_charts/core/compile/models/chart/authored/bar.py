@@ -13,25 +13,50 @@ from ._base import (
     _ConditionalFormattingField,
     reject_multi_series_channel_conflicts,
 )
-from ._layer import CartesianLayer
+from ._layer import CARTESIAN_LAYER_SUPPORTED_CHART_TYPES, CartesianLayer
 
 
 class BarChart(_CartesianChartFields, _ConditionalFormattingField):
-    """Authored patch for bar and histogram charts."""
+    """Authored patch for bar and histogram charts; histogram adds automatic x binning."""
 
     model_config = ConfigDict(extra="forbid")
 
     type: Annotated[
-        Literal["bar", "histogram"], Field(description="Bar or histogram chart type.")
+        Literal["bar", "histogram"],
+        Field(description="Selects the chart family."),
     ]
     style: Annotated[
         BarChartStylePatch | None,
-        Field(default=None, description="Chart-local style overrides."),
+        Field(default=None, description="Appearance overrides for this chart alone."),
     ]
     layers: Annotated[
         list[CartesianLayer] | None,
-        Field(default=None, description="Typed overlay layers on this chart."),
+        Field(
+            default=None,
+            description=(
+                "Extra marks drawn over this chart, each with its own type and columns. Not supported when "
+                "type: histogram: a histogram bins x and aggregates to a "
+                "count, so there is no shared y measure for an overlay to "
+                "plot against."
+            ),
+        ),
     ]
+
+    @model_validator(mode="after")
+    def _reject_histogram_layers(self) -> BarChart:
+        # The guard lives here, on BarChart, not on the shared
+        # _CartesianChartFields base: HeatmapChart also inherits that base but
+        # declares no `layers` field at all, so a base-class validator
+        # referencing self.layers would AttributeError on every authored
+        # heatmap. See _validate_support_table for the same field-per-type-support
+        # shape on a field (support_table) that IS shared on the base.
+        if self.type not in CARTESIAN_LAYER_SUPPORTED_CHART_TYPES and self.layers:
+            supported = ", ".join(sorted(CARTESIAN_LAYER_SUPPORTED_CHART_TYPES))
+            raise ValueError(
+                f"chart.layers is not supported for chart type {self.type!r}. "
+                f"Supported chart types: {supported}."
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_multi_series(self) -> BarChart:
@@ -41,12 +66,20 @@ class BarChart(_CartesianChartFields, _ConditionalFormattingField):
         if self.type != "bar":
             return self
         reject_multi_series_channel_conflicts(
-            "Bar", self.y, self.color, self.layers, self.conditional_formatting
+            "Bar", self.y, self.layers, self.conditional_formatting
         )
         # Folded measures are grouped side by side within each x band; without
         # an x there are no bands to group them into.
         if isinstance(self.y, list) and self.x is None:
             raise ValueError(
                 "Bar chart: multi-metric (y: [...]) charts require an x field."
+            )
+        # The mirror: bands with nothing to measure. The emitter would hand
+        # Vega-Lite a null measure field, which it cannot compile; an empty
+        # list or name is the same nothing.
+        if self.x is not None and not self.y:
+            raise ValueError(
+                "Bar chart: x requires a y field — a bar with categories but no "
+                "measure has nothing to draw."
             )
         return self

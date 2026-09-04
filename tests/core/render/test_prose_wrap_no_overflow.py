@@ -37,7 +37,7 @@ _PROSE = (
 
 # Serif themes are where the defect showed; sans themes guard against a fix that
 # trades one family's correctness for another's.
-_THEMES = ("editorial", "cream", "stark")
+_THEMES = ("clarity", "paper", "stark")
 _WIDTHS = tuple(float(w) for w in range(240, 1300, 53))
 
 _SVG_WIDTH = re.compile(r'<svg[^>]*\swidth="([\d.]+)"')

@@ -25,7 +25,9 @@ Every cartesian family calls `plan_cartesian()` / `build_cartesian_axes()`
 legend-vs-rail decision. A family with "not applicable" to say passes that as an
 explicit argument (`scatter`/`heatmap` pass `_NO_RAIL_ENDPOINT_LABELS`; they never
 skip the call). A hand-rolled `top_legend` ternary, or reading `primary.legend`
-directly instead of `_author_hid_legend`, reintroduces the same invisible gap.
+directly instead of letting `cartesian_series_naming()` derive the
+author-hid/showed/placed facts from `_authored_legend`, reintroduces the same
+invisible gap.
 
 Every family also calls `build_chart_style_context(chart_style_context, normalized)`
 itself to get its own `chart_local_style_context` (used for
@@ -81,33 +83,36 @@ the board-level context there silently drops a chart-local `style.title.font.col
 
 ### The zero-anchor decision
 
-Line, area and scatter each call `_bake_y_zero` (`_domain.py`) at resolve for every
-numeric-y shape they support: line for `y_field_line` singular or `normalized.y` as
-a list (`line.py:183-186`), area for `y_field_area` singular or `normalized.y` as a
-list (`area.py:269-272`), scatter for its single quantitative y field
-(`scatter.py:133-139`). `_bake_y_zero` bakes a definitive True/False from
-`resolve_y_zero`'s heuristic onto `ay.scale.continuous.zero`; that heuristic
-(`enrich._pick_scale`) lives in exactly one place, decided once at resolve. It is a
-no-op when the heuristic abstains (returns `None`) or the axis is log-typed. Bar
-never calls `_bake_y_zero`: VL bars extend to/from zero unconditionally. An authored
-`style.axis_y.scale.continuous.zero` bool on a bar chart flows through the standard
-axis cascade to `ay_merged.scale.continuous.zero` and is the sole override path.
+Line, area and scatter each call `_bake_y_zero` (`_domain.py`) at resolve, baking
+a definitive zero-anchor decision onto `ResolvedAxisStyle.zero_anchored` — the one
+fact every family reads off the cascaded y-axis rather than re-deriving. It reads
+an author-pinned `scale.continuous.zero` off that same cascaded axis, never the
+per-chart/family patch, so a pin authored at board, chart, or family level is
+honored identically; absent a pin, the smart-zero heuristic decides. Area's bake
+is gated on `resolved_stack != "center"` — a streamgraph carve-out, since its
+y=0 is the silhouette's visual centerline, not a baseline, so the bake is skipped
+outright rather than anchoring a meaningless value. Bar never bakes this: VL bars
+extend to/from zero unconditionally regardless of any pin.
 
-Line and area additionally ride the render-time `BaselineFeature`
-(`render/chart/features/baseline.py`), which draws a `datum: 0` rule for any
-bar/line/area chart whose axis does not carry an explicit `scale.zero=False`
-(`_insert_zero_rule`); that rule's datum pulls 0 into Vega-Lite's domain fit
-independently of the resolve-time bake. Scatter is not in
-`BaselineFeature.applies_to` (bar/line/area only), so scatter's resolve-time
-`_bake_y_zero` call is the only mechanism setting its zero anchor.
+Line, area and scatter also ride the render-time `BaselineFeature`
+(`render/chart/features/baseline.py`), which draws a `datum: 0` rule
+independently of the resolve-time bake. Bar fires unconditionally there past
+guards shared by every family (log-typed axis, an authored domain excluding 0,
+hidden grid, empty rows); a normalize-stack draws top rules at 0/1 instead. Line
+and area fire unconditionally past those guards unless the axis pins
+`scale.zero=False`; scatter never treats "no explicit pin" as "fire
+unconditionally" the way line/area do — it reads the resolve-time
+`zero_anchored` bake off its own axis instead. Both the explicit-pin branch and
+scatter's own path fall back to `_zero_in_shared_domain`, a union (not a
+per-series straddle check) of the base measure with every layer's values, plus
+an unconditional `True` for any bar layer.
 
-Line's multi-metric path (`y:` a list) has one further, narrower bake beyond the
-shared `_bake_y_zero` call: when `resolve_y_zero` abstains but the tick ladder was
-computed assuming a zero-anchored domain (no authored domain, a real tick count),
-`_bake_zero_flag` pins `scale.continuous.zero` explicitly to the same decision the
-ladder assumed (`line.py:210-233`). This guards the pre-computed ladder against
-Vega-Lite auto-fitting a different domain than the ladder was built for, a concern
-distinct from whether `BaselineFeature`'s rule fires.
+Scatter is the one family whose measure can land on either axis: it has no
+`orientation` field, and the dot-plot recipe rotates it by putting the value on
+x and the category on y. Both datum rules gate on `_y_carries_the_measure`,
+which reads the y-axis's own `is_quantitative` — a nominal y carries no
+`scale.continuous`, so a rule would otherwise paint at a position the axis has
+no room for. A rotated scatter draws no zero rule on either axis today.
 
 Before adding or removing a bake for a family, verify through the real pipeline
 (resolved `tick_values` against the compiled Vega scale's `domain`) whether a

@@ -39,7 +39,7 @@ def reset():
 
 
 def _board() -> Any:
-    return resolve_style_and_context(get_theme_style("editorial"))
+    return resolve_style_and_context(get_theme_style("clarity"))
 
 
 def _rows() -> list[dict[str, Any]]:

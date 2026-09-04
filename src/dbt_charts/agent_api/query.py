@@ -15,7 +15,7 @@ from dbt_charts.agent_api._paths import resolve_board_path
 from dbt_charts.core.compile import compile_file
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.execute.adapters import AdapterRegistry
-from dbt_charts.core.inspect.query_validator import validate_query
+from dbt_charts.core.inspect.query_validator import QueryDiagnostic, validate_query
 from dbt_charts.core.project import Project
 from dbt_charts.core.validate import normalize_data_for_json
 
@@ -76,6 +76,7 @@ def lookup_board_query_sql(
     paths that need the rendered SQL text without executing it against a
     warehouse.
     """
+    from dbt_charts.core.compile.errors import JinjaError
     from dbt_charts.core.compile.template.parameterized import (
         render_parameterized_with_queries,
     )
@@ -123,14 +124,14 @@ def lookup_board_query_sql(
             queries=board.queries,
             strict=not query.lenient_variables,
         )
-    except (ValueError, KeyError, TypeError) as exc:
+    except JinjaError as exc:
         return BoardQueryLookupResult(success=False, errors=[str(exc)])
 
     return BoardQueryLookupResult(success=True, sql=rendered.sql, source=query.source)
 
 
 class ExecuteQueryArgs(BaseModel):
-    """Execute a SQL query against the project's data sources and return results. Use {{ variable_name }} for parameterized values — these work identically in dashboard YAML, so queries you test here will be cached when reused in dashboards. Great for exploring data shape before writing chart configs."""
+    """Execute a SQL query against the project's data sources and return results. Use {{ variable_name }} for parameterized values — these work identically in dashboard YAML, so queries you test here will be cached when reused in dashboards. Great for exploring data shape before writing chart configs. Return values in natural units — never scale for display (no /1000, no _k/_m columns); compact display belongs to the chart's number format (e.g. currency)."""
 
     sql: str = Field(
         ...,
@@ -151,7 +152,7 @@ class ExecuteQueryArgs(BaseModel):
     )
     # Display only — never reaches execute_query(). Ad-hoc SQL is the one query
     # surface with no author to describe it: a named board query carries the
-    # `description:` its YAML already declares, and this is the equivalent for
+    # `notes:` its YAML already declares, and this is the equivalent for
     # a query that exists only for the length of one tool call.
     description: str | None = Field(
         None,
@@ -171,11 +172,10 @@ class ExecuteQueryResult(BaseModel):
     success: bool
     columns: list[str]
     data: list[dict[str, Any]]
-    error: str | None
     errors: list[str]
     row_count: int
     truncated: bool
-    diagnostics: list[dict[str, Any]] = Field(
+    diagnostics: list[QueryDiagnostic] = Field(
         default_factory=list,
         description=(
             "Deterministic validate_query findings (WARN-FANOUT-RISK, "
@@ -187,7 +187,7 @@ class ExecuteQueryResult(BaseModel):
 
 def _query_diagnostics(
     sql: str, source: str | None, adapter_registry: AdapterRegistry
-) -> list[dict[str, Any]]:
+) -> list[QueryDiagnostic]:
     """Run the structural validator over *sql*; never raise on a real query.
 
     Resolves the source dialect when possible so dialect-specific parsing is
@@ -200,7 +200,7 @@ def _query_diagnostics(
             dialect = adapter_registry.resolve_source_config(source).get("type")
         except Exception:  # noqa: BLE001 — best-effort dialect hint
             dialect = None
-        return [d.to_dict() for d in validate_query(sql, dialect=dialect)]
+        return validate_query(sql, dialect=dialect)
     except Exception:  # noqa: BLE001 — diagnostics are advisory, never fatal
         return []
 
@@ -245,7 +245,6 @@ def execute_query(
                 success=False,
                 data=[],
                 columns=[],
-                error=result.error,
                 errors=[result.error],
                 row_count=0,
                 truncated=False,
@@ -261,7 +260,6 @@ def execute_query(
             success=True,
             data=data,
             columns=columns,
-            error=None,
             errors=[],
             row_count=len(data),
             truncated=truncated,
@@ -273,7 +271,6 @@ def execute_query(
             success=False,
             data=[],
             columns=[],
-            error=str(e),
             errors=[str(e)],
             row_count=0,
             truncated=False,
@@ -282,7 +279,7 @@ def execute_query(
 
 
 class QueryBoardArgs(BaseModel):
-    """Run one named query from a board YAML file and return its columns and sample rows. Unlike execute_query (which takes raw SQL), query_board runs a query by name from the board the user actually authored — including Jinja variable substitution and support for non-SQL query types (values, http, metricflow). Use this to inspect what a named query produces when debugging chart errors like 'unknown column foo'."""
+    """Run one named query from a board YAML file and return its columns and sample rows. Unlike execute_query (which takes raw SQL), query_board runs a query by name from the board the user actually authored — including Jinja variable substitution and support for non-SQL query types (values, http). Use this to inspect what a named query produces when debugging chart errors like 'unknown column foo'."""
 
     name: str = Field(
         ..., description="Name of the query inside the board's `queries:` block"
@@ -316,9 +313,9 @@ class QueryBoardResult(BaseModel):
     path: PurePosixPath
     query_type: str | None = None
     sql: str | None = None
-    #: The query's authored `description:`, when its YAML declares one. Lets a
+    #: The query's authored `notes:`, when its YAML declares one. Lets a
     #: caller label the run with what it is for rather than its identifier.
-    description: str | None = None
+    notes: str | None = None
     columns: list[str] = []
     data: list[dict[str, Any]] = []
     row_count: int = 0
@@ -333,7 +330,7 @@ def _fail(
     errors: list[str],
     available: list[str] | None = None,
     sql: str | None = None,
-    description: str | None = None,
+    notes: str | None = None,
 ) -> QueryBoardResult:
     """A failure reports the query it was running whenever it got far enough to
     know it: an undefined-variable error is unreadable without the SQL holding
@@ -344,7 +341,7 @@ def _fail(
         name=name,
         path=path,
         sql=sql,
-        description=description,
+        notes=notes,
         errors=errors,
         available_queries=available or [],
     )
@@ -390,7 +387,7 @@ def query_board(
     merged_vars = {**board.variable_defaults, **(vars or {})}
     query = board.queries[name].model_copy(update={"limit": limit + 1})
     sql = query.sql if isinstance(query, SqlQuery) else None
-    described = query.description
+    noted = query.notes
 
     # Detect file sources before dispatching — the adapter path has no materializer
     # and would fall through to SqlAdapter with a cryptic dbt error. File-source
@@ -418,7 +415,7 @@ def query_board(
                         "Use dct render to preview this dashboard."
                     ],
                     sql=sql,
-                    description=described,
+                    notes=noted,
                 )
 
     try:
@@ -426,7 +423,7 @@ def query_board(
             query, variables=merged_vars or None, board=board, query_name=name
         )
     except Exception as e:  # noqa: BLE001
-        return _fail(name, resolved_display, [str(e)], sql=sql, description=described)
+        return _fail(name, resolved_display, [str(e)], sql=sql, notes=noted)
 
     if exec_result.error:
         return _fail(
@@ -434,7 +431,7 @@ def query_board(
             resolved_display,
             [exec_result.error],
             sql=sql,
-            description=described,
+            notes=noted,
         )
 
     data = normalize_data_for_json(exec_result.data)
@@ -447,7 +444,7 @@ def query_board(
         path=resolved_display,
         query_type=query.query_type,
         sql=sql,
-        description=described,
+        notes=noted,
         columns=list(data[0].keys()) if data else [],
         data=data,
         row_count=len(data),

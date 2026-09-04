@@ -38,8 +38,8 @@ class TestEditorialThemeBarLegend:
     """editorial theme: bar.legend.visible overrides the global visible:false default."""
 
     def test_editorial_theme_loads_without_validation_error(self):
-        """get_theme_style('editorial') must not raise ValidationError."""
-        theme = get_theme_style("editorial")
+        """get_theme_style('clarity') must not raise ValidationError."""
+        theme = get_theme_style("clarity")
         assert theme is not None
 
     def test_editorial_global_legend_visible_false(self):
@@ -48,7 +48,7 @@ class TestEditorialThemeBarLegend:
             resolve_chart_style_context,
         )
 
-        resolved = resolve_chart_style_context(get_theme_style("editorial"))
+        resolved = resolve_chart_style_context(get_theme_style("clarity"))
         # Global legend from the theme (not per-chart override)
         assert resolved.legend.visible is False
 
@@ -61,7 +61,7 @@ class TestEditorialThemeBarLegend:
             build_chart_style_context,
         )
 
-        board = resolve_chart_style_context(get_theme_style("editorial"))
+        board = resolve_chart_style_context(get_theme_style("clarity"))
         # No chart-local overrides -- just the theme cascade
         effective = build_chart_style_context(board, BarChart(id="t", type="bar"))
         # bar charts should have visible=True (legend shown), overriding
@@ -77,7 +77,7 @@ class TestEditorialThemeBarLegend:
             build_chart_style_context,
         )
 
-        board = resolve_chart_style_context(get_theme_style("editorial"))
+        board = resolve_chart_style_context(get_theme_style("clarity"))
         effective = build_chart_style_context(
             board, ScatterChart(id="t", type="scatter")
         )
@@ -96,7 +96,7 @@ class TestEditorialThemeBarLegend:
             build_chart_style_context,
         )
 
-        board = resolve_chart_style_context(get_theme_style("editorial"))
+        board = resolve_chart_style_context(get_theme_style("clarity"))
         effective = build_chart_style_context(
             board, HeatmapChart(id="t", type="heatmap")
         )
@@ -111,7 +111,7 @@ class TestEditorialThemeBarLegend:
             build_chart_style_context,
         )
 
-        board = resolve_chart_style_context(get_theme_style("editorial"))
+        board = resolve_chart_style_context(get_theme_style("clarity"))
         effective = build_chart_style_context(board, LineChart(id="t", type="line"))
         # line has no per-family legend override -- inherits global visible=False
         assert effective.legend.visible is False
@@ -125,7 +125,7 @@ class TestEditorialThemeBarLegend:
             build_chart_style_context,
         )
 
-        board = resolve_chart_style_context(get_theme_style("editorial"))
+        board = resolve_chart_style_context(get_theme_style("clarity"))
         # "line" has no per-family legend patch in editorial, so fast path fires.
         effective = build_chart_style_context(board, LineChart(id="t", type="line"))
         assert effective is board

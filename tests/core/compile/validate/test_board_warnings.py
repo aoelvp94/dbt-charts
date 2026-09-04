@@ -47,9 +47,9 @@ def _codes(yaml: str) -> list[str]:
 def test_h1_opening_the_body_under_a_board_title_warns() -> None:
     result = compile(
         """
-title: Dataface Cloud
+title: dbt charts Cloud
 text: |
-  # Dataface Cloud
+  # dbt charts Cloud
 
   Every number below is a live query.
 """
@@ -58,7 +58,7 @@ text: |
     assert result.success, result.errors
     warnings = [w for w in result.warnings if w.code == "WARN-DOUBLE-HEADER"]
     assert len(warnings) == 1
-    assert "Dataface Cloud" in warnings[0].message
+    assert "dbt charts Cloud" in warnings[0].message
     assert "title:" in warnings[0].fix
     # The heading is the line the author has to delete, so it carries the mark.
     # `title:` is the other half of the pair and rides along as a related
@@ -75,7 +75,7 @@ def test_h1_with_a_different_text_than_the_title_still_warns() -> None:
         """
 title: Markdown Guide
 text: |
-  # Markdown in Dataface
+  # Markdown in dbt charts
 
   Prose.
 """
@@ -86,7 +86,7 @@ def test_h1_body_with_no_board_title_does_not_warn() -> None:
     assert "WARN-DOUBLE-HEADER" not in _codes(
         """
 text: |
-  # Dataface Cloud
+  # dbt charts Cloud
 
   Prose.
 """
@@ -146,11 +146,11 @@ text: |
 
 def test_heading_in_a_rows_text_block_warns() -> None:
     yaml = f"""
-title: Dataface Cloud
+title: dbt charts Cloud
 {_QUERIES_AND_CHARTS}
 rows:
   - text: |
-      # Dataface Cloud
+      # dbt charts Cloud
 
       Prose.
   - untitled
@@ -161,7 +161,7 @@ rows:
 def test_heading_in_a_titled_nested_section_does_not_warn() -> None:
     """Root-scoped: a section card pairing its title with a body hero is allowed."""
     yaml = f"""
-title: Dataface Cloud
+title: dbt charts Cloud
 {_QUERIES_AND_CHARTS}
 rows:
   - title: Regional Detail
@@ -177,11 +177,11 @@ rows:
 def test_heading_in_a_cols_text_cell_warns() -> None:
     """A bare text cell in the first `cols:` slot opens the body just as a row does."""
     yaml = f"""
-title: Dataface Cloud
+title: dbt charts Cloud
 {_QUERIES_AND_CHARTS}
 cols:
   - text: |
-      # Dataface Cloud
+      # dbt charts Cloud
 
       Prose.
   - untitled
@@ -193,13 +193,13 @@ def test_heading_in_the_first_tab_does_not_warn() -> None:
     """A tab always labels itself (`TabItem.title` is required), so its body
     heading belongs to the tab, not to the board header."""
     yaml = f"""
-title: Dataface Cloud
+title: dbt charts Cloud
 {_QUERIES_AND_CHARTS}
 tabs:
   items:
     - title: Overview
       text: |
-        # Dataface Cloud
+        # dbt charts Cloud
 
         Prose.
     - title: Detail
@@ -232,7 +232,7 @@ def test_h1_body_with_no_title_warns() -> None:
     result = compile(
         """
 text: |
-  # Dataface Cloud
+  # dbt charts Cloud
 
   Prose.
 """
@@ -241,7 +241,7 @@ text: |
     assert result.success, result.errors
     warnings = [w for w in result.warnings if w.code == "WARN-H1-BODY-NO-TITLE"]
     assert len(warnings) == 1
-    assert "Dataface Cloud" in warnings[0].message
+    assert "dbt charts Cloud" in warnings[0].message
     assert "title:" in warnings[0].fix
 
 
@@ -250,7 +250,7 @@ def test_h1_in_a_rows_text_block_with_no_title_warns() -> None:
 {_QUERIES_AND_CHARTS}
 rows:
   - text: |
-      # Dataface Cloud
+      # dbt charts Cloud
 
       Prose.
   - untitled
@@ -438,9 +438,9 @@ def test_double_header_range_lands_on_the_heading_line_not_the_whole_text_block(
     range would cover all of them and the author would have to find the heading
     themselves.
     """
-    yaml = """title: Dataface Cloud
+    yaml = """title: dbt charts Cloud
 text: |
-  # Dataface Cloud
+  # dbt charts Cloud
 
   Every number below is a live query.
 
@@ -451,7 +451,7 @@ text: |
     assert result.success, result.errors
     (w,) = [d for d in result.warnings if d.code == "WARN-DOUBLE-HEADER"]
     assert w.range is not None
-    # "# Dataface Cloud" is the third line of the file (1-based).
+    # "# dbt charts Cloud" is the third line of the file (1-based).
     assert w.range.start_line == 3
     assert w.range.end_line == 3
     assert w.range.columns is not None

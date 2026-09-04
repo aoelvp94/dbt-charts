@@ -37,3 +37,29 @@ def test_css_weight_to_axis_accepts_the_full_css_keyword_vocabulary(weight, expe
     from dbt_charts.core.font_measure import css_weight_to_axis
 
     assert css_weight_to_axis(weight) == expected
+
+
+def test_centered_baseline_offset_is_the_face_s_own_ascent_descent_split():
+    """A centred line's content box straddles the middle, so the baseline sits
+    ``(ascent - descent) / 2`` below it -- the face's ratio, not a constant.
+
+    Read off the loaded face rather than pinned to a number: the value it
+    replaced (``font_size * 0.35``) was one family's ratio applied to every
+    other, and a test asserting a number would be the same mistake.
+    """
+    from dbt_charts.core.font_measure import centered_baseline_offset, get_font_measurer
+
+    measurer = get_font_measurer("Inter")
+    expected = (measurer.ascent_em - measurer.descent_em) / 2
+
+    for size in (11.0, 24.0):
+        assert centered_baseline_offset("Inter", size) == pytest.approx(expected * size)
+
+
+def test_centered_baseline_offset_differs_between_two_vendored_faces():
+    """It has to read the face, and this fails if it goes back to a constant."""
+    from dbt_charts.core.font_measure import centered_baseline_offset
+
+    assert centered_baseline_offset("Inter", 14.0) != pytest.approx(
+        centered_baseline_offset("Source Serif 4", 14.0)
+    )

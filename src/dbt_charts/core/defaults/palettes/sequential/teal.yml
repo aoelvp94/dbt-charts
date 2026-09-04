@@ -4,9 +4,9 @@
 
 name: dbt-seq-teal
 family: sequential
-description: Single-hue teal/turquoise. Anchored between cat-10 cyan and editorial-10 teal; replaces dbt-seq-cyan.
+description: Single-hue teal/turquoise. Harmonizes with vivid-10 cyan and editorial-10 teal.
 design_notes: |
-  Monotonic L* from 0.95 → 0.25. Hue=205° (between editorial-10 teal at 194° and cat-10 cyan at 210°); c_max=0.11. New palette in Session 8.
+  Monotonic L* from 0.95 → 0.25. Hue=205°; c_max=0.11. New palette in Session 8.
 
 colors:
   - "#dff3f5"    # step 1 — lightest

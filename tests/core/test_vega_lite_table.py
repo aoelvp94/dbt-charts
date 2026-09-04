@@ -675,7 +675,7 @@ class TestTableColumnConfig:
             style={
                 "table": {
                     "columns": {
-                        "revenue": TableColumnConfig(format="currency"),
+                        "revenue": TableColumnConfig(format="currency_full"),
                     }
                 }
             },
@@ -896,6 +896,7 @@ class TestCellLink:
             style={
                 "columns": {
                     "name": TableColumnConfig(link="profile_url"),
+                    "profile_url": TableColumnConfig(visible=False),
                 }
             },
         )
@@ -934,6 +935,7 @@ class TestCellLink:
                     "name": TableColumnConfig(
                         link="https://app.example/u/{{ user_id }}",
                     ),
+                    "user_id": TableColumnConfig(visible=False),
                 }
             },
         )
@@ -968,6 +970,7 @@ class TestCellLink:
                     "name": TableColumnConfig(
                         link="https://app.example/u/{{ user_id }}",
                     ),
+                    "user_id": TableColumnConfig(visible=False),
                 }
             },
         )
@@ -1001,6 +1004,7 @@ class TestCellLink:
             style={
                 "columns": {
                     "name": TableColumnConfig(link="profile_url"),
+                    "profile_url": TableColumnConfig(visible=False),
                 }
             },
         )

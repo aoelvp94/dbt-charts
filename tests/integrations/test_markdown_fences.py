@@ -830,7 +830,7 @@ class TestResolveProjectDir:
 
         assert _resolve_project_dir() == dct_root.resolve()
 
-    def test_falls_back_to_git_root_when_no_dft_marker(
+    def test_falls_back_to_git_root_when_no_dct_marker(
         self, tmp_path, monkeypatch
     ) -> None:
         """Pyproject-only Python project: .git is the project root."""

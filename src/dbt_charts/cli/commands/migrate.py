@@ -42,6 +42,8 @@ def _emit(summary: MigrateSummary, *, dry_run: bool) -> None:
     action = "Would update" if dry_run else "Updated"
     for path in summary.updated:
         _console.print(f"{action} {path}")
+    for note in summary.notes:
+        _console.print(f"  {note.path}: {note.message}")
     for path in summary.current:
         _console.print(f"Current {path}")
     for error in summary.errors:

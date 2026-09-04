@@ -1,11 +1,11 @@
 title: Sales Dashboard with Filters
-description: |
+notes: |
   Filter-bar pattern — region dropdown and date controls wired to queries. Inline data used here; in production, replace with sql: + WHERE {{ filter(...) }}.
 
 variables:
   region:
     label: Region
-    description: Filter to a single region, or leave blank for all
+    notes: Filter to a single region, or leave blank for all
     options:
       static:
         - North
@@ -22,7 +22,7 @@ variables:
     default: "2025-12-31"
 queries:
   monthly_revenue:
-    description: Monthly revenue — replace with sql and {{ filter }} for a live source
+    notes: Monthly revenue — replace with sql and {{ filter }} for a live source
     columns:
       - month
       - region
@@ -36,7 +36,7 @@ queries:
       - ['2025-09-01', 'South', 26000]
 charts:
   revenue_by_month:
-    description: Monthly revenue trend by region
+    notes: Monthly revenue trend by region
     type: bar
     query: monthly_revenue
     x: month

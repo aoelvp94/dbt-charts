@@ -292,6 +292,9 @@ class FontMeasurer:
         default=None, init=False, repr=False
     )
     _supports_weight: bool = field(default=False, init=False, repr=False)
+    # hhea ascent/descent in font units; the properties below scale them to em.
+    _ascent_raw: int = field(default=0, init=False, repr=False)
+    _descent_raw: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._init_font()
@@ -331,9 +334,14 @@ class FontMeasurer:
             head = font["head"]
             upm = head.unitsPerEm  # pyright: ignore[reportAttributeAccessIssue]
             self._units_per_em = upm
+            hhea = font["hhea"]
+            self._ascent_raw = hhea.ascent  # pyright: ignore[reportAttributeAccessIssue]
+            self._descent_raw = hhea.descent  # pyright: ignore[reportAttributeAccessIssue]
             self._available = True
         except (FileNotFoundError, OSError, TTLibError):
-            # Font file not found, unreadable, or invalid.
+            # Font file not found, unreadable, or invalid. A file that loads but
+            # is missing a mandatory table raises KeyError instead and is not
+            # caught: that is malformed input, not a font to measure at zero.
             self._available = False
 
     def _load_advance_deltas(self, font: Any, weight: float) -> None:
@@ -487,6 +495,38 @@ class FontMeasurer:
         than constructing a ``FontMeasurer(weight=...)`` and catching the raise.
         """
         return self._supports_weight
+
+    @property
+    def ascent_em(self) -> float:
+        """Ascender height above the baseline, as a fraction of em.
+
+        With :attr:`descent_em` this is the face's content box — the height a
+        line of it occupies before any leading. A line box taller than the two
+        has leading to split above and below the text; one shorter has the
+        glyphs overflowing it, which is normal at a tight line height and is
+        why neither value is clamped here.
+        """
+        self._require_vertical_metrics()
+        return self._ascent_raw / self._units_per_em
+
+    @property
+    def descent_em(self) -> float:
+        """Descender depth below the baseline, as a positive fraction of em.
+
+        ``hhea.descent`` is negative in a well-formed font — down is negative in
+        the Y-up font coordinate system — and is returned here as a magnitude, so
+        a caller computing ``baseline + descent_em * size`` needs to know nothing
+        about that convention.
+        """
+        self._require_vertical_metrics()
+        return abs(self._descent_raw) / self._units_per_em
+
+    def _require_vertical_metrics(self) -> None:
+        if not self._available:
+            raise RuntimeError(
+                f"Font {self.font_path!r} did not load; it has no vertical metrics "
+                "to read. Check `is_available` before asking for them."
+            )
 
     @classmethod
     def system_default(cls) -> Optional[FontMeasurer]:

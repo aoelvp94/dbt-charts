@@ -1,0 +1,253 @@
+title: Attached Support Tables
+theme: paper
+notes: |
+  Showcases the `chart.support_table` primitive — a strip of cells attached to
+  a chart and pixel-aligned to its x-axis ticks. Default position is `top`
+  (above the plot); set `style.support_table.position: bottom` for below-plot.
+  Works on `bar`, `line`, and `area` charts. Each entry is one row of the
+  strip; use `aggregate:` to roll up rows that have multiple values per x.
+
+source: examples_db
+text: |
+  **Attached support tables** turn a chart into a chart-plus-table: every x-tick
+  carries one or more numeric rows adjacent to it, formatted and labeled. By
+  default the strip sits above the plot (`position: top`); set
+  `style.support_table.position: bottom` on any chart or style tier to restore
+  the legacy below-plot layout. Reach for them when the picture answers the
+  trend question and the reader still wants the raw numbers — totals, sample
+  sizes, comparison metrics — without flipping to a separate table.
+
+  | Key | What it does |
+  |-----|--------------|
+  | `source` | Column read from the chart's query output |
+  | `aggregate` | `sum`, `avg`, `min`, `max`, `median`, `count`, `count_distinct` — required when more than one row maps to a given x |
+  | `format` | Standard d3-format spec (`$.2s`, `,d`, `.1%`, …) |
+  | `label` | Optional row label; rendered at the y-axis tick column (right gutter on standard charts, left gutter on charts with `axis_y.position: left`) |
+
+queries:
+  weekly_revenue: |
+    SELECT
+      date_trunc('week', date)::DATE AS week,
+      SUM(revenue) AS revenue,
+      SUM(units_sold) AS units,
+      COUNT(*) AS orders,
+      AVG(revenue) AS avg_order_revenue
+    FROM ecommerce_orders
+    GROUP BY week
+    ORDER BY week
+
+  weekly_revenue_by_category: |
+    SELECT
+      date_trunc('week', date)::DATE AS week,
+      category,
+      SUM(revenue) AS revenue,
+      SUM(units_sold) AS units
+    FROM ecommerce_orders
+    GROUP BY week, category
+    ORDER BY week, category
+
+  product_totals: |
+    SELECT
+      product,
+      SUM(revenue) AS revenue,
+      SUM(units_sold) AS units,
+      AVG(revenue) AS avg_order_revenue,
+      COUNT(*) AS orders
+    FROM ecommerce_orders
+    GROUP BY product
+    ORDER BY revenue DESC
+
+  region_by_category: |
+    SELECT
+      region,
+      category,
+      SUM(revenue) AS revenue,
+      SUM(units_sold) AS units
+    FROM ecommerce_orders
+    GROUP BY region, category
+    ORDER BY region, category
+
+  weekly_revenue_with_share: |
+    SELECT
+      date_trunc('week', date)::DATE AS week,
+      SUM(revenue) AS revenue,
+      ROUND(SUM(revenue) / SUM(SUM(revenue)) OVER (), 3) AS revenue_share
+    FROM ecommerce_orders
+    GROUP BY week
+    ORDER BY week
+
+charts:
+  weekly_bar:
+    query: weekly_revenue
+    type: bar
+    title: Weekly Revenue (with attached support table)
+    notes: |
+      One row per x — the support_table reads `units` and `orders` directly
+      from the query and formats them per row.
+
+    x: week
+    y: revenue
+    support_table:
+      - source: revenue
+        format: currency_whole
+        label: Revenue
+      - source: units
+        format: ",d"
+        label: Units
+      - source: orders
+        format: ",d"
+        label: Orders
+  weekly_bar_grouped:
+    query: weekly_revenue_by_category
+    type: bar
+    title: Weekly Revenue by Category
+    notes: |
+      Multiple rows per x → use `aggregate:` to roll up. The `per_series:`
+      entry emits one row per category with series-colored label ink. Aggregate
+      rows (Total, Units) stay neutral.
+
+    x: week
+    y: revenue
+    color: category
+    support_table:
+      - per_series: revenue
+        format: currency_whole
+      - aggregate: sum
+        source: revenue
+        format: currency_whole
+        label: Total
+      - aggregate: sum
+        source: units
+        format: ",d"
+        label: Units
+    style:
+      stack: zero
+  weekly_line:
+    query: weekly_revenue
+    type: line
+    title: Weekly Revenue Trend
+    notes: |
+      Line charts get the same strip treatment. Useful when the line shows
+      the trend and the table grounds it with the underlying counts.
+
+    x: week
+    y: revenue
+    support_table:
+      - source: revenue
+        format: currency_whole
+        label: Revenue
+      - source: avg_order_revenue
+        format: currency_whole
+        label: Avg/order
+      - source: orders
+        format: ",d"
+        label: Orders
+  weekly_line_by_category:
+    query: weekly_revenue_by_category
+    type: line
+    title: Weekly Revenue by Category (line)
+    x: week
+    y: revenue
+    color: category
+    support_table:
+      - per_series: revenue
+        format: currency_whole
+      - aggregate: sum
+        source: revenue
+        format: currency_whole
+        label: Total
+  weekly_area_stacked:
+    query: weekly_revenue_by_category
+    type: area
+    title: Weekly Revenue (stacked area)
+    notes: |
+      Stacked area on the visual, totals + units underneath.
+
+    x: week
+    y: revenue
+    color: category
+    support_table:
+      - aggregate: sum
+        source: revenue
+        format: currency_whole
+        label: Total $
+      - aggregate: sum
+        source: units
+        format: ",d"
+        label: Units
+  product_bar:
+    query: product_totals
+    type: bar
+    title: Revenue by Product
+    notes: |
+      Categorical x. Three rows under each bar give the reader the table
+      view alongside the visual ranking.
+
+    x: product
+    y: revenue
+    support_table:
+      - source: revenue
+        format: currency_whole
+        label: Revenue
+      - source: units
+        format: ",d"
+        label: Units
+      - source: avg_order_revenue
+        format: currency_whole
+        label: Avg/order
+    style:
+      orientation: vertical
+  region_bar_grouped:
+    query: region_by_category
+    type: bar
+    title: Revenue by Region (grouped by category)
+    x: region
+    y: revenue
+    color: category
+    support_table:
+      - aggregate: sum
+        source: revenue
+        format: currency_whole
+        label: Total
+      - aggregate: max
+        source: revenue
+        format: currency_whole
+        label: Top cat
+      - aggregate: sum
+        source: units
+        format: ",d"
+        label: Units
+    style:
+      stack: zero
+      orientation: vertical
+
+  weekly_bar_compact_formats:
+    query: weekly_revenue_with_share
+    type: bar
+    title: Declare-once formats (currency_compact and percent)
+    notes: |
+      Exercises the declare-once anchoring for both format families:
+      `currency_compact` strips the `$` and `mn` suffix from repeated cells,
+      keeping them only on the first painted cell. `percent` keeps the `%`
+      on the first cell only.
+
+    x: week
+    y: revenue
+    support_table:
+      - source: revenue
+        format: currency
+        label: Revenue
+      - source: revenue_share
+        format: percent
+        label: Share
+rows:
+  - weekly_bar
+  - weekly_line
+  - weekly_bar_grouped
+  - cols:
+      - weekly_line_by_category
+      - weekly_area_stacked
+  - cols:
+      - product_bar
+      - region_bar_grouped
+  - weekly_bar_compact_formats

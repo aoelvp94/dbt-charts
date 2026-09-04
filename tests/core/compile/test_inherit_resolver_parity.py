@@ -54,7 +54,7 @@ def test_parity_root_font_fills_charts_font_color():
     graph = get_inherit_graph()
     target = "Style.charts.font.color"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#f00ba2"
 
     patched_charts_font = base.charts.font.model_copy(update={"color": None})
@@ -80,7 +80,7 @@ def test_parity_charts_font_fills_legend_label_font_color():
     graph = get_inherit_graph()
     target = "Style.charts.legend.label.font.color"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     root_color = "#ff0000"
     charts_color = "#00ff00"  # distinct from root
 
@@ -168,7 +168,7 @@ def test_parity_grid_dash_divergence():
     """
     graph = get_inherit_graph()
     target = "Style.charts.axis_x.grid.dash"
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     # Patch a distinctive dash on the canonical axis
     patched_axis = base.charts.axis.model_copy(
         update={"grid": base.charts.axis.grid.model_copy(update={"dash": [4.0, 2.0]})}
@@ -195,7 +195,7 @@ def test_parity_bar_marks_bar_padding():
     graph = get_inherit_graph()
     target = "Style.charts.bar.marks.bar.padding"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = 42.0
 
     patched_global_bar = base.charts.marks.bar.model_copy(
@@ -237,7 +237,7 @@ def test_parity_line_marks_line_halo_multiplier():
     graph = get_inherit_graph()
     target = "Style.charts.line.marks.line.halo_multiplier"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = 9.9
 
     patched_global_line = base.charts.marks.line.model_copy(
@@ -280,7 +280,7 @@ def test_parity_chart_base_aspect_ratio():
     graph = get_inherit_graph()
     target = "Style.charts.bar.aspect_ratio"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = 99.0
 
     merged = base.model_copy(
@@ -308,7 +308,7 @@ def test_parity_chart_base_palette():
     from dbt_charts.core.compile.models.primitives import CategoricalColorStyle
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = ["#111111", "#222222"]
 
     # Patch charts.color.categorical.palette with a distinctive value.
@@ -341,7 +341,7 @@ def test_parity_kpi_font_fills_from_charts_font():
     graph = get_inherit_graph()
     target = "Style.charts.kpi.font.color"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#aa1122"
 
     patched_charts_font = base.charts.font.model_copy(update={"color": distinctive})
@@ -363,15 +363,19 @@ def test_parity_kpi_font_fills_from_charts_font():
 
 
 def test_parity_kpi_value_font_fills_from_kpi_font():
-    """kpi.value.font inherits from kpi.font via InheritSlot."""
+    """kpi.value.font inherits from kpi.font via InheritSlot.
+
+    Pinned on `weight`, not `color`: the slot excludes `color` from the fill
+    so it stays a sentinel the renderer can read as "unauthored".
+    """
     graph = get_inherit_graph()
-    target = "Style.charts.kpi.value.font.color"
+    target = "Style.charts.kpi.value.font.weight"
 
-    base = get_theme_style("editorial")
-    distinctive = "#bb2233"
+    base = get_theme_style("clarity")
+    distinctive = 771.0
 
-    patched_kpi_font = base.charts.kpi.font.model_copy(update={"color": distinctive})
-    patched_value_font = base.charts.kpi.value.font.model_copy(update={"color": None})
+    patched_kpi_font = base.charts.kpi.font.model_copy(update={"weight": distinctive})
+    patched_value_font = base.charts.kpi.value.font.model_copy(update={"weight": None})
     merged = base.model_copy(
         update={
             "charts": base.charts.model_copy(
@@ -393,15 +397,19 @@ def test_parity_kpi_value_font_fills_from_kpi_font():
 
 
 def test_parity_kpi_label_font_fills_from_kpi_font():
-    """kpi.label.font inherits from kpi.font via InheritSlot."""
+    """kpi.label.font inherits from kpi.font via InheritSlot.
+
+    Pinned on `weight`, not `color`: the slot excludes `color` from the fill
+    so it stays a sentinel the renderer can read as "unauthored".
+    """
     graph = get_inherit_graph()
-    target = "Style.charts.kpi.label.font.color"
+    target = "Style.charts.kpi.label.font.weight"
 
-    base = get_theme_style("editorial")
-    distinctive = "#cc3344"
+    base = get_theme_style("clarity")
+    distinctive = 813.0
 
-    patched_kpi_font = base.charts.kpi.font.model_copy(update={"color": distinctive})
-    patched_label_font = base.charts.kpi.label.font.model_copy(update={"color": None})
+    patched_kpi_font = base.charts.kpi.font.model_copy(update={"weight": distinctive})
+    patched_label_font = base.charts.kpi.label.font.model_copy(update={"weight": None})
     merged = base.model_copy(
         update={
             "charts": base.charts.model_copy(
@@ -430,7 +438,7 @@ def test_parity_table_font_fills_from_charts_font():
     graph = get_inherit_graph()
     target = "Style.charts.table.font.color"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#dd4455"
 
     patched_charts_font = base.charts.font.model_copy(update={"color": distinctive})
@@ -456,7 +464,7 @@ def test_parity_table_header_font_fills_from_table_font():
     graph = get_inherit_graph()
     target = "Style.charts.table.header.font.color"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#ee5566"
 
     patched_table_font = base.charts.table.font.model_copy(
@@ -490,7 +498,7 @@ def test_parity_table_spark_bar_font_fills_from_charts_font():
     graph = get_inherit_graph()
     target = "Style.charts.table.spark.bar.font.color"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#ff6677"
 
     patched_charts_font = base.charts.font.model_copy(update={"color": distinctive})
@@ -529,7 +537,7 @@ def test_parity_spark_bar_font_fills_from_charts_font():
     graph = get_inherit_graph()
     target = "Style.charts.spark_bar.font.color"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#112233"
 
     patched_charts_font = base.charts.font.model_copy(update={"color": distinctive})
@@ -550,25 +558,25 @@ def test_parity_spark_bar_font_fills_from_charts_font():
     assert _get_at(result, target) == distinctive
 
 
-# ── data_table font subtree fixtures ─────────────────────────────────────────
+# ── support_table font subtree fixtures ─────────────────────────────────────────
 
 
-def test_parity_data_table_font_fills_from_charts_font():
-    """data_table.font inherits from charts.font via InheritSlot."""
+def test_parity_support_table_font_fills_from_charts_font():
+    """support_table.font inherits from charts.font via InheritSlot."""
     graph = get_inherit_graph()
-    target = "Style.charts.data_table.font.color"
+    target = "Style.charts.support_table.font.color"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#334455"
 
     patched_charts_font = base.charts.font.model_copy(update={"color": distinctive})
-    patched_dt_font = base.charts.data_table.font.model_copy(update={"color": None})
+    patched_dt_font = base.charts.support_table.font.model_copy(update={"color": None})
     merged = base.model_copy(
         update={
             "charts": base.charts.model_copy(
                 update={
                     "font": patched_charts_font,
-                    "data_table": base.charts.data_table.model_copy(
+                    "support_table": base.charts.support_table.model_copy(
                         update={"font": patched_dt_font}
                     ),
                 }
@@ -579,28 +587,28 @@ def test_parity_data_table_font_fills_from_charts_font():
     assert _get_at(result, target) == distinctive
 
 
-def test_parity_data_table_label_font_fills_from_data_table_font():
-    """data_table.label.font inherits from data_table.font via InheritSlot."""
+def test_parity_support_table_label_font_fills_from_support_table_font():
+    """support_table.label.font inherits from support_table.font via InheritSlot."""
     graph = get_inherit_graph()
-    target = "Style.charts.data_table.label.font.color"
+    target = "Style.charts.support_table.label.font.color"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#445566"
 
-    patched_dt_font = base.charts.data_table.font.model_copy(
+    patched_dt_font = base.charts.support_table.font.model_copy(
         update={"color": distinctive}
     )
-    patched_label_font = base.charts.data_table.label.font.model_copy(
+    patched_label_font = base.charts.support_table.label.font.model_copy(
         update={"color": None}
     )
     merged = base.model_copy(
         update={
             "charts": base.charts.model_copy(
                 update={
-                    "data_table": base.charts.data_table.model_copy(
+                    "support_table": base.charts.support_table.model_copy(
                         update={
                             "font": patched_dt_font,
-                            "label": base.charts.data_table.label.model_copy(
+                            "label": base.charts.support_table.label.model_copy(
                                 update={"font": patched_label_font}
                             ),
                         }
@@ -621,7 +629,7 @@ def test_parity_tooltip_font_fills_from_charts_font():
     graph = get_inherit_graph()
     target = "Style.charts.tooltip.font.color"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#556677"
 
     patched_charts_font = base.charts.font.model_copy(update={"color": distinctive})
@@ -647,7 +655,7 @@ def test_parity_tooltip_label_font_fills_from_charts_font():
     graph = get_inherit_graph()
     target = "Style.charts.tooltip.label.font.color"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#667788"
 
     patched_charts_font = base.charts.font.model_copy(update={"color": distinctive})
@@ -682,7 +690,7 @@ def test_parity_series_label_font_fills_from_charts_font():
     graph = get_inherit_graph()
     target = "Style.charts.series_label.font.color"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#778899"
 
     patched_charts_font = base.charts.font.model_copy(update={"color": distinctive})
@@ -711,7 +719,7 @@ def test_parity_pie_total_value_font_fills_from_charts_font():
     graph = get_inherit_graph()
     target = "Style.charts.pie.total.value.font.color"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#8899aa"
 
     patched_charts_font = base.charts.font.model_copy(update={"color": distinctive})
@@ -750,7 +758,7 @@ def test_parity_callout_title_font_fills_from_charts_font():
     graph = get_inherit_graph()
     target = "Style.charts.callout.title.font.color"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#99aabb"
 
     patched_charts_font = base.charts.font.model_copy(update={"color": distinctive})
@@ -785,7 +793,7 @@ def test_parity_variables_font_fills_from_root_font():
     graph = get_inherit_graph()
     target = "Style.variables.font.color"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#aabbcc"
 
     patched_root_font = base.font.model_copy(update={"color": distinctive})
@@ -805,7 +813,7 @@ def test_parity_variables_label_font_fills_from_variables_font():
     graph = get_inherit_graph()
     target = "Style.variables.label.font.color"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#bbccdd"
 
     patched_var_font = base.variables.font.model_copy(update={"color": distinctive})
@@ -831,7 +839,7 @@ def test_parity_variables_placeholder_font_fills_from_variables_font():
     graph = get_inherit_graph()
     target = "Style.variables.placeholder.font.color"
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#ccdde0"
 
     patched_var_font = base.variables.font.model_copy(update={"color": distinctive})
@@ -857,7 +865,7 @@ def test_parity_variables_placeholder_font_fills_from_variables_font():
 
 def test_skip_passthrough_none_stays_none_outside_graph():
     """Fields not in the graph keep their None value — apply_inherit is a scoped no-op."""
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     graph = get_inherit_graph()
     result = apply_inherit(base, graph)
     # Any None field on the raw theme that has no graph entry must remain None.
@@ -881,25 +889,25 @@ def test_global_tooltip_chains_in_graph():
     assert "Style.charts.tooltip.label.font.color" in graph
 
 
-def test_per_family_data_table_inherits_from_global():
-    """Per-family data_table.font.* inherits from charts.data_table.font.* via InheritSlot.
+def test_per_family_support_table_inherits_from_global():
+    """Per-family support_table.font.* inherits from charts.support_table.font.* via InheritSlot.
 
-    _CartesianChartStyle.data_table now carries InheritSlot(from_path="Style.charts.data_table"),
-    so apply_inherit fills per-family sub-fields from the global data_table.
+    _CartesianChartStyle.support_table now carries InheritSlot(from_path="Style.charts.support_table"),
+    so apply_inherit fills per-family sub-fields from the global support_table.
     """
     graph = get_inherit_graph()
     per_family_paths = [
-        "Style.charts.bar.data_table.font.color",
-        "Style.charts.line.data_table.font.color",
-        "Style.charts.bar.data_table.label.font.color",
+        "Style.charts.bar.support_table.font.color",
+        "Style.charts.line.support_table.font.color",
+        "Style.charts.bar.support_table.label.font.color",
     ]
     missing = [p for p in per_family_paths if p not in graph]
     assert not missing, (
-        f"Per-family data_table font paths must be in the inherit graph: {missing}"
+        f"Per-family support_table font paths must be in the inherit graph: {missing}"
     )
     # Global chains must still be present too.
-    assert "Style.charts.data_table.font.color" in graph
-    assert "Style.charts.data_table.label.font.color" in graph
+    assert "Style.charts.support_table.font.color" in graph
+    assert "Style.charts.support_table.label.font.color" in graph
 
 
 # ── Full-theme graph coverage ─────────────────────────────────────────────────

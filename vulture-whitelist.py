@@ -39,13 +39,3 @@ md  # src/dbt_charts/integrations/markdown.py:402,453 (fence_dbt_charts, fence_d
 # execute() signature for duck-typing purposes; the stub always returns the
 # same fixed result regardless of fetch.
 fetch  # tests/core/inspect/test_sources_dbt.py:793 (stub execute())
-
-# === MetricFlow SqlClient Protocol stub (compile/normalize/queries.py) ===
-# WHY: _CompileTimeSqlClient must declare these parameter names verbatim to
-# satisfy pyright's structural Protocol check against metricflow.protocols.SqlClient.
-# The stub methods always raise NotImplementedError — MetricFlowEngine.explain()
-# only reads sql_engine_type/sql_plan_renderer, never calls query/execute/dry_run/
-# render_bind_parameter_key. Parameter names must match the Protocol for
-# keyword-argument compatibility; renaming to _-prefix breaks pyright Protocol conformance.
-sql_bind_parameter_set  # src/dbt_charts/core/compile/normalize/queries.py (_CompileTimeSqlClient)
-bind_parameter_key  # src/dbt_charts/core/compile/normalize/queries.py (_CompileTimeSqlClient)

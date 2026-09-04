@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 from unittest.mock import MagicMock
 
+import httpx
+import openai
 import pytest
 
 from dbt_charts.ai.agent import AgentProfile, run_agent
 from dbt_charts.ai.context import DbtChartsAIContext
-from dbt_charts.ai.events import ContentDelta, ToolCallEvent
+from dbt_charts.ai.events import AgentError, ContentDelta, ToolCallEvent
+from dbt_charts.ai.llm import AITurnFailure, LLMClientError
 from dbt_charts.ai.messages import AgentMessage
 
 
@@ -44,7 +48,7 @@ def test_run_agent_threads_extra_handlers_to_dispatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A host (Cloud) passes extra_handlers through to dispatch_tool_call, so
-    host-only tools (with no meaning to dft-core) still execute."""
+    host-only tools (with no meaning to dbt_charts.core) still execute."""
     captured: dict[str, object] = {}
 
     def fake_dispatch(
@@ -358,3 +362,242 @@ def test_svg_tool_result_event_keeps_full_payload() -> None:
     events = list(run_agent("hi", client=client, context=context, profile=profile))
     result_event = next(e for e in events if isinstance(e, ToolResultEvent))
     assert result_event.result["data"] == svg
+
+
+def test_a_truncated_turn_errors_instead_of_reporting_success() -> None:
+    """The user-visible half of the silent-truncation bug, end to end.
+
+    Driven through a real OpenAIAdapter over a raw stream that is cut mid-tool-
+    call: the prose deltas arrive, then `response.incomplete`, and the
+    `response.output_item.done` that would have carried the tool call never
+    fires. Left unread, that reaches run_agent as an ordinary no-tool-call turn
+    and reports AgentDone — a successful-looking end of turn with half a
+    sentence and no board.
+    """
+    from types import SimpleNamespace
+
+    from dbt_charts.ai.events import AgentDone, AgentError
+    from dbt_charts.ai.llm import OpenAIAdapter
+    from dbt_charts.ai.openai_gateway import OpenAIGateway
+
+    truncated = [
+        SimpleNamespace(type="response.created", response=SimpleNamespace(id="r1")),
+        SimpleNamespace(
+            type="response.output_text.delta", delta="Sure — building that board"
+        ),
+        SimpleNamespace(
+            type="response.incomplete",
+            response=SimpleNamespace(
+                incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+                usage=None,
+            ),
+        ),
+    ]
+
+    def _create(**kwargs: Any) -> Iterator[Any]:
+        return iter(truncated)
+
+    gateway = OpenAIGateway(api_key="fake")
+    gateway._client = SimpleNamespace(responses=SimpleNamespace(create=_create))
+    client = OpenAIAdapter(gateway, model="gpt-test")
+
+    context = MagicMock()
+    context.project_session.adapter_registry = MagicMock()
+    profile = AgentProfile(
+        name="test", tools=[], build_system_prompt=lambda _ctx: "prompt"
+    )
+
+    events = list(run_agent("hi", client=client, context=context, profile=profile))
+
+    assert not any(isinstance(e, AgentDone) for e in events)
+    errors = [e for e in events if isinstance(e, AgentError)]
+    assert len(errors) == 1
+    details = errors[0].details
+    assert details is not None
+    assert "max_output_tokens" in details
+
+
+class TestAgentErrorCarriesATypedReason:
+    """Every way the agent loop gives up names itself.
+
+    Two of the three have no exception to classify — the loop-detection and
+    step-limit terminals `return` rather than raise — which is exactly why an
+    implementation shaped only around `classify(exc)` misses them, and why they
+    are the two most actionable reasons on the list.
+    """
+
+    def _profile(self) -> AgentProfile:
+        return AgentProfile(
+            name="test",
+            tools=[],
+            build_system_prompt=lambda _ctx: "You are a test assistant.",
+        )
+
+    def _context(self) -> Any:
+        context = MagicMock()
+        context.project_session.adapter_registry = MagicMock()
+        return context
+
+    def test_a_provider_fault_carries_its_classified_reason(self) -> None:
+        cause = openai.RateLimitError(
+            "slow down",
+            response=httpx.Response(
+                429, request=httpx.Request("POST", "http://provider.test")
+            ),
+            body={"code": "insufficient_quota"},
+        )
+        wrapped = LLMClientError(str(cause))
+        wrapped.__cause__ = cause
+
+        client = MagicMock()
+        # An exception as side_effect raises on call, which is where the
+        # provider fault surfaces: run_agent's `for event in
+        # client.stream_with_tools(...)` is inside the try that catches it.
+        client.stream_with_tools.side_effect = wrapped
+
+        events = list(
+            run_agent(
+                "hi",
+                client=client,
+                context=self._context(),
+                profile=self._profile(),
+            )
+        )
+
+        errors = [e for e in events if isinstance(e, AgentError)]
+        assert len(errors) == 1
+        assert errors[0].reason is AITurnFailure.USAGE_LIMIT_EXCEEDED
+
+    def test_the_loop_detector_reports_loop_detected(self) -> None:
+        """No exception is raised here at all — the loop yields and returns."""
+
+        def _same_call_every_time(**_kwargs: Any) -> Iterator[Any]:
+            yield ToolCallEvent(id="1", name="search_dashboards", arguments={"q": "x"})
+
+        client = MagicMock()
+        client.stream_with_tools.side_effect = _same_call_every_time
+
+        events = list(
+            run_agent(
+                "hi",
+                client=client,
+                context=self._context(),
+                profile=self._profile(),
+                max_identical_calls=2,
+                max_iterations=25,
+            )
+        )
+
+        errors = [e for e in events if isinstance(e, AgentError)]
+        assert errors, "the loop detector must terminate the run"
+        assert errors[-1].reason is AITurnFailure.LOOP_DETECTED
+
+    def test_exhausting_the_step_budget_reports_step_limit_exceeded(self) -> None:
+        """Also exception-less: the loop falls out of its range and yields."""
+        counter = {"n": 0}
+
+        def _always_a_new_call(**_kwargs: Any) -> Iterator[Any]:
+            counter["n"] += 1
+            yield ToolCallEvent(
+                id=str(counter["n"]),
+                name="search_dashboards",
+                arguments={"q": str(counter["n"])},
+            )
+
+        client = MagicMock()
+        client.stream_with_tools.side_effect = _always_a_new_call
+
+        events = list(
+            run_agent(
+                "hi",
+                client=client,
+                context=self._context(),
+                profile=self._profile(),
+                max_iterations=2,
+            )
+        )
+
+        errors = [e for e in events if isinstance(e, AgentError)]
+        assert errors, "the step limit must terminate the run"
+        assert errors[-1].reason is AITurnFailure.STEP_LIMIT_EXCEEDED
+
+    def test_reason_is_required_not_defaulted(self) -> None:
+        """A fourth terminal added later must fail to construct rather than
+        silently report `internal` — a default here is how a real failure mode
+        goes uncounted."""
+        with pytest.raises(TypeError):
+            AgentError(message="boom")  # type: ignore[call-arg]
+
+
+def test_tool_result_duration_reflects_only_its_own_dispatch_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three tool calls dispatched in one batch, the middle one slow. Each
+    ToolResultEvent's duration_s must be independent of the calls dispatched
+    before it — dispatch runs the whole batch in a ``for`` loop after the
+    stream drains (see agent.py), so pairing ToolCallEvent to ToolResultEvent
+    downstream would bill the third call for the second call's slowness too.
+    Duration has to come from timing dispatch_tool_call directly."""
+
+    from dbt_charts.ai.events import ToolResultEvent
+
+    dispatch_order: list[str] = []
+
+    class _Clock:
+        """A fake monotonic clock. `agent` reads `time` for nothing but this
+        measurement, so replacing it makes the assertion exact instead of a
+        ratio between real sleeps — which is a flake waiting for a loaded
+        CI runner, on the one test that proves durations are independent."""
+
+        def __init__(self) -> None:
+            self.now = 0.0
+
+        def monotonic(self) -> float:
+            return self.now
+
+    clock = _Clock()
+
+    def fake_dispatch(
+        name: str,
+        args: dict[str, Any],
+        *,
+        context: Any,
+        extra_handlers: Any = None,
+        tool_overrides: Any = None,
+    ) -> dict[str, Any]:
+        dispatch_order.append(name)
+        clock.now += 0.08 if len(dispatch_order) == 2 else 0.005
+        return {"success": True}
+
+    monkeypatch.setattr("dbt_charts.ai.agent.time", clock)
+    monkeypatch.setattr("dbt_charts.ai.agent.dispatch_tool_call", fake_dispatch)
+
+    tool_calls = [
+        ToolCallEvent(id="a", name="execute_query", arguments={}),
+        ToolCallEvent(id="b", name="execute_query", arguments={}),
+        ToolCallEvent(id="c", name="execute_query", arguments={}),
+    ]
+    client = MagicMock()
+    client.stream_with_tools.side_effect = [
+        iter(tool_calls),
+        iter([ContentDelta(delta="done")]),
+    ]
+    context = MagicMock()
+    context.project_session.adapter_registry = MagicMock()
+    profile = AgentProfile(
+        name="test", tools=[], build_system_prompt=lambda _ctx: "prompt"
+    )
+
+    events = list(run_agent("hi", client=client, context=context, profile=profile))
+    results = [e for e in events if isinstance(e, ToolResultEvent)]
+
+    assert [r.id for r in results] == ["a", "b", "c"]
+    first, second, third = (r.duration_s for r in results)
+    # Each call reports its own elapsed time and nothing else. Pairing
+    # ToolCallEvent to ToolResultEvent in the host would give the third call
+    # 0.09 — the whole batch — because every call event is emitted before any
+    # dispatch begins. That is the misattribution this measurement exists to
+    # avoid, and these are the exact numbers that catch it.
+    assert first == pytest.approx(0.005)
+    assert second == pytest.approx(0.08)
+    assert third == pytest.approx(0.005)

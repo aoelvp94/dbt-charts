@@ -167,7 +167,7 @@ def _emit_topic_index(topics: list[TopicEntry]) -> None:
 
 def _emit_topic_index_rich(topics: list[TopicEntry], web_docs: str) -> None:
     typer.echo(
-        "Dataface (`dct`) is a dbt-native dashboard layer. You author dashboards as "
+        "dbt charts (`dct`) is a dbt-native dashboard layer. You author dashboards as "
         'YAML "boards" — queries, charts, variables, and layout — and `dct` compiles '
         "and renders them."
     )
@@ -195,7 +195,7 @@ def _emit_topic_index_rich(topics: list[TopicEntry], web_docs: str) -> None:
 
 def _emit_topic_index_plain(topics: list[TopicEntry], web_docs: str) -> None:
     typer.echo(
-        "Dataface (`dct`) is a dbt-native dashboard layer. You author dashboards as "
+        "dbt charts (`dct`) is a dbt-native dashboard layer. You author dashboards as "
         'YAML "boards" — queries, charts, variables, and layout — and `dct` compiles '
         "and renders them.\n"
     )

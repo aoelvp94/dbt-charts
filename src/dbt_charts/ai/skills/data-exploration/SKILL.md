@@ -85,7 +85,7 @@ When sampling with `{{ s_execute_query }}`:
 - select only the columns needed for the question
 - use small limits for row samples
 - aggregate before charting or comparing categories
-- preserve Dataface template placeholders such as `{{ variable_name }}` when
+- preserve dbt charts template placeholders such as `{{ variable_name }}` when
   testing parameterized SQL that may move into dashboard YAML
 
 ## Red Flags

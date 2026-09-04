@@ -44,6 +44,38 @@ class TableOverflow(BaseModel):
     available_width: float
 
 
+class TableCramping(BaseModel):
+    """A table the renderer had to degrade to fit the width it was given.
+
+    Distinct from ``TableOverflow``, which is the physical case: columns that
+    cannot fit even at their minimum readable width, so the table paints past
+    its slot. Cramping is the quieter ladder below that — the renderer absorbs
+    the width shortfall by wrapping headers, and the table still fits its box
+    while reading badly. The height axis is not cramping: a slot cutting the
+    rows-per-page down is captured as ``TablePageSqueeze``
+    (``table_page_squeeze.py``) for WARN-TABLE-PAGE-SQUEEZED, whose grow-the-
+    slot fix matches that cause.
+
+    ``required_width`` is the columns' pre-allocation demand (cell content, or
+    the header label where that is wider); ``available_width`` is the budget
+    they were divided into. ``wrapped_headers`` of ``column_count`` counts
+    headers forced onto a second line.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    required_width: float
+    available_width: float
+    wrapped_headers: int
+    column_count: int
+    # The fraction of the budget consumed by percentage-pinned columns (0.0
+    # when none). Their demand scales with the very budget a wider board would
+    # grant, so the detector's suggested width must solve for the budget where
+    # the absolute remainder fits into what the percentages leave over —
+    # scaling the raw shortfall would under-shoot on every paste-back.
+    relative_demand_fraction: float
+
+
 # Stack of active collection sinks (innermost last); empty when no render pass
 # is collecting. A stack rather than a nullable slot so nested renders each
 # collect into their own map without a sentinel.
@@ -76,3 +108,29 @@ def record_table_overflow(chart_id: str, overflow: TableOverflow) -> None:
     sinks = _sinks.get()
     if sinks:
         sinks[-1][chart_id] = overflow
+
+
+_cramping_sinks: contextvars.ContextVar[tuple[dict[str, TableCramping], ...]] = (
+    contextvars.ContextVar("table_cramping_sinks", default=())
+)
+
+
+@contextmanager
+def collect_table_crampings() -> Generator[dict[str, TableCramping]]:
+    """Open a fresh cramping sink for the duration of a render."""
+    collected: dict[str, TableCramping] = {}
+    token = _cramping_sinks.set((*_cramping_sinks.get(), collected))
+    try:
+        yield collected
+    finally:
+        _cramping_sinks.reset(token)
+
+
+def record_table_cramping(chart_id: str, cramping: TableCramping) -> None:
+    """Record a table's cramping into the innermost open sink, if any.
+
+    No-op when no sink is open (e.g. non-SVG formats).
+    """
+    sinks = _cramping_sinks.get()
+    if sinks:
+        sinks[-1][chart_id] = cramping

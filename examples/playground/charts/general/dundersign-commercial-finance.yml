@@ -1,12 +1,12 @@
 title: Commercial finance
-description: |
+notes: |
   Bookings, win rate, and subscription health — a dense above-the-fold board
   for sales finance. Authored data-honestly against the Dundersign silver
   layer (no invented dimensions). Theme-swap at the top of the file:
   cream / editorial / stark all render coherently
   because no chart pins a color — palettes cycle through the cascade.
 
-theme: cream
+theme: paper
 source: dundersign_db
 
 style:
@@ -372,7 +372,7 @@ charts:
         # Tick ladder is derived, not pinned, so it tracks the data.
         labels:
           align: right
-          format: currency_compact
+          format: currency
       endpoint_labels:
         visible: true
 
@@ -449,7 +449,7 @@ charts:
         right: 36
       axis_y:
         labels:
-          format: currency_compact
+          format: currency
       axis_x:
         labels:
           time_unit: yearquarter

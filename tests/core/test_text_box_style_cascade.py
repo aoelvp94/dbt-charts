@@ -135,8 +135,8 @@ class TestGetCompactStyleMapper:
         # code_color should be a string (not None)
         assert isinstance(style.code_color, str)
 
-    def test_code_highlight_enabled_for_dataface_markdown(self) -> None:
-        """Dataface markdown code-fence highlighting comes from style.text.code."""
+    def test_code_highlight_enabled_for_dbt_charts_markdown(self) -> None:
+        """dbt charts markdown code-fence highlighting comes from style.text.code."""
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
@@ -195,17 +195,16 @@ class TestGetCompactStyleMapper:
         style = get_compact_style(rs)
         assert style.link_color == rs.accent
 
-    def test_table_border_from_charts_table_border(self) -> None:
-        """table_border_color comes from rs.charts.table.border.color."""
+    def test_table_border_from_text_rule(self) -> None:
+        """table_border_color comes from rs.text.rule.color."""
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
         from dbt_charts.core.render.sizing import get_compact_style
 
         rs = resolve_style(get_theme_style())
-        csc = resolve_chart_style_context(get_theme_style())
         style = get_compact_style(rs)
-        assert style.table_border_color == csc.table.border.color
+        assert style.table_border_color == rs.text.rule.color
 
     def test_heading_color_from_title_font_color(self) -> None:
         """heading_color comes from rs.title.font.color."""

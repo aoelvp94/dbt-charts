@@ -19,20 +19,36 @@ from pydantic import (
     Discriminator,
     Field,
     Tag,
+    field_validator,
     model_validator,
 )
 
 from dbt_charts.core.aliases import normalize_alias_url
 from dbt_charts.core.compile.models.cache import CachePatch
 from dbt_charts.core.compile.models.chart.authored import AuthoredChart
-from dbt_charts.core.compile.models.markers import Merge, Strategy
-from dbt_charts.core.compile.models.primitives import HtmlPolicy
+from dbt_charts.core.compile.models.markers import (
+    Content,
+    DisplayText,
+    Extends,
+    Markdown,
+    Merge,
+    Strategy,
+)
+from dbt_charts.core.compile.models.primitives import (
+    HtmlPolicy,
+    IncrementalValue,
+    validate_incremental_value,
+)
 from dbt_charts.core.compile.models.query.authored import AuthoredQuery
 from dbt_charts.core.compile.models.refs import (
+    CHART_REF_PATTERN_STR,
+    VAR_REF_PATTERN_STR,
     ChartRef,
     QueryRef,
     VariableRef,
+    coerce_ref_string,
     normalize_query_value,
+    ref_or_inline,
 )
 from dbt_charts.core.compile.models.schema_names import ThemeName
 from dbt_charts.core.compile.models.style.authored import StylePatch
@@ -42,50 +58,61 @@ from dbt_charts.core.compile.models.variable.authored import (
 )
 
 
-def _ref_or_inline(v: object, ref_cls: type) -> str:
-    """Classify a union value as '@ref' or '@inline'.
-
-    Returns '@ref' when v is already a typed ref instance, a bare cross-file ref
-    string, or a dict that contains a 'ref' key. Returns '@inline' otherwise.
-
-    Tag names start with '@' to prevent collision with user-chosen YAML keys
-    ('ref', 'inline') in Pydantic error locs.
-
-    Routing any dict with a 'ref' key to the ref branch produces a clean
-    'extra inputs not permitted' error from the ref model (extra="forbid")
-    rather than an opaque 'extra inputs' error on the inline model.
-    """
-    if isinstance(v, ref_cls):
-        return "@ref"
-    if isinstance(v, str):
-        return "@ref"
-    if isinstance(v, dict) and "ref" in v:
-        return "@ref"
-    return "@inline"
-
-
 def _var_discriminator(v: object) -> str:
-    return _ref_or_inline(v, VariableRef)
+    return ref_or_inline(v, VariableRef)
 
 
 def _query_discriminator(v: object) -> str:
-    return _ref_or_inline(v, QueryRef)
+    return ref_or_inline(v, QueryRef)
 
 
 def _chart_discriminator(v: object) -> str:
-    return _ref_or_inline(v, ChartRef)
+    return ref_or_inline(v, ChartRef)
 
 
+# Each "@ref" arm carries its own BeforeValidator + json_schema_input_type: the
+# string-to-{"ref": ...} coercion used to live as a model_validator(mode="before")
+# on the CrossFileRef subclass itself (refs.py), invisible to JSON Schema.
+# Declaring it here, on the annotation, is what schema/introspection.py reads back
+# — the migrator's projected schema widens for free instead of needing a
+# hand-maintained copy (renderers/json_schema.py, renderers/vscode_schema.py).
 VariableOrRef = Annotated[
-    Annotated[Variable, Tag("@inline")] | Annotated[VariableRef, Tag("@ref")],
+    Annotated[Variable, Tag("@inline")]
+    | Annotated[
+        VariableRef,
+        BeforeValidator(
+            coerce_ref_string,
+            json_schema_input_type=VAR_REF_PATTERN_STR | VariableRef,
+        ),
+        Tag("@ref"),
+    ],
     Discriminator(_var_discriminator),
 ]
+# queries: additionally needs normalize_query_value's whole-value coercion (bare
+# SQL vs. bare ref string vs. dict-with-inferred-type) ahead of discrimination —
+# QueryRef's own "@ref" arm never actually sees a raw string, since
+# normalize_query_value already turns a ref-shaped string into {"ref": ...}
+# before the union validates.
 QueryOrRef = Annotated[
-    Annotated[AuthoredQuery, Tag("@inline")] | Annotated[QueryRef, Tag("@ref")],
-    Discriminator(_query_discriminator),
+    Annotated[
+        Annotated[AuthoredQuery, Tag("@inline")] | Annotated[QueryRef, Tag("@ref")],
+        Discriminator(_query_discriminator),
+    ],
+    BeforeValidator(
+        normalize_query_value,
+        json_schema_input_type=str | AuthoredQuery | QueryRef,
+    ),
 ]
 ChartOrRef = Annotated[
-    Annotated[AuthoredChart, Tag("@inline")] | Annotated[ChartRef, Tag("@ref")],
+    Annotated[AuthoredChart, Tag("@inline")]
+    | Annotated[
+        ChartRef,
+        BeforeValidator(
+            coerce_ref_string,
+            json_schema_input_type=CHART_REF_PATTERN_STR | ChartRef,
+        ),
+        Tag("@ref"),
+    ],
     Discriminator(_chart_discriminator),
 ]
 
@@ -93,7 +120,14 @@ ChartOrRef = Annotated[
 # LAYOUT SUB-SHAPES
 # ============================================================================
 
-_CHARTREF_KEYS = frozenset({"chart", "width", "height", "description", "visible"})
+# Both spellings: a pre-rename board still authors `description:` here, and
+# the retired form predates the rename either way, so a `notes:` sibling must
+# also match -- `v.keys() <= _CHARTREF_KEYS` would otherwise drop out for
+# `- chart: c1 / notes: x` and fall through to a confusing "Unknown field
+# 'chart'" error instead of this form's clear message.
+_CHARTREF_KEYS = frozenset(
+    {"chart", "width", "height", "description", "notes", "visible"}
+)
 _CHARTREF_MSG = (
     "Layout item uses removed `chart:` reference form. "
     "Use a bare chart name (`- chart_name`) or a nested board wrapper:\n"
@@ -170,9 +204,13 @@ class GridItem(BaseModel):
     height: int | None = Field(
         default=None, description="Alias for row_span (more intuitive name)."
     )
-    description: str | None = Field(
+    notes: Annotated[str | None, DisplayText()] = Field(
         default=None,
-        description="Optional metadata for AI search and context tooltips.",
+        description=(
+            "Optional metadata for AI search. Emitted into the SVG DOM as "
+            "a data-layout-notes attribute; never painted as visible "
+            "pixels."
+        ),
     )
 
 
@@ -184,22 +222,8 @@ class GridLayout(BaseModel):
     columns: int = Field(
         default=24, description="Number of grid columns (default: 24)."
     )
-    row_height: str | None = Field(
-        default=None, description="Default row height as a CSS value (e.g., '200px')."
-    )
-    gap: Literal["sm", "md", "lg", "xl"] | None = Field(
-        default=None, description="Gap between grid cells (sm, md, lg, xl)."
-    )
-    default_width: int | None = Field(
-        default=None,
-        description="Default column span for items that don't specify width.",
-    )
-    default_height: int | None = Field(
-        default=None,
-        description="Default row span for items that don't specify height.",
-    )
     items: list[GridItem] = Field(
-        description="List of grid items with position and span configuration."
+        description="Cells of this grid, each pairing content with its placement."
     )
 
 
@@ -208,20 +232,26 @@ class TabItem(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    title: str = Field(description="Tab label displayed in the tab bar.")
+    title: Annotated[str, DisplayText()] = Field(
+        description="Tab label displayed in the tab bar."
+    )
     icon: str | None = Field(
         default=None,
         description="Optional icon shown in the tab (e.g., emoji or icon name).",
     )
-    description: str | None = Field(
+    notes: Annotated[str | None, DisplayText()] = Field(
         default=None,
-        description="Optional metadata for AI search and context tooltips.",
+        description=(
+            "Optional metadata for AI search. Emitted into the SVG DOM as "
+            "a data-layout-notes attribute; never painted as visible "
+            "pixels."
+        ),
     )
-    text: str | None = Field(
+    text: Annotated[str | None, Markdown()] = Field(
         default=None, description="Markdown text content shown in this tab."
     )
     style: StylePatch | None = Field(
-        default=None, description="Style patch for this tab's content area."
+        default=None, description="Appearance overrides for this tab's content area."
     )
 
     # Layout fields (tab can contain nested layouts)
@@ -237,7 +267,7 @@ class TabItem(BaseModel):
         default=None, description="CSS-grid layout for this tab's content."
     )
     tabs: TabLayout | None = Field(
-        default=None, description="Nested tab layout (tabs within tabs)."
+        default=None, description="A further set of tabs opening inside this one."
     )
 
 
@@ -265,12 +295,13 @@ class TabLayout(BaseModel):
         description="Variable name and URL param base for tab selection (auto-generated if omitted).",
     )
     position: Literal["top", "left"] = Field(
-        default="top", description="Tab bar position (top or left)."
+        default="top", description="Which edge the tab bar sits on (top or left)."
     )
     default: str | None = Field(
-        default=None, description="Default tab title to activate on load."
+        default=None,
+        description="Title of the tab opened on load; the first tab if omitted.",
     )
-    items: list[TabItem] = Field(description="List of tab items.")
+    items: list[TabItem] = Field(description="Tabs in display order.")
 
 
 # ============================================================================
@@ -292,8 +323,10 @@ class BoardDetails(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    summary: str = Field(description="Label shown when the section is collapsed.")
-    expanded_title: str | None = Field(
+    summary: Annotated[str, DisplayText()] = Field(
+        description="Label shown when the section is collapsed."
+    )
+    expanded_title: Annotated[str | None, DisplayText()] = Field(
         default=None,
         description="Label shown when the section is expanded. Defaults to summary.",
     )
@@ -310,14 +343,19 @@ def _coerce_details(v: Any) -> Any:
 
 
 class _BoardDesugarMixin(BaseModel):
-    """Shared authoring-input mixin: desugar ``theme:`` and normalize query shorthand.
+    """Shared authoring-input mixin: desugar ``theme:``.
 
     Inherited by both ``AuthoredBoard`` and ``BoardPatch`` so that meta files and
     extends fragments (validated as ``BoardPatch`` by the merge engine) accept the
-    exact same authored input the canonical model does. Every desugaring/normalizing
+    exact same authored input the canonical model does. Every desugaring
     validator that turns valid authored YAML into the model's field shape belongs
     here — not on ``AuthoredBoard`` alone — because ``build_patch_model_ext`` only
     carries over validators that live on the patch model's base class.
+
+    Query-shorthand normalization (``queries: {q: "SELECT ..."}``) is NOT here:
+    it lives on ``QueryOrRef``'s own ``BeforeValidator`` (`normalize_query_value`,
+    above), which `build_patch_model_ext` forwards to ``BoardPatch`` for free by
+    copying the field's annotation — no mixin needed for a per-field coercion.
 
     Single-write: ``_desugar_theme`` strips ``theme`` and sets ``extends``.
     ``AuthoredBoard`` does NOT override ``_desugar_theme``.
@@ -334,33 +372,14 @@ class _BoardDesugarMixin(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _normalize_queries(cls, data: object) -> object:
-        """Normalize string query shorthand to full form before field validation.
-
-        ``queries: {q: "SELECT ..."}`` is authoring sugar for
-        ``queries: {q: {type: sql, sql: "SELECT ..."}}``. Runs for all boards —
-        top-level and nested boards embedded in rows/cols/tabs/grid — and for every
-        meta/extends fragment, since they all share this mixin. Delegates to the
-        single shared helper ``normalize_query_value`` (models.refs).
-        """
-        if not isinstance(data, dict):
-            return data
-        raw_queries = data.get("queries")
-        if not isinstance(raw_queries, dict):
-            return data
-        return {
-            **data,
-            "queries": {
-                name: normalize_query_value(q) for name, q in raw_queries.items()
-            },
-        }
-
-    @model_validator(mode="before")
-    @classmethod
     def _desugar_theme(cls, data: Any) -> Any:
         """Desugar ``theme: X`` → ``extends: X`` (single-write: theme removed).
 
         ``theme:`` is authoring sugar for ``extends:``. Having both is an error.
+
+        Sugar at *parse* time, which is downstream of schema migration — so
+        ``theme:`` is a key the migration recognizer sees like any other, not a
+        spelling of ``extends:`` that it can look through.
         """
         if not isinstance(data, dict) or "theme" not in data:
             return data
@@ -386,7 +405,7 @@ class AuthoredBoard(_BoardDesugarMixin):
 
     Example YAML:
         title: Sales Board
-        description: Overview of sales metrics
+        notes: Overview of sales metrics
 
         source: my_postgres  # Default source for all queries
 
@@ -422,17 +441,18 @@ class AuthoredBoard(_BoardDesugarMixin):
 
     model_config = ConfigDict(extra="forbid")
 
-    title: Annotated[str | None, Merge(Strategy.OVERRIDE)] = Field(
-        default=None, description="Dashboard title displayed at the top."
+    title: Annotated[str | None, Merge(Strategy.OVERRIDE), DisplayText()] = Field(
+        default=None, description="Heading shown at the top of the board."
     )
-    description: Annotated[str | None, Merge(Strategy.OVERRIDE)] = Field(
-        default=None, description="Description text for the dashboard."
+    notes: Annotated[str | None, Merge(Strategy.OVERRIDE), DisplayText()] = Field(
+        default=None,
+        description="Prose summary of what this board covers; read by AI search and board listings.",
     )
     tags: Annotated[list[str] | None, Merge(Strategy.APPEND, nested=Strategy.CHILD)] = (
-        Field(default=None, description="Tags for categorization and search.")
+        Field(default=None, description="Keywords for grouping and searching boards.")
     )
     aliases: list[str] | None = (
-        Field(  # no Merge marker — identity field, validate-absent in extends/meta lane
+        Field(  # no Merge marker -- identity field, validate-absent in extends/meta lane
             default=None,
             description=(
                 "Additional URLs that redirect to this board's canonical file-path URL. "
@@ -442,18 +462,35 @@ class AuthoredBoard(_BoardDesugarMixin):
             ),
         )
     )
+    # alias="_schema_version" so YAML authors see a leading underscore marking
+    # this as dct migrate-written, not hand-authored (Python code uses
+    # schema_version; Pydantic rejects a leading underscore on a field name).
+    schema_version: str | None = (
+        Field(  # no Merge marker -- identity field, validate-absent in extends/meta lane
+            default=None,
+            alias="_schema_version",
+            description=(
+                "The latest released dbt charts YAML schema version this file was "
+                "last migrated to, written by `dct migrate` only -- never hand-author "
+                "this. Informational: nothing reads it back when your board loads, "
+                "and it is not a validated guarantee about the file's actual grammar "
+                "(a hand-edit after migration can make it stale). YAML key: "
+                "_schema_version."
+            ),
+        )
+    )
 
-    text: Annotated[str | None, Merge(Strategy.OVERRIDE)] = Field(
-        default=None, description="Markdown text content for text-only sections."
+    text: Annotated[str | None, Merge(Strategy.OVERRIDE), Content(), Markdown()] = (
+        Field(default=None, description="Markdown text content for text-only sections.")
     )
     html_policy: Annotated[HtmlPolicy, Merge(Strategy.OVERRIDE)] = Field(
         default="none",
         description=(
             "HTML rendering policy for the board's body text. One of: "
-            '"none" (default) — HTML is escaped and rendered as plain markdown; '
-            '"safe-subset" — reserved for a parser-checked allowlist (not yet '
-            "enforced — currently renders as none); "
-            '"trusted-raw" — raw HTML via foreignObject. TRUSTED-CONTENT ONLY: '
+            '"none" (default): HTML is escaped and rendered as plain markdown; '
+            '"safe-subset": reserved for a parser-checked allowlist (not yet '
+            "enforced; currently renders as none); "
+            '"trusted-raw": raw HTML via foreignObject. TRUSTED-CONTENT ONLY: '
             "this is NOT a security sandbox. <script>/event-handlers are stripped "
             "as a best-effort guard, not a guarantee. Enable only on first-party "
             "boards you fully control."
@@ -482,9 +519,20 @@ class AuthoredBoard(_BoardDesugarMixin):
     cache: CachePatch = Field(
         default_factory=CachePatch,
         description=(
-            "Cache policy for every query in this dashboard, e.g. cache: 1h — "
+            "Cache policy for every query in this dashboard, e.g. cache: 1h: "
             "queries inherit it and may refine it; cache: false opts the whole "
             "dashboard out. Inheritable via the meta.yaml cascade."
+        ),
+    )
+    incremental: Annotated[IncrementalValue, Merge(Strategy.OVERRIDE)] = Field(
+        default=None,
+        description=(
+            "Default watermark column for incremental refresh: queries in "
+            "this board fetch only new rows since the last run and merge "
+            "them with the cached result, keyed on this column. Queries "
+            "inherit this value and may override it with their own "
+            "incremental: setting. Set to false on a nested board to opt out "
+            "of a parent's incremental setting."
         ),
     )
 
@@ -493,13 +541,17 @@ class AuthoredBoard(_BoardDesugarMixin):
         dict[str, VariableOrRef] | None, Merge(Strategy.BY_KEY, nested=Strategy.CHILD)
     ] = Field(
         default_factory=dict,
-        description="Variable definitions for dynamic filtering and UI controls.",
+        description="Named inputs that parameterize queries; each renders as a control unless it sets visible: false.",
     )
-    queries: Annotated[dict[str, QueryOrRef] | None, Merge(Strategy.BY_KEY)] = Field(
+    queries: Annotated[
+        dict[str, QueryOrRef] | None, Merge(Strategy.BY_KEY), Content()
+    ] = Field(
         default_factory=dict,
-        description="Named query definitions (SQL, CSV, MetricFlow, HTTP, etc.).",
+        description="Named result sets the charts draw from (SQL, CSV, HTTP, and more).",
     )
-    charts: Annotated[dict[str, ChartOrRef] | None, Merge(Strategy.BY_KEY)] = Field(
+    charts: Annotated[
+        dict[str, ChartOrRef] | None, Merge(Strategy.BY_KEY), Content()
+    ] = Field(
         default_factory=dict,
         description=(
             "Named chart definitions. When no explicit layout is present, "
@@ -512,6 +564,7 @@ class AuthoredBoard(_BoardDesugarMixin):
         list[str | AuthoredBoard | AuthoredChart | dict[str, AuthoredChart]] | None,
         BeforeValidator(_check_layout_list),
         Merge(Strategy.APPEND, nested=Strategy.CHILD),
+        Content(),
     ] = Field(
         default=None,
         description="Vertical stack layout: list of chart names or inline chart/board definitions.",
@@ -520,21 +573,22 @@ class AuthoredBoard(_BoardDesugarMixin):
         list[str | AuthoredBoard | AuthoredChart | dict[str, AuthoredChart]] | None,
         BeforeValidator(_check_layout_list),
         Merge(Strategy.APPEND, nested=Strategy.CHILD),
+        Content(),
     ] = Field(
         default=None,
         description="Horizontal layout: list of chart names or inline chart/board definitions.",
     )
-    grid: Annotated[GridLayout | None, Merge(Strategy.DEEP, nested=Strategy.CHILD)] = (
-        Field(
-            default=None,
-            description="CSS-grid style layout with explicit row/column placement.",
-        )
+    grid: Annotated[
+        GridLayout | None, Merge(Strategy.DEEP, nested=Strategy.CHILD), Content()
+    ] = Field(
+        default=None,
+        description="CSS-grid style layout with explicit row/column placement.",
     )
-    tabs: Annotated[TabLayout | None, Merge(Strategy.DEEP, nested=Strategy.CHILD)] = (
-        Field(
-            default=None,
-            description="Tabbed navigation layout where each tab contains its own layout.",
-        )
+    tabs: Annotated[
+        TabLayout | None, Merge(Strategy.DEEP, nested=Strategy.CHILD), Content()
+    ] = Field(
+        default=None,
+        description="Tabbed navigation layout where each tab contains its own layout.",
     )
 
     # Card gap toggle: when true, adds gap between cards.
@@ -563,20 +617,20 @@ class AuthoredBoard(_BoardDesugarMixin):
 
     # Styling & dimensions (when nested)
     id: str | None = (
-        Field(  # no Merge marker — identity field, validate-absent in extends/meta lane
+        Field(  # no Merge marker -- identity field, validate-absent in extends/meta lane
             default=None,
             description="Explicit ID for this board. Auto-generated from filename if omitted.",
         )
     )
     style: Annotated[StylePatch | None, Merge(Strategy.DEEP)] = Field(
         default=None,
-        description="Style patch (background, padding, border, etc.). Background and semantic color tokens (accent, muted) cascade to nested child boards.",
+        description="Appearance overrides for this board (background, padding, border, and more). Background and semantic color tokens (accent, muted) cascade to nested child boards.",
     )
     width: Annotated[str | int | None, Merge(Strategy.OVERRIDE)] = Field(
         default=None,
         description="Width when nested (e.g., '50%', '400px', or an integer in pixels). "
         "On the root board there is no parent to place it into, so it instead sets "
-        "the board's own width (equivalent to 'style.frame.width') — percentages "
+        "the board's own width (equivalent to 'style.frame.width'); percentages "
         "are rejected there since there's nothing to size relative to.",
     )
     height: Annotated[str | int | None, Merge(Strategy.OVERRIDE)] = Field(
@@ -598,25 +652,35 @@ class AuthoredBoard(_BoardDesugarMixin):
     # The resolution engine folds the chain (low→high priority) before merging.
     # `override` here: a child's extends replaces the parent's; the parent's own
     # extends is already folded in during chain resolution, never re-merged.
-    extends: Annotated[ThemeName | str | list[str] | None, Merge(Strategy.OVERRIDE)] = (
-        Field(
-            default=None,
-            description="Board name(s) or relative path(s) this board inherits from, low to high priority. A built-in theme name resolves it directly.",
-        )
+    extends: Annotated[
+        ThemeName | str | list[str] | None, Merge(Strategy.OVERRIDE), Extends()
+    ] = Field(
+        default=None,
+        description="Board name(s) or relative path(s) this board inherits from, low to high priority. A built-in theme name resolves it directly.",
     )
 
     # Auto-link: synthesize a detail-page link for table charts when no explicit
     # link: is set. Default off — opt in at the board level (per-board override).
-    # Explicit link: always wins; link: none suppresses per chart.
+    # Explicit link: always wins; link: false suppresses per chart (an explicit
+    # null is indistinguishable from omission, so only false opts out).
     # dct serve-scoped for Phase 1; project-level opt-in is deferred.
     auto_link: bool = Field(
         default=False,
         description=(
             "When True, table charts with no explicit link: automatically link each "
             "row to its canonical /data/<source>/<schema>/<table>/detail/ page. "
-            "Default off. Explicit link: always wins; set link: ~ to suppress per chart."
+            "Default off. An explicit link: always wins; set link: false on a "
+            "chart to suppress its automatic link."
         ),
     )
+
+    @field_validator("incremental", mode="before")
+    @classmethod
+    def _validate_incremental(
+        cls,
+        v: Any,  # type-state: explicit_any — mode="before" validator input; raw YAML value
+    ) -> Any:  # type-state: explicit_any — passthrough of the same boundary value
+        return validate_incremental_value(v)
 
     @model_validator(mode="before")
     @classmethod
@@ -657,11 +721,11 @@ class AuthoredBoard(_BoardDesugarMixin):
             len(defined) == 0
             and self.text is None
             and not self.title
-            and not self.description
+            and not self.notes
             and not self.charts
         ):
             raise ValueError(
-                "Board must have at least one layout type, text, title, description, or chart"
+                "Board must have at least one layout type, text, title, notes, or chart"
             )
         return self
 

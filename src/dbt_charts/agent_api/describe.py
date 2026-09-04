@@ -100,8 +100,15 @@ class DescribeBoardResult(BaseModel):
 
     success: bool
     path: str = Field(description="Project-relative path to the described board.")
+    error: str | None = Field(
+        default=None,
+        description=(
+            "Host refusal (e.g. access denied) reported in-band; this model "
+            "carries no compile-diagnostic channel."
+        ),
+    )
     title: str | None = None
-    description: str | None = None
+    notes: str | None = None
     queries: list[QueryDescription] = Field(
         default_factory=list, description="Queries defined in the board."
     )
@@ -166,8 +173,6 @@ def _encoding_for_chart(chart: Chart) -> dict[str, Any]:
     """
     enc: dict[str, Any] = {}
     for field in _ENCODING_FIELDS:
-        # No default on getattr — a typo in _ENCODING_FIELDS should raise
-        # loudly, not be silently skipped.
         # Chart families only expose the fields relevant to their type.
         v = getattr(chart, field, None)
         if v is None or v == "":
@@ -295,7 +300,7 @@ def _describe_resolved(resolved: ProjectPath) -> DescribeBoardResult:
         success=True,
         path=resolved.relpath,
         title=board.title or None,
-        description=board.description or None,
+        notes=board.notes or None,
         queries=query_descs,
         charts=chart_descs,
         variables=var_descs,
@@ -325,12 +330,11 @@ def _describe_one_path(
     project: Project,
 ) -> list[DescribeBoardResult]:
     """Per-argv expansion: file → [one], dir → walk."""
-    # WHY: dbt_charts.core.inspect.manifest_utils triggers the inspect package
-    # __init__, which eagerly imports TableInspector + grain/quality/semantic
-    # detectors. Keep this lazy so `dct --help` doesn't pay that startup cost.
-    from dbt_charts.agent_api._paths import resolve_board_path
+    from dbt_charts.agent_api._paths import (
+        iter_expanded_board_files,
+        resolve_board_path,
+    )
     from dbt_charts.core.diagnostics.base import DbtChartsError
-    from dbt_charts.core.inspect.manifest_utils import INSPECT_TEMPLATE_MANIFEST
 
     try:
         resolved = resolve_board_path(path, project)
@@ -354,13 +358,7 @@ def _describe_one_path(
     if resolved.is_yaml:
         return [_describe_resolved(resolved)]
 
-    boards = sorted(
-        pf
-        for pf in project.iter_boards(under=resolved.relpath, recursive=True)
-        if pf.is_yaml
-        and not pf.is_private
-        and not (pf.parent / INSPECT_TEMPLATE_MANIFEST).exists()
-    )
+    boards = iter_expanded_board_files(project, resolved.relpath)
     if not boards:
         return [
             DescribeBoardResult(

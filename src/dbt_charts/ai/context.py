@@ -1,4 +1,4 @@
-"""Shared scoping context for Dataface AI tool surfaces."""
+"""Shared scoping context for dbt charts AI tool surfaces."""
 
 from __future__ import annotations
 

@@ -28,9 +28,11 @@ def test_table_rejects_categorical() -> None:
 
 
 def test_kpi_rejects_categorical_and_gradient() -> None:
-    # KpiChartStylePatch.color is a bare str — no categorical or gradient arm at all.
-    # Uses the all-Optional Patch (not the theme class) so the error is isolated to
-    # the color field, not drowned out by unrelated required-field errors.
+    # KpiChartStylePatch has no color field at all — KPI has no series axis
+    # and no gradient-eligible channel, so any color shape (dict or scalar)
+    # is rejected extra_forbidden. Uses the all-Optional Patch (not the theme
+    # class) so the error is isolated to the color field, not drowned out by
+    # unrelated required-field errors.
     from dbt_charts.core.compile.models.style.authored.kpi import KpiChartStylePatch
 
     with pytest.raises(ValidationError, match="color"):

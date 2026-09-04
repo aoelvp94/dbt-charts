@@ -26,14 +26,20 @@ from __future__ import annotations
 import datetime as dt
 import itertools
 import json
+import math
 import re
 import statistics
 from collections.abc import Iterable
 from typing import Any
 
+from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.font_measure import FontMeasurer
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.text.format_d3 import portable_strftime
+from dbt_charts.core.text.predefined_formats import (
+    PREDEFINED_TIME_SPECS,
+    PredefinedTimeFormat,
+)
 from dbt_charts.core.utils import is_year_shaped
 
 # ISO date: "2024-01-15"
@@ -184,6 +190,12 @@ BUCKETED_CALENDAR_UNITS: frozenset[str] = frozenset(
     {"year", "yearquarter", "yearmonth", "yearweek", "yearmonthdate"}
 )
 
+# The fine-grain subset whose auto-detected banding is additionally gated by
+# ordinal_scaffold_within_budget: day/week buckets accumulate ~52-365 slots
+# per year of span, so data sparser than its detected grain (quarterly rows
+# plus two stray mid-month dates reading as "daily") explodes the scaffold.
+FINE_BUCKET_UNITS: frozenset[str] = frozenset({"yearweek", "yearmonthdate"})
+
 # Cyclic time-part units that remain temporal (not ordinal).
 TIME_PART_UNITS: frozenset[str] = frozenset(_TIME_UNIT_TO_VL.keys())
 
@@ -223,9 +235,10 @@ def _fiscal_month_is_year_start(d: dt.date, fiscal_year_start_month: int) -> boo
     half of the real predicate ``_month_label``/``_quarter_label`` use to
     decide whether a tick's labelExpr stacks a year-context row under the
     month/quarter text. The full predicate is ``anchor || fiscal_month ===
-    0``; ``anchor`` (true only for the domain's literal first tick) is the
-    caller's responsibility — see ``_pair_clears``, which is the one place
-    that knows whether a given tick is the leading or trailing flush edge.
+    0``; ``anchor`` (the first LABELED tick — ``visible_indices[0]`` in
+    ``_label_overlap``, not the domain's literal index 0, which differ whenever
+    a domain opens before its first opener) is the caller's responsibility —
+    see ``_pair_clears``, which receives it as ``is_anchor``.
     """
     return (d.month - fiscal_year_start_month) % 12 == 0
 
@@ -237,51 +250,40 @@ def _cadence_token_width(
     size: float,
     position: int,
     fiscal_year_start_month: int,
-    *,
-    carries_year_row: bool,
 ) -> float:
-    """Rendered width of one label in its stable format vocabulary.
+    """Rendered width of one label's own row (row 1) in its stable format vocabulary.
 
-    ``carries_year_row`` says whether *this specific tick* paints the
-    stacked year-context row under its month/quarter text — the real
-    labelExpr condition is ``anchor || fiscal_month === 0``
-    (``_month_label``/``_quarter_label``), where ``anchor`` is true only
-    for the domain's literal first tick, regardless of what month it
-    opens on. That condition can't be recomputed from ``d`` and
-    ``fiscal_year_start_month`` alone, so the caller resolves it and
-    passes the answer directly — see ``_pair_clears``, which knows
-    whether a tick is the leading edge (``anchor`` always true when
-    flushed) or the trailing edge (only ``fiscal_month === 0`` can apply).
-
-    The row only ever widens the tick's *reach from a flush-anchored
-    edge* — both rows share the edge's x position, so the wider row is
-    what actually extends furthest from it. A centered (non-flushed)
-    tick's year row sits one line below its neighbor's single-row label;
-    it never overlaps horizontally with anything, so a centered width
-    must stay row-1-only. Confirmed against a real render (a centered
-    fiscal-boundary "Jan"/"2024" tick forced to stay at month cadence
-    shows zero collision with the next month) — passing the wider width
-    for the centered case produces a false positive collision and
-    over-thins a chart no real render would thin.
+    A tick that carries the stacked year-context row (``_year_row_width``)
+    paints that row as a SEPARATE text line, one row below this one, sharing
+    only the flush edge's x position — never a wider block folded into this
+    return via ``max()``. Row 1 can only ever collide with a neighbour's row
+    1; the year row only with a neighbour's year row. See ``_pair_clears``,
+    which checks the two rows as two independent clearances.
     """
     if format_tu == "year":
         return measurer.measure(str(d.year), size)
     if format_tu == "yearquarter":
-        width = measurer.measure(f"Q{(d.month - 1) // 3 + 1}", size)
-        if carries_year_row:
-            width = max(width, measurer.measure(str(d.year), size))
-        return width
+        return measurer.measure(f"Q{(d.month - 1) // 3 + 1}", size)
     if format_tu == "yearmonth":
-        width = measurer.measure(d.strftime("%b"), size)
-        if carries_year_row:
-            width = max(width, measurer.measure(str(d.year), size))
-        return width
+        return measurer.measure(d.strftime("%b"), size)
     if format_tu == "yearweek":
         return measurer.measure(portable_strftime(d, "W%V"), size)
     if format_tu == "yearmonthdate":
         # _day_label renders two rows ("%-d" over a possibly-blank
         # month/year row) — measure that shape, not a single-row string
-        # nothing draws.
+        # nothing draws. Deliberately still `max()`'d, unlike yearmonth/
+        # yearquarter above: those two have a simple two-way row-2 shape
+        # (blank, or the bare year, gated by one boolean —
+        # `_fiscal_month_is_year_start`), which `_pair_clears` now checks as
+        # its own independent clearance. The day path's row 2
+        # (`day_week_context`) is a three-way shape — blank, bare month, or
+        # month+year — gated by an `opens_month` condition `_pair_clears`
+        # has no equivalent for today. Folding it via `max()` over-reserves
+        # here the same way it did for month/quarter before that fix, but
+        # under-reserving it without also teaching `_pair_clears` the
+        # three-way shape would UNDER-detect a real day-axis collision.
+        # Splitting it out is a real fix, not a docstring note — filed as a
+        # follow-on, not done here to keep this diff to the reported bug.
         return max(
             measurer.measure(str(d.day), size),
             measurer.measure(
@@ -291,6 +293,15 @@ def _cadence_token_width(
     raise ValueError(
         f"_cadence_token_width: {format_tu!r} is not a bucketed calendar grain"
     )
+
+
+def _year_row_width(d: dt.date, measurer: FontMeasurer, size: float) -> float:
+    """Rendered width of the stacked year-context row under a month/quarter tick.
+
+    A separate text line at a different y than row 1 (``_cadence_token_width``)
+    — checked as its own, independent clearance in ``_pair_clears``.
+    """
+    return measurer.measure(str(d.year), size)
 
 
 def _pair_clears(
@@ -303,6 +314,7 @@ def _pair_clears(
     size: float,
     band: float,
     edge_labels_flushed: bool,
+    is_anchor: bool,
     fiscal_year_start_month: int,
 ) -> bool:
     """True when labeled buckets *i* and *j* (i < j) do not overlap.
@@ -324,44 +336,81 @@ def _pair_clears(
     would over-detect collisions the real render never has, so the last
     tick keeps the calendar-boundary gate.
 
-    The two flushed edges also disagree on the year-context row
-    (``_cadence_token_width``'s ``carries_year_row``): the labelExpr's real
-    condition is ``anchor || fiscal_month === 0``, and ``anchor`` is true
-    only for the domain's literal first tick. The leading edge is always
-    ``anchor`` when flushed — it carries the year row whatever month it
-    opens on, so ``carries_year_row`` is unconditional there. The trailing
-    edge is never ``anchor``; only a genuine fiscal-year-boundary date
-    triggers the row there.
+    Whether a tick carries the year-context row is a text-anchor question,
+    not a flush-edge question: the labelExpr's real condition is ``anchor ||
+    fiscal_month === 0``, and either half can fire on ANY tick, interior or
+    edge — a interior January (or fiscal-year-start month) paints its year
+    row regardless of whether the axis flushes edges at all. ``anchor`` is
+    the first *visible* (labeled) tick, not the domain's literal first
+    bucket — the real spec compares ``datum.index === anchor_index`` where
+    ``anchor_index`` is ``visible_indices[0]`` (``_label_overlap.py``), and
+    the caller here (``temporal_visibility_fits``) passes ``is_anchor`` for
+    exactly the pair whose ``i`` is that first labeled opener (``k == 0``).
+    ``is_anchor`` and ``i == 0`` coincide only when the domain's literal
+    first bucket also happens to be labeled at this candidate grain — a
+    domain that opens off the label cadence (e.g. monthly data opening in
+    August against a quarterly candidate) has its anchor at some ``i > 0``.
+    Every other tick, ``i`` or ``j``, carries the row only when it lands on
+    the fiscal year's start month. ``left_flush``/``right_flush`` answer a
+    different question — how far a tick's own reserved extent stretches —
+    and stay scoped to that (``left_flush`` still tests literal ``i == 0``,
+    since it answers whether Vega positionally flushes the domain's own
+    first bucket, not whether this tick is the labelExpr's semantic anchor).
+
+    Confirmed against a real render: monthly data opening 2015-08 against a
+    quarterly cadence emits ``axis.values[0] = 2015-10-01`` and paints that
+    label — the axis's first RENDERED tick — ``text-anchor: middle``, while
+    the same chart opening 2015-01 paints its first ``text-anchor: start``.
+    So the flush keys off position at the range edge, not ordinal among
+    rendered ticks, and only ``dates[0]`` can ever be flushed. Keying
+    ``left_flush`` on ``is_anchor`` would reserve full width for an interior
+    label and coarsen an axis that has the room (measured on that domain at
+    a 12px band: 14 quarterly labels down to 4 yearly ones).
+
+    A tick that carries the year row renders it as a SEPARATE text line
+    (``_year_row_width``), one row below the tick's own text
+    (``_cadence_token_width``) — not a wider block reserved for both. Row 1
+    of one tick can only ever collide with row 1 of its neighbour; the year
+    row only with a neighbour's year row, and only when the neighbour
+    renders one too (nothing paints there otherwise, so there is nothing to
+    collide with). The two rows are therefore two independent clearances,
+    not one max()'d width.
     """
     clearance = (j - i) * band
     left_flush = edge_labels_flushed and i == 0
-    wi = _cadence_token_width(
-        dates[i],
-        format_tu,
-        measurer,
-        size,
-        i,
-        fiscal_year_start_month,
-        carries_year_row=left_flush,
-    )
-    left_extent = wi if left_flush else wi / 2
     right_flush = (
         edge_labels_flushed
         and j == len(dates) - 1
         and _is_calendar_tick(dates[j], encoding_tu, format_tu, fiscal_year_start_month)
     )
-    wj = _cadence_token_width(
-        dates[j],
-        format_tu,
-        measurer,
-        size,
-        j,
-        fiscal_year_start_month,
-        carries_year_row=right_flush
-        and _fiscal_month_is_year_start(dates[j], fiscal_year_start_month),
+    stacks_year_row = format_tu in {"yearmonth", "yearquarter"}
+    i_carries_year_row = stacks_year_row and (
+        is_anchor or _fiscal_month_is_year_start(dates[i], fiscal_year_start_month)
     )
+    j_carries_year_row = stacks_year_row and _fiscal_month_is_year_start(
+        dates[j], fiscal_year_start_month
+    )
+
+    wi = _cadence_token_width(
+        dates[i], format_tu, measurer, size, i, fiscal_year_start_month
+    )
+    wj = _cadence_token_width(
+        dates[j], format_tu, measurer, size, j, fiscal_year_start_month
+    )
+    left_extent = wi if left_flush else wi / 2
     right_extent = wj if right_flush else wj / 2
-    return left_extent + right_extent <= clearance
+    if left_extent + right_extent > clearance:
+        return False
+
+    if i_carries_year_row and j_carries_year_row:
+        yi = _year_row_width(dates[i], measurer, size)
+        yj = _year_row_width(dates[j], measurer, size)
+        left_year_extent = yi if left_flush else yi / 2
+        right_year_extent = yj if right_flush else yj / 2
+        if left_year_extent + right_year_extent > clearance:
+            return False
+
+    return True
 
 
 def _is_calendar_tick(
@@ -416,6 +465,7 @@ def temporal_visibility_fits(
             size,
             band,
             edge_labels_flushed,
+            k == 0,
             fiscal_year_start_month,
         ):
             return False
@@ -434,46 +484,78 @@ def resolve_temporal_label_visibility(
     *,
     edge_labels_flushed: bool,
 ) -> tuple[str, bool]:
-    """Return one render-local visibility step and whether its labels fit flat."""
-    labeled = [
-        i
-        for i, d in enumerate(dates)
-        if is_label_opener(
-            d, encoding_time_unit, format_time_unit, fiscal_year_start_month
-        )
-    ]
-    if temporal_visibility_fits(
-        labeled,
-        dates,
-        encoding_time_unit,
-        format_time_unit,
-        measurer,
-        font_size,
-        band,
-        edge_labels_flushed=edge_labels_flushed,
-        fiscal_year_start_month=fiscal_year_start_month,
-    ):
-        return format_time_unit, True
+    """Coarsen the label cadence until it fits, without overshooting into sparseness.
 
-    visibility = next_coarser_label_unit(format_time_unit) if allow_skip else None
-    if visibility is None:
-        return format_time_unit, False
-    labeled = [
-        i
-        for i, d in enumerate(dates)
-        if is_label_opener(d, encoding_time_unit, visibility, fiscal_year_start_month)
-    ]
-    return visibility, temporal_visibility_fits(
-        labeled,
-        dates,
-        encoding_time_unit,
-        format_time_unit,
-        measurer,
-        font_size,
-        band,
-        edge_labels_flushed=edge_labels_flushed,
-        fiscal_year_start_month=fiscal_year_start_month,
-    )
+    Steps ``next_coarser_label_unit`` repeatedly rather than once, so ``year``
+    is reachable from any sub-year grain — not just from a rung that starts
+    one step away. A candidate rung with fewer than two labeled openers has
+    no defined spacing and is refused as a step target, so the loop can never
+    exit on a near-empty axis by way of ``temporal_visibility_fits``'s
+    <2-label special case.
+
+    ``chart_rendering.axis.sparse_ceiling_px`` is a *preference*, not a hard
+    stop: walking finest to coarsest, the first rung that both clears
+    collisions and lands no farther apart than the ceiling wins immediately.
+    If no rung ever satisfies both, the finest rung that clears collisions at
+    all — even past the ceiling — still wins over rotating a chart to
+    vertical; a slightly sparse flat axis is a judgment call, a collision is
+    a defect. Rotation stays reserved for when no rung clears collisions at
+    any spacing.
+
+    At ``year`` cadence every visible tick is a January (or the fiscal-year
+    opener), so the label vocabulary promotes to the bare year — showing
+    ``2016`` where a finer cadence would show ``Jan`` — rather than repeating
+    the same token at every tick. Every other rung keeps the caller's
+    ``format_time_unit`` vocabulary unchanged; this is a render-local text
+    decision, not a re-graining of the axis (the ticks/values a bar or
+    histogram axis draws are unaffected — see
+    ``type_inference.build_cartesian_x_encoding``'s ``label_tick_cadence``).
+    """
+    ceiling = get_chart_rendering().axis.sparse_ceiling_px
+    unit = format_time_unit
+    sparse_fit: str | None = None  # finest rung that clears collisions but is sparse
+    while True:
+        labeled = [
+            i
+            for i, d in enumerate(dates)
+            if is_label_opener(d, encoding_time_unit, unit, fiscal_year_start_month)
+        ]
+        vocab = "year" if unit == "year" else format_time_unit
+        if temporal_visibility_fits(
+            labeled,
+            dates,
+            encoding_time_unit,
+            vocab,
+            measurer,
+            font_size,
+            band,
+            edge_labels_flushed=edge_labels_flushed,
+            fiscal_year_start_month=fiscal_year_start_month,
+        ):
+            spacing = (
+                band * (labeled[-1] - labeled[0]) / (len(labeled) - 1)
+                if len(labeled) >= 2
+                else 0.0
+            )
+            if spacing <= ceiling:
+                return unit, True
+            if sparse_fit is None:
+                sparse_fit = unit
+
+        next_unit = next_coarser_label_unit(unit) if allow_skip else None
+        if next_unit is None:
+            return (sparse_fit, True) if sparse_fit is not None else (unit, False)
+
+        next_labeled = [
+            i
+            for i, d in enumerate(dates)
+            if is_label_opener(
+                d, encoding_time_unit, next_unit, fiscal_year_start_month
+            )
+        ]
+        if len(next_labeled) < 2:
+            return (sparse_fit, True) if sparse_fit is not None else (unit, False)
+        unit = next_unit
 
 
 def _ordinal_axis_iso_value(value: Any) -> Any:
@@ -523,6 +605,28 @@ def _parse_date(value: Any) -> dt.date | dt.datetime | None:
                 return None
         return _parse_bucket_string(value)
     return None
+
+
+def epoch_ms(
+    value: Any,  # type-state: explicit_any — raw query cell, _parse_date's domain
+) -> float | None:
+    """Epoch milliseconds for a date-like value, or None if unparseable.
+
+    The numeric form Vega's ``scale('x', …)`` accepts as a probe point on a
+    continuous temporal scale. A date-only value is UTC midnight; a naive
+    datetime is read as UTC — consumers difference two probe points, so a
+    uniform assumption cancels out either way.
+    """
+    parsed = _parse_date(value)
+    if parsed is None:
+        return None
+    if isinstance(parsed, dt.datetime):
+        aware = parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
+        return aware.timestamp() * 1000.0
+    midnight = dt.datetime(
+        parsed.year, parsed.month, parsed.day, tzinfo=dt.timezone.utc
+    )
+    return midnight.timestamp() * 1000.0
 
 
 def detect_time_unit(values: list[Any]) -> str | None:
@@ -591,6 +695,77 @@ def detect_time_unit(values: list[Any]) -> str | None:
         # Same weekday but non-weekly spacing — no recognizable bucket grain.
         return None
     return "yearmonthdate"
+
+
+def ordinal_scaffold_within_budget(
+    panels: list[list[Any]],  # type-state: explicit_any — raw x cells
+    time_unit: str,
+) -> bool:
+    """Whether banding *panels*' values at a fine grain keeps a legible band axis.
+
+    A banded bucketed-time x owes the axis one slot per grain bucket across
+    its [min, max] span (``complete_ordinal_time_series`` synthesizes the
+    missing ones), so the rendered band count is the SPAN, not the row count.
+    For day/week grains the two can diverge wildly — quarterly data plus two
+    stray mid-month dates detects as "daily" and would enumerate ~90 slots
+    per real bar, each band sub-pixel.
+
+    The span is measured PER PANEL and summed, because that is what
+    ``fill_one_panel`` materializes: each panel enumerates only its own
+    [min, max] range, never the pooled one (see the density-gate paragraph
+    in ``emitters/_channels.py``). Pooling the span instead would charge the
+    chart for the gaps BETWEEN panels, which nothing ever enumerates — two
+    small-multiple panels of contiguous dailies twenty years apart synthesize
+    zero buckets but would score a ~7,200-bucket deficit and get flipped onto
+    a continuous twenty-year domain, the very failure this gate exists to
+    prevent. A non-faceted chart is the one-panel case and is unaffected.
+
+    The budget: synthesized empty buckets may not exceed ``max(distinct
+    buckets, chart_rendering.type_inference.max_ordinal_buckets)`` — dense
+    series (contiguous dailies, weekday-only data, weekly-with-holiday-gaps)
+    pass untouched, while a scaffold dominated by empty slots means the
+    detected grain is finer than the data's own and banding must not fire.
+
+    Unparseable values are ignored: ``_ordinal_bucket_key`` keys them through
+    ``str(value)``, which matches no enumerated bucket, so they neither
+    occupy a slot nor extend a span. ``detect_time_unit`` already raised at
+    ≥10% unparseable, so what is left cannot move the verdict far.
+    """
+    step_days = 7 if time_unit == "yearweek" else 1
+    spans: list[tuple[int, int]] = []
+    occupied: set[dt.date] = set()
+    for values in panels:
+        distinct: set[dt.date] = set()
+        for v in {v for v in values if v is not None}:
+            parsed = _parse_date(v)
+            if parsed is None:
+                continue
+            d = parsed.date() if isinstance(parsed, dt.datetime) else parsed
+            distinct.add(_floor_to_bucket_start(d, time_unit, 1))
+        if not distinct:
+            continue
+        # Bucket starts are already floored, so bucket indices are plain
+        # day/week arithmetic — the same slots _enumerate_buckets would
+        # materialize, without allocating a date per bucket on data whose
+        # defining property is a span pathologically larger than its row count.
+        lo = min(distinct).toordinal() // step_days
+        hi = max(distinct).toordinal() // step_days
+        spans.append((lo, hi))
+        occupied |= distinct
+    # Merge the panels' ranges before counting: the band scale is SHARED, so a
+    # bucket two panels both cover is one band, not two. Counting each panel's
+    # span separately would make the verdict a function of panel count —
+    # identical per-panel data would flip to continuous purely by gaining a
+    # sibling — while the axis it describes never changed.
+    total_bands = 0
+    merged_hi: int | None = None
+    for lo, hi in sorted(spans):
+        start = lo if merged_hi is None or lo > merged_hi else merged_hi + 1
+        if hi >= start:
+            total_bands += hi - start + 1
+        merged_hi = hi if merged_hi is None else max(merged_hi, hi)
+    max_ordinal = get_chart_rendering().type_inference.max_ordinal_buckets
+    return total_bands - len(occupied) <= max(len(occupied), max_ordinal)
 
 
 _MIXED_LABEL_MSG = (
@@ -1017,6 +1192,12 @@ def complete_ordinal_time_series(
         A new list of dicts, sorted (bucket asc, dim_1 asc, …), with the
         original rows merged in. When no buckets are missing, returns data
         sorted by the same key. If data is empty, returns data unchanged.
+
+    Raises:
+        ChartDataError: (ERR-GAP-FILL-BUCKET-COLLISION) when two rows collapse
+            to the same (bucket, *dim_vals) key — e.g. two timestamps on the
+            same calendar day under a yearmonthdate grain. Can't happen on
+            legitimately grain-aligned data.
     """
     if not data:
         return data
@@ -1076,6 +1257,42 @@ def complete_ordinal_time_series(
     existing: dict[tuple[Any, ...], dict[str, Any]] = {
         _row_key(row): row for row in data
     }
+
+    if len(existing) != len(data):
+        # A last-wins dict comprehension above would otherwise silently
+        # discard every row but one for a bucket/dim combo that collides —
+        # e.g. two timestamps on the same calendar day under a
+        # yearmonthdate grain. A collision can't happen on legitimately
+        # grain-aligned data, so this check costs nothing on valid input.
+        from collections import Counter
+
+        from dbt_charts.core.diagnostics.chart_data import ChartDataError
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_GAP_FILL_BUCKET_COLLISION,
+        )
+
+        key_counts = Counter(_row_key(row) for row in data)
+        collision_key = next(key for key, count in key_counts.items() if count > 1)
+        colliding_rows = [row for row in data if _row_key(row) == collision_key]
+        bucket, *dim_vals = collision_key
+        dim_desc = (
+            " ("
+            + ", ".join(
+                f"{dim}={val!r}" for dim, val in zip(dim_fields, dim_vals, strict=True)
+            )
+            + ")"
+            if dim_fields
+            else ""
+        )
+        raise ChartDataError.from_code(
+            ERR_GAP_FILL_BUCKET_COLLISION,
+            x_field=x_field,
+            value_a=colliding_rows[0].get(x_field),
+            value_b=colliding_rows[1].get(x_field),
+            time_unit=time_unit,
+            bucket=bucket,
+            dim_desc=dim_desc,
+        )
 
     # Generate full scaffold via cross-product of buckets × dim combinations
     if dim_fields:
@@ -1175,7 +1392,7 @@ def label_opener_values(
 
 
 def vl_time_unit(time_unit: str) -> str:
-    """Return the Vega-Lite timeUnit for a Dataface time_unit value.
+    """Return the Vega-Lite timeUnit for a dbt charts time_unit value.
 
     Chronological grains return their UTC variant (utcyearmonth etc.) so VL
     bucketing stays UTC-aligned regardless of the renderer's TZ.  Time-part
@@ -1194,7 +1411,7 @@ def resolve_label_time_unit(
 
     ``None``/``auto`` inherit the encoding vocabulary. Render-time layout may
     promote daily or weekly labels to months when the native labels do not fit
-    and the domain crosses multiple months. ``none`` disables Dataface's smart
+    and the domain crosses multiple months. ``none`` disables dbt charts' smart
     label expression.
     """
     if authored_label_time_unit == "none":
@@ -1406,6 +1623,7 @@ def default_label_expr_for(
     anchor_value: str = "",
     *,
     ticks_are_buckets: bool = True,
+    anchor_grain: str | None = None,
     steep_tilt: bool = False,
 ) -> str | None:
     """Return a smart Vega labelExpr with independent format and visibility.
@@ -1429,19 +1647,36 @@ def default_label_expr_for(
     ``format_time_unit`` chooses the text vocabulary. ``visibility_time_unit``
     only gates which ticks receive that text. ``anchor_index`` or
     ``anchor_value`` identifies the first visible tick and always gives it year
-    context. When ``ticks_are_buckets`` is ``True`` the comparison uses the
-    visibility grain (so a native month tick still matches a weekly source
-    opener after Vega-Lite normalizes both to different concrete dates); when
-    ``False`` it uses the encoding grain (Vega generates ticks at that grain,
-    and a coarser visibility comparison would match every tick in the period).
-    Value anchoring is used whenever Vega-Lite's tick-array indices do not
-    reliably match source-bucket indices.
+    context. ``anchor_grain`` names the exact time unit the anchor comparison
+    runs at — a three-way answer, not a boolean, because ``values`` can land
+    at three different grains and the anchor must match whichever one a
+    caller actually injected: the authored label grain (``values`` collapsed
+    to ``label_tick_values``), the render-local visibility grain (``values``
+    collapsed to a visibility-opener expression), or the encoding grain
+    (``values`` was left at its full native grain, or never set at all — a
+    genuinely continuous temporal axis). Comparing at the wrong grain either
+    fails to match the one tick it should (a native month tick against a
+    weekly source opener needs the visibility grain, not the encoding grain)
+    or matches every tick in a coarser period (comparing at a grain coarser
+    than what ``values`` actually holds repeats the same anchor text across
+    every tick inside that period — the exact defect this parameter exists to
+    prevent). Unset (``None``, the default) falls back to ``ticks_are_buckets``
+    — visibility grain when ``True``, encoding grain when ``False`` — which
+    only two-way callers that never mix authored and visibility grains still
+    rely on. Value anchoring is used whenever Vega-Lite's tick-array indices
+    do not reliably match source-bucket indices.
 
-    ``ticks_are_buckets`` is ``False`` for a genuinely continuous temporal axis.
-    Day labels use the same two-row day-number vocabulary as week labels either
-    way. Vega's continuous ``utcyearweek`` ticks are Sunday-anchored, so weekly
-    labels shift the tick date to the represented Monday bucket before
-    formatting it when ``ticks_are_buckets`` is ``False``.
+    ``ticks_are_buckets`` is ``False`` only for a genuinely continuous temporal
+    axis, where ``datum.value`` is a tick Vega computed itself rather than a
+    real per-row bucket key. Day labels use the same two-row day-number
+    vocabulary as week labels either way. Vega's continuous ``utcyearweek``
+    ticks are Sunday-anchored, so weekly labels shift the tick date to the
+    represented Monday bucket before formatting it when ``ticks_are_buckets``
+    is ``False``. An ordinal/bucket axis (bar, histogram) always has real
+    bucket-key values in ``datum.value`` — whether or not those values were
+    thinned to a coarser visibility grain — so it must always pass
+    ``ticks_are_buckets=True`` to keep this shift off; only the encoding-vs-
+    visibility grain choice above should vary with thinning.
 
     ``steep_tilt`` flows year/month context inline on one row instead of
     stacking it as a second row — at a full-vertical label angle, Vega's
@@ -1483,15 +1718,19 @@ def default_label_expr_for(
         "yearmonthdate": "%Y-%m-%d",
     }
     if anchor_value:
-        # On the continuous temporal path ticks are generated at the encoding
-        # grain, so compare at that grain — a coarser visibility-grain
-        # comparison is a period test that matches every tick in the period.
-        # On the bucket path ticks are injected opener values (at visibility
-        # grain), so the coarser comparison correctly handles the case where a
-        # native-month tick is compared against a weekly source opener.
-        anchor_format = anchor_formats[
-            encoding_time_unit if not ticks_are_buckets else visibility
-        ]
+        # `anchor_grain` names the grain `values` actually landed at (see the
+        # docstring's three-way explanation). A caller that never mixes
+        # authored and visibility grains may omit it and fall back to the
+        # two-way `ticks_are_buckets` choice: visibility grain when
+        # `values` collapsed to opener positions, encoding grain when it
+        # kept its full native grain (a period-coarser comparison there would
+        # match every tick in the period).
+        grain = (
+            anchor_grain
+            if anchor_grain is not None
+            else (visibility if ticks_are_buckets else encoding_time_unit)
+        )
+        anchor_format = anchor_formats[grain]
         anchor = (
             f"{fmt}({v}, '{anchor_format}') === "
             f"{fmt}(toDate({json.dumps(anchor_value)}), '{anchor_format}')"
@@ -1505,6 +1744,416 @@ def default_label_expr_for(
     if not gate:
         return expr
     return f"({anchor} || {gate}) ? ({expr}) : ''"
+
+
+def _is_subday_instant(p: dt.date | dt.datetime) -> bool:
+    """True when a single parsed value carries a nonzero hour/minute/second."""
+    return isinstance(p, dt.datetime) and bool(p.hour or p.minute or p.second)
+
+
+def _has_subday_component(parsed: list[dt.date | dt.datetime]) -> bool:
+    """True when any parsed value carries a nonzero hour/minute/second.
+
+    Mirrors ``detect_time_unit``'s own "sub-daily fallthrough" predicate —
+    the same check that makes ``detect_time_unit`` return ``None`` for this
+    data (continuous, not a calendar-bucketed grain).
+    """
+    return any(_is_subday_instant(p) for p in parsed)
+
+
+def _midnight_count(min_dt: dt.datetime, max_dt: dt.datetime) -> int:
+    """Count of midnight (00:00) instants inside ``[min_dt, max_dt]``, inclusive.
+
+    Backs rule 5 of the time-notation vocabulary: the date-context row
+    appears only when the domain holds more than one midnight — a
+    single-day intraday chart (exactly one midnight, at the domain's own
+    start) never pays for the second row.
+
+    ``min_dt``/``max_dt`` must already be in whatever clock the rendered
+    expression's ``hours(datum.value)``/``utchours(datum.value)`` gate reads
+    (see ``default_subday_label_expr_for``'s ``has_offset`` branch) — this
+    function has no timezone awareness of its own.
+    """
+    start_day = min_dt.date()
+    if dt.datetime.combine(start_day, dt.time.min) < min_dt:
+        start_day += dt.timedelta(days=1)
+    end_day = max_dt.date()
+    if dt.datetime.combine(end_day, dt.time.min) > max_dt:
+        end_day -= dt.timedelta(days=1)
+    if start_day > end_day:
+        return 0
+    return (end_day - start_day).days + 1
+
+
+def _has_hour_boundary(min_dt: dt.datetime, max_dt: dt.datetime) -> bool:
+    """True when at least one exact-hour instant falls inside ``[min_dt, max_dt]``.
+
+    Backs rule 3's anchor rule: the hour carries the full label wherever a
+    tick lands on one; when the domain never reaches an hour boundary at all
+    (e.g. 09:05 -> 09:55), no tick can ever anchor on the hour, so the caller
+    forces the anchor onto the first tick instead — see
+    ``default_subday_label_expr_for``'s ``core`` expression.
+    """
+    first_hour = min_dt.replace(minute=0, second=0, microsecond=0)
+    if first_hour < min_dt:
+        first_hour += dt.timedelta(hours=1)
+    return first_hour <= max_dt
+
+
+# Above this, the vocabulary's own date-context row (``%b %-d``, no year)
+# can print the same text for two different years — exactly the ambiguity
+# rule 5 exists to prevent, just extended across a year boundary instead of
+# a day one. 365 days is the tight bound, not a round number: two instants
+# can only land on the same calendar month/day if they are at least 365
+# days apart (366 across a leap day), so any domain narrower than this can
+# never produce that collision, and any domain at or beyond it can. This
+# check is independent of the tick-cadence gate below — it protects a
+# label-text collision, not a tick-grain one — but in practice the
+# tick-cadence ceiling fires first at any chart width narrower than
+# roughly 21,600px, so this is the backstop for widths beyond that.
+_SUBDAY_MAX_DOMAIN_SPAN = dt.timedelta(days=365)
+
+# The vocabulary only makes sense when Vega's OWN tick generator — not our
+# data's cadence — actually produces ticks with varying, sub-day clock
+# values. Vega-Lite's compiled Vega spec sets a continuous temporal axis's
+# tick count to `ceil(width / 40)` (confirmed by inspecting
+# `vl_convert.vegalite_to_vega`'s emitted `tickCount` signal); d3-time's own
+# tick-interval table then switches from one "nice" step to the next at the
+# geometric mean of the two neighboring step durations (confirmed against
+# real `vl_convert.vegalite_to_svg` renders at both boundaries below, to
+# within a tenth of the finer unit). Multiplying that boundary by the tick
+# count converts it from "target seconds-per-tick" back to "domain span":
+#
+#   - at or above the day boundary, every tick Vega draws lands on local
+#     midnight (a day/week/month/year step), so `hours(datum.value) === 0`
+#     is true everywhere and the vocabulary would print "Midnight" on every
+#     tick regardless of what the underlying data looks like;
+#   - below the minute boundary, Vega's ticks are closer together than a
+#     minute, which the vocabulary has no rung to describe (rule 3's finest
+#     discriminator is minutes) and would render identical labels on
+#     distinct ticks.
+#
+# Both bounds are span-and-width joint quantities, not data-cadence ones —
+# the row values beyond the domain's own min/max never enter this
+# computation, because Vega's tick *positions* come from the scale domain,
+# not from how densely the underlying rows are packed inside it.
+_VL_DEFAULT_TICK_PITCH_PX = 40.0
+_TICK_DAY_STEP_BOUNDARY_HOURS = math.sqrt(12 * 24)  # ~16.9706
+_TICK_MINUTE_STEP_BOUNDARY_SECONDS = math.sqrt(30 * 60)  # ~42.4264
+
+# vl_convert renders every chart under `autosize: {type: "fit"}`: the VL
+# spec's declared `width` is the OUTER box, and Vega solves internally for a
+# smaller plot rectangle by subtracting the y-axis's own rendered chrome
+# (tick marks, label text, padding) — a data-dependent amount only Vega's
+# layout engine measures exactly, invisible to Python before the spec is
+# compiled. Measured directly against this engine's default theme at a
+# declared width of 600px (`<path class="background" ... d="M0,0h<N>...">`
+# in the compiled SVG gives the real plot rectangle): 49px for small
+# integers, 59px for decimals, 63px for six-digit values, 88px for six-digit
+# negatives. This constant is a conservative allowance above the widest of
+# those, not a measurement of any one axis — it can only make the tick-count
+# prediction below UNDER-count relative to Vega's real tickCount, except for a
+# y-axis whose real chrome exceeds even this allowance (an unusually long
+# custom number format), where the prediction can still overshoot the real
+# plot width. An under-counted tick_count is the SAFE direction for the upper
+# (day-grain) gate alone — it lowers that gate's span ceiling, biasing toward
+# bailing rather than wrongly applying. It is the UNSAFE direction for the
+# lower (minute-grain) gate: that gate's floor shrinks right along with it,
+# so a real tickCount higher than predicted can slip a span through that
+# Vega itself subdivides into sub-minute ticks (confirmed by a real render:
+# a declared 600px card predicts 13 here while Vega draws 14, opening a
+# ~42s band of domains that clear this under-counted floor but not the real
+# one). ``predicted_tick_count_ceiling`` below is the safe counterpart for
+# that gate. See default_subday_label_expr_for's docstring for why a wider
+# margin trades away a bit of the vocabulary's reach rather than closing that
+# risk outright — only invoking vl_convert itself would close it exactly.
+_ESTIMATED_Y_AXIS_CHROME_PX = 100.0
+
+
+def predicted_tick_count(available_width: float | None) -> int | None:
+    """Predict a safe LOWER BOUND on Vega's continuous-temporal tickCount.
+
+    ``available_width`` is the horizontal space known to Python before the
+    spec is compiled — the outer card minus any chrome our own code already
+    reserves (e.g. the endpoint-label rail) — NOT the real plot rectangle
+    Vega will draw (see ``_ESTIMATED_Y_AXIS_CHROME_PX`` above for why that
+    is unknowable here). Subtracts the conservative y-axis chrome allowance
+    before applying Vega-Lite's own ``ceil(width / 40)`` tickCount default,
+    so the result is never larger than Vega's real tickCount — safe for the
+    upper (day-grain) gate, which wants to under-count. Use
+    ``predicted_tick_count_ceiling`` for the lower (minute-grain) gate, which
+    wants the opposite bias. Returns ``None`` when the resulting estimate is
+    unknown or non-positive — the caller then has no basis to gate on and
+    must bail rather than guess.
+    """
+    if available_width is None:
+        return None
+    plot_width_estimate = available_width - _ESTIMATED_Y_AXIS_CHROME_PX
+    if plot_width_estimate <= 0:
+        return None
+    return math.ceil(plot_width_estimate / _VL_DEFAULT_TICK_PITCH_PX)
+
+
+def predicted_tick_count_ceiling(available_width: float | None) -> int | None:
+    """Predict a safe UPPER BOUND on Vega's continuous-temporal tickCount.
+
+    No chrome allowance is subtracted: Vega's real plot rectangle can only be
+    narrower than or equal to ``available_width`` (it only ever loses space
+    to y-axis chrome, never gains any), and ``ceil`` is non-decreasing, so
+    ``ceil(available_width / 40)`` can never be smaller than Vega's real
+    tickCount. Pairs with ``predicted_tick_count`` (the LOWER bound) — the
+    lower/minute-grain gate in ``default_subday_label_expr_for`` needs the
+    ceiling here so a wider-than-predicted real tickCount can never slip a
+    span through that Vega itself subdivides into sub-minute ticks.
+    """
+    if available_width is None or available_width <= 0:
+        return None
+    return math.ceil(available_width / _VL_DEFAULT_TICK_PITCH_PX)
+
+
+def default_subday_label_expr_for(
+    values: list[Any],  # type-state: explicit_any — raw x-field values
+    clock: int | None,
+    *,
+    narrow: bool,
+    tick_count: int | None,
+    tick_count_ceiling: int | None,
+    authored_domain: tuple[int | float | str, int | float | str] | None = None,
+) -> str | None:
+    """Return the default sub-day clock labelExpr, or ``None`` when not applicable.
+
+    Engine default for a continuous (non-bucketed) temporal x-axis, carrying
+    the time-notation vocabulary's five rules:
+
+    1. There is no separate analytic/editorial register for time, only a
+       clock choice — ``clock`` is 24 or 12; anything else (``None``
+       included) renders the 12-hour vocabulary. The house default of 12
+       lives in the theme cascade (``_base.yaml``'s ``axis_x.labels.clock``),
+       never as a fallback baked into this function.
+    2. Minutes print when non-zero, or unconditionally on the 24-hour clock
+       (which has no meridiem to disambiguate a bare hour).
+    3. The hour carries the full label; a sub-hour tick carries only its
+       minutes (``:15``, ``:30``, …). Moot on the 24-hour clock, whose hour
+       label is already full-width at every tick under rule 2. When the
+       domain never reaches an hour boundary at all (``09:05`` -> ``09:55``:
+       no tick can ever land on the hour), the first tick — ``datum.index
+       === 0`` — still needs a full-form label, but it is NOT on the hour,
+       so hour-only text would claim a clock the tick does not have (a
+       09:05 tick reading bare "9am"). It gets hour AND minutes instead
+       (``9:05am``, never the Midnight/Noon words, which only ever describe
+       an exact hour) so the axis always anchors somewhere (see
+       ``_has_hour_boundary``). Not "first and last": a tick already
+       anchored on the hour elsewhere in the domain is enough.
+    4. Hour 0 reads "Midnight" and hour 12 reads "Noon" — 12-hour clock
+       only, and only while the card is wide enough (``narrow=False``); a
+       narrower card falls back to compact 12-hour numerals (``12am``,
+       ``12pm``) so the words are never asked to fit where they don't. The
+       caller decides ``narrow`` from the card's outer pixel width against
+       the shared "tiny" tier boundary (``typography.width_tier``).
+    5. A second labelExpr row naming the calendar date (``Aug 11``) appears
+       only when the axis domain crosses more than one midnight; a
+       single-midnight domain stays single-row. Applies at both clocks.
+
+    ``tick_count`` also gates rules 1-5 as a whole: it is the number of
+    ticks Vega's own axis will actually draw for this domain — the
+    already-resolved authored cadence when the axis has one (``ticks.count``,
+    or the day-grain-or-coarser interval ``ticks.time_unit`` names), else a
+    prediction from the plot's own pixel width (``predicted_tick_count``,
+    above). Multiplying it by the two boundary constants above converts
+    "target seconds-per-tick" back to "domain span", which is what decides
+    whether this vocabulary is even applicable — see
+    ``_TICK_DAY_STEP_BOUNDARY_HOURS`` for why that step, not the data's own
+    cadence, is the right quantity. The caller — never this function —
+    resolves which of those three sources ``tick_count`` came from, because
+    only the caller has the merged VL axis dict the cadence was written into.
+
+    ``tick_count_ceiling`` is a second, separate tick-count estimate used
+    ONLY for the lower (minute-grain) boundary check — required, not
+    defaulted from ``tick_count``: the two gates need opposite rounding of
+    the same underlying uncertainty, and a fallback would let a caller skip
+    the ceiling silently instead of computing it. When the count is an exact
+    authored value, ``tick_count`` already is Vega's real tickCount, so the
+    caller passes the same value for both (no ambiguity). When it is
+    predicted from width, ``tick_count`` (``predicted_tick_count``) is a safe
+    LOWER bound and ``tick_count_ceiling`` (``predicted_tick_count_ceiling``)
+    a safe UPPER bound on Vega's real tickCount — using the lower bound for
+    BOTH boundary checks under-counts the minute-grain floor too, letting
+    spans through that Vega's own real (higher) tickCount already subdivides
+    into sub-minute ticks. Bails to ``None`` when unknown, same as
+    ``tick_count``.
+
+    ``authored_domain`` is the axis's own ``axis_x.scale.continuous.domain``
+    when authored — the two endpoints Vega will actually render across,
+    applied to the compiled spec by ``cartesian_x_scale_domain`` AFTER the
+    caller resolves this labelExpr. Ticks only ever fall inside a scale's own
+    domain, so when this is set it — not ``values``'s own min/max — decides
+    span and the date-context row: an authored domain can be narrower (a
+    zoomed-in view) or wider (e.g. a full calendar day framing a shorter
+    intraday series) than the data, and using the data's own extent in
+    either case gates on a span Vega will never actually draw ticks across.
+    ``values`` itself is untouched by this for the span question — it still
+    decides whether the series has a sub-day component at all, a question
+    about the FIELD's data, not the rendered range. The offset/mixed-clock
+    check is different: it reads BOTH ``values`` and ``authored_domain``
+    together, because the rendered expression's accessor choice has to be
+    correct for everything it touches — a date-only domain (UTC, per Vega's
+    own parsing) framing naive sub-day data (local) is exactly "the one
+    state neither accessor can get right" the mixed-clock bail already
+    exists to catch within ``values`` alone; an authored domain widens what
+    has to agree, it never narrows it.
+
+    Returns ``None`` when ``tick_count`` is unknown (no width to predict
+    from, or an authored ``ticks.time_unit`` whose interval is always
+    day-grain or coarser — every tick would then land on local midnight
+    regardless of span); when the data carries no sub-day component (a plain
+    day-or-coarser continuous axis, which this vocabulary does not touch);
+    when fewer than two distinct instants exist (no cadence to describe);
+    when the domain's span is wide enough that the date-context row's
+    year-less format could collide across calendar years (see
+    ``_SUBDAY_MAX_DOMAIN_SPAN``); when it is wide enough, at this tick count,
+    that Vega's own ticks would land on local midnight (see
+    ``_TICK_DAY_STEP_BOUNDARY_HOURS``); or when it is narrow enough that
+    Vega's own ticks would be finer than the vocabulary's minute-level floor
+    (see ``_TICK_MINUTE_STEP_BOUNDARY_SECONDS``). Every one of these bails to
+    ``None`` rather than a wrong-looking label, letting the axis fall back to
+    Vega's own default temporal format.
+
+    Renders in local (renderer) time when every parsed value is a naive
+    datetime (no timezone designator) — matching how Vega-Lite itself parses
+    such a string as local time for a continuous temporal scale, the same
+    convention the confirming render (2026-08-26) used. When a value carries
+    an explicit UTC offset, both the gate above (``show_date_row``) and the
+    rendered expression switch to UTC-explicit accessors (``utcFormat``/
+    ``utchours``/``utcminutes``): an offset is an absolute instant, and
+    Vega's local accessors on it would read whatever ambient timezone the
+    rendering *browser* happens to be in (a static ``dct render``/CI render
+    is pinned to UTC — see ``pin_vl_convert_tz_utc`` — but a board viewed
+    live in a browser is not) — UTC is the only zone both sides can agree on
+    regardless of viewer. This differs from the calendar-bucketed vocabulary
+    above, which is UTC throughout because it buckets date-only strings
+    (parsed by Vega as UTC midnight).
+    """
+    if tick_count is None or tick_count_ceiling is None:
+        return None
+    parsed = [
+        p for p in (_parse_date(v) for v in values if v is not None) if p is not None
+    ]
+    if not _has_subday_component(parsed):
+        return None
+    # The authored scale domain — not the field's own data extent — is what
+    # decides span/offset/midnight-count once it's set (see the docstring's
+    # `authored_domain` paragraph); `parsed` above stays data-derived because
+    # `_has_subday_component` is a question about the field, not the range.
+    extent_source = (
+        [p for p in (_parse_date(v) for v in authored_domain) if p is not None]
+        if authored_domain is not None
+        else parsed
+    )
+    # An explicit UTC offset is an absolute instant — convert it rather than
+    # dropping it, so the gate below reads the same instant the rendered
+    # expression's UTC accessors will (see the has_offset branch below). A
+    # bare date-only value (``dt.date``, no time component) is ALSO an
+    # absolute instant for this purpose: Vega parses a date-only string as
+    # UTC midnight, never local, the same convention the calendar-bucketed
+    # vocabulary's docstring notes above. A domain MIXING either of those
+    # with a naive datetime is the one state neither accessor can get right
+    # — Python's `instants` below would normalize the UTC-anchored values
+    # while leaving the naive ones untouched (reading a blended clock no
+    # single accessor choice matches), and Vega itself still parses the
+    # naive values as local regardless of what we pick — so it bails rather
+    # than guessing which side to trust. This check spans BOTH `parsed`
+    # (the field's own data) AND `extent_source` (the authored domain, when
+    # set) — checking the domain alone would miss a naive/offset mismatch
+    # BETWEEN the two, e.g. a date-only domain (UTC) framing naive sub-day
+    # data (local): the offset choice below has to hold for everything the
+    # rendered expression's accessors will actually touch, not just the
+    # values that happen to decide the span.
+    offset_check_source = parsed if authored_domain is None else parsed + extent_source
+    offset_flags = [
+        (isinstance(p, dt.datetime) and p.tzinfo is not None)
+        # `p` is always a `dt.date | dt.datetime` here, so "not a datetime"
+        # already means "a bare date" -- an `isinstance(p, dt.date)` check
+        # would be trivially true for both members of that union.
+        or (not isinstance(p, dt.datetime))
+        for p in offset_check_source
+    ]
+    if any(offset_flags) and not all(offset_flags):
+        return None
+    has_offset = all(offset_flags)
+    instants = sorted(
+        {
+            (
+                p.astimezone(dt.timezone.utc).replace(tzinfo=None)
+                if isinstance(p, dt.datetime) and p.tzinfo is not None
+                else (
+                    p
+                    if isinstance(p, dt.datetime)
+                    else dt.datetime.combine(p, dt.time.min)
+                )
+            )
+            for p in extent_source
+        }
+    )
+    if len(instants) < 2:
+        return None
+    span = instants[-1] - instants[0]
+    if span >= _SUBDAY_MAX_DOMAIN_SPAN:
+        return None
+    if span >= dt.timedelta(hours=_TICK_DAY_STEP_BOUNDARY_HOURS * tick_count):
+        return None
+    if span < dt.timedelta(
+        seconds=_TICK_MINUTE_STEP_BOUNDARY_SECONDS * tick_count_ceiling
+    ):
+        return None
+    show_date_row = _midnight_count(instants[0], instants[-1]) > 1
+
+    fmt, hours_fn, minutes_fn = (
+        ("utcFormat", "utchours", "utcminutes")
+        if has_offset
+        else ("timeFormat", "hours", "minutes")
+    )
+    # Anything other than 24 renders the 12-hour vocabulary, including
+    # clock=None -- explicit here rather than silent: production always
+    # resolves a concrete 12 or 24 through the theme cascade before reaching
+    # this function (see DimensionLabelStyle.clock's own docstring), so a
+    # bare `None` here means a direct-call test double, never an authored
+    # choice. This `else` branch IS the None-defaults-to-12-hour behavior --
+    # it renders the same vocabulary a resolved `clock=12` would.
+    if clock == 24:
+        core = f"{fmt}(datum.value, '{PREDEFINED_TIME_SPECS[PredefinedTimeFormat.time_short]}')"
+    else:
+        minute_only = f"{fmt}(datum.value, ':%M')"
+        hour_text = (
+            f"lower({fmt}(datum.value, '%-I%p'))"
+            if narrow
+            else (
+                f"({hours_fn}(datum.value) === 0 ? 'Midnight' : "
+                f"{hours_fn}(datum.value) === 12 ? 'Noon' : "
+                f"lower({fmt}(datum.value, '%-I%p')))"
+            )
+        )
+        if _has_hour_boundary(instants[0], instants[-1]):
+            core = f"{minutes_fn}(datum.value) !== 0 ? {minute_only} : {hour_text}"
+        else:
+            # Rule 3's anchor: the hour normally carries the full label. When
+            # no hour boundary falls anywhere in the domain, no tick can ever
+            # take hour_text on its own merit, so the first tick still needs
+            # a full-form label — but routing it through hour_text would
+            # discard its minutes and print a clock reading it does not have
+            # (a 09:05 tick reading bare "9am"). It gets its own full-form
+            # branch: hour AND minutes, never the Midnight/Noon words (those
+            # describe an exact hour, which this tick is not).
+            anchor_full_form = f"lower({fmt}(datum.value, '%-I:%M%p'))"
+            core = (
+                f"{minutes_fn}(datum.value) !== 0 ? "
+                f"(datum.index === 0 ? {anchor_full_form} : {minute_only}) : "
+                f"{hour_text}"
+            )
+
+    if not show_date_row:
+        return core
+    date_row = f"{hours_fn}(datum.value) === 0 ? {fmt}(datum.value, '%b %-d') : ''"
+    return f"[{core}, {date_row}]"
 
 
 def tooltip_header_date_expr(value_ref: str, time_unit: str) -> str:

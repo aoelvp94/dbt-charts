@@ -1,5 +1,5 @@
 title: "Tic-tac-toe state machine"
-description: |
+notes: |
   A YAML-only click-through game. The board lives in hidden URL variables,
   SQL computes legal moves and game status, and table cell links advance state.
 
@@ -287,6 +287,16 @@ charts:
           font:
             weight: 700
 
+        status:
+          visible: false
+        x_score_label:
+          visible: false
+        o_score_label:
+          visible: false
+        draw_score_label:
+          visible: false
+        reset_link:
+          visible: false
       symbol_mode: anchors
       font:
         size: 18
@@ -370,6 +380,14 @@ charts:
           width: 196
           align: center
 
+        row_sort:
+          visible: false
+        link_a:
+          visible: false
+        link_b:
+          visible: false
+        link_c:
+          visible: false
       symbol_mode: anchors
       font:
         size: 64

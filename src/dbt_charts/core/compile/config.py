@@ -108,7 +108,7 @@ _compiled_theme_cache: dict[str, Any] = {}  # str -> Style
 # Project-wide overrides live in charts/meta.yaml: extends: <name>.
 # The VS Code inspector flips the theme per-session via DCT_DEFAULT_THEME env var,
 # read at call time by get_default_theme_name() without any global mutation.
-SHIPPED_DEFAULT_THEME_NAME: str = "editorial"
+SHIPPED_DEFAULT_THEME_NAME: str = "clarity"
 
 
 def _load_yaml_data(path: Traversable) -> Any:
@@ -449,6 +449,50 @@ def resolve_max_result_bytes() -> int:
     return config_value if ceiling is None else min(config_value, ceiling)
 
 
+def resolve_file_source_max_bytes_ceiling() -> int | None:
+    """Resolve the DCT_FILE_SOURCE_MAX_BYTES_CEILING deployment ceiling, if set.
+
+    Raises:
+        ValueError: If DCT_FILE_SOURCE_MAX_BYTES_CEILING is set to a
+            non-positive or non-integer value.
+    """
+    return _resolve_positive_int_env_ceiling("DCT_FILE_SOURCE_MAX_BYTES_CEILING")
+
+
+def resolve_file_source_max_tables_ceiling() -> int | None:
+    """Resolve the DCT_FILE_SOURCE_MAX_TABLES_CEILING deployment ceiling, if set.
+
+    Raises:
+        ValueError: If DCT_FILE_SOURCE_MAX_TABLES_CEILING is set to a
+            non-positive or non-integer value.
+    """
+    return _resolve_positive_int_env_ceiling("DCT_FILE_SOURCE_MAX_TABLES_CEILING")
+
+
+def resolve_file_source_max_bytes() -> int:
+    """Resolve the effective file_source_max_bytes: project config, clamped to
+    the deployment ceiling (DCT_FILE_SOURCE_MAX_BYTES_CEILING) if one is set.
+
+    A project's own dbt_charts.yml can never raise the value above the
+    deployment ceiling — only the ceiling or a tighter config value wins.
+    """
+    ceiling = resolve_file_source_max_bytes_ceiling()
+    config_value = get_execution_config().file_source_max_bytes
+    return config_value if ceiling is None else min(config_value, ceiling)
+
+
+def resolve_file_source_max_tables() -> int:
+    """Resolve the effective file_source_max_tables: project config, clamped to
+    the deployment ceiling (DCT_FILE_SOURCE_MAX_TABLES_CEILING) if one is set.
+
+    A project's own dbt_charts.yml can never raise the value above the
+    deployment ceiling — only the ceiling or a tighter config value wins.
+    """
+    ceiling = resolve_file_source_max_tables_ceiling()
+    config_value = get_execution_config().file_source_max_tables
+    return config_value if ceiling is None else min(config_value, ceiling)
+
+
 @dataclass(frozen=True)
 class CacheBoot:
     """Resolved boot-time decision: whether/where to open the result cache.
@@ -535,7 +579,7 @@ def shipped_cache_root() -> ProjectCacheConfig:
 
 
 def get_project_server_config(project: Project) -> ServerConfig:
-    """Read project-level ``server:`` config from dataface.yml/yaml.
+    """Read project-level ``server:`` config from dbt_charts.yml/yaml.
 
     Only the ``server:`` section is validated here. dbt_charts.yml is also used
     as a lightweight project marker in tests and examples, so unrelated top-level
@@ -660,7 +704,7 @@ def get_theme_style(theme_name: str | None = None) -> Any:  # -> Style
     the base argument to resolve_style().
 
     Args:
-        theme_name: Built-in theme stem (e.g. "editorial", "cream") or None
+        theme_name: Built-in theme stem (e.g. "clarity", "paper") or None
             to use the configured default theme.
 
     Returns:
@@ -759,37 +803,34 @@ def load_project_sources(project: FilesystemProject) -> ProjectSourcesConfig:
     json) values resolve against ``project.root`` so callers can pass the
     returned config straight into ``compile()`` without further work.
 
-    Merge order: engine config → dbt_charts.yml. ``sources.default`` is not
-    supported at the project level; set ``source: <name>`` on the board or
-    folder ``meta.yaml`` instead.
+    The project's own dbt_charts.yml is the only input. The process-global
+    ``_config`` is deliberately not consulted: the shipped defaults stack
+    declares no ``sources:``, so ``get_config().sources`` is non-empty only
+    when ``load_config`` has installed *some* project's registry into the
+    global — for the same project that is redundant with the read below, and
+    for any other project it is one project's warehouses appearing in
+    another's registry. Any process holding more than one project hits that:
+    a pytest session spanning several packages' suites did, silently. Same
+    reasoning as ``get_project_cache_root``.
+
+    ``sources.default`` is not supported at the project level; set
+    ``source: <name>`` on the board or folder ``meta.yaml`` instead.
     """
-    all_sources: dict[str, dict[str, Any]] = {}
-
-    # Engine config sources (no default key expected)
-    engine_config = get_config()
-    if engine_config.sources:
-        sources_data = _as_mapping(engine_config.sources, "config.sources")
-        all_sources.update(
-            {k: v for k, v in sources_data.items() if isinstance(v, dict)}
-        )
-
     # dbt_charts.yml sources — default key is rejected
     filename, sources_section = _dbt_charts_yml_mapping_section(project, "sources")
-    if sources_section is not None:
-        if "default" in sources_section:
-            raise TypeError(
-                f"{filename}: sources.default is no longer supported. "
-                "Set the default source at the board or folder meta.yaml level: `source: <name>`."
-            )
-        for name, entry in sources_section.items():
-            if isinstance(entry, dict):
-                # Reject raw secret literals in the git-committed registry, on the
-                # RAW authored value — before env_var rendering could turn a
-                # reference into a literal (dbt defers `password`, renders the rest).
-                reject_credential_literals(name, entry)
-        all_sources.update(
-            {k: v for k, v in sources_section.items() if isinstance(v, dict)}
+    if sources_section is None:
+        sources_section = {}
+    elif "default" in sources_section:
+        raise TypeError(
+            f"{filename}: sources.default is no longer supported. "
+            "Set the default source at the board or folder meta.yaml level: `source: <name>`."
         )
+    all_sources = {k: v for k, v in sources_section.items() if isinstance(v, dict)}
+    for name, entry in all_sources.items():
+        # Reject raw secret literals in the git-committed registry, on the
+        # RAW authored value — before env_var rendering could turn a
+        # reference into a literal (dbt defers `password`, renders the rest).
+        reject_credential_literals(name, entry)
 
     normalized = _normalize_project_sources(all_sources)
     _validate_source_registry(normalized, filename)

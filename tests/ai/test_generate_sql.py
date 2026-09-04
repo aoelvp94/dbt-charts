@@ -105,37 +105,43 @@ class TestGenerateSql:
         assert "EXACT result-set match" not in prompt
         assert "id/key column" not in prompt
 
-    def test_openai_client_create_wraps_httpx_errors(self) -> None:
-        """OpenAIClient.create() wraps httpx errors in LLMClientError."""
+    def test_openai_adapter_create_wraps_httpx_errors(self) -> None:
+        """OpenAIAdapter.create() delegates to the gateway, which wraps httpx
+        errors in LLMClientError — the translation itself is pinned at the
+        gateway (test_openai_gateway.py); this covers the adapter's wiring."""
         import pytest
 
-        from dbt_charts.ai.llm import LLMClientError, OpenAIClient
+        from dbt_charts.ai.llm import LLMClientError, OpenAIAdapter
+        from dbt_charts.ai.openai_gateway import OpenAIGateway
 
         try:
             import httpx
         except ImportError:
             pytest.skip("httpx not installed")
 
-        client = OpenAIClient(model="test", api_key="fake")
+        gateway = OpenAIGateway(api_key="fake")
         mock_inner = MagicMock()
         mock_inner.responses.create.side_effect = httpx.ConnectError(
             "connection refused"
         )
-        client._client = mock_inner
+        gateway._client = mock_inner
+        client = OpenAIAdapter(gateway, model="test")
 
         with pytest.raises(LLMClientError, match="connection refused"):
             client.create(model="test", input=[])
 
-    def test_openai_client_create_propagates_programming_errors(self) -> None:
-        """OpenAIClient.create() does not swallow non-API exceptions."""
+    def test_openai_adapter_create_propagates_programming_errors(self) -> None:
+        """OpenAIAdapter.create() does not swallow non-API exceptions."""
         import pytest
 
-        from dbt_charts.ai.llm import OpenAIClient
+        from dbt_charts.ai.llm import OpenAIAdapter
+        from dbt_charts.ai.openai_gateway import OpenAIGateway
 
-        client = OpenAIClient(model="test", api_key="fake")
+        gateway = OpenAIGateway(api_key="fake")
         mock_inner = MagicMock()
         mock_inner.responses.create.side_effect = RuntimeError("bug")
-        client._client = mock_inner
+        gateway._client = mock_inner
+        client = OpenAIAdapter(gateway, model="test")
 
         with pytest.raises(RuntimeError, match="bug"):
             client.create(model="test", input=[])

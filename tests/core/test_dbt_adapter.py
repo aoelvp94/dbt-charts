@@ -966,32 +966,195 @@ class TestParameterizedFilterHelper:
         assert "dbt adapter setup" not in result.error
         adapter._adapter.execute.assert_not_called()
 
-    def test_a_value_naming_the_mask_token_cannot_forge_a_filter(
+    def test_a_loop_variable_can_be_filtered_on(
         self,
         tmp_path: Path,
         in_memory_project: Callable[[Path, dict[str, str]], Project],
     ) -> None:
-        """A variable value cannot name the deferred-filter mask token.
+        """A filter() argument may come from the loop that emits the span.
 
-        Restoring the mask is a string replace over text that already holds
-        substituted values, so a guessable token would let a value nominate
-        itself as a replacement site — landing the bound predicate, quotes and
-        all, inside an author-written literal. That is SQL *code* position, so
-        escaping the value buys nothing: the guard accepts the result.
+        Jinja invokes the helper, so the loop variable is in scope for it
+        exactly as for any other expression in the body. The masking design
+        could not do this: it bound each span by re-rendering that span's text
+        against the board variables alone, where `u` does not exist.
+        """
+        adapter = self._resolver(tmp_path, in_memory_project)
+
+        resolved = adapter._resolve_dbt_sql(
+            "SELECT region FROM {{ ref('orders') }} WHERE "
+            "{% for u in units %}{{ filter('region', u) }} OR {% endfor %} 1=0",
+            {"units": ["North", "South"]},
+        )
+
+        assert resolved == (
+            "SELECT region FROM analytics.orders WHERE "
+            "region = 'North' OR region = 'South' OR  1=0"
+        )
+
+    def test_a_set_variable_can_be_filtered_on(
+        self,
+        tmp_path: Path,
+        in_memory_project: Callable[[Path, dict[str, str]], Project],
+    ) -> None:
+        """`{% set %}` is in scope for filter() too, for the same reason."""
+        adapter = self._resolver(tmp_path, in_memory_project)
+
+        resolved = adapter._resolve_dbt_sql(
+            "SELECT region FROM {{ ref('orders') }} "
+            "{% set r = region | upper %}WHERE {{ filter('region', r) }}",
+            {"region": "north"},
+        )
+
+        assert resolved == "SELECT region FROM analytics.orders WHERE region = 'NORTH'"
+
+    @pytest.mark.parametrize("pipe", ["| upper"])
+    def test_a_predicate_transform_that_mangles_the_placeholder_is_refused(
+        self,
+        tmp_path: Path,
+        in_memory_project: Callable[[Path, dict[str, str]], Project],
+        pipe: str,
+    ) -> None:
+        """A pipe that corrupts the placeholder is refused, not run unfiltered.
+
+        The helpers emit a placeholder, so a pipe lands on that rather than on
+        a value. Upper-casing it means nothing downstream matches, the
+        parameter is never substituted, and the query would run with no
+        constraint at all — so it is refused rather than allowed to return
+        wrong rows with no error. The match is on the shared property, not on
+        which of the two checks fires: the placeholder-present check sees the
+        exact token missing, the inline guard sees the mangled one left behind.
+
+        `| upper` is the only stock Jinja filter that reaches the token: it is
+        already lower case, and NUL delimits it, which `| title` and
+        `| capitalize` treat as a word boundary and leave alone.
+        """
+        adapter = self._resolver(tmp_path, in_memory_project)
+
+        with pytest.raises(JinjaError, match="would never be bound"):
+            adapter._resolve_dbt_sql(
+                "SELECT region FROM {{ ref('orders') }} "
+                f"WHERE {{{{ filter('region', region) {pipe} }}}}",
+                {"region": "North"},
+            )
+
+    @pytest.mark.parametrize("pipe", ["| lower", "| trim", '| replace("\'", "")'])
+    def test_a_predicate_transform_cannot_strip_a_value_of_its_escaping(
+        self,
+        tmp_path: Path,
+        in_memory_project: Callable[[Path, dict[str, str]], Project],
+        pipe: str,
+    ) -> None:
+        """A pipe that leaves the placeholder alone binds the value as usual.
+
+        This is the property that makes the placeholder round trip worth
+        keeping. `| replace("'", "")` is a no-op on a quote-free token, so an
+        author cannot use it to strip the quoting off a value: the escaping is
+        applied *after* the pipe has run, by the inline pass. Emit the escaped
+        literal during the render instead and the same pipe takes the quotes
+        straight back off, putting a URL-supplied value in code position.
         """
         adapter = self._resolver(tmp_path, in_memory_project)
 
         resolved = adapter._resolve_dbt_sql(
             "SELECT region FROM {{ ref('orders') }} "
-            "WHERE d >= '{{ yr }}-01-01' AND {{ filter('region', region) }}",
-            {"yr": "__DBT_CHARTS_DEFERRED_FILTER_0__", "region": " OR 1=1 --"},
+            f"WHERE {{{{ filter('region', region) {pipe} }}}}",
+            {"region": "' OR 1=1 --"},
         )
 
         assert resolved == (
-            "SELECT region FROM analytics.orders "
-            "WHERE d >= '__DBT_CHARTS_DEFERRED_FILTER_0__-01-01' "
-            "AND region = ' OR 1=1 --'"
+            "SELECT region FROM analytics.orders WHERE region = ''' OR 1=1 --'"
         )
+
+    def test_a_bound_value_whose_placeholder_never_lands_is_refused(
+        self,
+        tmp_path: Path,
+        in_memory_project: Callable[[Path, dict[str, str]], Project],
+    ) -> None:
+        """A collected value with nowhere to bind is refused, not dropped.
+
+        Binding a predicate under a name and then not emitting it leaves the
+        value collected and its placeholder absent. The inline guard cannot see
+        this — it only matches a token that survived mangled — so the query
+        would go to the warehouse with no constraint at all and return every
+        row. `{% set %}` binding is a pattern this change newly supports, which
+        is what makes the mistake reachable.
+        """
+        adapter = self._resolver(tmp_path, in_memory_project)
+
+        with pytest.raises(JinjaError, match="placeholder is missing"):
+            adapter._resolve_dbt_sql(
+                "{% set p = filter('region', region) %}"
+                "SELECT region FROM {{ ref('orders') }}"
+                "{% if show %} WHERE {{ p }}{% endif %}",
+                {"region": "North", "show": False},
+            )
+
+    def test_a_filter_that_collides_two_placeholders_is_refused(
+        self,
+        tmp_path: Path,
+        in_memory_project: Callable[[Path, dict[str, str]], Project],
+    ) -> None:
+        """Rewriting one token into another's spelling drops the second value.
+
+        Both predicates then read parameter 1 and parameter 2 binds nowhere —
+        the mangled-token guard sees a well-formed token and passes it.
+        """
+        adapter = self._resolver(tmp_path, in_memory_project)
+
+        with pytest.raises(JinjaError, match="placeholder is missing"):
+            adapter._resolve_dbt_sql(
+                "SELECT region FROM {{ ref('orders') }} WHERE "
+                "{{ filter('region', region) }} AND "
+                '{{ filter(\'tier\', tier) | replace("2", "1") }}',
+                {"region": "North", "tier": "gold"},
+            )
+
+    def test_a_predicate_bound_through_set_still_renders(
+        self,
+        tmp_path: Path,
+        in_memory_project: Callable[[Path, dict[str, str]], Project],
+    ) -> None:
+        """Naming a predicate with {% set %} and emitting it later is fine."""
+        adapter = self._resolver(tmp_path, in_memory_project)
+
+        resolved = adapter._resolve_dbt_sql(
+            "{% set p = filter('region', region) %}"
+            "SELECT region FROM {{ ref('orders') }} WHERE {{ p }}",
+            {"region": "North"},
+        )
+
+        assert resolved == "SELECT region FROM analytics.orders WHERE region = 'North'"
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            "filter('region', region, 'DROP')",
+            "filter('region; DROP TABLE t', region)",
+            "filter('region', region, none='maybe')",
+            "filter_date_range('d', region)",
+        ],
+    )
+    def test_a_bad_filter_argument_is_a_coded_jinja_error(
+        self,
+        tmp_path: Path,
+        in_memory_project: Callable[[Path, dict[str, str]], Project],
+        call: str,
+    ) -> None:
+        """The helpers' own argument validation reaches the author coded.
+
+        They raise ValueError from inside the render; unwrapped that reaches
+        the executor with no error code and stamps ERR-INTERNAL, which this
+        repo treats as a bug rather than an author-facing error. The
+        parameterized path used to supply the coding, and moving the helpers
+        into the plain-Jinja context is what took them out from under it.
+        """
+        adapter = self._resolver(tmp_path, in_memory_project)
+
+        with pytest.raises(JinjaError):
+            adapter._resolve_dbt_sql(
+                f"SELECT region FROM {{{{ ref('orders') }}}} WHERE {{{{ {call} }}}}",
+                {"region": "North"},
+            )
 
     @pytest.mark.parametrize(
         ("units", "expected"),
@@ -1007,7 +1170,7 @@ class TestParameterizedFilterHelper:
         units: list[int],
         expected: str,
     ) -> None:
-        """A masked span is body text, so a loop legitimately emits it N times.
+        """A {% for %} calls the helper once per iteration, emitting N predicates.
 
         Both counts are pinned because an earlier version rejected the second:
         one iteration rendered and two raised, so a multiselect became an error
@@ -1028,10 +1191,11 @@ class TestParameterizedFilterHelper:
         tmp_path: Path,
         in_memory_project: Callable[[Path, dict[str, str]], Project],
     ) -> None:
-        """A span a false branch removed must not be bound, or even evaluated.
+        """A span a false branch removed must not be evaluated at all.
 
-        Binding it anyway raises on its undefined variable — for a predicate the
-        query was never going to contain.
+        Evaluating it anyway raises on its undefined variable — for a predicate
+        the query was never going to contain. Jinja skips the branch, so the
+        helper is simply never called.
         """
         adapter = self._resolver(tmp_path, in_memory_project)
 
@@ -1044,21 +1208,29 @@ class TestParameterizedFilterHelper:
         assert resolved == "SELECT region FROM analytics.orders"
 
     @pytest.mark.parametrize(
-        "spelling",
+        ("spelling", "expected"),
         [
-            "{{ filter('region', region) }}",
-            "{{- filter('region', region) }}",
-            "{{ filter('region', region) -}}",
-            "{{- filter('region', region) -}}",
+            ("{{ filter('region', region) }}", "WHERE region = 'North'"),
+            ("{{- filter('region', region) }}", "WHEREregion = 'North'"),
+            ("{{ filter('region', region) -}}", "WHERE region = 'North'"),
+            ("{{- filter('region', region) -}}", "WHEREregion = 'North'"),
         ],
     )
-    def test_whitespace_control_spellings_are_masked(
+    def test_whitespace_control_spellings_are_bound(
         self,
         tmp_path: Path,
         in_memory_project: Callable[[Path, dict[str, str]], Project],
         spelling: str,
+        expected: str,
     ) -> None:
-        """`{{-` / `-}}` are standard Jinja and must not fall to the raising stub."""
+        """`{{-` / `-}}` bind, and mean what Jinja says they mean.
+
+        `{{-` eats the space before the tag, so the two `{{-` spellings really
+        do run WHERE into the predicate — the author's bug, reported the same
+        way the SqlAdapter path already reports it. The masking design swallowed
+        the hyphen along with the span, which silently made the same board
+        render differently depending on which adapter ran it.
+        """
         adapter = self._resolver(tmp_path, in_memory_project)
 
         resolved = adapter._resolve_dbt_sql(
@@ -1066,6 +1238,4 @@ class TestParameterizedFilterHelper:
             {"region": "North"},
         )
 
-        assert resolved.rstrip() == (
-            "SELECT region FROM analytics.orders WHERE region = 'North'"
-        )
+        assert resolved.rstrip() == f"SELECT region FROM analytics.orders {expected}"

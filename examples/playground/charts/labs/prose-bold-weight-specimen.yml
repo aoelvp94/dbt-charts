@@ -1,9 +1,9 @@
 title: "Prose bold weight specimen — 600 vs the old hardcoded bold (700)"
-description: >
+notes: >
   EXPECTED: bold text in every block below (including table headers) should
   read at weight 600 — the theme's own bold token — not the browser/CSS-default
   bold (700). Left column is body size 11, right column is body size 14.
-extends: editorial
+extends: clarity
 cols:
   - style:
       text:

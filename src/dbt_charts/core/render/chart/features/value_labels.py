@@ -14,10 +14,18 @@ from __future__ import annotations
 import json as _json
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, overload
 
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
+from dbt_charts.core.compile.models.chart.resolved._layer import (
+    LayeredResolvedChart,
+    ResolvedAreaLayer,
+    ResolvedBarLayer,
+    ResolvedLayer,
+    ResolvedLineLayer,
+    ResolvedScatterLayer,
+)
 from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
@@ -338,6 +346,38 @@ def _null_safe_position(expr: str, y_field: str) -> str:
     return f"isValid(datum[{y_field!r}]) ? {expr} : null"
 
 
+def _suppress_label_layer_axes(spec: ChartSpec) -> None:
+    """Stamp ``"axis": None`` on every text sublayer's VL y channel.
+
+    Dual-axis only — called when the emitted spec carries
+    ``resolve.scale.y = "independent"`` (set by ``emitters/_overlay.py``).
+    Under that resolution every sublayer's un-suppressed y channel draws its
+    OWN axis — titled with the raw field name, since nobody authors a label
+    for a synthetic label-sublayer channel — so both the base chart's and
+    each overlay layer's label sublayers (already appended by the overlay
+    emitter) must opt out. Suppressing the axis leaves the channel's scale,
+    and so the label's position, untouched.
+
+    Exactly the channel the resolve certifies, whatever its encoding type:
+    the overlay emitter never resolves x independent, so x is always a
+    SHARED scale — and an explicit null on a shared scale corrupts
+    Vega-Lite's axis merge (verified against vl-convert: the merged axis
+    loses its ticks or fails to parse), which is also why the suppression is
+    gated on the emitted resolve rather than baked into the builders.
+
+    The stamp is type-blind because it does not need to know: a horizontal
+    base cannot reach this function at all, since a layer pinning
+    ``axis_y.position`` there is refused by ``ERR-LAYER-AXIS-POSITION-
+    ORIENTATION`` and nothing else resolves y independent.
+    """
+    for sub in spec.layers:
+        if sub.mark != "text":
+            continue
+        enc = sub.encoding.get("y")
+        if isinstance(enc, dict) and "field" in enc:
+            enc["axis"] = None
+
+
 # Positions drawn over the bar's fill, so the label needs the inside ink color.
 _INSIDE_BAR_POSITIONS = frozenset({"top", "middle", "bottom", "middle_aligned"})
 # Of those, the ones the bar's own extent can actually crop. middle_aligned is
@@ -404,6 +444,18 @@ def _build_bar_text_layer(
     if size is not None:
         layer_enc["size"] = size
 
+    # A label's color is only a static mark prop, and Vega-Lite lets any
+    # inherited encoding.color beat one: a text sublayer picks up the outer
+    # color channel and paints each label in its own bar's fill — invisible
+    # inside the bar, and a silent override of the authored ink when a chart's
+    # `conditional_formatting` supplies that channel. Pin it as this layer's
+    # own encoding value so nothing upstream can claim it. A stacked label
+    # always sits in a segment and so always needs one; elsewhere no color
+    # means no claim, and the label goes on inheriting the series color.
+    label_color = mark_dict.pop("color", background if is_stacked else None)
+    if label_color is not None:
+        layer_enc["color"] = {"value": label_color}
+
     if effective_position == "bottom":
         bottom_field = "__bar_bottom"
         return {
@@ -457,10 +509,6 @@ def _build_bar_text_layer(
         if stack_sort is not None:
             stack_transform["sort"] = stack_sort
         mid_field = "__value_label_mid"
-        # Same reason the total label pins a color: a text sublayer inherits the
-        # outer nominal color encoding and paints each label in its own
-        # segment's fill, which is invisible against that fill.
-        label_color = mark_dict.pop("color", background)
         return {
             "mark": mark_dict,
             "transform": [
@@ -475,7 +523,6 @@ def _build_bar_text_layer(
             ],
             "encoding": {
                 **layer_enc,
-                "color": {"value": label_color},
                 measure_channel: {
                     "field": mid_field,
                     "type": "quantitative",
@@ -505,15 +552,10 @@ def _build_bar_text_layer(
         }
     if is_stacked:
         # Text marks don't inherit VL bar stacking — inject explicit stacked position.
-        # Pin an explicit color too: without it the label layer inherits the outer
-        # nominal color encoding and paints each label in its own segment's fill
-        # (invisible). mark_dict carries the background color for inside positions.
-        label_color = mark_dict.pop("color", background)
         stacked_result: VLDict = {
             "mark": mark_dict,
             "encoding": {
                 **layer_enc,
-                "color": {"value": label_color},
                 measure_channel: {
                     "field": y_field,
                     "type": "quantitative",
@@ -736,7 +778,7 @@ def _fit_hide_test(
       ``resolve.scale.y: "shared"``, and a shared measure scale is what makes
       vl-convert hoist a root ``height``. That resolve is what to preserve:
       panes of equal height happen to hoist without it, but the panes are not
-      always equal (a ``data_table`` chart with no authored height leaves the
+      always equal (a ``support_table`` chart with no authored height leaves the
       label pane's unset), so the shared scale is the guarantee that holds. A
       facet root sets no ``height`` at all, so faceted charts must name
       ``child_height`` instead; see ``plot_height`` below.
@@ -883,6 +925,7 @@ def _build_point_text_layer(
     y_field: str,
     is_house: bool,
     label_is_text: bool,
+    measure_channel: str,
 ) -> dict[str, Any]:
     """Build a VL text-layer dict for a point/scatter mark."""
     pos_map = _POINT_POS_MAP
@@ -905,7 +948,7 @@ def _build_point_text_layer(
 
     layer_enc: dict[str, Any] = {
         "text": text_enc,
-        "y": {"field": y_field, "type": "quantitative"},
+        measure_channel: {"field": y_field, "type": "quantitative"},
     }
     size = label_size_encoding(labels)
     if size is not None:
@@ -922,6 +965,7 @@ def _build_line_text_layer(
     is_house: bool,
     label_is_text: bool,
     effective_position: str,
+    measure_channel: str,
 ) -> dict[str, Any]:
     """Build a VL text-layer dict for a line mark at ``effective_position``."""
     pos_map = _LINE_POS_MAP
@@ -943,7 +987,7 @@ def _build_line_text_layer(
 
     layer_enc: dict[str, Any] = {
         "text": text_enc,
-        "y": {"field": y_field, "type": "quantitative"},
+        measure_channel: {"field": y_field, "type": "quantitative"},
     }
     size = label_size_encoding(labels)
     if size is not None:
@@ -960,6 +1004,7 @@ def build_line_text_layers(
     is_house: bool,
     label_is_text: bool,
     band: BandLabelAnchor | None,
+    measure_channel: str,
 ) -> list[VLDict]:
     """The VL text layers for a line/area mark's value labels.
 
@@ -975,7 +1020,7 @@ def build_line_text_layers(
 
     def layer_at(at_position: str) -> VLDict:
         built = _build_line_text_layer(
-            labels, y_field, is_house, label_is_text, at_position
+            labels, y_field, is_house, label_is_text, at_position, measure_channel
         )
         if band is not None and band.rows_are_doubled:
             _prepend_filter(built, f"{_datum_ref(STEP_BAND_EDGE_FIELD)} === 0")
@@ -1025,6 +1070,38 @@ def text_layer_spec(text_layer: VLDict) -> ChartSpec:
     )
 
 
+@overload
+def _layer_label_slots(layer: ResolvedBarLayer) -> tuple[BarLabelsStyle]: ...
+@overload
+def _layer_label_slots(
+    layer: ResolvedLineLayer,
+) -> tuple[PointLabelsStyle, PointLabelsStyle]: ...
+@overload
+def _layer_label_slots(layer: ResolvedAreaLayer) -> tuple[PointLabelsStyle]: ...
+@overload
+def _layer_label_slots(layer: ResolvedScatterLayer) -> tuple[PointLabelsStyle]: ...
+def _layer_label_slots(layer: ResolvedLayer) -> tuple[MarkLabelsStyle, ...]:
+    """The label-carrying mark-style slots for one overlay layer.
+
+    Mirrors ``_build_layer_label_specs``'s per-family dispatch
+    (``emitters/_overlay.py``): a bar layer's ``bar_mark.labels``, a line
+    layer's ``line_mark.labels``/``point_mark.labels`` alias pair, an area
+    layer's ``line_mark.labels``, else (scatter) ``point_mark.labels``. The
+    overloads let each concrete-layer call site (``_build_layer_label_specs``)
+    keep the narrower ``BarLabelsStyle``/``PointLabelsStyle`` types its
+    builders require; a call on the ``ResolvedLayer`` union (validation's own
+    per-layer loop) falls back to the shared ``MarkLabelsStyle`` base, which
+    is all ``.field`` access needs.
+    """
+    if isinstance(layer, ResolvedBarLayer):
+        return (layer.bar_mark.labels,)
+    if isinstance(layer, ResolvedLineLayer):
+        return (layer.line_mark.labels, layer.point_mark.labels)
+    if isinstance(layer, ResolvedAreaLayer):
+        return (layer.line_mark.labels,)
+    return (layer.point_mark.labels,)  # ResolvedScatterLayer
+
+
 def _base_band_anchor(
     x_field: str,
     y_field: str,
@@ -1069,7 +1146,7 @@ def _band_domain_order(x_enc: VLDict, rows: Rows) -> list[DomainValue]:
     scale = x_enc.get("scale")
     if isinstance(scale, dict) and isinstance(scale.get("domain"), list):
         return list(scale["domain"])
-    return rendered_x_domain(x_enc, rows, [])
+    return rendered_x_domain(x_enc, rows, [], chart_id=None)
 
 
 # ---------------------------------------------------------------------------
@@ -1096,8 +1173,35 @@ class ValueLabelFeature:
             ),
         )
 
-    def _collect_label_fields(self, chart: ResolvedChart) -> list[str]:
-        """Return non-None labels.field values for the chart's active label slots."""
+    def _collect_label_fields(
+        self,
+        chart: ResolvedChart,
+        data: Rows,
+        datasets: dict[
+            str | None,
+            list[dict[str, Any]],  # type-state: explicit_any — query rows
+        ],
+    ) -> list[tuple[str, Rows, str]]:
+        """Return (labels.field, its own rows, source description) per slot.
+
+        A base-chart slot pairs with the chart's own ``data`` and the source
+        "the chart". An overlay layer's slot pairs with THAT LAYER's own
+        rows: ``data`` when the layer shares the base chart's query, else
+        ``datasets[layer.query_name]`` — the same divergence rule
+        ``render_cartesian_overlay``/``_resolve_layer_rows``
+        (``emitters/_overlay.py``) use to decide whether a layer reads its
+        own dataset or inherits the base's already-normalized rows. A
+        layer's rows must be validated on their own terms: a diverging
+        layer's query rarely shares the base's columns, so checking a
+        layer's field against the base's rows would pass a field that
+        doesn't exist where the layer actually renders (or fail one that
+        does).
+
+        ``source`` identifies the offending slot in a raised error: a chart
+        can carry N+1 candidate ``labels.field`` sources once overlay layers
+        are in play, and "names a column not present" alone leaves the
+        author hunting for which one fired.
+        """
         slots: list[MarkLabelsStyle]
         if isinstance(chart, ResolvedBarChart):
             slots = [chart.style.mark.labels]
@@ -1108,8 +1212,34 @@ class ValueLabelFeature:
         elif isinstance(chart, ResolvedScatterChart):
             slots = [chart.style.point_mark.labels]
         else:
-            return []
-        return [s.field for s in slots if s.field is not None]
+            slots = []
+        pairs: list[tuple[str, Rows, str]] = [
+            (s.field, data, "the chart") for s in slots if s.field is not None
+        ]
+        if not isinstance(chart, LayeredResolvedChart):
+            return pairs
+        for index, layer in enumerate(chart.layers):
+            layer_rows: Rows
+            if layer.query_name == chart.query_name:
+                layer_rows = data
+            else:
+                # A missing key is not necessarily a caller bug: two
+                # non-production callers pass an incomplete datasets map on
+                # purpose — generate_vega_lite_spec() (no per-query datasets
+                # concept at all) and renderer.py's board-level
+                # warning-detection pass (only threads the base chart's own
+                # rows). Neither can supply this layer's own rows, so there
+                # is nothing to validate for it — the same tolerant lookup
+                # FacetFeature and render_cartesian_overlay use.
+                own_rows = datasets.get(layer.query_name)
+                layer_rows = own_rows if own_rows is not None else []
+            source = f"overlay layer {index} ({layer.type}, query={layer.query_name!r})"
+            pairs.extend(
+                (s.field, layer_rows, source)
+                for s in _layer_label_slots(layer)
+                if s.field is not None
+            )
+        return pairs
 
     def apply(
         self,
@@ -1119,19 +1249,24 @@ class ValueLabelFeature:
         datasets: dict[str | None, list[dict[str, Any]]],
     ) -> ChartSpec:
         data = chart_rows(chart, datasets).all_rows()
-        # Validate any labels.field names against the actual data columns so a
-        # bad field fails fast (Vega-Lite silently renders empty text otherwise).
-        # Guard on data being non-empty: no data → nothing to validate against,
-        # same as the channel-column gate in compile/resolve/chart/_channels.py:_channels_for.
-        if data:
-            available = set(data[0])
-            for field in self._collect_label_fields(chart):
-                if field not in available:
-                    raise ChartDataError.from_code(
-                        ERR_LABELS_FIELD_NOT_FOUND,
-                        field=field,
-                        available=sorted(available),
-                    )
+        # Validate any labels.field names against the actual columns it will
+        # render against so a bad field fails fast (Vega-Lite silently
+        # renders empty text otherwise). Each pair carries its own rows —
+        # see _collect_label_fields. Guard per-pair on rows being non-empty:
+        # no data → nothing to validate against, same as the channel-column
+        # gate in compile/resolve/chart/_channels.py:_channels_for.
+        for field, rows, source in self._collect_label_fields(chart, data, datasets):
+            if not rows:
+                continue
+            available = set(rows[0])
+            if field not in available:
+                raise ChartDataError.from_code(
+                    ERR_LABELS_FIELD_NOT_FOUND,
+                    chart_id=chart.id,
+                    field=field,
+                    source=source,
+                    available=sorted(available),
+                )
         # A base chart with overlay `layers:` renders as a mark="layered" wrapper
         # (built by render_cartesian_overlay, which also injects each overlay
         # layer's OWN value-label text layer from that layer's own mark style).
@@ -1143,7 +1278,11 @@ class ValueLabelFeature:
         # applies_to() already isinstance-gates on the same five families, so a
         # missing key here means that gate and _HANDLERS have drifted apart —
         # let it raise instead of silently no-oping.
-        return self._HANDLERS[chart.chart_type](self, spec, chart, box, data)
+        result = self._HANDLERS[chart.chart_type](self, spec, chart, box, data)
+        resolve_scale = result.resolve.get("scale")
+        if resolve_scale is not None and resolve_scale.get("y") == "independent":
+            _suppress_label_layer_axes(result)
+        return result
 
     def _apply_bar(
         self, spec: ChartSpec, chart: ResolvedBarChart, _box: RenderBox, data: Rows
@@ -1208,7 +1347,7 @@ class ValueLabelFeature:
         enc = dict(text_layer.get("encoding", {}))
         # For standard (non-midpoint) positions: add the categorical axis
         # explicitly so the text layer carries both x and y.
-        # apply_chart_data_table_post_pass moves the outer encoding into a
+        # apply_chart_support_table_post_pass moves the outer encoding into a
         # sub-layer; without explicit positional channels the text layer loses
         # its position. Middle/middle_aligned use a synthetic midpoint field in
         # the measure axis and rely on outer-encoding category inheritance, so
@@ -1234,7 +1373,7 @@ class ValueLabelFeature:
             }
         # Only the un-stacked midpoints inherit the category from the outer
         # encoding; the stacked one carries it explicitly like every other
-        # position, so the data-table post-pass can't strip its position.
+        # position, so the support-table post-pass can't strip its position.
         inherits_category = not is_stacked and effective_pos in {
             "middle",
             "middle_aligned",
@@ -1317,6 +1456,7 @@ class ValueLabelFeature:
             _base_band_anchor(chart.x, y, chart.style.line_mark.curve, spec)
             if chart.x is not None
             else None,
+            measure_channel="y",
         ):
             spec.layers.append(text_layer_spec(text_layer))
         return spec
@@ -1341,6 +1481,7 @@ class ValueLabelFeature:
             _base_band_anchor(chart.x, y, chart.style.area_mark.curve, spec)
             if chart.x is not None
             else None,
+            measure_channel="y",
         ):
             spec.layers.append(text_layer_spec(text_layer))
         return spec
@@ -1367,6 +1508,7 @@ class ValueLabelFeature:
                     y,
                     is_house=chart.style.label_is_house,
                     label_is_text=labels_draw_text(labels, data),
+                    measure_channel="y",
                 )
             )
         )

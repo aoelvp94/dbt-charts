@@ -13,10 +13,11 @@ structured content, one bubble per hovered x -- the base's own parts (and
 group total, when commensurable) first, then each overlay reference last, as
 the thing the parts are being compared against. The base's own role content
 is computed exactly as the non-combo case below, but wired onto the BASE's OWN
-sub-spec (``spec.layers[0].tooltip_description``), not the outer/shared
-encoding — a shared top-level description is unreliable across sibling
-layers (e.g. one gap-filled, another not; see ``_apply_structured_tooltip``'s
-private-data guard), so each layer gets its own description set directly.
+sub-spec (``spec.layers[0]``, or the entry it wraps; see
+``layer_encoding_owner``), not the outer/shared encoding. A shared
+top-level description is unreliable across sibling layers (e.g. one
+gap-filled, another not; see ``_apply_structured_tooltip``'s private-data
+guard), so each layer gets its own description set directly.
 Each overlay layer's OWN content is built independently in
 ``emitters/_overlay.py::render_cartesian_overlay`` (mirrors this module's
 role-building, reusing the same LUT/builder primitives) and wired the same
@@ -44,6 +45,7 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
 )
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.emitters._cartesian import (
+    layer_encoding_owner,
     series_order_expression,
     wide_measures_title,
 )
@@ -53,10 +55,11 @@ from dbt_charts.core.render.chart.emitters._tooltip import (
     header_tooltip_field,
     series_row_promoted,
 )
+from dbt_charts.core.render.chart.emitters.pie import PIE_PCT_FIELD, PIE_TOTAL_FIELD
 from dbt_charts.core.render.chart.feature import chart_rows
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.type_inference import infer_vega_type_from_data
-from dbt_charts.core.text.case import format_display_text
+from dbt_charts.core.text.case import default_axis_title, format_display_text
 
 _SeriesCartesianChart = ResolvedBarChart | ResolvedLineChart | ResolvedAreaChart
 _NormalizableChart = ResolvedBarChart | ResolvedAreaChart
@@ -75,8 +78,8 @@ _PERCENT_TOOLTIP_FORMAT = ".0%"
 # pipeline (server-side joinaggregate + calculate — VL's stack:normalize/zero
 # only affects the plotted position, it exposes no datum field for either
 # number).
-_GROUP_TOTAL_FIELD = "__dft_group_total"
-_GROUP_PCT_FIELD = "__dft_group_pct"
+_GROUP_TOTAL_FIELD = "__dct_group_total"
+_GROUP_PCT_FIELD = "__dct_group_pct"
 
 
 def _value_tooltip_field(
@@ -101,7 +104,7 @@ def _value_tooltip_field(
 # read from the SAME color scale domain `pin_legend_display_order` already
 # pinned to legend.values (emitters/_channels.py), never a second, parallel
 # order derivation.
-_TOOLTIP_ORDER_FIELD = "__dft_tooltip_order"
+_TOOLTIP_ORDER_FIELD = "__dct_tooltip_order"
 
 
 def _series_order_role(spec: ChartSpec, color_field: str) -> tuple[TooltipField, ...]:
@@ -112,8 +115,13 @@ def _series_order_role(spec: ChartSpec, color_field: str) -> tuple[TooltipField,
     bubble by rank even when no legend renders (an endpoint-labelled line,
     the common default, has no ``.role-legend-label`` DOM for the runtime's
     other order-reading path). Absent (``()``) when the color scale carries
-    no explicit domain override -- grouped bar, or a numeric/boolean color
-    field -- there is no display reorder to rank by.
+    no explicit domain -- a numeric/boolean color field -- leaving nothing to
+    rank by.
+
+    A domain that happens to equal its own sorted order still earns a rank.
+    Skipping those looks tempting and is wrong: the runtime's only fallback is
+    legend DOM order, and the charts most likely to sort alphabetically by
+    coincidence are the endpoint-labelled ones that render no legend at all.
     """
     color_enc = spec.encoding.get("color") if spec.encoding else None
     scale = color_enc.get("scale") if isinstance(color_enc, dict) else None
@@ -146,9 +154,7 @@ def _cartesian_roles(
 
     header: tuple[TooltipField, ...] = ()
     if chart.x is not None:
-        x_title = chart.x_label or format_display_text(
-            chart.x, from_slug=True, font=style.axis_x.title.font
-        )
+        x_title = chart.x_label or default_axis_title(chart.x)
         header = (header_tooltip_field(chart.x, x_title, data),)
 
     # Wide charts (y: [m1, m2, ...]) are folded client-side by VL: at render
@@ -156,9 +162,7 @@ def _cartesian_roles(
     # datum[WIDE_LABEL_FIELD] = the measure name. Use a human title for the
     # value row and force the series row rather than probing pre-fold rows.
     if chart.wide_measures:
-        y_title = chart.y_label or wide_measures_title(
-            chart.wide_measures, style.axis_y.title.font
-        )
+        y_title = chart.y_label or wide_measures_title(chart.wide_measures)
         values: list[TooltipField] = [
             TooltipField(
                 WIDE_VALUE_FIELD,
@@ -171,9 +175,7 @@ def _cartesian_roles(
         order = _series_order_role(base_spec, WIDE_LABEL_FIELD)
         return header, series, values, order
 
-    y_title = chart.y_label or format_display_text(
-        chart.y, from_slug=True, font=style.axis_y.title.font
-    )
+    y_title = chart.y_label or default_axis_title(chart.y)
     values = [
         TooltipField(chart.y, y_title, kind="quantitative", format=style.tooltip_format)
     ]
@@ -271,7 +273,7 @@ def _pie_roles(
     """Header (chart.identity_field), values (share % then raw), total (grand
     total) for a pie/donut.
 
-    ``__dft_pct``/``__dft_total`` are already baked into every row by
+    ``__dbt_pct``/``__dbt_total`` are already baked into every row by
     ``PieEmitter``'s ``_augment_pie_data`` (the same fields drive the donut
     center-total display) — no new transform needed here, unlike the
     cartesian normalized-stack case.
@@ -291,7 +293,7 @@ def _pie_roles(
     # context, so both render muted (low-contrast). See MUTED in _tooltip.py.
     values = [
         TooltipField(
-            "__dft_pct", "Share", kind="quantitative", format=_PERCENT_TOOLTIP_FORMAT
+            PIE_PCT_FIELD, "Share", kind="quantitative", format=_PERCENT_TOOLTIP_FORMAT
         ),
         TooltipField(
             chart.theta, value_title, kind="quantitative", format=fmt, muted=True
@@ -299,7 +301,7 @@ def _pie_roles(
     ]
     total = (
         TooltipField(
-            "__dft_total", "Total", kind="quantitative", format=fmt, muted=True
+            PIE_TOTAL_FIELD, "Total", kind="quantitative", format=fmt, muted=True
         ),
     )
     return header, values, total
@@ -326,12 +328,8 @@ def _scatter_roles(
     assert isinstance(chart.y, str)  # narrowed by applies_to
     style = chart.style
     fmt = style.tooltip_format
-    x_title = chart.x_label or format_display_text(
-        chart.x, from_slug=True, font=style.axis_x.title.font
-    )
-    y_title = chart.y_label or format_display_text(
-        chart.y, from_slug=True, font=style.axis_y.title.font
-    )
+    x_title = chart.x_label or default_axis_title(chart.x)
+    y_title = chart.y_label or default_axis_title(chart.y)
     values = [
         _value_tooltip_field(chart.y, y_title, data, fmt),
         _value_tooltip_field(chart.x, x_title, data, fmt),
@@ -360,12 +358,8 @@ def _heatmap_roles(
     assert isinstance(chart.x, str)  # narrowed by applies_to
     assert isinstance(chart.y, str)  # narrowed by applies_to
     style = chart.style
-    x_title = chart.x_label or format_display_text(
-        chart.x, from_slug=True, font=style.axis_x.title.font
-    )
-    y_title = chart.y_label or format_display_text(
-        chart.y, from_slug=True, font=style.axis_y.title.font
-    )
+    x_title = chart.x_label or default_axis_title(chart.x)
+    y_title = chart.y_label or default_axis_title(chart.y)
     header = (
         header_tooltip_field(chart.x, x_title, data),
         header_tooltip_field(chart.y, y_title, data),
@@ -442,8 +436,11 @@ class StructuredTooltipFeature:
             # Combo (chart.layers set): the base's own role content is wired
             # onto its OWN sub-spec (spec.layers[0]), never the outer/shared
             # encoding -- see the module docstring. render_cartesian_overlay
-            # always puts the base spec first, unwrapped, in spec.layers.
-            base_spec = spec.layers[0] if chart.layers else spec
+            # always puts the base spec first in spec.layers, but a dual-axis
+            # base's own zero rule may have wrapped it in an extra
+            # `mark="layered"` level with no encoding of its own -- unwrap to
+            # the real owner.
+            base_spec = layer_encoding_owner(spec.layers[0]) if chart.layers else spec
             header, series, values, order = _cartesian_roles(chart, data, base_spec)
             if chart.layers and not series:
                 # A single-series base has no series row today (no color

@@ -558,9 +558,8 @@ def test_table_render_chart_root_link_is_row_scoped_column_link_wins() -> None:
     ]
     board_style = resolve_style(get_theme_style())
 
-    # Both columns must be listed in style.columns so the renderer shows both
-    # (table renderer uses style.columns keys as the authoritative column list
-    # when any column style is configured). Only status gets a column-level link.
+    # style.columns is styling-only — every query column renders regardless.
+    # Only status gets a column-level link.
     yaml = """\
 title: Tickets
 queries:

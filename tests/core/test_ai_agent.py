@@ -219,7 +219,7 @@ def test_build_agent_system_prompt_orders_tool_guidance_after_project_instructio
 def test_build_agent_system_prompt_requires_disclosing_chart_shape_substitution(
     tmp_path: Path,
 ) -> None:
-    """A user who asks for a chart shape Dataface can't draw (funnel, gauge,
+    """A user who asks for a chart shape dbt charts can't draw (funnel, gauge,
     sunburst, ...) must be told plainly — not handed a substitute quietly
     labeled with the requested name (chart_vocabulary fabrication bug). This
     must live in _TOOL_GUIDANCE, the block every profile sharing
@@ -287,6 +287,9 @@ def test_run_agent_executes_tools_and_finishes(monkeypatch, tmp_path: Path) -> N
     ctx = _make_ctx(tmp_path)
     events = list(run_agent("List my sources", client=fake_client, context=ctx))
 
+    tool_result = events[2]
+    assert isinstance(tool_result, ToolResultEvent)
+    assert tool_result.duration_s >= 0
     assert events == [
         ThinkingStatus(status="Planning", block="rs_1:0"),
         ToolCallEvent(id="call_1", name="execute_query", arguments={}),
@@ -294,6 +297,8 @@ def test_run_agent_executes_tools_and_finishes(monkeypatch, tmp_path: Path) -> N
             id="call_1",
             name="execute_query",
             result={"ok": True, "tool": "execute_query", "args": {}},
+            duration_s=tool_result.duration_s,
+            outcome="ok",
         ),
         ContentDelta(delta="Done."),
         AgentDone(response="Done."),
@@ -349,6 +354,7 @@ def test_run_agent_yields_error_for_llm_client_error(
     is its only surviving copy on that path."""
     from dbt_charts.ai.agent import run_agent
     from dbt_charts.ai.events import AGENT_ERROR_MESSAGE
+    from dbt_charts.ai.failures import AITurnFailure
     from dbt_charts.ai.llm import LLMClientError
 
     monkeypatch.setattr(
@@ -368,6 +374,9 @@ def test_run_agent_yields_error_for_llm_client_error(
     assert events == [
         AgentError(
             message=AGENT_ERROR_MESSAGE,
+            # No __cause__ on this bare LLMClientError, so classify() has
+            # nothing narrower to read: still the provider's fault, unnamed.
+            reason=AITurnFailure.PROVIDER_ERROR,
             details="Invalid schema for function 'validate_board'",
         )
     ]

@@ -70,7 +70,9 @@ def _render(
 def test_v2_table_svg_plain_columns() -> None:
     """Flat table with an explicit per-column display config (style.columns)."""
     data = [{"region": "US", "amount": 100}, {"region": "EU", "amount": 200}]
-    style = {"columns": {"amount": {"format": ",.0f", "label": "Amount"}}}
+    style = {
+        "columns": {"amount": {"format": ",.0f", "label": "Amount", "visible": True}}
+    }
     svg = _render(style=style, data=data)
     assert "<svg" in svg
 
@@ -145,7 +147,7 @@ def test_v2_table_svg_negative_numbers_never_use_ascii_hyphen() -> None:
     emits the real minus sign (U+2212). Covers both the theme-default (no
     explicit format:) and an explicit-format column."""
     data = [{"delta": -1234.5, "revenue": -47300}]
-    style = {"columns": {"revenue": {"format": "integer"}}}
+    style = {"columns": {"revenue": {"format": "integer", "visible": True}}}
     svg = _render(style=style, data=data)
     assert "−" in svg
     assert not re.search(r">-\d", svg)

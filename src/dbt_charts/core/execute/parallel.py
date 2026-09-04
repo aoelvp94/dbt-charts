@@ -8,6 +8,7 @@ would be wasted work.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 # thread-local resource per query (e.g. a per-thread DB connection) can key its
 # cleanup on this prefix, so it reaps only pool workers and never the
 # request/task thread that runs the synchronous cache-hit pre-pass.
-RENDER_POOL_THREAD_PREFIX = "dft-render"
+RENDER_POOL_THREAD_PREFIX = "dct-render"
 
 
 def execute_queries_parallel(
@@ -48,8 +49,14 @@ def execute_queries_parallel(
     with ThreadPoolExecutor(
         max_workers=max_workers, thread_name_prefix=RENDER_POOL_THREAD_PREFIX
     ) as pool:
+        # `ContextVar` does not cross `ThreadPoolExecutor.submit` on its own — a
+        # copy per task (not one shared copy) so `attribute()`'s scope (surface,
+        # actor, client, …) reaches every worker without the workers stepping on
+        # each other's Context via concurrent `.run()`.
         futures: dict[Future[list[dict[str, Any]]], str] = {
-            pool.submit(executor.execute_query, name, variables): name
+            pool.submit(
+                contextvars.copy_context().run, executor.execute_query, name, variables
+            ): name
             for name in query_names
         }
 

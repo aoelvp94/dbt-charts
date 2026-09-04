@@ -34,7 +34,13 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_SOURCE_NOT_FOUND_EMPTY,
 )
 from dbt_charts.core.dialects import SQLDialect
-from dbt_charts.core.execute.adapters.base import BaseAdapter, QueryParams, QueryResult
+from dbt_charts.core.execute.adapters.base import (
+    BaseAdapter,
+    QueryParams,
+    QueryResult,
+    handle_adapter_error,
+)
+from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
 from dbt_charts.core.execute.observability import WarehouseObserver, notify_observers
 from dbt_charts.core.execute.source_registry import SourceRegistry
 from dbt_charts.core.execute.source_resolver import (
@@ -90,7 +96,7 @@ def build_adapter_registry(
     All entry points should use this instead of hand-wiring adapters.
 
     Args:
-        project: The Dataface project supplying source config. When it is a
+        project: The dbt charts project supplying source config. When it is a
             ``FilesystemProject``, DuckDBAdapter/SqliteAdapter also root
             relative paths against ``project.root``; any other host (Cloud's
             git-blob store, an in-memory test double) gets ``data_dir=None``
@@ -251,7 +257,7 @@ class AdapterRegistry:
         Use ``build_adapter_registry()`` to get a fully configured registry.
 
         Args:
-            project: The Dataface project; file reads go through its seam methods.
+            project: The dbt charts project; file reads go through its seam methods.
             project_sources: Pre-loaded source configuration. Caller is responsible
                 for loading this (e.g. via ``load_project_sources``).
             resolver: Source resolver instance. Defaults to DefaultSourceResolver.
@@ -262,6 +268,7 @@ class AdapterRegistry:
         self._observers: list[WarehouseObserver] = list(observers) if observers else []
         self._type_index: dict[str, list[BaseAdapter]] = {}
         self._project = project
+        self._dbt_refs = DbtRefResolver(project)
         self._sources = SourceRegistry(project_sources=project_sources)
         self._resolver: SourceResolver = (
             resolver if resolver is not None else DefaultSourceResolver()
@@ -391,7 +398,11 @@ class AdapterRegistry:
                 query, board=board, dbt_context=dbt_context, query_name=query_name
             )
         except DbtChartsError as exc:
-            return QueryResult(data=[], error=str(exc))
+            # handle_adapter_error keeps the resolver's typed identity —
+            # message-only flattening here used to downgrade
+            # ERR-SOURCE-NOT-FOUND et al. to the ERR-INTERNAL fallback by the
+            # time _query_error_from_result rebuilt the QueryError.
+            return handle_adapter_error("Source resolution", exc)
 
         # Single-pass routing on (query_type, resolved source type). source_config
         # is already resolved above, so each adapter's can_execute claims only the
@@ -467,12 +478,18 @@ class AdapterRegistry:
         source_config: ResolvedSourceConfig | None,
         render_dialect: SQLDialect,
     ) -> tuple[AnyQuery, QueryParams] | QueryResult:
-        """Expand ``{{ queries.X }}`` references and parameterize variables.
+        """Resolve dbt refs, expand ``{{ queries.X }}``, and parameterize variables.
 
         Composition lives here — one place every adapter passes through — so no
-        individual adapter can omit it. The adapter then receives pre-computed
-        params and skips its own render step. ``render_dialect`` is the
-        placeholder style the adapter declared via ``param_render_dialect``.
+        individual adapter can omit it. dbt ref()/source() resolution runs
+        first, since the variable-Jinja render below is StrictUndefined and
+        doesn't know ``ref``. The adapter then receives pre-computed params and
+        skips its own render step; its own ``DbtRefResolver.resolve()`` call is
+        a no-op on *this* query's own SQL (already ref-free), but still does
+        real work when a ``{{ queries.X }}`` sub-query's raw, unresolved SQL
+        gets inlined here and reaches the adapter unresolved.
+        ``render_dialect`` is the placeholder style the adapter declared via
+        ``param_render_dialect``.
         """
         if not (
             params is None
@@ -488,8 +505,13 @@ class AdapterRegistry:
         )
 
         try:
+            resolved_sql, _resolved_relations = self._dbt_refs.resolve(query.sql)
+        except DbtChartsError as exc:
+            return handle_adapter_error("dbt ref resolution", exc)
+
+        try:
             rendered = render_parameterized_with_queries(
-                query.sql,
+                resolved_sql,
                 variables if variables is not None else {},
                 queries=board.queries,
                 dialect=render_dialect,

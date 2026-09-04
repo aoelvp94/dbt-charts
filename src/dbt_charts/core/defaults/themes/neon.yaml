@@ -4,7 +4,7 @@
 # backdrop that lets the marks glow; the color lives entirely in the vivid-10 marks.
 # FOUR coarse chrome tiers (+1 grid split), all from dbt-grays (no opacity, no inline hex).
 # "Values pop": numeric readouts get the max-contrast tier, above titles — opposite
-# editorial's soft mid-anchored ramp.
+# clarity's soft mid-anchored ramp.
 #   VALUE dbt-grays.canvas   (#FAFAFA) — quant-axis numbers, data labels, values, zero-baseline (max)
 #   HIGH  dbt-grays.grid     (#EDEFF2) — titles, legend, table headers
 #   MID   dbt-grays.subtitle (#8A8C8F) — category labels, axis titles, support text
@@ -34,6 +34,11 @@ style:
     sequence: dbt-seq-blue-dark
     category_dark: vivid-10-light
     category_light: vivid-10-dark
+  # Lighter tone stops for the dark canvas — the default positive/negative
+  # `.solid` greens/reds are tuned for light bg and read too dark here.
+  tones:
+    positive: positive.border
+    negative: negative.border
   border:
     color: &faint dbt-grays.heading
   title:
@@ -64,6 +69,9 @@ style:
         color: *high
         width: 3
         radius: 0
+    # Markdown rules + markdown-table gridlines (was charts.table.border.color).
+    rule:
+      color: *faint
   charts:
     color:
       categorical:
@@ -114,9 +122,9 @@ style:
       ticks:
         color: *measure_grid       # tracks the quantitative grid above
         width: 1                   # the hairline this theme's grid is drawn at
-        count: 6                   # sparse, like editorial
+        count: 6                   # sparse, like clarity
     legend:
-      visible: false               # direct-labeling by default (editorial posture)
+      visible: false               # direct-labeling by default (clarity posture)
       label:
         font:
           color: *high
@@ -179,8 +187,6 @@ style:
         labels:
           align: inward
     table:
-      border:
-        color: *faint
       header:
         background: *panel
         font:
@@ -191,7 +197,7 @@ style:
       spark:
         bar:
           background: *faint
-    data_table:
+    support_table:
       font:
         color: *value
       label:
@@ -213,7 +219,7 @@ style:
           color: *value
       border:
         color: *faint
-        # Borderless like the other shadowed themes (see editorial.yaml).
+        # Borderless like the other shadowed themes (see clarity.yaml).
         width: 0.0
         radius: 4.0
       shadow:
@@ -229,12 +235,6 @@ style:
         label:
           font:
             color: *mid
-    kpi:
-      # Lighter tone stops for the dark canvas — the default positive/negative
-      # `.solid` greens/reds are tuned for light bg and read too dark here.
-      tones:
-        positive: positive.border
-        negative: negative.border
   variables:
     font:
       color: *mid
@@ -242,5 +242,3 @@ style:
       color: *faint
     input:
       background: *panel
-      border:
-        color: *faint

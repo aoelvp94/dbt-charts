@@ -243,7 +243,7 @@ class AliasIndex:
         charts/ does not exist.
 
         Args:
-            project: The Dataface project.
+            project: The dbt charts project.
 
         Returns:
             A populated AliasIndex.

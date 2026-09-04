@@ -8,7 +8,7 @@
 # Every control here actually filters the data below it; none are decoration.
 
 title: Every Variable Input Type
-description: One control of each widget, all filtering the same orders table.
+notes: One control of each widget, all filtering the same orders table.
 source: examples_db
 
 variables:

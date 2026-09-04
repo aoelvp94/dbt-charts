@@ -171,7 +171,7 @@ def test_board_level_axis_y_beats_theme_default():
     """Board-level still beats the theme, and picking up the fix does not
     touch theme-internal Layer 2/3 ordering (test_unified_axis_emit.py
     pins that separately)."""
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     patch = StylePatch.model_validate(
         {"charts": {"axis_y": {"labels": {"format": "$,.3~s"}}}}
     )
@@ -355,16 +355,16 @@ def test_board_family_axis_reaches_resolved_axis_style_via_chart_type():
     """The board family scope (layer 9) must reach the resolved_axis_style
     wrapper, not just the direct _merge_axis_cascade render path.
 
-    axis_offset (the data-table geometry path) resolves axis state through
+    axis_offset (the support-table geometry path) resolves axis state through
     resolved_axis_style. Before chart_type was threaded through that wrapper,
     a board-level charts.bar.axis.labels.padding was applied on the render
     path (which passes chart_type) but skipped on the geometry path (which
-    did not) — so the data-table strip mis-reserved space against the axis.
+    did not) — so the support-table strip mis-reserved space against the axis.
     This pins that resolved_axis_style honors the family scope when chart_type
     is threaded, and ignores it when it is not.
     """
     ctx = resolve_chart_style_context(
-        get_theme_style("editorial"),
+        get_theme_style("clarity"),
         StylePatch.model_validate(
             {"charts": {"bar": {"axis": {"labels": {"padding": 40}}}}}
         ),

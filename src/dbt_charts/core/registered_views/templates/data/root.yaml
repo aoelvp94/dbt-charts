@@ -3,6 +3,7 @@ title: "Sources"
 queries:
   sources:
     type: schema
+    fields: [name]
 
 charts:
   source_list:

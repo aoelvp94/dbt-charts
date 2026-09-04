@@ -13,7 +13,7 @@ this proves end-to-end YAML-sourced coverage against the real normalizer.
 All families are plain params that must go green; no permanent xfails are permitted.
 
 To regenerate goldens after an intentional, reviewed render output change, run:
-DFT_WRITE_PARITY_GOLDENS=1 uv run pytest dbt-charts/tests/core/render/chart/test_render_parity.py -q
+DCT_WRITE_PARITY_GOLDENS=1 uv run pytest dbt-charts/tests/core/render/chart/test_render_parity.py -q
 """
 
 from __future__ import annotations
@@ -186,7 +186,7 @@ def _write_goldens() -> None:
     Regeneration path only — never runs in CI. Use after an intentional,
     reviewed change to rendering output:
 
-        DFT_WRITE_PARITY_GOLDENS=1 uv run pytest dbt-charts/tests/core/render/chart/test_render_parity.py -q
+        DCT_WRITE_PARITY_GOLDENS=1 uv run pytest dbt-charts/tests/core/render/chart/test_render_parity.py -q
     """
     board_style = _board_style()
     _GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
@@ -198,5 +198,5 @@ def _write_goldens() -> None:
         golden_path.write_text(json.dumps(vl, indent=2, sort_keys=True) + "\n")
 
 
-if os.environ.get("DFT_WRITE_PARITY_GOLDENS") == "1":
+if os.environ.get("DCT_WRITE_PARITY_GOLDENS") == "1":
     _write_goldens()

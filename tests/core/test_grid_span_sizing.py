@@ -23,7 +23,7 @@ from ._svg_render import render_board_to_svg
 def _render_svg(yaml_body: str, board_width: float = 1872.0) -> str:
     yaml_content = f"""\
 title: Test
-extends: editorial
+extends: clarity
 style:
   frame:
     width: {board_width}

@@ -25,14 +25,14 @@ falls out of this for free.
 Two tick-content scopes are safe to measure, both covered here:
 
 1. **Baked** — ``tick_values`` + a concrete ``format`` (quantitative axes on
-   a theme that sets ``axis.ticks.count``). Dataface already knows the exact
+   a theme that sets ``axis.ticks.count``). dbt charts already knows the exact
    values VL will render (``axis.scale.values`` is emitted explicitly); measuring
    is exact, not an estimate. ``quantitative_tick_labels``.
 2. **Unbaked** — no ``tick_values`` (e.g. the ``stark``/``plain`` themes,
    which leave ``axis.ticks.count`` unset so VL picks its own "nice" ticks).
-   Dataface doesn't know VL's actual pick, but it can still bound the widest
+   dbt charts doesn't know VL's actual pick, but it can still bound the widest
    label VL could plausibly render: run the *data's own domain* through the
-   same ``nice_tick_values`` algorithm Dataface uses for the baked case, at a
+   same ``nice_tick_values`` algorithm dbt charts uses for the baked case, at a
    spread of plausible tick counts, and take the widest formatted candidate.
    This is an upper-bound estimate, not a prediction of VL's exact choice —
    VL still auto-generates its real ticks; this only sizes the gutter for the
@@ -61,6 +61,13 @@ digit-width units. This module reads the same ``ruler`` field rather than
 re-deriving whether it applies — a gutter measured against a stale or
 partial predicate under-measures a compacting ladder, and the labels this
 module exists to align invade the plot.
+
+The actual width measurement + Vega-Lite ``labelLimit`` cap this module's own
+docstring describes (``measured_label_padding`` / ``cap_padding_to_label_limit``
+/ ``DEFAULT_VL_LABEL_LIMIT``) live in ``core/utils.py`` — a leaf module a
+compile-side caller (the horizontal bar's categorical-gutter estimate,
+``compile/resolve/chart/bar.py``) can reach too. This module keeps only the
+label-*text* generation those functions measure.
 """
 
 from __future__ import annotations
@@ -68,28 +75,16 @@ from __future__ import annotations
 from decimal import Decimal
 
 from d3_format import format as d3_format
-from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedRulerAxis,
     ResolvedTickLabel,
 )
-from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.numeric import nice_tick_values
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.text.numeral_scale import SuffixMode, decimal_pad_for, with_symbol
 
-# Breathing room between the widest label's near edge and the tick — purely
-# cosmetic (avoids the label touching the tick line), not a gutter-sizing
-# input. Small and fixed, like the axis label gap in chart-rendering config.
-_BREATHING_ROOM_PX = 4.0
-
-# Vega-Lite's own default axis.labelLimit when the theme leaves
-# axis.labels.max_width unset — the pixel width VL truncates a rendered label
-# to (with an ellipsis) before this module ever measures it.
-DEFAULT_VL_LABEL_LIMIT: float = 180.0
-
 # Plausible spread of tick counts Vega-Lite's own axis layout might land on
-# when Dataface hasn't baked explicit tick values. Not an attempt to predict
+# when dbt charts hasn't baked explicit tick values. Not an attempt to predict
 # VL's actual choice for a specific chart (that would need its real panel
 # height, which isn't known at this point in the pipeline) — a defensible
 # bracket around d3-scale's own default tick target (10) and the low end
@@ -108,13 +103,13 @@ def quantitative_tick_labels(
 ) -> list[str]:
     """Render each baked tick label exactly as the axis will paint it.
 
-    ``format_spec`` is the raw d3-format string Dataface passes verbatim to
+    ``format_spec`` is the raw d3-format string dbt charts passes verbatim to
     VL's ``axis.format``. When ``ruler`` is None (the axis's resolved
     ``ResolvedAxisStyle.ruler`` — the ladder doesn't compact, the format
     isn't SI-shaped, or ``label.expr`` is authored), VL renders straight
-    from the literal spec and so does this — Dataface's analytic/narrative
+    from the literal spec and so does this — dbt charts' analytic/narrative
     display extension does not apply here; VL renders axis ticks with its
-    own d3-format implementation, not Dataface's.
+    own d3-format implementation, not dbt charts'.
 
     When ``tick_label.prefix`` is set (the ``ruler is None`` non-compacting
     case), the anchor tick additionally gets the currency prefix (mirroring
@@ -188,42 +183,6 @@ def quantitative_tick_labels(
     return labels
 
 
-def measured_label_padding(labels: list[str], font: ResolvedFontStyle) -> float:
-    """Gutter width so the widest ``labels`` entry's near edge sits at the tick.
-
-    Returns 0.0 for an empty label list (nothing to reserve for). Does NOT
-    add tick length: Vega-Lite's own ``labelPadding`` is already measured
-    from the tick's outer edge, not the axis line — confirmed empirically
-    (a vl-convert probe varying ``tickSize``/``labelPadding``/``ticks``
-    independently shows the rendered label anchor always lands at
-    ``(tickSize if ticks-visible else 0) + labelPadding``). Adding tick
-    length again here double-counts it whenever ticks are visible, and adds
-    dead space even when they aren't — this is the "labels moved further
-    from the axis than they should" bug. Callers no longer need to resolve
-    or pass a tick size for this calculation.
-    """
-    if not labels:
-        return 0.0
-    measurer = get_font_measurer(font.family)
-    max_width = max(measurer.measure(label, font.size) for label in labels)
-    return max_width + _BREATHING_ROOM_PX
-
-
-def cap_padding_to_label_limit(padding: float, label_limit: float) -> float:
-    """Cap a computed gutter at what Vega-Lite will actually render.
-
-    ``measured_label_padding`` sizes the gutter to the widest label's full,
-    untruncated text width. Vega-Lite truncates any rendered label wider than
-    ``labelLimit`` (``axis.labels.max_width``, or its own ``DEFAULT_VL_LABEL_LIMIT``
-    when unset) to that width plus an ellipsis — so reserving more than
-    ``label_limit + breathing_room`` leaves dead gutter space no rendered
-    label ever fills. Capping the final padding value is equivalent to
-    capping each label's width before taking the max (min/max commute here),
-    so this needs no access to the underlying label list.
-    """
-    return min(padding, label_limit + _BREATHING_ROOM_PX)
-
-
 def numeric_values(data: list[VLDict], fields: tuple[str, ...]) -> list[float]:
     """Finite numeric values across one or more fields (skips bools/None/non-numeric).
 
@@ -244,7 +203,7 @@ def estimated_quantitative_tick_labels(
     values: list[float], format_spec: str
 ) -> list[str]:
     """Upper-bound candidate tick labels for a quantitative axis whose real
-    Vega-Lite ticks aren't known (Dataface hasn't baked ``tick_values``).
+    Vega-Lite ticks aren't known (dbt charts hasn't baked ``tick_values``).
 
     ``values`` should already include any authored ``scale.domain`` bounds
     (via ``dbt_charts.core.compile.resolve.chart.tick_values.numeric_domain_bounds``)
@@ -256,7 +215,7 @@ def estimated_quantitative_tick_labels(
     ``nice_tick_values``, it does not know about authored overrides itself.
 
     Runs the domain (plus zero, since a zero-anchored scale is common and
-    cheap to cover) through the same ``nice_tick_values`` algorithm Dataface
+    cheap to cover) through the same ``nice_tick_values`` algorithm dbt charts
     uses when it *does* bake ticks, at ``_ESTIMATE_TARGET_COUNTS`` — not to
     predict VL's actual pick, but to bound the widest label it could
     plausibly render. Returns every candidate's formatted string; callers

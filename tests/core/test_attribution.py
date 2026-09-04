@@ -11,6 +11,8 @@ The dbt-side transport is covered by ``execute/adapters/test_query_header.py``.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 import dbt_charts.core.attribution as attribution_module
@@ -167,3 +169,96 @@ class TestRuntimeContext:
         """Engine-owned values are ours to normalize; authored ones are validated."""
         with attribute({"board": "GTM/Weekly Revenue"}, {}):
             assert current_attribution()["dbt_charts_board"] == "gtm-weekly-revenue"
+
+
+class TestActorClientRequestDimensions:
+    """`actor`, `client`, `request` — per-request identity (D-05).
+
+    These ride the same `ContextVar` seam as `board`/`query`/`target`, but the
+    stakes are higher: a Cloud process serves many tenants concurrently, so
+    an actor that leaked into process-global state (`_process_surface`) or a
+    pooled connection's identity would attribute one tenant's query to
+    another's actor. Both are silent failures, so both are pinned here.
+    """
+
+    def test_unknown_dimension_still_raises(self) -> None:
+        """Adding real dimensions must not loosen the unknown-dimension guard."""
+        with (
+            pytest.raises(ValueError, match="unknown attribution dimension"),
+            attribute({"principal": "user-1"}, {}),
+        ):
+            pass
+
+    def test_actor_reaches_current_attribution(self) -> None:
+        with attribute({"actor": "user-1", "client": "web", "request": "req-1"}, {}):
+            current = current_attribution()
+        assert current["dbt_charts_actor"] == "user-1"
+        assert current["dbt_charts_client"] == "web"
+        assert current["dbt_charts_request"] == "req-1"
+
+    def test_actor_never_reaches_process_surface(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """set_surface()'s module-global dict is a cross-tenant trap for an
+        actor — this must stay empty no matter what attribute() establishes."""
+        monkeypatch.setattr(attribution_module, "_process_surface", {})
+        with attribute({"actor": "user-1", "client": "web", "request": "req-1"}, {}):
+            pass
+        assert attribution_module._process_surface == {}
+
+    def test_actor_client_request_excluded_from_connection_identity(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A pooled connection is shared by every source with the same identity —
+        an actor written there would label a second tenant's queries."""
+        monkeypatch.setattr(attribution_module, "_process_surface", {})
+        with attribute({"actor": "user-1", "client": "web", "request": "req-1"}, {}):
+            identity = connection_identity()
+        assert "dbt_charts_actor" not in identity
+        assert "dbt_charts_client" not in identity
+        assert "dbt_charts_request" not in identity
+
+    def test_two_concurrent_contexts_see_only_their_own_actor(self) -> None:
+        """A Cloud process serves many users concurrently — attribute()'s
+        ContextVar must isolate one request's actor from another's in-flight
+        scope. A `threading.Barrier` forces both scopes to be open at once so
+        a leak (e.g. a module-global) would actually be observed."""
+        import threading
+
+        barrier = threading.Barrier(2)
+        seen: dict[str, str] = {}
+
+        def run(actor: str) -> None:
+            with attribute({"actor": actor}, {}):
+                barrier.wait(timeout=5)
+                seen[actor] = current_attribution()["dbt_charts_actor"]
+
+        threads = [
+            threading.Thread(target=run, args=("tenant-a",)),
+            threading.Thread(target=run, args=("tenant-b",)),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert seen == {"tenant-a": "tenant-a", "tenant-b": "tenant-b"}
+
+    def test_generated_values_survive_the_label_charset(self) -> None:
+        """Charset check on values as attribute() actually normalizes them, not
+        on `_normalize` called in isolation — an email or a mixed-case client
+        name must come out BigQuery-label-safe."""
+        with attribute(
+            {
+                "actor": "dave@fivetran.com",
+                "client": "Claude",
+                "request": "REQ 123!",
+            },
+            {},
+        ):
+            current = current_attribution()
+        for key in ("dbt_charts_actor", "dbt_charts_client", "dbt_charts_request"):
+            value = current[key]
+            assert "@" not in value
+            assert value == value.lower()
+            assert re.fullmatch(r"[a-z0-9_-]{0,63}", value), value

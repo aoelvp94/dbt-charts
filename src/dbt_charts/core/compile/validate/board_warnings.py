@@ -430,7 +430,7 @@ def _detect_axis_align_discarded(board: Board, warnings: list[Diagnostic]) -> No
     # can get the forced align — no warning is a true positive.
     ctx = board.chart_style_context
     # Theme baseline: what axis_quantitative.labels.format resolves to when a
-    # chart authors no per-chart format at all (e.g. "number_default", itself
+    # chart authors no per-chart format at all (e.g. "number", itself
     # a predefined name). Mirrors _bake_cartesian_axes's own
     # ay_format_is_alias fix -- a bare axis inheriting this default still
     # gets forced right-aligned, so the diagnostic must check it too, not

@@ -2,7 +2,7 @@
 name: board-design
 kind: workflow
 description: >
-  Design principles for at-a-glance Dataface boards: chart selection, information
+  Design principles for at-a-glance dbt charts boards: chart selection, information
   hierarchy, layout, color, dashboard vs report. Use for 'what chart type', 'how
   should I lay this out', 'dashboard design'. Do NOT use for narrative analyses
   (report-design) or the build-test-iterate cycle (board-build).
@@ -46,14 +46,15 @@ If the user needs a narrative analysis, use the `report-design` skill instead.
 
 ## Metadata Requirement
 
-Whenever you output or edit Dataface YAML, add `description` metadata:
+Whenever you output or edit dbt charts YAML, add `notes` metadata (never rendered — AI
+search and maintainer context only):
 
-- `queries.*.description` for query intent
-- `charts.*.description` for chart intent
-- `variables.*.description` for filter semantics
-- Layout object `description` fields (`rows`/`cols`/`grid.items`/`tabs.items`) when they add context
+- `queries.*.notes` for query intent
+- `charts.*.notes` for chart intent
+- `variables.*.notes` for filter semantics
+- Layout object `notes` fields (`rows`/`cols`/`grid.items`/`tabs.items`) when they add context
 
-Descriptions should be concise and optimized for AI retrieval.
+Notes should be concise and optimized for AI retrieval.
 
 ## Thinking Process
 
@@ -124,17 +125,24 @@ pins a color that stops answering to the theme. Author palette tokens
 (`category[1]`, `negative.solid`, `dbt-grays.muted`) — or a palette name where
 one is asked for (`palette: dbt-seq-blue`); `{{ s_docs_color }}` has the full table. Best of all, author no color and let the theme pick.
 
+**"Same color = same meaning everywhere" is enforced for you, board-wide.**
+Once two or more charts color by the same field, dbt charts assigns each
+value one palette slot and every chart honors it — no per-chart matching
+needed. Pin a specific value to a specific slot under
+`style.charts.category_colors.<field>.values`; `{{ s_docs_charts }}` has the
+full syntax.
+
 ### 6. Numeric Display
 
-Apply standard numeric-display judgment (two-numeral rule, no false precision, tabular numerals in columns). Dataface-specific defaults:
+Apply standard numeric-display judgment (two-numeral rule, no false precision, tabular numerals in columns). dbt charts-specific defaults:
 
-- **Put format in the family slot — not chart root.** Cartesian charts → `style.number_format`. KPI value → `style.value.format`. Table column → `style.columns.<col>.format`. Chart-root `format:` is rejected on cartesian families.
-- **Use format aliases, not raw d3 specs.** `currency_whole`, `percent`, `percent_delta`, `integer`, `compact` inside the slot above — not bare `format: currency_whole` at chart root. Raw d3 (`"$,.0f"`) only when no alias fits.
-- **Drop cents above $10.** `style.number_format: currency_whole` (or `style.value.format` on KPIs) is the dashboard default. Reserve `currency` (with cents) for reconciliation surfaces — billing, financial statements.
+- **Put format in the family slot — not chart root.** Cartesian charts: the measure → `style.number_format` (equivalently `style.axis_y.labels.format` — the measure, even on a horizontal bar where it draws along the bottom). The dimension (`style.axis_x.labels.format`) takes a number preset only when its ticks are themselves numbers; a text-category axis takes no number format, and a date axis takes a time token instead. A band-scale dimension raises `ERR-LABEL-FORMAT-AXIS-MISMATCH`; so does a temporal one now — dates get no numeric-tick exemption, so use a time token or `style.time_format` there instead. `heatmap` has no measure axis at all — its value is on the color channel, so a preset on either axis raises. `style.axis_y.mirror.format` follows the same rule whenever the mirrored edge is categorical — a dot plot's y, and also a default-orientation (horizontal) bar, where the rotation puts the category on that edge. KPI value → `style.value.format`. Table column → `style.columns.<col>.format`. Chart-root `format:` is rejected on cartesian families.
+- **Use format aliases, not raw d3 specs.** `currency`, `currency_whole`, `percent`, `percent_delta`, `integer`, `number` inside the slot above — not bare `format: currency_whole` at chart root. Raw d3 (`"$,.0f"`) only when no alias fits.
+- **Drop cents above $10.** `style.number_format: currency_whole` (or `style.value.format` on KPIs) is the dashboard default. Reserve `currency_full` (with cents) for reconciliation surfaces — billing, financial statements.
 - **Notation family: analytic for chrome, narrative for prose.** Analytic (`$2.5 M`, space, uppercase K/M/B) for axes, KPIs, tables, tooltips. Narrative (`$2.5mn`, no space, lowercase) only for text cards, titles, annotations. Independent of theme choice.
 - **Zero strips trailing decimals even when siblings have them.** A `$0` KPI uses `currency_whole` even if its partner uses `currency`. A `0%` KPI uses `percent_whole` even if its partner uses `.2%`. The rule generalizes to any unit.
 - **Percent precision is a group decision.** Default by magnitude: ≥20% → `.0%`; 1–20% → `.1%`; <1% → `.2%`. **Modulate by surface:** a single KPI or short rail can afford one more decimal; a long table column or axis wants the simpler form. **Override:** when tenths carry signal regardless of magnitude (A/B rates, churn, conversion in a tight range), use `format: ".2%"`.
-- **Compaction is a group decision, not per-value.** Compact when ≥4 similar-magnitude values exceed 10,000, or when surface density demands it. Adjacent surfaces showing the same metric may compact differently — a reconciliation table can show full precision while the headline KPI uses `currency_compact`.
+- **Compaction is a group decision, not per-value.** Compact when ≥4 similar-magnitude values exceed 10,000, or when surface density demands it. Adjacent surfaces showing the same metric may compact differently — a reconciliation table can show full precision while the headline KPI uses `currency`.
 - **NULL renders as `—` (em-dash), never `0`.** Different claims about the data.
 - **Tables anchor the currency symbol.** Default `symbol_mode: anchors` — first row carries the `$`, rows below don't.
 
@@ -170,7 +178,7 @@ Before delivering:
 - [ ] Color is purposeful, not decorative — and authored as palette tokens, with no raw hex anywhere
 - [ ] Titles are informative ("Revenue by Region, Last 30 Days" not "Chart 1")
 - [ ] User's most important question answered at a glance
-- [ ] Query/chart/variable/layout `description` metadata is filled for AI context
+- [ ] Query/chart/layout/variable `notes` metadata is filled for AI context
 
 ## Common Mistakes
 

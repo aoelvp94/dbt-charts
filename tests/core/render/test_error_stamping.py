@@ -36,10 +36,14 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("chart/spark.py", "render_spark"),
         # chart/presentation.py
         ("chart/presentation.py", "apply_presentation_defaults"),
-        # chart/data_table_attachment.py
-        ("chart/data_table_attachment.py", "_aggregate_by_x"),
-        ("chart/data_table_attachment.py", "_entry_cell_widths"),
-        ("chart/data_table_attachment.py", "apply_chart_data_table_post_pass"),
+        # chart/support_table_attachment.py
+        ("chart/support_table_attachment.py", "_aggregate_by_x"),
+        ("chart/support_table_attachment.py", "_entry_cell_widths"),
+        ("chart/support_table_attachment.py", "apply_chart_support_table_post_pass"),
+        # Theme-cascade-guarantee guard (font.family always populated by a
+        # fully-resolved support-table style), identical in kind to the
+        # allowlisted _entry_cell_widths font.size guard above.
+        ("chart/support_table_attachment.py", "resolved_pad_font_family"),
         # chart/table.py
         ("chart/table.py", "_render_spark_cell"),
         # chart/table_support.py

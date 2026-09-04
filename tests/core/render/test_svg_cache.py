@@ -424,19 +424,109 @@ def test_the_memo_reports_what_a_host_must_write_back() -> None:
     Getting them wrong is how a durable store either loses entries or lets a
     chart that hits on every page load age out of its own LRU.
     """
-    cache = RenderedSvgCache({"preloaded": "<svg>old</svg>"})
-    cache.get("preloaded")
+    cache = RenderedSvgCache(loader={"stored": "<svg>old</svg>"}.get)
+    cache.get("stored")
     cache.put("fresh", "<svg>new</svg>", "revenue")
 
-    assert cache.touched == frozenset({"preloaded"})
+    assert cache.touched == frozenset({"stored"})
     assert [(e.key, e.chart_id) for e in cache.minted] == [("fresh", "revenue")]
 
 
-def test_an_unread_preloaded_entry_is_not_reported_as_touched() -> None:
-    cache = RenderedSvgCache({"preloaded": "<svg/>"})
+def test_an_entry_the_loader_was_never_asked_for_is_not_touched() -> None:
+    cache = RenderedSvgCache(loader={"stored": "<svg/>"}.get)
 
     assert cache.touched == frozenset()
     assert cache.minted == ()
+
+
+def test_the_loader_is_consulted_only_on_a_miss() -> None:
+    """The whole point: one read per distinct hash, never a board's history."""
+    asked: list[str] = []
+
+    def loader(key: str) -> str | None:
+        asked.append(key)
+        return "<svg>stored</svg>" if key == "hit" else None
+
+    cache = RenderedSvgCache(loader=loader)
+    assert cache.get("hit") == "<svg>stored</svg>"
+    assert cache.get("hit") == "<svg>stored</svg>"
+
+    assert asked == ["hit"]
+
+
+def test_a_miss_is_remembered_so_one_hash_costs_one_read() -> None:
+    """Two identical charts on one board must not both pay the lookup."""
+    asked: list[str] = []
+
+    def loader(key: str) -> str | None:
+        asked.append(key)
+        return None
+
+    cache = RenderedSvgCache(loader=loader)
+    assert cache.get("absent") is None
+    assert cache.get("absent") is None
+
+    assert asked == ["absent"]
+
+
+def test_a_minted_entry_is_never_asked_of_the_loader() -> None:
+    asked: list[str] = []
+
+    def loader(key: str) -> str | None:
+        asked.append(key)
+        return None
+
+    cache = RenderedSvgCache(loader=loader)
+    cache.put("fresh", "<svg/>", "c1")
+
+    assert cache.get("fresh") == "<svg/>"
+    assert asked == []
+
+
+def test_a_loaded_entry_is_touched_and_never_minted() -> None:
+    """Writing a loaded entry back as an insert would be a redundant upsert."""
+    cache = RenderedSvgCache(loader={"stored": "<svg/>"}.get)
+    cache.get("stored")
+
+    assert cache.touched == frozenset({"stored"})
+    assert cache.minted == ()
+
+
+def test_a_minted_entry_is_never_reported_as_touched() -> None:
+    """last_used_at is already stamped by the insert; bumping it is a wasted write."""
+    cache = RenderedSvgCache(loader=lambda _key: None)
+    cache.put("fresh", "<svg/>", "c1")
+    cache.get("fresh")
+
+    assert cache.touched == frozenset()
+
+
+def test_loaded_entries_obey_the_entry_ceiling() -> None:
+    """The bug: preloading seated entries straight into the dict, past the LRU.
+
+    Entries arriving from the store have to go through the same trim as minted
+    ones, or the ceiling bounds nothing a host actually fills the memo with.
+    """
+    asked: list[str] = []
+
+    def loader(key: str) -> str | None:
+        asked.append(key)
+        return f"<svg>{key}</svg>"
+
+    cache = RenderedSvgCache(loader=loader, max_entries=2)
+    for key in ("a", "b", "c"):
+        cache.get(key)
+    cache.get("a")  # "c" pushed it out, so this is a second read, not a hit
+
+    assert asked == ["a", "b", "c", "a"]
+
+
+def test_no_loader_means_every_read_misses() -> None:
+    """`dct render` passes no store; the memo is then a plain in-render dict."""
+    cache = RenderedSvgCache()
+
+    assert cache.get("anything") is None
+    assert cache.touched == frozenset()
 
 
 def test_an_evicted_mint_is_not_reported_for_writing_back() -> None:

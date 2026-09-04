@@ -26,7 +26,7 @@ _DEFAULT_BOX = RenderBox(width=600.0, height=300.0)
 
 
 @pytest.fixture(autouse=True)
-def _stark(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def stark(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Pin to stark so the legend is visible for all tests in this module."""
     reset_config()
     monkeypatch.setenv("DCT_DEFAULT_THEME", "stark")
@@ -166,6 +166,22 @@ def _field_legend(vl: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _field_legend_recursive(vl: dict[str, Any]) -> dict[str, Any] | None:
+    """Like `_field_legend`, but descends into a nested `layer[]` entry. A
+    dual-axis zero-baseline rule wraps its own entry in an extra
+    `mark="layered"` level with no encoding of its own (see
+    `nest_zero_rule`), one level deeper than a shallow scan reaches."""
+    for layer in vl.get("layer", []):
+        color = layer.get("encoding", {}).get("color", {})
+        if color.get("field") is not None:
+            leg = color.get("legend")
+            return leg if isinstance(leg, dict) else None
+        nested = _field_legend_recursive(layer)
+        if nested is not None:
+            return nested
+    return None
+
+
 # ── Solo-mark glyph gating: line overlay → stroke ─────────────────────────
 
 
@@ -180,7 +196,7 @@ def test_line_overlay_on_bar_base_gets_stroke_glyph() -> None:
     layer = LineLayer(type="line", y="target")
     vl = _render_bar_with_layers([layer])
 
-    legend = _overlay_legend(vl, "Target")
+    legend = _overlay_legend(vl, "target")
     assert legend is not None, "Line overlay has no legend"
     symbol_type = legend.get("symbolType")
     assert symbol_type is not None, "Line overlay legend has no symbolType"
@@ -207,7 +223,7 @@ def test_bar_overlay_on_bar_base_gets_square_glyph() -> None:
     layer = BarLayer(type="bar", y="target")
     vl = _render_bar_with_layers([layer])
 
-    legend = _overlay_legend(vl, "Target")
+    legend = _overlay_legend(vl, "target")
     assert legend is not None, "Bar overlay has no legend"
     symbol_type = legend.get("symbolType")
     assert symbol_type is not None, (
@@ -278,7 +294,7 @@ def test_author_symbol_shape_override_emits_constant_symbol_type() -> None:
     )
     vl = _render_bar_with_layers([layer], style=style)
 
-    legend = _overlay_legend(vl, "Target")
+    legend = _overlay_legend(vl, "target")
     assert legend is not None, "Line overlay has no legend"
     symbol_type = legend.get("symbolType")
     assert symbol_type == "diamond", (
@@ -303,7 +319,7 @@ def test_author_symbol_fill_false_emits_transparent_fill_color() -> None:
     )
     vl = _render_bar_with_layers([layer], style=style)
 
-    legend = _overlay_legend(vl, "Target")
+    legend = _overlay_legend(vl, "target")
     assert legend is not None, "Line overlay has no legend"
     assert legend.get("symbolFillColor") == "transparent", (
         f"Expected symbolFillColor='transparent', got: {legend.get('symbolFillColor')!r}"
@@ -370,8 +386,8 @@ def test_base_series_appears_in_overlay_legend() -> None:
     vl = _render_vbar_with_layers([layer])
 
     labels = _datum_labels(vl)
-    assert "Actual" in labels, f"Base series missing from legend datums: {labels}"
-    assert "Target" in labels, f"Overlay series missing from legend datums: {labels}"
+    assert "actual" in labels, f"Base series missing from legend datums: {labels}"
+    assert "target" in labels, f"Overlay series missing from legend datums: {labels}"
 
 
 def test_authored_layer_color_drives_shared_scale() -> None:
@@ -402,14 +418,14 @@ def test_authored_layer_color_drives_shared_scale() -> None:
     assert scale is not None, "No explicit shared color scale on overlay spec"
     domain = scale["domain"]
     range_ = scale["range"]
-    assert "Actual" in domain and "Target" in domain, f"domain: {domain}"
-    assert range_[domain.index("Target")] == "#dea628", (
+    assert "actual" in domain and "target" in domain, f"domain: {domain}"
+    assert range_[domain.index("target")] == "#dea628", (
         f"Target swatch color != authored line color; scale={scale}"
     )
     overlay = next(
         sub
         for sub in vl["layer"]
-        if sub.get("encoding", {}).get("color", {}).get("datum") == "Target"
+        if sub.get("encoding", {}).get("color", {}).get("datum") == "target"
     )
     foreground_point = next(
         sub
@@ -442,7 +458,7 @@ def test_authored_area_point_color_wins_over_parent_series_encoding() -> None:
     overlay = next(
         sub
         for sub in vl["layer"]
-        if sub.get("encoding", {}).get("color", {}).get("datum") == "Target"
+        if sub.get("encoding", {}).get("color", {}).get("datum") == "target"
     )
     foreground_point = next(
         sub
@@ -496,7 +512,14 @@ def test_standalone_field_colored_point_keeps_explicit_color(base_type: str) -> 
 def test_standalone_field_color_keeps_composite_paths_partitioned(
     base_type: str,
 ) -> None:
-    """Literal child paint must not connect interleaved field-color series."""
+    """Literal child paint must not connect interleaved field-color series.
+
+    Points pinned off explicitly (line only): this fixture's 2 distinct x
+    values sit well inside the density-auto-on trigger (bake_point_
+    companions), which would otherwise add point-halo paths of the same
+    white stroke this test counts for the line halo, unrelated to what this
+    test checks (composite-path partitioning).
+    """
     import re
 
     import vl_convert as vlc
@@ -513,9 +536,10 @@ def test_standalone_field_color_keeps_composite_paths_partitioned(
         {"month": "Feb", "revenue": 40.0, "cat": "B"},
     ]
     style_type = LineChartStylePatch if base_type == "line" else AreaChartStylePatch
-    style = style_type.model_validate(
-        {"marks": {"line": {"stroke": {"color": "#dea628", "width": 3}}}}
-    )
+    marks_patch: dict = {"line": {"stroke": {"color": "#dea628", "width": 3}}}
+    if base_type == "line":
+        marks_patch["point"] = {"size": 0.0}
+    style = style_type.model_validate({"marks": marks_patch})
     render = (
         _render_line_with_layers if base_type == "line" else _render_area_with_layers
     )
@@ -575,3 +599,132 @@ def test_shared_emitter_pins_synthetic_paint_but_inherits_field_color(
         if sub["mark"]["type"] == "point" and sub["mark"].get("opacity") == 0
     )
     assert "color" not in hover.get("encoding", {})
+
+
+# ── Merged legend: overlay stroke entry must not out-size the base's own ──
+
+
+def test_merged_legend_stroke_entries_share_symbol_geometry() -> None:
+    """A line base split by ``color:`` plus a line overlay: every legend row that
+    resolves to the 'stroke' glyph shares one geometry (path length + stroke
+    width), whether the row belongs to the base's color-split series or the
+    overlay layer.
+
+    Regression: the overlay's own datum was hard-gated into a wider/thicker
+    stroke glyph (20px, stroke-width 2) while the base's field-color series
+    stayed at the plain default (10px, stroke-width 1.5) — even though both
+    resolve to the same 'stroke' symbolType. The size bump is a property of
+    the *shape* ('stroke' needs more length to read as a line), not of
+    *which layer emitted the entry*.
+    """
+    import re
+
+    import vl_convert as vlc
+
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+    from dbt_charts.core.compile.models.style.authored import LineChartStylePatch
+
+    layer = LineLayer(type="line", y="target")
+    style = LineChartStylePatch.model_validate({"endpoint_labels": {"visible": False}})
+    vl = _render_line_with_layers([layer], color="cat", style=style)
+    vl["data"] = {"values": _DATA}
+    svg = vlc.vegalite_to_svg(vl)
+
+    glyphs = re.findall(
+        r'<path[^>]*d="(M-\d+,0L\d+,0)"[^>]*stroke-width="([\d.]+)"[^>]*/>', svg
+    )
+    # Every color-split base series (Jan/Feb -> A/B) plus the overlay ("target")
+    # legend row draws a stroke glyph — three rows total for this fixture.
+    assert len(glyphs) == 3, f"expected 3 stroke legend glyphs, found: {glyphs}"
+    paths, widths = zip(*glyphs, strict=True)
+    assert len(set(paths)) == 1, f"stroke glyph path lengths differ: {glyphs}"
+    assert len(set(widths)) == 1, f"stroke glyph stroke-widths differ: {glyphs}"
+
+
+# ── One legend, one casing convention for engine-derived names ─────────────
+
+_UNAUTHORED_DATA: list[dict[str, Any]] = [
+    {"month": "2025-01", "order_revenue": 110.0, "order_cost_total": 40.0},
+    {"month": "2025-02", "order_revenue": 125.0, "order_cost_total": 55.0},
+]
+
+
+def _render_unauthored_overlay() -> tuple[dict[str, Any], Any, list[dict[str, Any]]]:
+    """Bar base + line overlay with NOTHING authored: no y_label, no layer
+    label, no color field. Both legend entries are engine-derived, so both
+    must follow the same naming rule.
+
+    Multi-word fields on both sides deliberately — a single-word field cannot
+    tell ``default_axis_title`` and ``format_display_text`` apart, which is
+    how the mixed-convention bug survived the existing tests.
+    """
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.render.chart.emitters.bar import BarEmitter
+    from dbt_charts.core.render.chart.translate import translate_to_vl
+
+    chart = _bar_normalized(
+        x="month",
+        y="order_revenue",
+        layers=[LineLayer(type="line", y="order_cost_total")],
+    )
+    resolved = resolve(chart, _UNAUTHORED_DATA, _board_style())
+    spec = BarEmitter().emit(resolved, _DEFAULT_BOX, regroup((), _UNAUTHORED_DATA))
+    return translate_to_vl(spec), resolved, _UNAUTHORED_DATA
+
+
+def test_unauthored_base_and_layer_share_one_naming_convention() -> None:
+    """A layered chart whose base and overlay are both engine-named must not
+    put two casing conventions in one legend.
+
+    Default names derive from the bound column and keep its casing, so an
+    unauthored layer reads 'order cost total', not 'Order Cost Total', beside
+    the base's 'order revenue'. An authored ``label:`` is a separate matter —
+    it passes through untouched, exactly like an authored ``y_label``.
+    """
+    vl, _resolved, _data = _render_unauthored_overlay()
+    domain = _color_scale(vl)
+    assert domain is not None, "no shared color scale on the overlay spec"
+    names = list(domain["domain"])
+    assert names == ["order revenue", "order cost total"], (
+        f"base and overlay must share one convention; got {names}"
+    )
+
+
+def test_rail_width_estimate_names_match_the_rendered_names() -> None:
+    """``_estimated_series_names`` documents itself as mirroring the feature's
+    own derivation. If it names the base differently from the string actually
+    drawn, it measures a label the chart never shows and the rail is budgeted
+    against the wrong text.
+    """
+    from dbt_charts.core.render.chart.emitters._endpoint_rail import (
+        _estimated_series_names,
+    )
+
+    vl, resolved, data = _render_unauthored_overlay()
+    domain = _color_scale(vl)
+    assert domain is not None
+    assert _estimated_series_names(resolved, data) == list(domain["domain"]), (
+        "rail width estimate must name exactly what the spec names"
+    )
+
+
+def test_dual_axis_base_color_split_legend_gets_glyph_through_nested_zero_rule() -> (
+    None
+):
+    """A dual-axis bar base whose own zero rule nests it inside a wrapper
+    ChartSpec (see `nest_zero_rule`) must still get its legend glyph patched.
+    `_mixed_mark_legend_symbols` must find the base's own color encoding
+    through the wrapper, not only at the top level."""
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+
+    layer = LineLayer(type="line", y="target", axis_y={"position": "right"})
+    vl = _render_bar_with_layers([layer], color="cat")
+
+    legend = _field_legend_recursive(vl)
+    assert legend is not None, "bar base's color-split legend not found"
+    symbol_type = legend.get("symbolType")
+    assert symbol_type is not None, (
+        "bar base's legend glyph was not patched: _mixed_mark_legend_symbols "
+        "must find the base's encoding through nest_zero_rule's wrapper"
+    )

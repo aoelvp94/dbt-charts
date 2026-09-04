@@ -50,17 +50,23 @@ def validate_color_series(
     continuous scale or a condition list that a null simply doesn't match. A
     quantitative ``series`` color is continuous for the same reason.
     """
-    # Wide charts use a synthetic color field added by VL's fold transform.
-    # The field doesn't exist in pre-fold data, making the null check vacuous.
-    if chart.wide_measures:
-        return
-
     color_ch = chart.resolved_channels.get("color")
     if color_ch is None or color_ch.mode != "series" or not color_ch.data_field:
         return
 
-    color_field = color_ch.data_field
-    if infer_vega_type_from_data(data, color_field) not in {"nominal", "ordinal"}:
+    # A wide chart's series field is synthetic (VL's fold adds it); the column
+    # that can carry a null series is the authored dimension it crosses with.
+    # That dimension is categorical by construction whatever its dtype — every
+    # value becomes a discrete composite series — so the type gate below,
+    # which lets a quantitative series colour through as continuous, does not
+    # apply to it.
+    color_field = chart.color if chart.wide_measures else color_ch.data_field
+    if color_field is None:
+        return
+    if not chart.wide_measures and infer_vega_type_from_data(data, color_field) not in {
+        "nominal",
+        "ordinal",
+    }:
         return
 
     null_rows = sum(1 for row in data if row.get(color_field) is None)
@@ -89,7 +95,9 @@ def _plot_key_fields(
     data: list[dict[str, Any]],
 ) -> list[str]:
     chart_type = chart.chart_type
-    color = effective_color_field(chart)
+    # A wide chart's series field is the fold's synthetic label, absent from
+    # pre-fold rows; its plot key is the authored dimension (chart.color).
+    color = chart.color if chart.wide_measures else effective_color_field(chart)
 
     if chart_type == "bar":
         x_field = chart.x
@@ -116,9 +124,7 @@ def _plot_key_fields(
         else:
             return []
 
-        # Wide charts fold measures into WIDE_LABEL_FIELD client-side; that
-        # synthetic field is not in pre-fold rows, so skip appending it.
-        if color and not chart.wide_measures:
+        if color:
             fields.append(color)
         return fields
 
@@ -138,7 +144,7 @@ def _plot_key_fields(
             return []
 
         fields = [x_field]
-        if color and not chart.wide_measures:
+        if color:
             fields.append(color)
         return fields
 

@@ -43,8 +43,9 @@ class ResolvedBarChart(_CartesianResolvedChartFields):
     stacked_domain_max: float | None = Field(
         default=None,
         description=(
-            "Baked at resolve via stacked_bar_totals_max. "
-            "Emitter uses this as scale.domainMax so the axis spans the full stacked height. "
+            "The measure axis's top edge for a stacked bar: an authored axis "
+            "domain if one is set, otherwise the stacked total with headroom. "
+            "Used as the axis's domainMax so it spans the full stack. "
             "None for grouped, non-stacked, normalize, or single-series bars."
         ),
     )

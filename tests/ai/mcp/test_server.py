@@ -311,7 +311,7 @@ class TestRunServerPortPropagation:
     ports lives in `tests/e2e/mcp/test_mcp_serve.py`.
     """
 
-    def test_resolved_port_reaches_dataface_ai_context(
+    def test_resolved_port_reaches_dbt_charts_ai_context(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -451,8 +451,12 @@ class TestThinShimLOCGuards:
             # tools/__init__.py limit raised 325→350 after adding diagnostic-code handlers,
             # then 350→390 after adding five project-file tool handlers (read/write/edit/glob/grep),
             # then 390→394 after DbtChartsAIContext -> DbtChartsAIContext pushed several
-            # per-handler signatures past the 88-col wrap threshold.
-            ("ai/tools/__init__.py", 394),
+            # per-handler signatures past the 88-col wrap threshold, then 394→410 after
+            # adding tool_call_outcome, the single predicate beside dispatch_tool_call
+            # that classifies a tool result's ok/partial/error outcome. 410, not the
+            # file's own 400: this guard flags scope creep, and a limit set to the
+            # current length makes the next one-line edit fail for something else.
+            ("ai/tools/__init__.py", 410),
             # tool_schemas.py: 147 actual after GET_DIAGNOSTIC_CODE converted to _mcp_tool, well under 195.
             ("ai/tool_schemas.py", 195),
         ],

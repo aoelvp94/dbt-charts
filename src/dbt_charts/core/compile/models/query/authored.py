@@ -27,13 +27,16 @@ from pydantic import (
 )
 
 from dbt_charts.core.compile.models.cache import CachePatch
+from dbt_charts.core.compile.models.markers import DisplayText, ExplicitTag
+from dbt_charts.core.compile.models.primitives import (
+    IncrementalValue,
+    validate_incremental_value,
+)
 from dbt_charts.core.diagnostics.suppression import validate_suppression_codes
 
 # ============================================================================
 # QUERY-LEVEL PRIMITIVES (used by both authored and compiled layers)
 # ============================================================================
-
-TimeGrain = Literal["day", "week", "month", "quarter", "year"]
 
 RestMethod = Literal["GET", "POST", "PUT", "DELETE", "PATCH"]
 
@@ -64,12 +67,12 @@ class _BaseQueryFields(BaseModel):
             "Source name reference, or an inline file path (e.g. `./data/sales.csv`). "
             "File paths are detected by `/` or data file extension. An inline "
             "connection-bearing dict (`{type: postgres, ...}`) is rejected at "
-            "compile time — reference a named source instead."
+            "compile time; reference a named source instead."
         ),
     )
-    description: str | None = Field(
+    notes: Annotated[str | None, DisplayText()] = Field(
         default=None,
-        description="Human-readable description of the query. Used by AI search and tooling.",
+        description="Prose summary of what this query returns, passed along with its results to tooling.",
     )
     ignore: list[str] | None = Field(
         default=None,
@@ -81,11 +84,21 @@ class _BaseQueryFields(BaseModel):
     cache: CachePatch | None = Field(
         default=None,
         description=(
-            "Cache policy override for this query, e.g. cache: 5m — refines "
+            "Cache policy override for this query, e.g. cache: 5m: refines "
             "the policy inherited from the source and project scopes; "
             "cache: false opts out of result caching entirely. Queries with "
             "cache: false cannot be used as {{ queries.X.cache }} upstream "
             "references."
+        ),
+    )
+    incremental: IncrementalValue = Field(
+        default=None,
+        description=(
+            "Column used as the monotonic watermark for incremental refresh: "
+            "the executor fetches only rows after the prior watermark and "
+            "merges them with the cached result. `incremental: false` opts "
+            "this query out of a board's incremental setting. Inherits from "
+            "the board-level incremental setting when omitted."
         ),
     )
 
@@ -96,9 +109,17 @@ class _BaseQueryFields(BaseModel):
             validate_suppression_codes(v, source="query.ignore")
         return v
 
+    @field_validator("incremental", mode="before")
+    @classmethod
+    def _validate_incremental(
+        cls,
+        v: Any,  # type-state: explicit_any — mode="before" validator input; raw YAML value
+    ) -> Any:  # type-state: explicit_any — passthrough of the same boundary value
+        return validate_incremental_value(v)
+
 
 class AuthoredSqlQuery(_BaseQueryFields):
-    """Raw SQL query — the default query type.
+    """Raw SQL query: the default query type.
 
     Example YAML:
         queries:
@@ -109,11 +130,11 @@ class AuthoredSqlQuery(_BaseQueryFields):
 
     type: Literal["sql"] = Field(
         default="sql",
-        description="Query adapter type.",
+        description="Inferred from the keys present.",
     )
     sql: str | None = Field(
         default=None,
-        description="SQL query string. Supports Jinja2 templates referencing variables.",
+        description="The statement to run, with Jinja2 over board variables, other queries, and the filter helpers.",
     )
     setup_sql: str | None = Field(
         default=None,
@@ -122,51 +143,6 @@ class AuthoredSqlQuery(_BaseQueryFields):
     target: str | None = Field(
         default=None,
         description="dbt target name for queries against a dbt_profile source (defaults to 'dev').",
-    )
-
-
-class AuthoredMetricflowQuery(_BaseQueryFields):
-    """dbt Semantic Layer (MetricFlow) query.
-
-    Example YAML:
-        queries:
-          metrics_query:
-            type: metricflow
-            metrics: [revenue, orders]
-            dimensions: [date_day]
-    """
-
-    type: Literal["metricflow"] = Field(
-        default="metricflow",
-        description="Query adapter type.",
-    )
-    # Chart `model:` sugar constructs this query before chart-channel collection
-    # discovers and fills the metric names.
-    metrics: list[str] | None = Field(
-        default=None,
-        description="MetricFlow metric names to query.",
-    )
-    dimensions: list[str] | None = Field(
-        default=None,
-        description="MetricFlow dimensions to include in the result.",
-    )
-    time_grain: TimeGrain | None = Field(
-        default=None,
-        description="MetricFlow time grain for time-series dimensions (day, week, month, quarter, year).",
-    )
-    where: list[str] | None = Field(
-        default=None,
-        description=(
-            "SQL predicates over the query's MetricFlow group-by names. Literal "
-            "predicates (no Jinja) bake into MetricFlow at compile time and may "
-            "reference any dimension; predicates with {{ }} resolve per render "
-            "and must reference a selected dimension (in dimensions: or the "
-            "time_grain column)."
-        ),
-    )
-    limit: int | None = Field(
-        default=None,
-        description="Maximum number of rows returned.",
     )
 
 
@@ -182,26 +158,26 @@ class AuthoredHttpQuery(_BaseQueryFields):
 
     type: Literal["http"] = Field(
         default="http",
-        description="Query adapter type.",
+        description="Inferred from the keys present.",
     )
     url: str = Field(
         description="HTTP endpoint URL for REST API queries.",
     )
     method: RestMethod | None = Field(
         default=None,
-        description="HTTP method (GET, POST, PUT, DELETE, PATCH).",
+        description="Verb the request is sent with (GET, POST, PUT, DELETE, PATCH).",
     )
     headers: dict[str, str] | None = Field(
         default=None,
-        description="HTTP request headers.",
+        description="Header lines sent with the request, such as auth and content type.",
     )
     params: dict[str, Any] | None = Field(
         default=None,
-        description="HTTP query string parameters.",
+        description="Values appended to the URL after the '?'.",
     )
     body: dict[str, Any] | str | None = Field(
         default=None,
-        description="HTTP request body for POST/PUT queries.",
+        description="Payload sent with the request, on POST, PUT, and PATCH.",
     )
     limit: int | None = Field(
         default=None,
@@ -218,7 +194,7 @@ class _AuthoredValuesQueryFields(_BaseQueryFields):
 
     type: Literal["values"] = Field(
         default="values",
-        description="Query adapter type.",
+        description="Inferred from the keys present.",
     )
 
 
@@ -266,24 +242,34 @@ class AuthoredSchemaQuery(_BaseQueryFields):
     # both the YAML key "schema:" and the Python attribute name "schema_name".
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    type: Literal["schema"] = Field(
+    type: Annotated[Literal["schema"], ExplicitTag()] = Field(
         default="schema",
-        description="Query adapter type.",
+        description="Never inferred; write `type: schema` explicitly.",
     )
     # alias="schema" so YAML authors write `schema: analytics`; Python code uses
     # schema_name to avoid shadowing BaseModel.schema (a Pydantic v2 legacy classmethod).
     schema_name: str | None = Field(
         default=None,
         alias="schema",
-        description="Schema name for schema queries (YAML key: schema).",
+        description="Which schema to inspect; lists every schema in the source if omitted (YAML key: schema).",
     )
     table: str | None = Field(
         default=None,
-        description="Table name for schema queries.",
+        description="Which table to inspect; lists the schema's tables if omitted.",
     )
     column: str | None = Field(
         default=None,
-        description="Column name for schema queries.",
+        description="Which column to profile; profiles every column in the table if omitted.",
+    )
+    fields: list[str] | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Project the result rows to exactly these keys, in this order: "
+            "the schema-query counterpart of a SQL SELECT list. A projected "
+            "key a row lacks yields null. Omit to return every key each row "
+            "carries."
+        ),
     )
 
 
@@ -316,7 +302,6 @@ def _discriminate_authored_query(v: Any) -> str | None:
 
 AuthoredQuery = Annotated[
     Annotated[AuthoredSqlQuery, Tag("sql")]
-    | Annotated[AuthoredMetricflowQuery, Tag("metricflow")]
     | Annotated[AuthoredHttpQuery, Tag("http")]
     | Annotated[AuthoredValuesQuery, Tag("values_rows")]
     | Annotated[AuthoredCompactValuesQuery, Tag("values_compact")]

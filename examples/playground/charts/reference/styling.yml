@@ -2,7 +2,7 @@
 # This example showcases styling properties that work in SVG mode
 
 title: "Styling Reference"
-description: "Test and showcase CSS styling options in dbt charts"
+notes: "Test and showcase CSS styling options in dbt charts"
 
 text: |
   This example demonstrates CSS styling options available in dbt charts.

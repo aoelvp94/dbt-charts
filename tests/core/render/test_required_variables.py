@@ -19,7 +19,7 @@ variables:
   account_id:
     input: text
     label: Account ID
-    description: The account to scope results to
+    notes: The account to scope results to
     required: true
 queries:
   q:
@@ -58,7 +58,7 @@ def test_required_variable_missing_raises(local_project: Callable[..., Project])
     mv = err.missing[0]
     assert mv.key == "account_id"
     assert mv.label == "Account ID"
-    assert mv.description == "The account to scope results to"
+    assert mv.notes == "The account to scope results to"
     assert mv.input_type == "text"
     assert err.code is not None
     assert err.code.code == "ERR-INPUT-INVALID"

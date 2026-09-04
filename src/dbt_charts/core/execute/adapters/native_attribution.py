@@ -5,7 +5,7 @@ Stage: EXECUTE
 Snowflake, Databricks, Trino and Postgres each expose a dedicated field naming who is
 connecting, and each dbt adapter surfaces it as an ordinary credential. Setting one
 costs nothing: it travels with the connect/login request, so a warehouse-native answer
-to "is this Dataface" lands in its own column instead of requiring a regex over the
+to "is this dbt charts" lands in its own column instead of requiring a regex over the
 query text.
 
 What we may write there is bounded by pooling. ``_source_config_hash`` deliberately

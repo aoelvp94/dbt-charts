@@ -43,7 +43,7 @@ class TestExtendsOpenForms:
 
 
 class TestScaleTargetConfigPaletteOpenForms:
-    def test_named_dataface_palette_still_validates(self) -> None:
+    def test_named_dbt_charts_palette_still_validates(self) -> None:
         config = ScaleTargetConfig(palette="dbt-seq-blue")
         assert config.palette == "dbt-seq-blue"
 

@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import pytest
 
+from dbt_charts.core.colors import wcag_contrast as _wcag_contrast
 from dbt_charts.core.compile.config import get_theme_style, list_built_in_themes
-from dbt_charts.core.compile.resolve.style.palette import _wcag_contrast
 
 THEMES = [t for t in list_built_in_themes() if not t.startswith(("_", "diagnostics-"))]
 

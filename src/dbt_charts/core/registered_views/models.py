@@ -38,7 +38,7 @@ class RegisteredView(BaseModel):
         default=None,
         description=(
             "Optional pre-template queries keyed by name. Each value is a raw "
-            "query dict using the normal Dataface query schema. Results are "
+            "query dict using the normal dbt charts query schema. Results are "
             "exposed to the template as queries.<name>."
         ),
     )

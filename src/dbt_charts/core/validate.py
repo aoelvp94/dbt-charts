@@ -1,7 +1,7 @@
-"""Core validation utilities for Dataface.
+"""Core validation utilities for dbt charts.
 
 This module provides core validation functions that can be used by any
-Dataface client (CLI, playground, API, etc.) to validate board YAML
+dbt charts client (CLI, playground, API, etc.) to validate board YAML
 before execution.
 
 All validation logic is in core - clients just provide their adapter registry.

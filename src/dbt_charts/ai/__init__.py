@@ -1,4 +1,4 @@
-"""Core AI utilities for Dataface.
+"""Core AI utilities for dbt charts.
 
 This module provides shared AI service utilities used by both Playground and Suite.
 It consolidates common patterns like prompt loading, tool dispatch, and YAML extraction.

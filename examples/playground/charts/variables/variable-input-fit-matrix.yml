@@ -1,0 +1,72 @@
+# Fit matrix for the drawn variable controls.
+#
+# One control per input type, most of them in their unset resting state — the
+# state where a field holds the least text, so a field that reserves too little
+# room for its ornament (the select chevron, the date calendar glyph) collides
+# with its own text or collapses to a bare glyph here first.
+#
+# Registered as a visual golden so those reserved widths cannot drift silently.
+
+title: Variable Input Fit Matrix
+source: examples_db
+
+style:
+  frame:
+    width: 800
+
+queries:
+  revenue_by_region: |
+    SELECT
+      region,
+      SUM(revenue) AS revenue
+    FROM ecommerce_orders
+    GROUP BY region
+    ORDER BY revenue DESC
+
+charts:
+  revenue_by_region:
+    type: bar
+    query: revenue_by_region
+    x: region
+    y: revenue
+
+variables:
+  region:
+    options:
+      static: [North, South, East, West]
+  tags:
+    input: multiselect
+    options:
+      static: [Priority, Backlog, Escalated]
+  tier:
+    input: select
+    options:
+      static: [Free, Pro, Enterprise]
+  active:
+    input: checkbox
+    default: true
+  search:
+    input: text
+    placeholder: Enter product name...
+  threshold:
+    input: number
+    min: 0
+    max: 10000
+    step: 100
+  as_of:
+    input: date
+  span:
+    input: daterange
+  limit:
+    input: slider
+    min: 5
+    max: 50
+    step: 5
+    default: 25
+
+rows:
+  - text: |
+      Every variable input type in one strip. Switch to **HTML format** above to
+      see the drawn controls — the static render carries their reserved geometry
+      but not their ornaments.
+  - revenue_by_region

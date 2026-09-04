@@ -7,10 +7,6 @@ Available Adapters:
     - SqlAdapter: Raw SQL queries
     - HttpAdapter: REST API queries
     - DbtAdapter: dbt-integrated SQL queries
-
-MetricFlow queries lower to SqlQuery at compile time (normalize/queries.py) by
-calling MetricFlow's own compiler against the dbt semantic manifest — there is
-no execute-time MetricFlow adapter.
 """
 
 from dbt_charts.core.execute.adapters.adapter_registry import (

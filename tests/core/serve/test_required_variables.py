@@ -209,7 +209,7 @@ def test_missing_variable_dict_keys_match_dataclass_fields() -> None:
     )
 
     mv = MissingVariable(
-        key="account_id", label="Account ID", description="desc", input_type="text"
+        key="account_id", label="Account ID", notes="desc", input_type="text"
     )
     err = MissingRequiredVariablesError([mv])
     emitted_keys = set(err.fields["missing"][0].keys())

@@ -19,7 +19,11 @@ from dbt_charts.core.render.chart.features.zero_value_label import ZeroValueLabe
 
 # List order IS application order (FeaturePipeline does not sort) — load-bearing.
 DEFAULT_FEATURES: list[ChartFeature] = [
-    # FIRST: appends a "0" text label for a genuine-zero bar row, but only
+    # Board-wide category-color binding is no longer a post-pass here: each
+    # emitter indexes its own color/companion palettes by the value's board
+    # slot as it builds the encoding (see compile/models/style/theme/
+    # category_colors.py's category_scale_for).
+    # Appends a "0" text label for a genuine-zero bar row, but only
     # where ValueLabelFeature wouldn't otherwise label that row (both gate on
     # labels.visible is not True — ownership is exclusive by construction,
     # not by running order), so position in this list isn't load-bearing for

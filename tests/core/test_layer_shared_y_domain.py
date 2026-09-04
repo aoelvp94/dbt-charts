@@ -62,10 +62,16 @@ def _y_axis(chart_type: str, layer: dict[str, Any]) -> dict[str, Any]:
     resolve(chart, _DATA, chart_style_context=_BOARD_CTX)
     spec = generate_vega_lite_spec(chart, _DATA, width=400)
     # A layered chart carries the primary scale on the base sub-layer, not at the
-    # spec root; the base series is the one encoding the chart's own ``y``.
+    # spec root; the base series is the one encoding the chart's own ``y``. A
+    # dual-axis base with its own zero-baseline rule nests one level deeper
+    # (base mark + rule share one inner `layer[]`) — check both the top-level
+    # entry and, when nested, its own sub-layers.
+    candidates = [
+        sub for layer in spec["layer"] for sub in [*(layer.get("layer") or []), layer]
+    ]
     return next(
         layer["encoding"]["y"]
-        for layer in spec["layer"]
+        for layer in candidates
         if layer.get("encoding", {}).get("y", {}).get("field") == "actual_share"
     )
 

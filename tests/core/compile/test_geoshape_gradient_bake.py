@@ -1,5 +1,5 @@
 """Regression tests: geoshape's theme-cascade color.gradient must bake
-resolved_stops for a named Dataface palette, the same way resolve/heatmap.py's
+resolved_stops for a named dbt charts palette, the same way resolve/heatmap.py's
 color_gradient does — a different construction path than a chart-channel
 scale (compile/resolve/chart/channel.py::_parse_channel_scale).
 """
@@ -34,8 +34,8 @@ def _board_with_geoshape_color_gradient(palette: str) -> ChartStyleContext:
     )
 
 
-def test_geoshape_theme_gradient_dataface_named_palette_resolves_to_stops() -> None:
-    """A Dataface named palette set at the theme level (charts.geoshape.color.
+def test_geoshape_theme_gradient_dbt_charts_named_palette_resolves_to_stops() -> None:
+    """A dbt charts named palette set at the theme level (charts.geoshape.color.
     gradient) must bake resolved_stops via _resolve_geoshape's own
     construction site — regression for the CRITICAL boundary bug where only
     the channel-scoped construction path baked resolved_stops, leaving this
@@ -55,7 +55,7 @@ def test_geoshape_theme_gradient_dataface_named_palette_resolves_to_stops() -> N
 def test_geoshape_chart_local_gradient_override_does_not_crash_on_named_theme_palette() -> (
     None
 ):
-    """A board-level Dataface named palette combined with a chart-local
+    """A board-level dbt charts named palette combined with a chart-local
     gradient override to a Vega scheme must resolve cleanly, not crash.
     Regression: baking resolved_stops inside ScaleTargetConfig's own
     validator crashed here, since merge_onto_base inherits the board's stale

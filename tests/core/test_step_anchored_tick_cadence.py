@@ -9,7 +9,7 @@ the data resolves to:
                step                        -> axis.tickMinStep: <int> (a floor)
   ordinal      neither applies
 
-``time_unit`` uses Dataface's own calendar-bucketing grain vocabulary
+``time_unit`` uses dbt charts' own calendar-bucketing grain vocabulary
 (``year``/``yearquarter``/``yearmonth``/...) — distinct from VL's own
 d3-interval vocabulary (``year``/``month``/...) that the old
 ``ticks.interval`` field spoke directly. The render layer derives the VL
@@ -22,7 +22,7 @@ compile pass needed):
 
 Compile-time gate (fires in _bake_cartesian_axes):
   2. ticks.time_unit/step on axis_y -> compile error (measure axis is never
-     temporal in Dataface's cartesian model; DimensionTicksStyle is also
+     temporal in dbt charts' cartesian model; DimensionTicksStyle is also
      axis_x-only at the type level, so this is belt-and-suspenders on the
      authored surface)
 
@@ -199,7 +199,7 @@ class TestCompileGates:
 
 class TestEmission:
     """time_unit/step emit axis.tickCount: {interval, step} (VL's own
-    d3-interval vocabulary, derived from the Dataface grain) — no
+    d3-interval vocabulary, derived from the dbt charts grain) — no
     axis.values, no materialized date list."""
 
     def test_time_unit_only_emits_tick_count_interval(self):
@@ -235,7 +235,7 @@ class TestEmission:
         assert "values" not in x_axis
 
     def test_yearquarter_and_yearmonth_grains_map_to_month_interval(self):
-        """Neither Dataface grain has a bare VL "quarter" interval — both
+        """Neither dbt charts grain has a bare VL "quarter" interval — both
         derive VL's "month" interval via _TEMPORAL_TICK_INTERVAL. An explicit
         ticks.time_unit with no ticks.step emits interval alone; the grain's
         own anchoring step (3 for yearquarter, 1 for yearmonth) only applies

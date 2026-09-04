@@ -17,6 +17,7 @@ import pytest
 
 from dbt_charts.core.compile.config import (
     get_theme_style,
+    list_built_in_themes,
     reset_config,
 )
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -60,6 +61,16 @@ from dbt_charts.core.compile.resolve.style.board import (
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
+
+# `_base` is the hidden completeness floor beneath every built-in theme, not
+# itself an author-facing pick; `diagnostics-*` themes are render-diagnostic
+# fixtures. Everything else -- including `stark`, the structural root every
+# user-facing theme extends -- gets the unresolved-token property check.
+_RESOLVABLE_BUILT_IN_THEMES = [
+    name
+    for name in list_built_in_themes()
+    if name != "_base" and not name.startswith("diagnostics-")
+]
 
 
 @pytest.fixture(autouse=True)
@@ -271,7 +282,7 @@ class TestFormatAuthoredProvenance:
 
     The fourth return value ("format_is_alias") says whether the authoring
     layer's *raw* string was a key in the theme's format-alias table (e.g.
-    ``currency_compact``) rather than a hand-typed literal d3 spec — it
+    ``currency``) rather than a hand-typed literal d3 spec — it
     relaxes ``build_resolved_axis``'s gate so an authored alias still
     qualifies for the plain-digit bake.
     """
@@ -298,7 +309,7 @@ class TestFormatAuthoredProvenance:
         assert format_is_alias is False
 
     def test_chart_fallback_format_alias_is_format_is_alias(self) -> None:
-        """Layer 10 authored via a predefined name (``currency_compact``,
+        """Layer 10 authored via a predefined name (``currency``,
         engine-owned predefined format) still counts as authored, and its raw
         pre-resolution string is recognized as a predefined/alias key.
         """
@@ -306,13 +317,13 @@ class TestFormatAuthoredProvenance:
             _board(),
             "axis_y",
             "quantitative",
-            chart_fallback_format="currency_compact",
+            chart_fallback_format="currency",
             chart_type="",
             label_authored=False,
         )
         assert format_authored is True
         assert format_is_alias is True
-        assert _merged.labels.format == "$~s"
+        assert _merged.labels.format == "$.3~s"
 
     def test_chart_local_axis_override_is_authored(self) -> None:
         """Layers 11-13 — a chart-local ``style.axis_y.labels.format``, a
@@ -331,7 +342,7 @@ class TestFormatAuthoredProvenance:
 
     def test_chart_local_axis_override_alias_is_format_is_alias(self) -> None:
         """Layers 11-13 authored via a named alias also sets format_is_alias --
-        the reproduction of the bug report's ``currency_compact`` case.
+        the reproduction of the bug report's ``currency`` case.
 
         Pinned on both cascade paths: v1 (``chart_style_context.axis_overrides_*``,
         populated by ``build_chart_style_context``) and v2 (an explicit
@@ -339,9 +350,7 @@ class TestFormatAuthoredProvenance:
         (``_extract_axis_overrides`` never returns ``None``), so asserting v1
         alone would miss a regression in the v2-only provenance blocks.
         """
-        axis_y_patch = AxisYStylePatch(
-            labels=AxisLabelStylePatch(format="currency_compact")
-        )
+        axis_y_patch = AxisYStylePatch(labels=AxisLabelStylePatch(format="currency"))
         patch = BarChartStylePatch(axis_y=axis_y_patch)
         result = build_chart_style_context(
             _board(), BarChart(id="t", type="bar", style=patch)
@@ -399,7 +408,7 @@ class TestFormatAuthoredProvenance:
             result,
             "axis_y",
             "quantitative",
-            chart_fallback_format="currency_compact",
+            chart_fallback_format="currency",
             chart_type="",
             label_authored=False,
         )
@@ -411,7 +420,7 @@ class TestFormatAuthoredProvenance:
             _board(),
             "axis_y",
             "quantitative",
-            chart_fallback_format="currency_compact",
+            chart_fallback_format="currency",
             axis_overrides=AxisOverrides(y=axis_y_patch),
             chart_type="",
             label_authored=False,
@@ -1242,26 +1251,12 @@ class TestResolveStyleCacheIdentity:
 class TestNoUnresolvedTokensInBuiltInThemes:
     """Property: no color token survives resolve_style for any built-in theme."""
 
-    @pytest.mark.parametrize(
-        "theme_name",
-        [
-            "stark",
-            "default",
-            "editorial",
-            "cream",
-            "plain",
-            "vivid",
-            "neon",
-        ],
-    )
+    @pytest.mark.parametrize("theme_name", _RESOLVABLE_BUILT_IN_THEMES)
     def test_no_color_token_survives_resolve_style(self, theme_name: str) -> None:
         from pydantic import BaseModel as _BaseModel
 
-        from dbt_charts.core.compile.config import (
-            get_theme_style,
-            list_built_in_themes,
-        )
-        from dbt_charts.core.compile.resolve.style.tokens import _COLOR_TOKEN_RE
+        from dbt_charts.core.colors import is_color_token
+        from dbt_charts.core.compile.config import get_theme_style
 
         def _collect_string_fields(obj: object, seen: set[int]) -> list[str]:
             obj_id = id(obj)
@@ -1284,13 +1279,10 @@ class TestNoUnresolvedTokensInBuiltInThemes:
                     strings.extend(_collect_string_fields(item, seen))
             return strings
 
-        if theme_name not in list_built_in_themes():
-            pytest.skip(f"theme {theme_name!r} not present in this build")
-
         base = get_theme_style(theme_name)
         resolved = resolve_style(base)
         all_strings = _collect_string_fields(resolved, set())
-        token_strings = [s for s in all_strings if _COLOR_TOKEN_RE.match(s)]
+        token_strings = [s for s in all_strings if is_color_token(s)]
         assert token_strings == [], (
             f"Theme {theme_name!r}: unresolved color tokens in resolved ResolvedStyle:"
             f" {token_strings!r}"
@@ -1302,13 +1294,13 @@ class TestPatchIntroducedTokenIsResolved:
 
     def test_patch_direct_palette_token_resolves_to_hex(self) -> None:
         # dbt-grays.canvas is a valid direct palette.slot token → #FAFAFA
+        from dbt_charts.core.colors import is_color_token
         from dbt_charts.core.compile.models.style.authored import StylePatch
-        from dbt_charts.core.compile.resolve.style.tokens import _COLOR_TOKEN_RE
 
         base = get_theme_style()
         patch = StylePatch.model_validate({"background": "dbt-grays.canvas"})
         resolved = resolve_style(base, patch)
-        assert not _COLOR_TOKEN_RE.match(resolved.background), (
+        assert not is_color_token(resolved.background), (
             f"patch-introduced token was not resolved: {resolved.background!r}"
         )
         assert resolved.background.startswith("#"), (
@@ -1564,7 +1556,7 @@ class TestChartFormatPropagation:
         fallback to axis_x whenever x is quantitative (e.g. scatter) — so a
         scatter of ad_spend ($, x) vs conversions (count, y) stamped the $
         number_format onto the count axis too. x is always the dimension axis
-        in Dataface's cartesian model (never the measure), so the quantitative
+        in dbt charts' cartesian model (never the measure), so the quantitative
         fallback must be y-only, mirroring the temporal-x exclusion above.
         """
         from dbt_charts.core.compile.models.style.authored import (  # noqa: PLC0415

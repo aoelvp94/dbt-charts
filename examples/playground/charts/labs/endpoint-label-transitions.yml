@@ -1,5 +1,5 @@
 title: Bar Labelling — Review Proofs
-description: Each pair isolates one decision. The bold line under each heading is what to look at.
+notes: Each pair isolates one decision. The bold line under each heading is what to look at.
 
 source: examples_db
 
@@ -136,8 +136,6 @@ rows:
       constant, not because 2 is what fits.
     grid:
       columns: 24
-      row_height: "300px"
-      gap: md
       items:
         - item: grouped6_tiny
           col: 0
@@ -157,8 +155,6 @@ rows:
       a legend. 423px does.
     grid:
       columns: 24
-      row_height: "300px"
-      gap: md
       items:
         - item: stacked_tiny
           col: 0

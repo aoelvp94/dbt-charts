@@ -1,4 +1,4 @@
-"""Field markers for Dataface model annotations.
+"""Field markers for dbt charts model annotations.
 
 Markers are attached to Pydantic fields via Annotated[T, Marker()] and
 are picked up by introspection.py to enrich the schema IR.
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 from enum import Enum
+from typing import Literal
 
 
 @dataclasses.dataclass(frozen=True)
@@ -171,7 +172,58 @@ class Format(Facet):
     sits in, which no wheel-shipped Literal can hold. The facet is what lets a
     surface holding a board widen the offer to the aliases that board defines,
     without matching field names or comparing values against the built-in set.
+
+    `kind` narrows which half of the engine's vocabulary belongs in the slot.
+    Most slots are `"any"`: a `format:` on an axis or a table column is judged
+    by the column it paints, and the same field is a currency on one chart and
+    a date on the next. Two are not — `number_format` feeds a quantitative axis
+    and `time_format` a temporal one — and there the wrong half is a d3 number
+    spec baked onto a date, which renders garbage rather than failing. A board's
+    own `style.formats` aliases are never kind-narrowed: the engine cannot know
+    what spec a user's alias targets, so they stay legal in every slot.
     """
+
+    kind: Literal["any", "number", "time"] = "any"
+
+
+@dataclasses.dataclass(frozen=True)
+class FontFamily(Facet):
+    """The value names a font family or stack.
+
+    The wheel knows exactly which faces it ships (``core.fonts``), so an
+    editor can offer them — as shortcuts, never a closed set: any CSS family
+    or stack stays a legal value.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
+class Palette(Facet):
+    """The value names a colour palette, or spells one out as its stops.
+
+    The wheel ships a closed set of palette names, and an editor can offer them
+    as shortcuts rather than a closed set: a bare list of CSS colours stays a
+    legal value here too.
+
+    **Not** a theme's ``palettes:`` role (``category``, ``sequence``). A role is
+    theme-scope vocabulary — ``compile/validate/palettes.py`` rejects a bare one
+    on a board's or chart's own ``style:`` with ERR-PALETTE-UNKNOWN, and the
+    parse gate defers role-shaped strings rather than catching them, so a menu
+    that offers a role writes a board which stops compiling. An editor wanting
+    to show what the theme uses resolves the role to its target name first.
+
+    The names themselves reach the IR on ``enum_values`` either way. What the
+    facet adds is that the field *means* a palette: without it a consumer sees
+    ``<enum> | list[str] | str`` — the same shape as a chart's ``y`` — and the
+    list arm wins, which is how the categorical palettes drew as text boxes
+    full of hex while their vocabulary sat unused beside them.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
+class ExplicitTag(Facet):
+    """The field is a union tag the normalizer never infers — authors must
+    write it. Reference renderers key on this to keep the tag's description,
+    where an inferable tag's description would only restate its const cell."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -184,4 +236,59 @@ class Channel(Facet):
     render that fails on a column that does not exist, a wrong font size is a
     chart that looks slightly off. They want different validation and different
     input — a picker over the query's columns rather than a text box.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
+class Content(Facet):
+    """The field is one of the ways a board declares content of its own.
+
+    "Is this YAML file a board?" and "does this draft declare anything yet?"
+    are one fact asked twice, and both sides answered it with a hand-written
+    key list. They drifted: one counted `queries` and missed `text`, the other
+    the reverse, so a prose-only board rendered while being invisible to
+    `dct search`. The facet puts the answer on the fields; what to do with it
+    stays each consumer's own business.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
+class Extends(Facet):
+    """The field names the boards this one inherits from.
+
+    Content a board renders without declaring: composition folds the base's
+    layout into the child, so an `extends:`-only file is a full board carrying
+    no `Content` key at all. Separate from `Content` because that is exactly
+    where the consumers part ways — such a file *is* a board to list, and *is*
+    a draft with nothing of its own to show starter cards for.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
+class DisplayText(Facet):
+    """The value is prose the author wrote for a reader.
+
+    A title, a label, a description — text whose words are the point, as
+    opposed to a name that identifies something (`source`, `type`) or a body
+    that carries its own syntax (`Markdown`). It is what a search index should
+    hold and what an editor should offer a prose box for.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
+class Url(Facet):
+    """The value is a link target — a URL or an author-space board path.
+
+    Board navigation is authored as a root-relative path (`/spend/monthly`),
+    so a link field is both what render rewrites for its host and what a
+    project graph reads to find the edge between two boards.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
+class Markdown(Facet):
+    """The value is a markdown body, not a plain string.
+
+    Its `[label](/spend)` links are real board navigation once rendered, so a
+    markdown field carries edges that no `Url` field names.
     """

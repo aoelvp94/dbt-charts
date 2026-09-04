@@ -1,7 +1,7 @@
 """Warehouse query observer type and notification helper.
 
-dataface core has no prometheus_client import. The observer pattern keeps
-dataface metric-tool-neutral; Cloud's middleware is one consumer, CLI /
+dbt charts core has no prometheus_client import. The observer pattern keeps
+dbt charts metric-tool-neutral; Cloud's middleware is one consumer, CLI /
 playground can register their own (or none).
 """
 

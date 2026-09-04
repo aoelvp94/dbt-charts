@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from importlib.resources import files
 
-from dbt_charts.ai.llm import OpenAIClient
+from dbt_charts.ai.llm import OpenAIAdapter
 from dbt_charts.ai.prompts import load_prompt, render_prompt_template
 
 PROMPTS_DIR = files("dbt_charts.ai").joinpath("prompts")
@@ -38,14 +38,14 @@ def generate_sql(
     question: str,
     schema_context: str,
     *,
-    client: OpenAIClient,
+    client: OpenAIAdapter,
 ) -> str:
     """Generate SQL from a natural-language question using the LLM.
 
     Args:
         question: Natural-language question about the data.
         schema_context: Plain schema context string assembled by the caller.
-        client: An ``OpenAIClient`` instance.
+        client: An ``OpenAIAdapter`` instance.
 
     Returns:
         The generated SQL query string.

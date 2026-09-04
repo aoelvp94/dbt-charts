@@ -64,7 +64,7 @@ def _make_v2_board(charts: dict[str, Any]) -> Any:
     return ResolvedBoard(
         id="test",
         title="",
-        description="",
+        notes="",
         tags=(),
         text="",
         html_policy="none",

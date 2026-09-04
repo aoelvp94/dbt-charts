@@ -19,7 +19,7 @@ def serve_command(*, project: FilesystemProject) -> None:
     """Start the MCP server for AI assistant integration.
 
     Args:
-        project: The resolved Dataface project (injected by @with_project)
+        project: The resolved dbt charts project (injected by @with_project)
 
     The ``mcp`` extras gate runs in the ``mcp serve`` CLI wrapper, before this
     body's project discovery — a missing-extra install hint must win over a

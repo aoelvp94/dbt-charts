@@ -50,7 +50,7 @@ def tool_body(request: pytest.FixtureRequest) -> str:
 
 @pytest.mark.parametrize("name", REVIEW_SKILLS)
 class TestReviewSkillsParseAsValidSkills:
-    """Each review skill is a valid Skill per dataface.agent_api.skills.
+    """Each review skill is a valid Skill per dbt_charts.agent_api.skills.
 
     Description *length* is capped in one place for both skill corpora —
     ``.claude/skills/skill-review/tests/test_description_budget.py``.
@@ -78,7 +78,7 @@ class TestStructuralReviewChecklist:
 
     SKILL = "board-structural-review"
 
-    def test_invokes_dft_validate_first_on_cli(self, body: str) -> None:
+    def test_invokes_dct_validate_first_on_cli(self, body: str) -> None:
         assert "dct validate" in body
         assert "uv run dct validate" not in body, (
             "shipped skill must use bare `dct`; in-repo guidance lives in AGENTS.md"
@@ -103,7 +103,7 @@ class TestStructuralReviewChecklist:
         assert "Chart-data shape" in body or "chart-data shape" in body.lower()
 
     def test_descriptive_metadata_section(self, body: str) -> None:
-        assert "description:" in body
+        assert "notes:" in body
 
     def test_layout_intent_section(self, body: str) -> None:
         assert "Layout intent" in body or "layout intent" in body.lower()

@@ -54,11 +54,13 @@ def _mark_types(spec: dict[str, Any]) -> list[str]:
 
 
 def test_area_stacked_composition_uses_perimeter_stroke(make_chart):
-    """stack='zero' emits one area layer with its own stroke, plus a hover point."""
+    """stack='zero' emits one area layer with its own stroke, a zero-anchor
+    baseline rule (area always zero-anchors this all-positive data), and a
+    hover point."""
     resolved, data = _make_area_chart(make_chart, stack="zero")
     spec = _render_spec(resolved, data)
 
-    assert _mark_types(spec) == ["area", "point"], _mark_types(spec)
+    assert _mark_types(spec) == ["area", "rule", "point"], _mark_types(spec)
     area_mark = spec["layer"][0]["mark"]
     # Read opacity from the resolved mark rather than pinning the theme literal.
     assert area_mark.get("fillOpacity") == resolved.style.area_mark.opacity
@@ -70,13 +72,20 @@ def test_area_stacked_composition_uses_perimeter_stroke(make_chart):
 
 
 def test_area_overlap_composition_unchanged(make_chart):
-    """stack=None (overlap default) keeps halo + fg fill + top-line + hover."""
+    """stack=None (overlap default) keeps halo + fg fill + zero-anchor rule +
+    top-line + hover. Area always zero-anchors this all-positive data, so the
+    baseline rule is inserted after the last area fill (see _insert_rule)."""
     resolved, data = _make_area_chart(make_chart, stack=None)
     spec = _render_spec(resolved, data)
 
-    assert _mark_types(spec) == ["area", "line", "area", "line", "point"], _mark_types(
-        spec
-    )
+    assert _mark_types(spec) == [
+        "area",
+        "line",
+        "area",
+        "rule",
+        "line",
+        "point",
+    ], _mark_types(spec)
     fg_area_mark = spec["layer"][2]["mark"]
     assert fg_area_mark.get("strokeOpacity") == 0
 

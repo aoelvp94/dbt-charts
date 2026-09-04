@@ -11,6 +11,7 @@ from unittest.mock import Mock
 from dbt_charts.core.compile import compile
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.duckdb_cache import (
+    compute_cache_key,
     compute_query_hash,
     compute_source_hash,
     compute_variables_hash,
@@ -65,18 +66,16 @@ def _board_slug() -> str:
 def _seed_cache(cache: TrivialDuckDBCache) -> None:
     """Seed the DuckDB cache with CACHED_ROWS for the 'revenue' query.
 
-    Computes the same hashes execute_query will use so the key matches.
-    Key is (source_hash, query_hash, variables_hash) — the executor uses
-    compute_source_hash(query.source, board_sources=board.sources).
+    Uses compute_cache_key — the single source of truth — so the seeded key
+    always matches what execute_query will look up.
     """
     result = _compiled()
     query = result.board.queries["revenue"]
     board = result.board
 
-    query_hash = compute_query_hash(query.sql)
-    source_hash = compute_source_hash(query.source, board_sources=board.sources)
-    relevant_vars: dict = {}  # no variable_dependencies on this query
-    variables_hash = compute_variables_hash(relevant_vars)
+    source_hash, query_hash, variables_hash = compute_cache_key(
+        query, board_sources=board.sources
+    )
 
     cache.put(
         source_hash,

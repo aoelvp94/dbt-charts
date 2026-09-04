@@ -95,11 +95,45 @@ def sibling_container_tokens(type_repr: str) -> list[str]:
     ]
 
 
+def _array_schema(
+    items: dict[str, Any],  # type-state: explicit_any — see _ref
+    min_items: int | None,
+) -> dict[str, Any]:  # type-state: explicit_any — see _ref
+    """Build an array-shaped JSON Schema fragment, with an optional minItems."""
+    schema: dict[str, Any] = {"type": "array"}  # type-state: explicit_any — see _ref
+    schema["items"] = items
+    if min_items is not None:
+        schema["minItems"] = min_items
+    return schema
+
+
+def _primitive_schema(
+    name: str, patterns: dict[str, str]
+) -> dict[str, Any]:  # type-state: explicit_any — JSON Schema value, see _ref
+    """Map a primitive name to its JSON Schema dict, honoring a pattern constraint.
+
+    `_PRIMITIVES[name]` (e.g. {"type": "string"}) is the unconstrained shape;
+    `patterns` (SchemaField.extra_union_type_patterns) names the ones that
+    carry a regex constraint (VariableOrRef/ChartOrRef's cross-file-ref string
+    arm) — copy so mutating the pattern key never touches the shared _PRIMITIVES
+    dict other fields read from the same process-lifetime instance.
+    """
+    schema = dict(_PRIMITIVES[name])
+    pattern = patterns.get(name)
+    if pattern is not None:
+        schema["pattern"] = pattern
+    return schema
+
+
 def _type_schema(field: SchemaField, root: str) -> dict[str, Any]:
     """Build the JSON Schema type object for a single field."""
     nullable = "None" in field.type_repr
 
-    extra = [_PRIMITIVES[t] for t in field.extra_union_types if t in _PRIMITIVES]
+    extra = [
+        _primitive_schema(t, field.extra_union_type_patterns)
+        for t in field.extra_union_types
+        if t in _PRIMITIVES
+    ]
 
     if field.tuple_item_reprs is not None:
         # A fixed-length tuple: one type_repr string per position, mapped
@@ -116,7 +150,9 @@ def _type_schema(field: SchemaField, root: str) -> dict[str, Any]:
         return {"anyOf": [tuple_schema, {"type": "null"}]} if nullable else tuple_schema
 
     if field.enum_values is not None:
-        enum_item = {"enum": field.enum_values}
+        # Copy: the IR is a shared memoized instance; emitted schema must not
+        # alias its lists.
+        enum_item = {"enum": list(field.enum_values)}
         branches: list[dict[str, Any]]
         if field.nested_models:
             # Field accepts both model objects and scalar enum values (e.g. SparkConfig | SparkTypeLiteral).
@@ -184,6 +220,38 @@ def _type_schema(field: SchemaField, root: str) -> dict[str, Any]:
                 parts.append({"type": "null"})
             return {"anyOf": parts} if len(parts) > 1 else parts[0]
         all_branches: list[dict[str, Any]] = branches
+        if field.container_mapping_models:
+            # A bare (non-list, non-dict) union can still carry a dict[str, Model]
+            # sibling arm -- GridItem.item's `dict[str, AuthoredChart]` form, a
+            # chart keyed by name rather than referenced by it. The
+            # field.container == "list" branch above renders this same shape as
+            # the *items'* additionalProperties; here it's the field's own.
+            map_refs = [_ref(n, root) for n in field.container_mapping_models]
+            if len(map_refs) == 1:
+                all_branches.append(
+                    {"type": "object", "additionalProperties": map_refs[0]}
+                )
+            else:
+                all_branches.append(
+                    {"type": "object", "additionalProperties": {"anyOf": map_refs}}
+                )
+        if field.container_list_models:
+            # A bare (non-list, non-dict) union can also carry a list[...]
+            # sibling arm -- `support_table:`'s `json_schema_input_type`
+            # widening (list[ChartSupportTableEntry] | ChartSupportTable), the
+            # bare-list shorthand for a whole support_table block. Names can be
+            # authored models (rendered as $ref) or primitives (from
+            # _PRIMITIVES) since the list item type is itself a union of both.
+            item_schemas = [
+                _PRIMITIVES[n] if n in _PRIMITIVES else _ref(n, root)
+                for n in field.container_list_models
+            ]
+            item_schema = (
+                item_schemas[0] if len(item_schemas) == 1 else {"anyOf": item_schemas}
+            )
+            all_branches.append(
+                _array_schema(item_schema, field.container_list_min_items)
+            )
         if nullable:
             all_branches.append({"type": "null"})
         return {"anyOf": all_branches} if len(all_branches) > 1 else all_branches[0]
@@ -347,7 +415,7 @@ def _theme_property_schema() -> dict[str, str | list[str]]:
 
 
 def render_yaml_schema(schema: AuthorableSchema) -> dict[str, Any]:
-    """Render the strict draft-07 Dataface YAML schema.
+    """Render the strict draft-07 dbt charts YAML schema.
 
     Produces a self-contained schema with the root model's properties
     inlined and all reachable authored models in $defs. Author-defined model
@@ -360,24 +428,6 @@ def render_yaml_schema(schema: AuthorableSchema) -> dict[str, Any]:
         for name in schema.models
         if name != schema.root
     }
-
-    # Widen ChartDataTable to accept the bare-list shorthand handled by its
-    # _accept_bare_list model_validator (list[entry] -> {entries: list[entry]}).
-    # Covers every data_table field in Bar/Line/Area/etc. charts.
-    if "ChartDataTable" in defs:
-        entry_ref: dict[str, Any] = {
-            "anyOf": [
-                {"$ref": "#/$defs/ChartDataTableSource"},
-                {"$ref": "#/$defs/ChartDataTableAggregate"},
-                {"$ref": "#/$defs/ChartDataTablePerSeries"},
-            ]
-        }
-        defs["ChartDataTable"] = {
-            "anyOf": [
-                defs["ChartDataTable"],
-                {"type": "array", "items": entry_ref, "minItems": 1},
-            ]
-        }
 
     result: dict[str, Any] = {
         "$schema": "http://json-schema.org/draft-07/schema#",

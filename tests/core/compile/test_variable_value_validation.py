@@ -85,7 +85,7 @@ class TestValidateVariableValue:
 
     def test_daterange_shape_error_carries_the_registered_code(self):
         """A mis-shaped daterange default is an authoring mistake, so it must
-        carry a registered code — `dataface/AGENTS.md` treats ERR-INTERNAL as a
+        carry a registered code — `dbt-charts/AGENTS.md` treats ERR-INTERNAL as a
         defect signal, not an accepted tier."""
         var = Variable(input="daterange")
         with pytest.raises(CompilationError) as exc:

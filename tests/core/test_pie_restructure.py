@@ -148,7 +148,7 @@ class TestStaleArcKey:
         )
         from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         # Override marks.slice.gap — gap lives at the global level after migration
         global_slice = compiled.charts.marks.slice
         updated_slice_mark = global_slice.model_copy(update={"gap": 0.07})
@@ -205,7 +205,7 @@ class TestStyleInnerRadius:
             resolve_chart_style_context,
         )
 
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         chart = PieChart(
             id="t",
             type="pie",
@@ -401,7 +401,7 @@ rows:
             resolve_chart_style_context,
         )
 
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         pie = compiled.charts.pie
         updated_value_font = pie.total.value.font.model_copy(update={"size": 99.0})
         updated_total = pie.total.model_copy(
@@ -505,6 +505,68 @@ class TestTotalFormatResolution:
         mapped = PieEmitter().emit(rc, _DEFAULT_BOX, regroup((), data))
         value_layer = mapped.layers[1]
         assert value_layer.encoding["text"].get("format") == "$,.2f"
+
+    def test_sub_dollar_total_and_tooltip_format_as_plain_digits(self):
+        """A donut whose slices sum below $1 must not misread as SI milli.
+
+        $0.67 painted "$670m" (d3's SI milli prefix colliding case-only with
+        the house million grammar) before resolve_format_for_values voted
+        the whole slot (theta values + their sum) to the plain-digit
+        fallback. Centre total and slice tooltip must agree -- they vote on
+        the same set.
+        """
+        from dbt_charts.core.compile.config import get_theme_style
+        from dbt_charts.core.compile.models.chart.authored import ChartTotal
+        from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.compile.models.style.authored import StylePatch
+        from dbt_charts.core.compile.resolve.style.board import (
+            resolve_style_and_context,
+        )
+        from dbt_charts.core.render.chart.emitters.pie import PieEmitter
+        from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
+        from dbt_charts.core.text.predefined_formats import PREDEFINED_SPECS
+
+        tooltip_patch = StylePatch.model_validate(
+            {"charts": {"tooltip": {"format": "currency"}}}
+        )
+        board_style, ctx = resolve_style_and_context(get_theme_style(), tooltip_patch)
+        chart = PieChart(
+            id="t",
+            type="pie",
+            theta="cents",
+            color="cat",
+            total=ChartTotal.model_validate({"label": "Total", "format": "currency"}),
+            query=SqlQuery(sql="SELECT 1", source="src"),
+            query_name="q",
+        )
+        data = [{"cat": "A", "cents": 0.42}, {"cat": "B", "cents": 0.25}]
+        rc = resolve(chart, data, chart_style_context=ctx)
+        assert isinstance(rc, ResolvedPieChart)
+
+        # Centre total: baked spec must be the plain-digit fallback.
+        mapped = PieEmitter().emit(rc, _DEFAULT_BOX, regroup((), data))
+        value_layer = mapped.layers[1]
+        assert (
+            value_layer.encoding["text"].get("format")
+            == PREDEFINED_SPECS["currency_full"]
+        )
+
+        # Slice tooltip: the theta encoding's format must match.
+        assert rc.style.tooltip_format == PREDEFINED_SPECS["currency_full"]
+
+        import vl_convert as vlc
+
+        spec = generate_vega_lite_spec(
+            chart,
+            data,
+            width=600,
+            board_style=board_style,
+            chart_style_context=ctx,
+        )
+        svg = vlc.vegalite_to_svg(spec)
+        assert "$0.67" in svg
+        assert "670m" not in svg
 
 
 # ---------------------------------------------------------------------------
@@ -640,14 +702,14 @@ class TestDefaultThemePieShape:
         from dbt_charts.core.compile.config import get_theme_style
         from dbt_charts.core.compile.models.style.theme import PieChartStyle
 
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         assert isinstance(compiled.charts.pie, PieChartStyle)
 
     def test_global_marks_has_slice_sub_block(self):
         from dbt_charts.core.compile.config import get_theme_style
         from dbt_charts.core.compile.models.style.theme import SliceMarkStyle
 
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         assert isinstance(compiled.charts.marks.slice, SliceMarkStyle)
         assert isinstance(compiled.charts.marks.slice.gap, float)
 
@@ -655,7 +717,7 @@ class TestDefaultThemePieShape:
         from dbt_charts.core.compile.config import get_theme_style
         from dbt_charts.core.compile.models.style.theme import TotalStyle
 
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         assert isinstance(compiled.charts.pie.total, TotalStyle)
         assert compiled.charts.pie.total.value.font.size
 
@@ -666,6 +728,6 @@ class TestDefaultThemePieShape:
             resolve_chart_style_context,
         )
 
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         ctx = resolve_chart_style_context(compiled)
         assert isinstance(ctx.pie, PieChartStyle)

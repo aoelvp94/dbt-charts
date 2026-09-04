@@ -1,4 +1,4 @@
-"""HTTP server for Dataface.
+"""HTTP server for dbt charts.
 
 Stage: SERVE
 Purpose: Provide HTTP endpoints for dashboard rendering.

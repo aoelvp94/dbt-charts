@@ -13,16 +13,22 @@ from rich.console import Console
 from rich.panel import Panel
 from typer.core import TyperGroup
 
+from dbt_charts._render_tz import pin_vl_convert_tz_utc
 from dbt_charts.agent_api import RenderFormat, set_surface
 from dbt_charts.cli._console import is_plain_output
+from dbt_charts.cli._error_format import print_warning
 from dbt_charts.cli._extras import require_extras
 from dbt_charts.cli._parsing import parse_kv_pairs
 from dbt_charts.cli._project import has_charts_marker
+from dbt_charts.cli._workspace_guard import detect_workspace_mismatch
 from dbt_charts.cli.commands import (
     board_artifact as board_artifact_cmd,
+    cloud as cloud_cmd,
     describe as describe_cmd,
     docs as docs_cmd,
+    examples as examples_cmd,
     extension as extension_cmd,
+    impact as impact_cmd,
     init as init_cmd,
     inspect as inspect_cmd,
     mcp as mcp_cmd,
@@ -34,8 +40,15 @@ from dbt_charts.cli.commands import (
     skills as skills_cmd,
     validate as validate_cmd,
 )
+from dbt_charts.cli.commands.ci_init import run_init_ci as _ci_run_init
 from dbt_charts.cli.commands.mcp_init import run_init as _mcp_run_init
 from dbt_charts.cli.commands.skills_init import run_init_skills as _skills_run_init
+
+# Pin static rendering (SVG/PNG/PDF export, incl. `dct render`/`dct serve`) to
+# TZ=UTC before any subcommand can reach vl-convert -- see _render_tz.py for
+# why this must happen once, this early, at process startup rather than at
+# the render call site.
+pin_vl_convert_tz_utc()
 
 # Evaluated once at process startup — mid-session env changes won't take effect.
 _RICH_MARKUP_MODE: Literal["rich"] | None = None if is_plain_output() else "rich"
@@ -57,7 +70,7 @@ mcp_app = typer.Typer(
 # (AI integration), `dct init code|cursor|vscode` (editor extension install).
 init_app = typer.Typer(
     name="init",
-    help="Bootstrap a Dataface project, plus its AI / editor integrations.",
+    help="Bootstrap a dbt charts project, plus its AI / editor integrations.",
     invoke_without_command=True,
     pretty_exceptions_show_locals=False,
     rich_markup_mode=_RICH_MARKUP_MODE,
@@ -105,6 +118,12 @@ if not logging.getLogger().handlers:
         format="%(name)s - %(levelname)s - %(message)s",
     )
 
+# httpx logs one INFO line per request; on `dct cloud` verbs that is a
+# request-log line above every answer the user asked for. The CLI owns what it
+# prints, so it decides this here rather than the client silencing a logger it
+# does not own.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 
 def _render_init_banner() -> None:
     """Print a nudge to run ``dct init``.
@@ -116,13 +135,13 @@ def _render_init_banner() -> None:
     """
     if is_plain_output():
         Console(force_terminal=False, no_color=True).print(
-            "Welcome to Dataface — run `dct init` to start a new project."
+            "Welcome to dbt charts — run `dct init` to start a new project."
         )
         return
     Console().print(
         Panel(
             "Run [bold cyan]dct init[/bold cyan] to start a new project!",
-            title="Welcome to Dataface",
+            title="Welcome to dbt charts",
             title_align="left",
             border_style="yellow",
             box=box.ROUNDED,
@@ -133,7 +152,7 @@ def _render_init_banner() -> None:
 
 # Panel sections on `dct --help`, in the order they render. A panel absent
 # from this tuple sorts last (alphabetically among its peers).
-PANEL_ORDER: tuple[str, ...] = ("Dashboards", "Data & SQL", "AI", "Reference")
+PANEL_ORDER: tuple[str, ...] = ("Dashboards", "Data & SQL", "Cloud", "AI", "Reference")
 
 
 def _panel_rank(panel: str) -> int:
@@ -151,7 +170,7 @@ class _RootHelpGroup(TyperGroup):
     `init` after docs/playground/skills under Reference). Sorting here
     interleaves them so each panel reads A-Z. Also prints the "run
     `dct init`" banner above the help body when cwd isn't a scaffolded
-    Dataface project. Intentionally attached to the root Typer only —
+    dbt charts project. Intentionally attached to the root Typer only —
     sub-typer and leaf-command orders are left as authored, and
     sub-typer help never shows the banner.
     """
@@ -245,17 +264,17 @@ def init_default(
     vscode: Annotated[
         bool | None,
         typer.Option(
-            "--vscode/--no-vscode", help="Install Dataface extension into VS Code"
+            "--vscode/--no-vscode", help="Install dbt charts extension into VS Code"
         ),
     ] = None,
     cursor: Annotated[
         bool | None,
         typer.Option(
-            "--cursor/--no-cursor", help="Install Dataface extension into Cursor"
+            "--cursor/--no-cursor", help="Install dbt charts extension into Cursor"
         ),
     ] = None,
 ) -> None:
-    """Bootstrap a Dataface project in an existing repo.
+    """Bootstrap a dbt charts project in an existing repo.
 
     Detects dbt projects, creates charts/ and charts/partials/, ejects inspect
     templates, and writes starter dashboards. Optionally wires up MCP for AI
@@ -266,7 +285,8 @@ def init_default(
     Subcommands:
       dct init skills [target]  # Install workflow skills for AI assistants
       dct init mcp [client]     # Wire up MCP server
-      dct init code             # Install Dataface extension into VS Code
+      dct init ci               # Scaffold a board-validation GitHub Action
+      dct init code             # Install dbt charts extension into VS Code
       dct init cursor           # …or Cursor
 
     \b
@@ -294,9 +314,9 @@ def init_default(
 
 @init_app.command("code")
 def init_code() -> None:
-    """Install the Dataface extension into VS Code.
+    """Install the dbt charts extension into VS Code.
 
-    Installs the latest release of the Dataface extension into VS Code.
+    Installs the latest release of the dbt charts extension into VS Code.
     Idempotent — re-runs upgrade to the newest version.
     """
     raise typer.Exit(extension_cmd.install_extension("code", emit=typer.echo))
@@ -304,9 +324,9 @@ def init_code() -> None:
 
 @init_app.command("cursor")
 def init_cursor() -> None:
-    """Install the Dataface extension into Cursor.
+    """Install the dbt charts extension into Cursor.
 
-    Installs the latest release of the Dataface extension into Cursor.
+    Installs the latest release of the dbt charts extension into Cursor.
     Idempotent — re-runs upgrade to the newest version.
     """
     raise typer.Exit(extension_cmd.install_extension("cursor", emit=typer.echo))
@@ -354,7 +374,7 @@ def init_skills(
     ] = False,
     project_dir: ProjectDirOption = None,
 ) -> None:
-    """Install Dataface workflow skills for file-based agent auto-discovery.
+    """Install dbt charts workflow skills for file-based agent auto-discovery.
 
     Writes CLI-rendered skill files to ``.agents/skills/`` (Cursor, Codex,
     Copilot) and/or ``.claude/skills/`` (Claude Code). Does not configure MCP
@@ -402,7 +422,7 @@ def init_mcp(
     ] = False,
     project_dir: ProjectDirOption = None,
 ) -> None:
-    """Add Dataface to your AI client's MCP configuration.
+    """Add dbt charts to your AI client's MCP configuration.
 
     Writes MCP server entries only. Install workflow skills separately with
     ``dct init skills``.
@@ -428,6 +448,40 @@ def init_mcp(
         force=force,
         project_dir=project_dir,
     )
+
+
+# `dct init ci` — GitHub Actions workflow that runs `dct validate` on PRs.
+@init_app.command("ci")
+def init_ci(
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Overwrite an existing workflow file"),
+    ] = False,
+    project_dir: ProjectDirOption = None,
+) -> None:
+    """Scaffold a GitHub Actions workflow that validates your boards on every PR.
+
+    Writes a workflow at the *repo* root — the only place GitHub reads
+    workflows from — named .github/workflows/dbt-charts.yml for a project at
+    the root, or dbt-charts-<project-path>.yml for a nested one. When the dbt
+    root is a subdirectory, the workflow's path filters and working directory
+    carry that full repo-relative path, so a monorepo with nested dbt projects
+    gates the right files, one workflow per project.
+
+    Structural tier: `dct validate` checks board YAML shape, enums and
+    references without running queries, so the workflow needs no warehouse
+    credentials. Add a `dbt parse` step (see the comment in the generated file)
+    to also validate dbt ref()/source() calls against your models.
+
+    Safe to re-run — an existing workflow is never overwritten unless --force.
+
+    \b
+    Examples:
+      dct init ci                            # Scaffold for the detected project
+      dct init ci --project-dir ./analytics  # Target a specific dbt root
+      dct init ci --force                    # Overwrite the existing workflow
+    """
+    _ci_run_init(force=force, project_dir=project_dir)
 
 
 # =============================================================================
@@ -589,7 +643,7 @@ def mcp_serve(
     """Start the MCP server for AI assistant integration.
 
     This command starts an MCP (Model Context Protocol) server that enables
-    AI assistants like Claude, Cursor, and ChatGPT to interact with Dataface
+    AI assistants like Claude, Cursor, and ChatGPT to interact with dbt charts
     dashboards.
 
     The server speaks the MCP protocol over standard input/output — the
@@ -1054,6 +1108,50 @@ def search(
     )
 
 
+@app.command("impact", rich_help_panel="Dashboards")
+def impact(
+    column: Annotated[
+        str,
+        typer.Argument(help="Column name to look up (case-insensitive)"),
+    ],
+    table: Annotated[
+        str | None,
+        typer.Option("--table", help="Narrow to columns of this table/model"),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON"),
+    ] = False,
+    project_dir: ProjectDirOption = None,
+) -> None:
+    """Which boards break if this column changes.
+
+    Walks the compiled SQL of every board under charts/ — named queries, inline chart queries,
+    layers, cross-board imports — and reports the ones that reference the
+    column on a base table, resolved through CTEs, aliases and correlated
+    subqueries. ref('orders') maps to `orders`; source('raw', 'orders') to
+    the dotted `raw.orders`. Boards whose column use cannot be determined (a
+    `SELECT *`, SQL that does not parse, a jinja expression standing where a
+    column or table name would be, an unresolvable ref()/source() spelling)
+    are listed separately rather than silently omitted, so an empty hit list
+    is never read as "safe to rename" without checking them.
+
+    No warehouse connection — the index is built from the YAML alone.
+
+    \b
+    Examples:
+      dct impact customer_id                 # Who references this column?
+      dct impact id --table users            # Narrow a common name to one table
+      dct impact customer_id --json          # Agent-consumable output
+    """
+    impact_cmd.impact_command(
+        column,
+        table=table,
+        json_output=json_output,
+        project_dir=project_dir,
+    )
+
+
 @app.command("serve", rich_help_panel="Dashboards")
 def serve(
     port: Annotated[
@@ -1186,6 +1284,8 @@ def validate(
                 "Validate queries against the warehouse using the per-adapter mechanism. "
                 "DuckDB: DESCRIBE — schema only, no billing. "
                 "BigQuery: native dry-run — validity + schema, unbilled. "
+                "Postgres/Redshift/Snowflake: EXPLAIN — validity only, "
+                "no result schema. "
                 "All other adapters report 'unchecked' — queries are never run to "
                 "check them."
             ),
@@ -1197,7 +1297,8 @@ def validate(
     By default, validation is stateless — no warehouse connection, no query
     execution. Add --warehouse to validate queries against your warehouse using
     the cheapest per-adapter mechanism (DuckDB: DESCRIBE; BigQuery: dry-run;
-    'unchecked' everywhere else). No query is ever run at full cost to check it.
+    Postgres/Redshift/Snowflake: EXPLAIN, validity only; 'unchecked'
+    everywhere else). No query is ever run at full cost to check it.
 
     \b
     Examples:
@@ -1233,10 +1334,13 @@ def migrate(
     ] = False,
     project_dir: ProjectDirOption = None,
 ) -> None:
-    """Rewrite supported older board YAML syntax for the current Dataface release.
+    """Rewrite supported older board YAML syntax for the latest released dbt charts version.
 
-    A board has no authored schema version. Dataface recognizes its newest
-    compatible retained grammar, then applies only declared lossless moves.
+    dbt charts recognizes a board's newest compatible retained grammar, then
+    applies only declared lossless moves -- never further than the latest
+    *released* version, even when a further change is already in flight for
+    the next release. Also stamps an informational _schema_version field with
+    the version it migrated to; authors never write this field by hand.
 
     \b
     Examples:
@@ -1340,6 +1444,12 @@ def query(
     )
 
 
+# --- Cloud ------------------------------------------------------------------
+
+
+app.add_typer(cloud_cmd.cloud_app, name="cloud", rich_help_panel="Cloud")
+
+
 # --- AI ---------------------------------------------------------------------
 
 
@@ -1381,7 +1491,7 @@ def docs(
         ),
     ] = 5,
 ) -> None:
-    """Browse the Dataface YAML reference offline (topics, search).
+    """Browse the dbt charts YAML reference offline (topics, search).
 
     \b
     Modes:
@@ -1427,6 +1537,46 @@ else:
     from dbt_charts_playground.cli import main as _playground_main
 
     app.command("playground", rich_help_panel="Reference")(_playground_main)
+
+
+@app.command("examples", rich_help_panel="Reference")
+def examples(
+    slug: Annotated[
+        str | None,
+        typer.Argument(help="Example slug to print (default: list all)"),
+    ] = None,
+    search: Annotated[
+        str | None,
+        typer.Option("--search", "-s", help="Search slugs, titles, and board YAML"),
+    ] = None,
+    limit: Annotated[
+        int,
+        typer.Option("--limit", min=1, max=25, help="Max search hits (default 10)"),
+    ] = 10,
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON"),
+    ] = False,
+) -> None:
+    """List bundled board specimens, search them, or print one by slug.
+
+    \b
+    Modes:
+      dct examples                       # List all specimens, grouped by category
+      dct examples <slug>                # Print that specimen's board YAML
+      dct examples -s "<query>"          # Search slugs, titles, and board YAML
+      dct examples --json                # Stable JSON for any of the above
+
+    Specimens are complete boards that render standalone: inline data, no
+    `source:`. Point their queries at your own source after copying. Workflow
+    prose is `dct skills`; YAML field reference is `dct docs`.
+    """
+    examples_cmd.examples_command(
+        slug=slug,
+        search=search,
+        limit=limit,
+        as_json=as_json,
+    )
 
 
 @app.command("skills", rich_help_panel="Reference")
@@ -1475,7 +1625,7 @@ app.add_typer(inspect_app, name="inspect", hidden=True)
 # Each plugin's ``register()`` callable mounts its subcommands onto Typer apps
 # (e.g. ``inspect_app``) before the app executes. Runs at import time so that
 # ``dct --help`` shows profiler commands when the private package is installed.
-# importlib.metadata is stdlib since Python 3.8; dataface requires >=3.10, so
+# importlib.metadata is stdlib since Python 3.8; dbt-charts requires >=3.10, so
 # the outer try is unnecessary. Plugin load errors surface to the user rather
 # than being silently swallowed.
 from importlib.metadata import entry_points as _entry_points
@@ -1519,12 +1669,26 @@ def main(
             is_eager=True,
         ),
     ] = None,
+    no_workspace_guard: Annotated[
+        bool,
+        typer.Option(
+            "--no-workspace-guard",
+            envvar="DCT_NO_WORKSPACE_GUARD",
+            help=(
+                "Suppress the workspace-mismatch advisory on stderr. For machine "
+                "stderr consumers (--diagnostics-json readers, CI smoke runs) "
+                "where the advisory's non-JSON first line corrupts parsing."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """dct - Declarative, dbt-native dashboards in YAML."""
     _reconfigure_console_encoding()
     # Runs before any subcommand, so every warehouse query this process sends is
     # attributed to the CLI. `dct serve` narrows it to "serve" in its own command.
     set_surface("cli")
+    if not no_workspace_guard and (mismatch := detect_workspace_mismatch(Path.cwd())):
+        print_warning(mismatch)
 
 
 if __name__ == "__main__":

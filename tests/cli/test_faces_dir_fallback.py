@@ -19,7 +19,7 @@ FACE_YAML = "title: Revenue\ncharts:\n  c1:\n    type: bar\n    x: a\n    y: b\n
 
 
 def _faces_project(tmp_path: Path) -> FilesystemProject:
-    (tmp_path / "dataface.yml").write_text("name: legacy\n", encoding="utf-8")
+    (tmp_path / "legacy_config.yml").write_text("name: legacy\n", encoding="utf-8")
     faces = tmp_path / "faces"
     (faces / "sub").mkdir(parents=True)
     (faces / "revenue.yml").write_text(FACE_YAML, encoding="utf-8")
@@ -72,6 +72,6 @@ def test_non_charts_paths_are_untouched_by_the_fallback(tmp_path: Path) -> None:
     (tmp_path / "chartsy").mkdir()
     (tmp_path / "chartsy" / "x.txt").write_text("x\n", encoding="utf-8")
 
-    assert project.read_text("dataface.yml") == "name: legacy\n"
+    assert project.read_text("legacy_config.yml") == "name: legacy\n"
     # Prefix match is on the path segment, not the string prefix.
     assert project.read_text("chartsy/x.txt") == "x\n"

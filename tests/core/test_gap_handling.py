@@ -28,6 +28,8 @@ from dbt_charts.core.compile.models.style.authored import (
 )
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_render import ERR_GAP_FILL_BUCKET_COLLISION
 from dbt_charts.core.render.chart.time_unit_detect import complete_ordinal_time_series
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
@@ -227,6 +229,78 @@ class TestCompleteOrdinalTimeSeries:
         )
         days = [r["day"] for r in result]
         assert "2024-01-02" in days, "2024-01-02 missing"
+
+
+class TestGapFillBucketCollision:
+    """Two rows differing only by time-of-day collapse to the same
+    `_ordinal_bucket_key` and collide in `complete_ordinal_time_series`'s
+    `existing` lookup. `validate_preaggregated_data` cannot catch this: it
+    runs before gap-fill, on the still-distinct raw x values. A collision
+    cannot happen on legitimately grain-aligned data, so raising here costs
+    nothing on valid input.
+    """
+
+    def test_datetime_objects_same_day_raise(self) -> None:
+        rows = [
+            {"day": dt.datetime(2024, 1, 1, 9, 0, 0), "revenue": 100},
+            {"day": dt.datetime(2024, 1, 1, 15, 0, 0), "revenue": 500},
+            {"day": dt.datetime(2024, 1, 2, 9, 0, 0), "revenue": 200},
+        ]
+        with pytest.raises(ChartDataError) as exc_info:
+            complete_ordinal_time_series(
+                rows, "day", "yearmonthdate", [], "null", fiscal_year_start_month=1
+            )
+        assert exc_info.value.code is ERR_GAP_FILL_BUCKET_COLLISION, (
+            f"Expected ERR-GAP-FILL-BUCKET-COLLISION but got {exc_info.value.code!r}"
+        )
+
+    def test_iso_datetime_strings_same_day_raise(self) -> None:
+        rows = [
+            {"day": "2024-01-01T09:00:00", "revenue": 100},
+            {"day": "2024-01-01T15:00:00", "revenue": 500},
+            {"day": "2024-01-02T09:00:00", "revenue": 200},
+        ]
+        with pytest.raises(ChartDataError) as exc_info:
+            complete_ordinal_time_series(
+                rows, "day", "yearmonthdate", [], "null", fiscal_year_start_month=1
+            )
+        assert exc_info.value.code is ERR_GAP_FILL_BUCKET_COLLISION, (
+            f"Expected ERR-GAP-FILL-BUCKET-COLLISION but got {exc_info.value.code!r}"
+        )
+
+    def test_dim_field_collision_names_the_dim_in_message(self) -> None:
+        """`dim_fields = [color_field]` (`_channels.py`) is the production-common
+        shape — two rows sharing both bucket and dim value must still raise, and
+        the message must name the colliding dim, not just the bucket.
+        """
+        rows = [
+            {
+                "day": dt.datetime(2024, 1, 1, 9, 0, 0),
+                "region": "west",
+                "revenue": 100,
+            },
+            {
+                "day": dt.datetime(2024, 1, 1, 15, 0, 0),
+                "region": "west",
+                "revenue": 500,
+            },
+            {"day": dt.datetime(2024, 1, 2, 9, 0, 0), "region": "west", "revenue": 200},
+        ]
+        with pytest.raises(ChartDataError) as exc_info:
+            complete_ordinal_time_series(
+                rows,
+                "day",
+                "yearmonthdate",
+                ["region"],
+                "null",
+                fiscal_year_start_month=1,
+            )
+        assert exc_info.value.code is ERR_GAP_FILL_BUCKET_COLLISION, (
+            f"Expected ERR-GAP-FILL-BUCKET-COLLISION but got {exc_info.value.code!r}"
+        )
+        assert "region='west'" in str(exc_info.value), (
+            f"Expected the colliding dim in the message, got: {exc_info.value}"
+        )
 
 
 # ── Integration tests through render pipeline ──────────────────────────────────

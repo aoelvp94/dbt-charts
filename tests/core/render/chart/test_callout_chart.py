@@ -31,7 +31,7 @@ def reset_config_autouse():
     reset_config()
 
 
-def _callout_style_for_tone(tone: str, theme: str = "editorial"):
+def _callout_style_for_tone(tone: str, theme: str = "clarity"):
     """A ResolvedCalloutStyle resolved for the given tone.
 
     render_callout_svg no longer accepts a tone override (that decision is
@@ -111,7 +111,7 @@ def test_callout_default_tone_is_info(make_chart) -> None:
         query_name=None,
         message="Default info tone",
     )
-    _rs, _ctx = resolve_style_and_context(get_theme_style("editorial"))
+    _rs, _ctx = resolve_style_and_context(get_theme_style("clarity"))
     svg = render_chart(
         chart,
         resolved_style=_rs,
@@ -138,7 +138,7 @@ def test_callout_warning_tone_resolves_warning_palette_roles(make_chart) -> None
         message="A migration warning",
         style=CalloutChartStylePatch.model_validate({"tone": "warning"}),
     )
-    _rs, _ctx = resolve_style_and_context(get_theme_style("editorial"))
+    _rs, _ctx = resolve_style_and_context(get_theme_style("clarity"))
     svg = render_chart(
         chart,
         resolved_style=_rs,
@@ -164,7 +164,7 @@ def test_callout_positive_tone_resolves_positive_palette_roles(make_chart) -> No
         message="All checks passed",
         style=CalloutChartStylePatch.model_validate({"tone": "positive"}),
     )
-    _rs, _ctx = resolve_style_and_context(get_theme_style("editorial"))
+    _rs, _ctx = resolve_style_and_context(get_theme_style("clarity"))
     svg = render_chart(
         chart,
         resolved_style=_rs,
@@ -404,7 +404,7 @@ def test_render_callout_svg_without_code_has_no_doc_link() -> None:
 
 def test_render_callout_svg_renders_doc_url_as_see_docs_link() -> None:
     ctx = resolve_chart_style_context(get_theme_style())
-    doc_url = "https://docs.dataface.com/reference/errors/#err-test"
+    doc_url = "https://docs.dbtcharts.com/reference/errors/#err-test"
 
     svg = render_callout_svg(
         message="Something went wrong.",
@@ -543,7 +543,7 @@ def test_long_doc_url_renders_as_short_link_label() -> None:
     """A long doc_url must stay in href, not as visible card text."""
     import re as _re
 
-    ctx = resolve_chart_style_context(get_theme_style("editorial"))
+    ctx = resolve_chart_style_context(get_theme_style("clarity"))
     width = 280.0
     long_url = "https://docs.example.com/guides/error-reference/column-not-found-in-source-table"
 

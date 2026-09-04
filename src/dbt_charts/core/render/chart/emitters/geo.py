@@ -15,8 +15,16 @@ from dbt_charts.core.compile.models.style.resolved import (
 from dbt_charts.core.compile.models.style.theme import (
     GeoshapeMarkStyle,
 )
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    category_scale_for,
+    color_at,
+)
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset
 from dbt_charts.core.render.chart._types import VLDict
+from dbt_charts.core.render.chart.emitters._cartesian import (
+    distinct_series_values,
+    spatial_color_scale,
+)
 from dbt_charts.core.render.chart.emitters._channels import (
     apply_color_legend,
     apply_geo_choropleth_legend_endpoint_labels,
@@ -29,6 +37,7 @@ from dbt_charts.core.render.chart.geo_tooltip import (
 )
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.spec_builders import tooltip_entry
+from dbt_charts.core.render.chart.type_inference import infer_vega_type_from_data
 from dbt_charts.core.render.chart.vl_conditions import resolved_channel_to_vl_condition
 from dbt_charts.core.render.utils import normalize_data_types
 from dbt_charts.core.text.case import format_display_text
@@ -297,6 +306,11 @@ class GeoshapeEmitter:
         }
 
         # Color encoding: CF-driven conditional takes precedence over plain value field.
+        # value_field_type tracks color_enc's own "type" directly — it drives the
+        # tooltip entry below, which must never format the categorical-slot
+        # branch's string values ("nominal") with a numeric d3 format (that
+        # renders NaN, not the category name).
+        value_field_type = "quantitative"
         if color_ch is not None and color_ch.mode == "conditional":
             cond_enc = resolved_channel_to_vl_condition(color_ch)
             color_enc: dict[str, Any] = cond_enc if cond_enc is not None else {}
@@ -306,42 +320,90 @@ class GeoshapeEmitter:
                 raise ValueError(
                     "value_field must be set at resolve time for choropleth"
                 )
-            _geo_gradient = (
-                map_config.color.gradient
-                if map_config is not None and map_config.color is not None
-                else None
-            )
-            # No `data`/`field` passed: geoshape's data is pre-lookup-join, so
-            # it must never derive a nice-widened domain from it — Omitting
-            # `data` is the opt-out signal `gradient_scale_to_vl` reads,
-            # matching how _channels.py's bar/line/etc. gradient path (no
-            # `data` passed either) already opts out the same way. Domain
-            # widening stays unimplemented for geoshape; only the endpoint
-            # LABELS get a (safe, client-side) fix below.
-            _geo_scale: VLDict = (
-                gradient_scale_to_vl(_geo_gradient) if _geo_gradient is not None else {}
-            )
-            color_enc = {
-                "field": value_field,
-                "type": "quantitative",
-                "title": format_display_text(
-                    value_field,
-                    from_slug=True,
-                    font=chart.legend.title.font,
-                ),
-                "scale": _geo_scale,
-            }
-            # Wire the shared ResolvedLegendStyle styling through, same as
-            # heatmap.py — before this, geoshape's legend got whatever VL
-            # defaults to instead of our theme's legend style.
-            apply_color_legend(color_enc, chart.legend)
-            if _geo_gradient is not None:
-                # Labels are computed CLIENT-SIDE (a Vega signal reading the
-                # scale's own resolved, post-join domain) rather than from
-                # Python's pre-join `data` — see the function's docstring for
-                # why `apply_gradient_legend_endpoint_labels` (heatmap's
-                # server-side version) isn't safe here.
-                apply_geo_choropleth_legend_endpoint_labels(color_enc, _geo_gradient)
+            # Nominal vs quantitative is THIS chart's own data shape, never a
+            # sibling chart's binding decision -- category_scale_for used to
+            # gate the branch directly, so the identical string data
+            # rendered as a numeric gradient when this chart was alone on a
+            # board, and as a nominal discrete scale once some OTHER chart
+            # happened to bind the same field (the two-chart threshold, or
+            # an authored pin, neither of which says anything about THIS
+            # field's shape). A board scale, when one exists, now only ever
+            # supplies the RANGE below -- never whether this renders nominal
+            # at all.
+            own_type = infer_vega_type_from_data(data, value_field)
+            if own_type != "quantitative":
+                # A genuinely categorical `color:` field (string values) --
+                # paint the choropleth by board slot when bound, else fall
+                # back to the same alphabetical-by-palette-position default
+                # spatial_color_scale uses for an unbound cartesian series.
+                # Distinct from the quantitative gradient path below, which
+                # is the ordinary numeric choropleth. `data` is pre-lookup-
+                # join, so this chart's own drawn values come straight from
+                # it, in row order — same pattern as the pie emitter's
+                # wedge/label ink.
+                value_field_type = "nominal"
+                seen: list[str] = []
+                for row in data:
+                    v = row.get(value_field)
+                    if isinstance(v, str) and v not in seen:
+                        seen.append(v)
+                category_scale = category_scale_for(chart.category_colors, value_field)
+                if category_scale is not None:
+                    range_ = [color_at(category_scale, v, chart.palette) for v in seen]
+                else:
+                    range_ = [
+                        chart.palette[i % len(chart.palette)] for i in range(len(seen))
+                    ]
+                color_enc = {
+                    "field": value_field,
+                    "type": "nominal",
+                    "title": format_display_text(
+                        value_field, from_slug=True, font=chart.legend.title.font
+                    ),
+                    "scale": {"domain": seen, "range": range_},
+                }
+                apply_color_legend(color_enc, chart.legend)
+            else:
+                _geo_gradient = (
+                    map_config.color.gradient
+                    if map_config is not None and map_config.color is not None
+                    else None
+                )
+                # No `data`/`field` passed: geoshape's data is pre-lookup-join, so
+                # it must never derive a nice-widened domain from it — Omitting
+                # `data` is the opt-out signal `gradient_scale_to_vl` reads,
+                # matching how _channels.py's bar/line/etc. gradient path (no
+                # `data` passed either) already opts out the same way. Domain
+                # widening stays unimplemented for geoshape; only the endpoint
+                # LABELS get a (safe, client-side) fix below.
+                _geo_scale: VLDict = (
+                    gradient_scale_to_vl(_geo_gradient)
+                    if _geo_gradient is not None
+                    else {}
+                )
+                color_enc = {
+                    "field": value_field,
+                    "type": "quantitative",
+                    "title": format_display_text(
+                        value_field,
+                        from_slug=True,
+                        font=chart.legend.title.font,
+                    ),
+                    "scale": _geo_scale,
+                }
+                # Wire the shared ResolvedLegendStyle styling through, same as
+                # heatmap.py — before this, geoshape's legend got whatever VL
+                # defaults to instead of our theme's legend style.
+                apply_color_legend(color_enc, chart.legend)
+                if _geo_gradient is not None:
+                    # Labels are computed CLIENT-SIDE (a Vega signal reading the
+                    # scale's own resolved, post-join domain) rather than from
+                    # Python's pre-join `data` — see the function's docstring for
+                    # why `apply_gradient_legend_endpoint_labels` (heatmap's
+                    # server-side version) isn't safe here.
+                    apply_geo_choropleth_legend_endpoint_labels(
+                        color_enc, _geo_gradient
+                    )
 
         # Tooltip encoding (matching oracle field order).
         value_field = chart.value_field
@@ -358,9 +420,13 @@ class GeoshapeEmitter:
             tooltip_fields.append(
                 tooltip_entry(
                     value_field,
-                    "quantitative",
+                    value_field_type,
                     title=slug_to_text(value_field),
-                    format=chart.style.tooltip_format,
+                    format=(
+                        chart.style.tooltip_format
+                        if value_field_type == "quantitative"
+                        else None
+                    ),
                 )
             )
 
@@ -521,6 +587,22 @@ class PointMapEmitter:
                 enc["title"] = format_display_text(
                     color_field, from_slug=True, font=chart.legend.title.font
                 )
+                # A bound field still owes every value its board slot's
+                # color — VL's own alphabetical default range would
+                # otherwise paint this chart from its own local position,
+                # not the board's (mirrors bar/line/scatter's series path).
+                if (
+                    color_ch.mode == "series"
+                    and enc.get("type") == "nominal"
+                    and chart.palette
+                ):
+                    scale = category_scale_for(chart.category_colors, color_field)
+                    if scale is not None:
+                        series = distinct_series_values(data, color_field)
+                        if series:
+                            enc["scale"] = spatial_color_scale(
+                                series, chart.palette, series, scale
+                            )
                 encoding["color"] = enc
 
         tooltip_format = chart.style.tooltip_format

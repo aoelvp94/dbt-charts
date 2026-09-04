@@ -32,7 +32,7 @@ from dbt_charts.core.project import Project
 
 SALES_DASHBOARD = """\
 title: Sales Performance
-description: Revenue and order metrics for the sales team
+notes: Revenue and order metrics for the sales team
 queries:
   revenue:
     sql: SELECT date, SUM(amount) as revenue FROM orders GROUP BY date
@@ -61,7 +61,7 @@ tags:
 
 MARKETING_DASHBOARD = """\
 title: Marketing Campaign Analytics
-description: Track campaign performance, spend, and conversion rates
+notes: Track campaign performance, spend, and conversion rates
 queries:
   campaign_spend:
     sql: SELECT campaign, SUM(spend) as total_spend FROM marketing GROUP BY campaign
@@ -90,7 +90,7 @@ tags:
 
 INVENTORY_DASHBOARD = """\
 title: Inventory Status
-description: Stock levels, reorder points, and warehouse capacity
+notes: Stock levels, reorder points, and warehouse capacity
 queries:
   stock:
     sql: SELECT product, quantity, reorder_point FROM inventory
@@ -109,7 +109,7 @@ tags:
 
 FINANCE_DASHBOARD = """\
 title: Finance Overview
-description: Revenue recognition, margins, and cash flow analysis
+notes: Revenue recognition, margins, and cash flow analysis
 queries:
   margins:
     sql: SELECT date, revenue, cost, (revenue - cost) as margin FROM financials
@@ -139,7 +139,7 @@ tags:
 
 HR_DASHBOARD = """\
 title: HR Headcount Report
-description: Employee headcount, attrition, and department breakdown
+notes: Employee headcount, attrition, and department breakdown
 queries:
   headcount:
     sql: SELECT department, COUNT(*) as employees FROM staff GROUP BY department
@@ -181,6 +181,48 @@ def corpus_dir(
 # ---------------------------------------------------------------------------
 # Result contract — input/output shape validation
 # ---------------------------------------------------------------------------
+
+
+class TestSearchIndexesEveryBoard:
+    """The index gate and ``list_boards``' gate are one question, asked twice."""
+
+    def test_prose_only_board_is_searchable(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A ``text:``-only board renders, so it has to be findable."""
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        (boards / "runbook.yml").write_text(
+            "title: Incident Runbook\ntext: |\n  Paging rotation and escalation.\n"
+        )
+
+        hits = search_boards_hits("incident", local_project(tmp_path))
+
+        assert [h.title for h in hits] == ["Incident Runbook"]
+
+    def test_extends_only_board_is_searchable(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Composition folds the base's layout in; the child declares no content."""
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        (boards / "regional.yml").write_text(
+            "extends: sales_base\ntitle: Regional Sales\n"
+        )
+
+        hits = search_boards_hits("regional", local_project(tmp_path))
+
+        assert [h.title for h in hits] == ["Regional Sales"]
+
+    def test_meta_cascade_file_is_not_indexed(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """``meta.yaml`` is directory defaults, not a board someone can open."""
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        (boards / "meta.yaml").write_text("title: Regional defaults\nextends: cream\n")
+
+        assert search_boards_hits("regional", local_project(tmp_path)) == []
 
 
 class TestSearchDashboardsContract:
@@ -315,7 +357,7 @@ class TestSearchDashboardsHits:
         boards.mkdir()
         for i in range(MAX_SEARCH_LIMIT + 5):
             (boards / f"revenue_{i}.yml").write_text(
-                f"title: Revenue {i}\ndescription: revenue metrics\nrows: []\n"
+                f"title: Revenue {i}\nnotes: revenue metrics\nrows: []\n"
             )
         project = local_project(tmp_path)
 
@@ -354,7 +396,7 @@ class TestChartGrainSearch:
         boards.mkdir()
         (boards / "revenue.yml").write_text(
             "title: Revenue Board\n"
-            "description: Revenue metrics\n"
+            "notes: Revenue metrics\n"
             "queries:\n"
             "  revenue:\n"
             "    sql: SELECT date, SUM(amount) as revenue FROM orders\n"
@@ -397,7 +439,7 @@ class TestChartGrainSearch:
         boards.mkdir()
         (boards / "quick.yml").write_text(
             "title: Quick Board\n"
-            "description: Inline query chart\n"
+            "notes: Inline query chart\n"
             "charts:\n"
             "  rev:\n"
             "    query:\n"
@@ -425,7 +467,7 @@ class TestChartGrainSearch:
         boards.mkdir()
         (boards / "junk.yml").write_text(
             "title: Junk Board\n"
-            "description: malformed chart fields\n"
+            "notes: malformed chart fields\n"
             "charts:\n"
             "  odd:\n"
             "    title: [not, a, string]\n"
@@ -450,7 +492,7 @@ class TestChartGrainSearch:
         boards.mkdir()
         (boards / "yearly.yml").write_text(
             "title: Yearly Board\n"
-            "description: year-keyed charts\n"
+            "notes: year-keyed charts\n"
             "charts:\n"
             "  2024:\n"
             "    type: bar\n"
@@ -477,7 +519,7 @@ class TestChartGrainSearch:
         row_lines = "".join(f"  - revenue_{i}\n" for i in range(6))
         (boards / "many.yml").write_text(
             "title: Many Charts\n"
-            "description: revenue everywhere\n"
+            "notes: revenue everywhere\n"
             "charts:\n" + chart_lines + "rows:\n" + row_lines
         )
 
@@ -494,7 +536,7 @@ class TestChartGrainSearch:
         boards.mkdir()
         (boards / "text_only.yml").write_text(
             "title: Text Only Board\n"
-            "description: Just a queries mapping, no charts\n"
+            "notes: Just a queries mapping, no charts\n"
             "queries:\n"
             "  q:\n"
             "    sql: SELECT 1\n"
@@ -513,7 +555,7 @@ class TestChartGrainSearch:
         boards.mkdir()
         (boards / "styled.yml").write_text(
             "title: Styled Board\n"
-            "description: A board with heavily styled charts\n"
+            "notes: A board with heavily styled charts\n"
             "queries:\n"
             "  q:\n"
             "    sql: SELECT 1\n"
@@ -538,13 +580,13 @@ class TestChartGrainSearch:
     def test_chart_title_match_boosts_score_and_reason(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """A chart-title match ranks its dashboard above a description-only match
+        """A chart-title match ranks its dashboard above a notes-only match
         and names the answering chart in match_reasons."""
         boards = tmp_path / "charts"
         boards.mkdir()
         (boards / "revenue_chart.yml").write_text(
             "title: Analytics Board\n"
-            "description: General analytics\n"
+            "notes: General analytics\n"
             "queries:\n"
             "  q:\n"
             "    sql: SELECT 1\n"
@@ -558,7 +600,7 @@ class TestChartGrainSearch:
         )
         (boards / "desc_only.yml").write_text(
             "title: Other Board\n"
-            "description: Mentions monthly figures but revenue only once\n"
+            "notes: Mentions monthly figures but revenue only once\n"
             "queries:\n"
             "  q:\n"
             "    sql: SELECT 1\n"
@@ -585,7 +627,7 @@ class TestChartGrainSearch:
         boards.mkdir()
         (boards / "topline.yml").write_text(
             "title: Overview\n"
-            "description: General metrics\n"
+            "notes: General metrics\n"
             "queries:\n"
             "  q:\n"
             "    sql: SELECT 1\n"
@@ -694,16 +736,10 @@ class TestSearchDashboardsRelevance:
         boards = tmp_path / "charts"
         boards.mkdir()
         (boards / "b_widget.yml").write_text(
-            "title: Widget B\n"
-            "description: zephyr wind data\n"
-            "tags:\n  - zephyr\n"
-            "rows: []\n"
+            "title: Widget B\nnotes: zephyr wind data\ntags:\n  - zephyr\nrows: []\n"
         )
         (boards / "a_gadget.yml").write_text(
-            "title: Gadget A\n"
-            "description: zephyr wind data\n"
-            "tags:\n  - zephyr\n"
-            "rows: []\n"
+            "title: Gadget A\nnotes: zephyr wind data\ntags:\n  - zephyr\nrows: []\n"
         )
         result = search_boards(query="zephyr", project=local_project(tmp_path))
         assert len(result.results) == 2
@@ -726,7 +762,7 @@ class TestSearchDashboardsRelevance:
 
 
 class TestSearchSummarySanitization:
-    def test_strips_ai_notes_references_from_description(
+    def test_strips_ai_notes_references_from_notes(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         boards = tmp_path / "charts"
@@ -734,7 +770,7 @@ class TestSearchSummarySanitization:
         board = boards / "dense.yml"
         board.write_text(
             "title: Dense Board\n"
-            "description: Above-the-fold layout; see ai_notes/dense-board-design.md.\n"
+            "notes: Above-the-fold layout; see ai_notes/dense-board-design.md.\n"
             "queries:\n  q:\n    sql: SELECT 1\n"
             "charts:\n  c:\n    query: q\n    type: table\n"
             "rows:\n  - c\n"
@@ -752,7 +788,7 @@ class TestSearchDashboardsProjectScope:
         """Boards at project root with no charts/ dir are not discovered — search scans charts/ only."""
         # No charts/ dir — boards live directly at project root.
         (tmp_path / "root_dash.yml").write_text(
-            "title: Root Dashboard\ndescription: Zendesk root metrics\n"
+            "title: Root Dashboard\nnotes: Zendesk root metrics\n"
             "queries:\n  q:\n    sql: SELECT 1\n"
             "charts:\n  c:\n    query: q\n    type: kpi\n    value: v\n"
             "rows:\n  - c\n"
@@ -770,14 +806,14 @@ class TestSearchDashboardsProjectScope:
         boards = tmp_path / "charts"
         boards.mkdir()
         (boards / "support.yml").write_text(
-            "title: Support Trends\ndescription: Zendesk support metrics\n"
+            "title: Support Trends\nnotes: Zendesk support metrics\n"
             "queries:\n  q:\n    sql: SELECT 1\n"
             "charts:\n  c:\n    query: q\n    type: kpi\n    value: v\n"
             "rows:\n  - c\n"
         )
         # Root-level decoy — must NOT appear when charts/ has content.
         (tmp_path / "root_decoy.yml").write_text(
-            "title: Root Decoy\ndescription: Zendesk decoy\n"
+            "title: Root Decoy\nnotes: Zendesk decoy\n"
             "queries:\n  q:\n    sql: SELECT 1\n"
             "charts:\n  c:\n    query: q\n    type: kpi\n    value: v\n"
             "rows:\n  - c\n"
@@ -804,7 +840,7 @@ class TestSearchDashboardsProjectScope:
         )
         # Root-level YAML — must NOT be found; discovery scans charts/ only.
         (tmp_path / "root_dash.yml").write_text(
-            "title: Root Dashboard\ndescription: Zendesk root metrics\n"
+            "title: Root Dashboard\nnotes: Zendesk root metrics\n"
             "queries:\n  q:\n    sql: SELECT 1\n"
             "charts:\n  c:\n    query: q\n    type: kpi\n    value: v\n"
             "rows:\n  - c\n"
@@ -823,7 +859,7 @@ class TestSearchDashboardsProjectScope:
         boards.mkdir()
         (boards / "notes.md").write_text("charts:\n  c: hi\n")
         (boards / "real.yml").write_text(
-            "title: Real Dashboard\ndescription: zendesk metrics\n"
+            "title: Real Dashboard\nnotes: zendesk metrics\n"
             "queries:\n  q:\n    sql: SELECT 1\n"
             "charts:\n  c:\n    query: q\n    type: kpi\n    value: v\n"
             "rows:\n  - c\n"
@@ -850,7 +886,7 @@ class TestSearchHitPathCoordinateSystems:
         nested.mkdir(parents=True)
         (nested / "x.yaml").write_text(
             "title: Sub Dashboard\n"
-            "description: nested board for path coordinate regression\n"
+            "notes: nested board for path coordinate regression\n"
             "queries:\n  q:\n    columns: [n]\n    values:\n      - [1]\n"
             "charts:\n  c:\n    query: q\n    type: kpi\n    value: n\n"
             "rows:\n  - c\n"

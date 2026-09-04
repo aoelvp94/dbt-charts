@@ -5,21 +5,51 @@ Each primitive is genuinely shared (2+ call sites), accepts explicit args, and
 never takes board_style — preserving the no-board_style emitter invariant.
 
 Convention: every primitive here is a pure builder — it returns a value and
-never mutates an argument in place.
+never mutates an argument in place. Exception: ``nest_zero_rule`` mutates
+``entry`` in place (appends to ``entry.layers`` when already ``mark="layered"``,
+and always pins ``nice: false`` on its own scale dict when a headroom bound is
+present) — every call site already treats its return value as authoritative,
+so the mutation is harmless, but it is a real exception to this convention.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any, Literal, NamedTuple
 
+from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.chart.authored._annotations import ChartSort
+from dbt_charts.core.compile.models.chart.authored._base import MultiplesConfig
+from dbt_charts.core.compile.models.chart.resolved import (
+    PartitionAxis,
+    ResolvedChart,
+)
+from dbt_charts.core.compile.models.chart.resolved._base import (
+    _CartesianResolvedChartFields,
+)
+from dbt_charts.core.compile.models.chart.resolved._layer import (
+    LayeredResolvedChart,
+)
+from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
+from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
+from dbt_charts.core.compile.models.chart.resolved.heatmap import ResolvedHeatmapChart
+from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
 from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
 from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedAxisStyle,
     ResolvedScaleStyle,
 )
-from dbt_charts.core.compile.resolve.chart.tick_values import numeric_domain_bounds
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    CategoryColorScale,
+    color_at,
+)
+from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
+from dbt_charts.core.compile.resolve.chart.tick_values import (
+    numeric_domain_bounds,
+    zero_anchor_domain_floor,
+    zero_anchor_floor,
+)
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_SCALE_DOMAIN_REQUIRES_CONTINUOUS_X,
@@ -28,7 +58,7 @@ from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.emitters._label_overlap import resolve_axis_x_overlap
-from dbt_charts.core.render.chart.spec import RenderBox
+from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.text_truncation import record_text_truncation
 from dbt_charts.core.render.chart.time_unit_detect import (
     BUCKETED_CALENDAR_UNITS,
@@ -50,11 +80,16 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     bake_tick_ladder,
     emit_resolved_scale_vl,
 )
-from dbt_charts.core.text.case import format_display_text
+from dbt_charts.core.text.case import default_axis_title
+from dbt_charts.core.text.predefined_formats import (
+    PREDEFINED_SPECS,
+    PredefinedNumberFormat,
+)
+from dbt_charts.core.utils import DEFAULT_VL_LABEL_LIMIT, Rows, numeric_column_values
 from mdsvg.fonts import wrap_text_precise
 
-# Dataface ChartSort.order ("asc"/"desc") → Vega-Lite sort.order. VL silently
-# falls back to ascending on the raw Dataface form, so translate at emit (mirrors
+# dbt charts ChartSort.order ("asc"/"desc") → Vega-Lite sort.order. VL silently
+# falls back to ascending on the raw dbt charts form, so translate at emit (mirrors
 # V1 profile._SORT_ORDER_VL).
 _SORT_ORDER_VL = {"asc": "ascending", "desc": "descending"}
 
@@ -65,6 +100,22 @@ _CONTINUOUS_VL_TYPES = frozenset({"temporal", "quantitative"})
 
 # The complement: cartesian-x types that resolve to a discrete band scale.
 _BAND_X_TYPES = frozenset({"ordinal", "nominal"})
+
+
+def x_encoding_is_banded(x_enc: VLDict) -> bool:
+    """True when a cartesian position channel's emitted encoding sits on a
+    discrete band/point scale — nominal/ordinal, or a bucketed-calendar
+    temporal (``timeUnit`` present).
+
+    False for a genuinely continuous position: quantitative, or a temporal
+    channel wide enough to have been promoted past ``max_ordinal_buckets``
+    (raw temporal, no ``timeUnit``). A discrete scale is what an ``xOffset``/
+    ``yOffset`` sub-scale needs to divide bars within — on a continuous
+    position there is no band step for it to divide, so any offset channel
+    riding along is inert for positioning and must not be trusted to size a
+    mark either.
+    """
+    return x_enc.get("type") in _BAND_X_TYPES or "timeUnit" in x_enc
 
 
 # Smallest outer padding that lifts a band scale's first tick off the exact
@@ -264,6 +315,8 @@ def resolve_cartesian_x(
     mark_type: str,
     curve: str | None = None,
     band_doubled: bool = False,
+    domain_values: list[Any] | None = None,  # type-state: explicit_any — raw x values
+    reserved_width: float = 0.0,
 ) -> CartesianXResolution:
     """Resolve x encoding type, axis VL dict, and x scale for a cartesian x field.
 
@@ -277,12 +330,29 @@ def resolve_cartesian_x(
     ``build_cartesian_x_encoding`` for the bucketed-grain type split.
     ``band_doubled`` reports whether any overlay LAYER band-doubles this same
     scale; the base's own ``curve`` cannot see that, and either side is enough
-    to make adjacent band edges load-bearing.
+    to make adjacent band edges load-bearing. ``domain_values`` is the x
+    scale's full band domain when overlay layers extend it past this axis's
+    own rows (``overlay_x_domain_values``) — forwarded to both the crowding
+    measurement and the tick-value/cadence build, mirroring bar's own overlay
+    handling (``bar.py``'s ``_emit_vertical``).
+
+    ``reserved_width`` is horizontal chrome the caller already knows about
+    and this function does not — chiefly the endpoint-label rail
+    (``emitters/_endpoint_rail.py``'s ``resolve_endpoint_rail_span``), which
+    is sized from the same series names/font the feature pass will draw it
+    with, before the crowding decision below ever runs. Subtracted from
+    ``chart_width`` before the label-fit walk measures against it, so
+    ``label_usable_ratio`` is applied to the chart's real plot width instead
+    of its full outer slot.
     """
     from dbt_charts.core.render.chart.step_band import BAND_STEP_CURVE
 
+    # `()` is correct rather than merely convenient: this helper is reached
+    # only by line/area/scatter, which the scaffold gate excludes outright, so
+    # no panel-aware measurement is owed. Passing it explicitly is the point of
+    # the parameter having no default.
     vl_type, _, _ = resolve_cartesian_x_type(
-        data, x_field, ax, mark_type, curve == BAND_STEP_CURVE
+        data, x_field, ax, mark_type, curve == BAND_STEP_CURVE, ()
     )
     label_layout = resolve_axis_x_overlap(
         ax,
@@ -291,7 +361,8 @@ def resolve_cartesian_x(
         label_usable_ratio,
         bucket_aligned_temporal=curve == "step",
         edge_labels_flushed=temporal_edge_labels_flushed(vl_type, ax),
-        chart_width=chart_width,
+        chart_width=chart_width - reserved_width,
+        domain_values=domain_values,
     )
     ax_vl_raw = axis_to_vl(
         ax,
@@ -311,6 +382,10 @@ def resolve_cartesian_x(
         format_time_unit=label_layout.format_time_unit,
         visibility_time_unit=label_layout.visibility_time_unit,
         label_anchor_index=label_layout.anchor_index,
+        domain_values=domain_values,
+        outer_chart_width=chart_width,
+        plot_width=chart_width - reserved_width,
+        panel_fields=(),  # line/area/scatter only — excluded from the gate
     )
     x_scale.update(cartesian_x_scale_domain(ax.scale, vl_type, chart_id))
     nudge_band_scale_off_range_start(
@@ -326,7 +401,7 @@ def resolve_cartesian_x(
 
 
 # An axis title Vega-Lite will render: a plain string, or one entry per line
-# when Dataface pre-wrapped it to fit the axis (VL renders a list as lines but
+# when dbt charts pre-wrapped it to fit the axis (VL renders a list as lines but
 # never computes the breaks itself).
 AxisTitle = str | list[str] | None
 
@@ -336,15 +411,19 @@ class XYTitles(NamedTuple):
 
     ``x_title`` / ``y_title`` are what Vega-Lite renders: a ``list[str]`` when
     the title had to be wrapped to fit its axis (VL draws one line per entry).
-    ``y_plain`` is the y title before wrapping — the value to use anywhere the
-    title is *data* rather than layout, such as the base-series legend label a
-    layered chart builds its color scale domain from. Wrapping is a display
-    concern and must not leak into a datum. (There is no ``x_plain``: no data
-    label is derived from the x title.)
+    ``x_plain`` / ``y_plain`` are those same titles before wrapping — the value
+    to use anywhere the title is *data* rather than layout, such as the
+    base-series legend label a layered chart builds its color scale domain
+    from. Wrapping is a display concern and must not leak into a datum.
+
+    Both channels carry a plain form because these titles are in VL channel
+    space, not authored space: the legend label a layered chart needs is the
+    MEASURE title, and a horizontal bar draws its measure on ``x``.
     """
 
     x_title: AxisTitle
     y_title: AxisTitle
+    x_plain: str | None
     y_plain: str | None
 
 
@@ -394,19 +473,17 @@ def wrap_axis_title(
     return (lines if len(lines) > 1 else lines[0]), truncated
 
 
-def wide_measures_title(measures: tuple[str, ...], font: ResolvedFontStyle) -> str:
+def wide_measures_title(measures: tuple[str, ...]) -> str:
     """Y-axis title for a folded multi-measure (wide ``y: [...]``) chart.
 
-    Joins each measure's own humanized name — the same ``format_display_text``
+    Joins each measure's own humanized name — the same ``default_axis_title``
     derivation a single ``y:`` field's title already uses, generalized to the
     list case, since the measure names ARE real authored fields (unlike the
     synthetic fold-key/color field, which has no name to derive a legend
     title from). An authored ``y_label`` always overrides this — callers pass
     it through ``resolve_xy_titles``'s ``y_label`` param, not this function.
     """
-    return ", ".join(
-        format_display_text(m, from_slug=True, font=font) for m in measures
-    )
+    return ", ".join(default_axis_title(m) for m in measures)
 
 
 def resolve_xy_titles(
@@ -444,16 +521,8 @@ def resolve_xy_titles(
     before calling). Tooltip *content* is a separate concern — built by
     ``features/structured_tooltip.py`` from the chart-axes LUT, not here.
     """
-    x_text: str | None = x_label or (
-        format_display_text(x_field, from_slug=True, font=ax.title.font)
-        if x_field
-        else None
-    )
-    y_text: str | None = y_label or (
-        format_display_text(y_field, from_slug=True, font=ay.title.font)
-        if y_field
-        else None
-    )
+    x_text: str | None = x_label or (default_axis_title(x_field) if x_field else None)
+    y_text: str | None = y_label or (default_axis_title(y_field) if y_field else None)
     x_title: AxisTitle
     y_title: AxisTitle
     if x_text:
@@ -468,7 +537,7 @@ def resolve_xy_titles(
             record_text_truncation(chart_id, "axis_title", y_text, y_authored_field)
     else:
         y_title = y_text
-    return XYTitles(x_title, y_title, y_text)
+    return XYTitles(x_title, y_title, x_text, y_text)
 
 
 def build_x_enc(
@@ -507,6 +576,399 @@ def build_x_enc(
 _LAYOUT_CHROME_PX = 72.0
 
 
+# A raw query-result cell value (str/int/float/date/None) — dynamic by
+# construction, not a laundered type: the concrete type depends on the
+# board's own query.
+_CellValue = Any  # type-state: explicit_any — raw query result cell value
+# Facet panel key (one cell value per active facet dimension) -> distinct
+# values of one field seen within that panel.
+_PanelDomains = dict[tuple[_CellValue, ...], set[_CellValue]]
+
+
+def _panel_domains(
+    field: str,
+    panel_axes: tuple[PartitionAxis, ...],
+    data: list[dict[str, Any]],  # type-state: explicit_any — raw query result rows
+) -> _PanelDomains:
+    """``field``'s distinct values, grouped by resolve's own baked
+    small-multiples partition (``panel_axes``) — replays the one partition
+    resolve already computed (``regroup()``,
+    ``compile/resolve/chart/_chart_rows.py``) rather than re-deriving panel
+    membership from raw facet-field values a second time. Two authorities
+    computing the same fact drift; this reads the one resolve already baked.
+
+    Empty when the chart isn't faceted (``panel_axes == ()``) — nothing to
+    group by. ``field`` may itself be one of the partition columns (the
+    degenerate same-field-as-facet shape, e.g. ``y: series`` faceted by
+    ``columns: series``) — ``regroup()`` strips those off each row and
+    holds the single value on ``Panel.key`` instead (see ``Panel``'s own
+    docstring in ``_chart_rows.py``), so that case is read off the key,
+    not scanned for in rows that no longer carry it.
+    """
+    if not panel_axes:
+        return {}
+    axis_position = next(
+        (i for i, axis in enumerate(panel_axes) if axis.field == field), None
+    )
+    panel_domains: _PanelDomains = {}
+    for panel in regroup(panel_axes, data).panels:
+        values = (
+            {panel.key[axis_position]}
+            if axis_position is not None
+            else {
+                row[field]
+                for row in panel.rows
+                if field in row and row[field] is not None
+            }
+        )
+        if values:
+            panel_domains[panel.key] = values
+    return panel_domains
+
+
+def widest_panel_distinct_count(
+    field: str,
+    panel_axes: tuple[PartitionAxis, ...],
+    data: list[dict[str, Any]],  # type-state: explicit_any — raw query result rows
+) -> int:
+    """The most distinct ``field`` values any single small-multiples panel
+    holds, replaying resolve's baked partition (``_panel_domains``).
+
+    ``0`` when the chart isn't faceted or no panel carries any value for
+    ``field`` — callers deciding a per-panel budget fall back to the
+    whole-dataset count in that case (there is nothing narrower to use).
+    Shared by every reader of the "narrowed panels hold at most this many
+    values" fact — the render-side height floor
+    (``effective_horizontal_bar_category_count`` below) and the warning
+    detectors that estimate a per-band/per-slot pixel width from a
+    narrowed axis (``render/warnings/bar_band_width_too_narrow.py``,
+    ``render/warnings/value_labels_crowd_width.py``) — so there is one
+    place computing it, not three copies that can drift.
+    """
+    panel_domains = _panel_domains(field, panel_axes, data)
+    if not panel_domains:
+        return 0
+    return max(len(values) for values in panel_domains.values())
+
+
+def _panel_domain_is_proper_subset(
+    field: str,
+    panel_axes: tuple[PartitionAxis, ...],
+    data: list[dict[str, Any]],  # type-state: explicit_any — raw query result rows
+) -> bool:
+    """True when at least one facet panel's own rows carry a proper subset of
+    ``field``'s values across the whole dataset.
+
+    Data-driven, not name-driven: narrowing a position channel's scale to a
+    panel's own domain is only worth doing — and only correct to read — when
+    that panel actually holds fewer values than the chart's full domain.
+    Whether ``field`` happens to be one of the facet fields is irrelevant; a
+    panel keyed by one field can just as easily be sparse against a
+    completely different field's domain (a region panel containing two of
+    five products). A field with <= 1 distinct value overall has no "narrower"
+    state to reach (avoids a spurious True forced by "1 value is 'less than'
+    1 value" edge cases with malformed input).
+    """
+    panel_domains = _panel_domains(field, panel_axes, data)
+    if not panel_domains:
+        return False
+    domain = {value for values in panel_domains.values() for value in values}
+    if len(domain) <= 1:
+        return False
+    return any(len(values) < len(domain) for values in panel_domains.values())
+
+
+def _domain_subset_narrowing_candidates(
+    chart: ResolvedChart,
+    multiples: MultiplesConfig,
+    data: list[dict[str, Any]],  # type-state: explicit_any — raw query result rows
+) -> frozenset[Literal["x", "y"]]:
+    """VL position channels ("x"/"y") worth resolving independently per facet
+    panel, because at least one panel's own rows carry a proper subset of
+    that channel's field's domain (``_panel_domain_is_proper_subset``) —
+    whatever the field is called, not only when it happens to equal one of
+    the facet fields. A panel that DOES contain the full domain gains
+    nothing from narrowing, so it is left alone; VL's facet default (a
+    scale shared and unioned across every panel) is already correct there.
+
+    Width-oblivious: this is the domain-and-mirror layer only. It never
+    checks whether the columns/grid-facet "y" case is actually affordable —
+    ``facet_bound_position_channels()`` (below) adds that on top, and this
+    function is also what ``facet_extra_axis_width_px()`` calls to decide
+    whether measuring is worth doing at all, before affordability can even
+    be evaluated (affordability needs the measurement's own result). Calling
+    the public, affordability-aware predicate from inside the measurement
+    that predicate itself depends on would recurse; this split breaks that.
+
+    VL already draws an axis for the row-varying channel (VL "y") once per
+    row panel, and for the column-varying channel (VL "x") once per column
+    panel — narrowing costs no extra space there. Under a `columns` (or
+    grid) facet, VL otherwise draws the "y" axis only once, shared down the
+    left edge; forcing it independent paints a whole extra axis inside every
+    column panel. `facet_panel_width()` budgets that extra width itself
+    (see `facet_extra_axis_width_px()` below) when affordable.
+
+    Symmetrically, "x" narrowed under a `rows` (or grid) facet forces an
+    extra axis into every row panel — that costs panel *height*, and no
+    counterpart to `facet_panel_width()` budgets a chart's height (there is
+    no `facet_panel_height()`). So VL "x" still does NOT narrow when
+    `multiples.rows is not None`: the one exclusion this function keeps is
+    deliberate, not a leftover — removing it would reintroduce the same
+    unbudgeted-axis defect this function exists to prevent, just on the
+    other axis. Widening the height budget to close that gap is a distinct,
+    separately-scoped fix.
+
+    VL "y" also never narrows when the resolved y-axis mirrors to both
+    edges (``chart.style.axis_y.mirror`` — a bool or an ``AxisMirrorStyle``,
+    both truthy). `MirrorAxisFeature` appends the ghost edge as a layer on
+    the unit spec; once "y"'s scale is independent, VL stops sharing that
+    unit spec across the panel row and instantiates it — ghost layer
+    included — once per panel, not once for the whole facet. Charging that
+    per panel does not fix it either: measured on a real board, it forces
+    panels to shrink past zero rather than merely under-reserve. Refusing
+    to narrow a mirrored "y" is the only option that cannot overflow, so it
+    is the deliberate, permanent behaviour here — not a narrower budget to
+    grow into later. "x" has no mirror field to check (`AxisYStyle.mirror`
+    is the only shipped mirror flag), so this guard is "y"-only by
+    construction.
+
+    `color`/`theta`/`size` are never included: only positional band/axis
+    space narrows, not the shared colour identity.
+
+    Never narrows for a chart carrying an authored ``layers:`` overlay
+    (bar/line/area/scatter — see ``LayeredResolvedChart``). The overlay
+    assembly moves a base-only channel off the top-level VL encoding onto
+    ``spec.layers[0]`` (the base is always layers[0] — see
+    ``render_cartesian_overlay``'s "paint order contract" docstring in
+    ``_overlay.py``), which the two consumers of this predicate read
+    differently: ``FacetFeature`` sees a ChartSpec and could in principle
+    follow that relocation, but ``effective_horizontal_bar_category_count``
+    (below) runs BEFORE any ChartSpec exists — it only ever has the resolved
+    chart and raw data, with nothing to relocate to. Narrowing here for a
+    layered chart would need both consumers to agree on where a moved
+    channel's type lives, and only one of them has anywhere to look. Kept
+    out of scope deliberately, not narrowed accidentally: excluding it here,
+    once, means every consumer of this predicate agrees by construction
+    instead of each needing its own guard. Tracked as follow-on work:
+    graph-library/facet-narrowing-does-not-cover-a-layered-chart.
+    """
+    if isinstance(chart, LayeredResolvedChart) and chart.layers:
+        return frozenset()
+    # multiples is cartesian-only, so every real caller already holds a
+    # cartesian chart here — narrows chart.x/.y/.style below to the
+    # cartesian-shaped subset of ResolvedChart's own discriminated union.
+    assert isinstance(chart, _CartesianResolvedChartFields)
+    is_flipped = (
+        isinstance(chart, ResolvedBarChart) and chart.orientation == "horizontal"
+    )
+    x_channel: Literal["x", "y"] = "y" if is_flipped else "x"
+    y_channel: Literal["x", "y"] = "x" if is_flipped else "y"
+    mirrored = bool(chart.style.axis_y.mirror)
+
+    channels: set[Literal["x", "y"]] = set()
+    if (
+        isinstance(chart.x, str)
+        and not (x_channel == "x" and multiples.rows is not None)
+        and not (x_channel == "y" and mirrored)
+        and _panel_domain_is_proper_subset(chart.x, chart.panel_axes, data)
+    ):
+        channels.add(x_channel)
+    if (
+        isinstance(chart.y, str)
+        and not (y_channel == "x" and multiples.rows is not None)
+        and not (y_channel == "y" and mirrored)
+        and _panel_domain_is_proper_subset(chart.y, chart.panel_axes, data)
+    ):
+        channels.add(y_channel)
+    return frozenset(channels)
+
+
+def extra_axis_is_affordable(
+    unnarrowed_panel_width: float, extra_axis_px: float
+) -> bool:
+    """True when reserving ``extra_axis_px`` for the extra per-column-panel
+    axis still leaves at least ``chart_rendering.facet.min_panel_px`` of
+    panel width — the SAME floor ``WARN_FACET_PANEL_WIDTH_BELOW_MINIMUM``
+    (``render/warnings/facet_panel_width_below_minimum.py``) already reads,
+    not a separate constant. Narrowing a position channel is an improvement
+    only when the result is still legible; an honest budget that consumes
+    the whole card is a signal to skip the reservation, not a reason to
+    paint five zero-width panels. ``extra_axis_px <= 0.0`` is always
+    affordable — there is nothing to reserve.
+    """
+    if extra_axis_px <= 0.0:
+        return True
+    min_panel_px = get_chart_rendering().facet.min_panel_px
+    return unnarrowed_panel_width - extra_axis_px >= min_panel_px
+
+
+def facet_bound_position_channels(
+    chart: ResolvedChart,
+    multiples: MultiplesConfig,
+    data: list[dict[str, Any]],  # type-state: explicit_any — raw query result rows
+    unnarrowed_panel_width: float | None,
+) -> frozenset[Literal["x", "y"]]:
+    """``_domain_subset_narrowing_candidates()`` plus one more gate: the
+    columns/grid-facet "y" case additionally narrows only when
+    ``extra_axis_is_affordable()`` says the reservation still leaves a
+    legible panel.
+
+    ``unnarrowed_panel_width`` is the per-column-panel width the facet would
+    use with NO extra axis reserved (``facet_panel_width(..., extra_axis_px
+    =0.0)`` — the same number the caller's own width budget is computed
+    against, so both agree on the same verdict from the same inputs).
+    ``None`` skips the affordability check entirely rather than treating it
+    as "always affordable" or "never affordable" — legitimate for a caller
+    with no panel geometry to check (a non-faceted chart, where "y" can
+    never reach the columns-facet branch below regardless) or a caller
+    that never computed real facet geometry in the first place.
+
+    Only the width-budgeted "y" case is gated here — "x" is either free
+    (rows-only/no-facet) or already excluded outright by
+    ``_domain_subset_narrowing_candidates()`` (rows/grid facet, no height
+    budget exists to check against), so it never reaches this gate.
+    """
+    channels = set(_domain_subset_narrowing_candidates(chart, multiples, data))
+    if (
+        "y" in channels
+        and multiples.columns is not None
+        and unnarrowed_panel_width is not None
+    ):
+        extra = facet_extra_axis_width_px(chart, multiples, data)
+        if not extra_axis_is_affordable(unnarrowed_panel_width, extra):
+            channels.discard("y")
+    return frozenset(channels)
+
+
+def _emits_discrete_y(
+    chart: _CartesianResolvedChartFields,
+    y_field: str,
+    data: list[dict[str, Any]],  # type-state: explicit_any — raw query result rows
+) -> bool:
+    """Whether VL "y" will actually be emitted nominal/ordinal for ``chart``,
+    re-derived from the resolved chart and raw data rather than the emitted
+    spec — ``facet_extra_axis_width_px()`` (below) runs before any spec
+    exists (see ``vega_lite.py``'s ``_render_vl_artifact``), so it cannot
+    read ``spec.encoding["y"]["type"]`` the way
+    ``_discrete_facet_channels()`` (``render/chart/features/facet.py``)
+    does post-emission.
+
+    NOT a single data-inference call: how the emitted "y" type is decided
+    varies by chart family, and getting that wrong in either direction is a
+    real bug — treating every family as data-inferred would budget width for
+    a chart whose real "y" is hardcoded quantitative and never narrows, or
+    skip budgeting for a chart whose "y" is hardcoded discrete regardless of
+    what the data looks like. Per family, from source:
+
+    - Heatmap (single measure — the only shape reaching here, see the
+      ``isinstance(y_field, str)`` guard at the call site: a wide/list
+      ``chart.y`` folds into a layered spec whose per-measure "y" encodings
+      never land on the top-level encoding at all): hardcoded nominal
+      unconditionally — ``emitters/heatmap.py``'s ``y_type = "nominal"``
+      ("a grid dimension, never a numeric domain"). Always discrete.
+    - Horizontal bar: hardcoded nominal unconditionally —
+      ``emitters/bar.py``'s ``_emit_horizontal`` (the ``cat_field`` "y"
+      encoding), which never consults the data or
+      ``resolve_cartesian_x_type()`` for this axis. Always discrete
+      (VL "y" carries ``chart.x``, the category, after the flip).
+    - Vertical bar / line / area: hardcoded quantitative unconditionally —
+      ``emitters/bar.py``'s ``_emit_vertical`` and
+      ``emitters/_cartesian.py``'s ``build_cartesian_y_encoding`` (line,
+      area — ``"type": "quantitative"``). Safe only because resolve
+      refuses a non-numeric ``y`` outright before render ever runs. Never
+      discrete.
+    - Scatter: the one family actually inferred from data —
+      ``emitters/scatter.py``'s ``y_type = infer_vega_type_from_data(data,
+      chart.y)``. Scatter has no numeric-``y`` validation and no fixed axis
+      semantics (a scatter "y" can legitimately be nominal, e.g. a dot
+      plot), so this is the only row where re-reading the data is the
+      correct source of truth, not merely convenient. Scatter also never
+      reaches here as a wide chart — resolve raises
+      ``ERR_MULTI_Y_UNSUPPORTED_CHART_TYPE`` for a list ``y``
+      (``compile/resolve/chart/scatter.py``) — so ``chart.y`` is always a
+      plain ``str | None`` by this point.
+    """
+    if isinstance(chart, ResolvedHeatmapChart):
+        return True
+    if isinstance(chart, ResolvedBarChart):
+        return chart.orientation == "horizontal"
+    if isinstance(chart, (ResolvedLineChart, ResolvedAreaChart)):
+        return False
+    return infer_vega_type_from_data(data, y_field) in {"nominal", "ordinal"}
+
+
+def facet_extra_axis_width_px(
+    chart: ResolvedChart,
+    multiples: MultiplesConfig,
+    data: list[dict[str, Any]],  # type-state: explicit_any — raw query result rows
+) -> float:
+    """The width ONE extra per-column-panel axis instance would cost, were
+    the "y"-bound channel narrowed under a columns/grid facet — see
+    ``facet_bound_position_channels``'s docstring. ``0.0`` when no channel
+    could ever force that (no columns facet, "y" isn't a raw domain-subset
+    candidate, or the family never emits "y" discrete).
+
+    A pure measurement, not a narrow/don't-narrow verdict: this says how
+    much the reservation WOULD cost, not whether it is affordable. Callers
+    that need the final "is this actually happening" answer use
+    ``facet_bound_position_channels()``, which measures via this function
+    and then applies ``extra_axis_is_affordable()`` on top. Kept separate
+    because affordability needs this function's own result as an input —
+    folding the check in here would make it call itself.
+
+    Sized by measurement, not a flat guess: a fixed per-axis constant can't
+    tell a 1-character label from a 30-character one apart, and a widest
+    label sets the real width VL will draw regardless of how many labels
+    share it. ``_LAYOUT_CHROME_PX`` (this module) already budgets the
+    title/tick/padding chrome an axis needs beyond its label text — the
+    same constant `min_height_for_horizontal_bar_categories` reuses for the
+    same purpose on the other axis — so only the label text itself is
+    measured here, against the field's FULL domain (every panel's width is
+    the same VL-side property, so the budget must cover the widest label
+    any panel could paint, not just the panel being computed for), clamped
+    to the axis's own label limit (``axis_y.labels.max_width``, else VL's
+    own 180px default) the same way VL itself would clip an over-long label.
+    """
+    if multiples.columns is None:
+        return 0.0
+    # multiples is cartesian-only, so every real caller already holds a
+    # cartesian chart here — narrows chart.x/.y/.style below, same as
+    # facet_bound_position_channels above.
+    assert isinstance(chart, _CartesianResolvedChartFields)
+    is_flipped = (
+        isinstance(chart, ResolvedBarChart) and chart.orientation == "horizontal"
+    )
+    y_field = chart.x if is_flipped else chart.y
+    if not isinstance(y_field, str):
+        return 0.0
+    if "y" not in _domain_subset_narrowing_candidates(chart, multiples, data):
+        return 0.0
+    if not _emits_discrete_y(chart, y_field, data):
+        return 0.0
+    # The category axis a horizontal bar narrows is styled through axis_x,
+    # not axis_y — _emit_horizontal builds VL "y" from chart.style.axis_x
+    # (bar.py's own "categorical cascade" comment; ERR text at bar.py:1066
+    # says the same: "A horizontal bar's axis_x is its categorical axis").
+    # Same flip that picked y_field above must pick the style, or this
+    # measures the WRONG axis's font/labelLimit whenever the two diverge.
+    labels = chart.style.axis_x.labels if is_flipped else chart.style.axis_y.labels
+    font = labels.font
+    assert font.size is not None, (
+        "axis_y.labels.font.size unset — theme cascade must populate it"
+    )
+    domain = {
+        str(row[y_field]) for row in data if y_field in row and row[y_field] is not None
+    }
+    if not domain:
+        return 0.0
+    measurer = get_font_measurer(font.family)
+    label_limit = (
+        labels.max_width if labels.max_width is not None else DEFAULT_VL_LABEL_LIMIT
+    )
+    widest = min(max(measurer.measure(v, font.size) for v in domain), label_limit)
+    return _LAYOUT_CHROME_PX + widest
+
+
 def count_horizontal_bar_categories(
     category_field: str | None,
     data: list[dict[str, Any]],
@@ -531,11 +993,12 @@ def min_height_for_horizontal_bar_categories(
     """Minimum chart height so every categorical band can show a flat y label.
 
     axis_x and bar_size are the caller's already-resolved
-    ``resolved_chart.style.axis_x`` / ``.mark.size`` — the fully
-    chart-local-cascaded values (theme chart-type patch and any chart-local
-    override both baked in at resolve time). Both stay ``| None``-typed here
-    only because the underlying theme model shares its type with the
-    resolved usage; the cascade guarantees them concrete by this point.
+    ``resolved_chart.style.axis_x`` / ``effective_bar_size(.style.mark)`` —
+    the fully chart-local-cascaded values (theme chart-type patch and any
+    chart-local override both baked in at resolve time). Both stay
+    ``| None``-typed here only because the underlying theme model shares its
+    type with the resolved usage; the cascade guarantees them concrete by
+    this point.
     """
     if n_categories <= 0:
         return 0.0
@@ -552,10 +1015,54 @@ def min_height_for_horizontal_bar_categories(
     assert padding is not None, (
         "axis_x.labels.padding unset — theme cascade must populate it"
     )
-    assert bar_size is not None, "marks.bar.size unset — theme cascade must populate it"
+    assert bar_size is not None, (
+        "marks.bar.size and marks.bar.max_size both unset — "
+        "theme cascade must populate at least one"
+    )
     label_line = font_size + 2 * padding
     band_step = max(bar_size, label_line) + min_gap
     return _LAYOUT_CHROME_PX + n_categories * band_step
+
+
+def effective_horizontal_bar_category_count(
+    chart: ResolvedBarChart,
+    data: list[dict[str, Any]],  # type-state: explicit_any — raw query result rows
+    unnarrowed_panel_width: float | None,
+) -> int:
+    """Distinct category count the height floor must budget for.
+
+    Ordinarily the whole dataset's union (`count_horizontal_bar_categories`)
+    — the facet operator resolves the category axis as shared by default, so
+    every panel paints every category regardless of which rows landed in it.
+    That premise breaks exactly where `facet_bound_position_channels` narrows
+    the category channel: each panel then only paints its own subset, so the
+    floor only needs the WIDEST panel's own count — not the whole-dataset
+    count `count_horizontal_bar_categories` would return, which would over-
+    budget height for every panel holding fewer. Not a flat 1: a panel can
+    hold any proper subset of the domain, not only the single-value case a
+    name-matched rows facet used to guarantee by construction.
+
+    `unnarrowed_panel_width` threads straight through to
+    `facet_bound_position_channels` — a horizontal bar's category rides VL
+    "y" (after the orientation flip), the same channel the columns/grid
+    width budget gates on affordability, so this must reach the identical
+    narrow/don't-narrow verdict: declining to narrow for width reasons means
+    every panel still paints the full category set, and the height floor
+    must budget for that, not the narrower per-panel count.
+    """
+    n = count_horizontal_bar_categories(chart.x, data)
+    if (
+        chart.x
+        and chart.multiples is not None
+        and "y"
+        in facet_bound_position_channels(
+            chart, chart.multiples, data, unnarrowed_panel_width
+        )
+    ):
+        widest = widest_panel_distinct_count(chart.x, chart.panel_axes, data)
+        if widest:
+            return widest
+    return n
 
 
 def apply_domain_headroom_bounds(
@@ -578,6 +1085,17 @@ def apply_domain_headroom_bounds(
     if domain_min is not None:
         result["domainMin"] = domain_min
     return result
+
+
+def multiples_scale_independent(chart: _CartesianResolvedChartFields) -> bool:
+    """True when ``chart.multiples`` pins every panel to its own y-scale.
+
+    The single spelling of "does this chart-wide zero-rule verdict need to
+    be skipped because it can't hold for every panel", computed once here
+    so ``BaselineFeature`` and each cartesian emitter's dual-axis rule
+    injection cannot drift apart on the same check.
+    """
+    return chart.multiples is not None and chart.multiples.scale == "independent"
 
 
 def authored_measure_domain(ay: ResolvedAxisStyle) -> tuple[float, float] | None:
@@ -653,39 +1171,187 @@ def effective_measure_domain(
         # emitter really does pin a domainMin below 0, and collapsing this to a
         # literal would make the stated parity false on that shape.
         ladder = zero_anchor_domain_floor(
-            ay, list(ay.tick_values) if ay.tick_values else []
+            ay.scale.values if ay.scale is not None else None,
+            list(ay.tick_values) if ay.tick_values else [],
         )
-        lo = ladder[0] if ladder else 0.0
+        lo = zero_anchor_floor(ladder)
     else:
         lo = data_lo
     return lo, hi
 
 
-def zero_anchor_domain_floor(
-    ay: ResolvedAxisStyle, tick_values: list[float]
-) -> list[float]:
-    """*tick_values*, or ``[]`` when they may not pin a zero-anchored scale's
-    domain floor.
+def full_rule_at(
+    value: float,
+    axis: str,
+    measure_field: str,
+    color: str,
+    width: float,
+) -> ChartSpec:
+    """Return a full VL ``rule`` sub-spec spanning the full plot width/height.
 
-    A computed zero-anchored ladder is a matched set whose bottom rung is
-    always <= the data floor, so pinning ``domainMin`` from it can never
-    exclude data. An authored ``scale.values`` list carries no such
-    guarantee — it's a statement about tick positions, not the domain — so
-    an authored list must never source a floor pin. The single place this
-    provenance distinction is spelled, so a caller filters through it rather
-    than re-deriving the condition inline: ``resolve_measure_y_scale`` below,
-    and horizontal bar's own measure-axis scale in ``bar.py``.
-
-    One ``domainMin``-from-ticks site is deliberately NOT converted:
-    ``_emit_vertical``'s ``bar_zero`` branch in ``bar.py``, which pins
-    ``y_ticks[0]`` unfiltered. Vertical bar has the same authored-ladder
-    exposure, but it predates this function and fixing it moves goldens, so
-    it is its own task rather than a rider here. The ``domainMax`` pins from
-    ``ay.tick_values[-1]`` are the mirror image and equally unconverted.
+    ``axis`` controls orientation:
+    - ``"x"``: rule at x=value spanning full y height (horizontal bar zero line)
+    - ``"y"``: rule at y=value spanning full x width (vertical zero line)
     """
-    if ay.scale is not None and ay.scale.values is not None:
-        return []
-    return tick_values
+    datum_channel = axis  # "x" or "y" — the channel carrying the datum value
+    datum_enc: VLDict = {"datum": value, "type": "quantitative"}
+    if datum_channel == "x":
+        encoding: VLDict = {
+            "x": datum_enc,
+            "y": {"value": 0},
+            "y2": {"value": "height"},
+            "color": {"value": color},
+            "yOffset": {"value": 0},
+        }
+    else:
+        encoding = {
+            "y": datum_enc,
+            "x": {"value": 0},
+            "x2": {"value": "width"},
+            "color": {"value": color},
+            "xOffset": {"value": 0},
+        }
+    return ChartSpec(
+        mark="rule",
+        mark_props={
+            "color": color,
+            "strokeWidth": width,
+            "opacity": 1,
+            "tooltip": False,
+        },
+        encoding=encoding,
+        data=[{measure_field: value}],
+    )
+
+
+def values_straddle_zero(rows: Rows, field: str) -> bool:
+    """True when ``field``'s numeric values in ``rows`` straddle (or touch) 0."""
+    values = numeric_column_values(rows, field)
+    if not values:
+        return False
+    return min(values) <= 0 <= max(values)
+
+
+def non_bar_zero_rule_should_fire(
+    is_scatter: bool,
+    zero_setting: bool | None,
+    *,
+    zero_anchored: bool,
+    authored_domain: tuple[float, float] | None,
+    zero_in_domain: Callable[[], bool],
+) -> bool:
+    """Whether a line/area/scatter measure axis's own zero rule fires.
+
+    The one implementation of ``BaselineFeature._insert_zero_rule``'s real
+    non-bar verdict: fires unless the axis explicitly turned zero-anchoring
+    off (``zero_setting is False``), in which case ``zero_in_domain`` (0
+    lies within the values that share this scale) decides. A scatter axis
+    with no authored domain additionally falls back to the axis's own baked
+    zero-anchor verdict, since resolve's own heuristic can abstain and leave
+    the axis data-fitted even though nothing pinned ``zero: false``.
+    ``zero_in_domain`` is a callable, not a bool, so a caller whose check is
+    expensive (unioning every sibling layer's rows) only pays for it on the
+    branches that actually consult it. Bar has no such nuance: it always
+    fires and is decided by the caller before reaching this function.
+    """
+    if zero_setting is False:
+        return zero_in_domain()
+    should_fire = True
+    if is_scatter and authored_domain is None:
+        should_fire = zero_anchored or zero_in_domain()
+    return should_fire
+
+
+def build_zero_rule_if_applicable(
+    measure_field: str,
+    axis: str,
+    *,
+    log_scale: bool,
+    authored_domain: tuple[float, float] | None,
+    grid_visible: bool,
+    zero_color: str,
+    zero_width: float,
+    should_fire: bool,
+) -> ChartSpec | None:
+    """Build a zero-baseline ``rule`` ChartSpec for one measure scale, or None.
+
+    The single implementation of the guards every zero-rule caller must
+    honor, regardless of chart family or whether the scale is shared or
+    independently resolved: a log-typed scale can't carry a literal ``0``
+    datum (breaks VL's entire axis rendering), an authored domain excluding
+    0 has no legal position for the rule, and ``grid_visible=False``
+    suppresses it outright. ``should_fire`` is the caller's own straddle/
+    always-fire verdict; see ``non_bar_zero_rule_should_fire`` for the
+    line/area/scatter verdict most callers combine with their own
+    mark-family always-fire shortcut.
+    """
+    if log_scale:
+        return None
+    if authored_domain is not None and not (
+        min(authored_domain) <= 0.0 <= max(authored_domain)
+    ):
+        return None
+    if not grid_visible:
+        return None
+    if not should_fire:
+        return None
+    return full_rule_at(
+        0,
+        axis=axis,
+        measure_field=measure_field,
+        color=zero_color,
+        width=zero_width,
+    )
+
+
+def nest_zero_rule(
+    entry: ChartSpec, rule: ChartSpec, measure_channel: str
+) -> ChartSpec:
+    """Nest ``rule`` inside ``entry``'s own scale (an independent-y dual-axis layer).
+
+    An outer ``resolve.scale.y: independent`` governs only the DIRECT
+    children of that outer ``layer[]`` array (see ``render_cartesian_overlay``'s
+    docstring on dual-axis placement); a rule appended as a new top-level
+    sibling there would carry no field of its own and manufacture a
+    degenerate ``[0, 0]`` scale. Wrapping ``entry`` and ``rule`` together in
+    one more ``layer[]`` level puts them in the same composite, where
+    Vega-Lite unions their y encodings onto one shared scale by default.
+
+    That union changes the compiled Vega scale's default ``nice`` from unset
+    to ``true`` (measured via ``vl_convert.vegalite_to_vega``: an un-nested
+    entry's compiled scale carries no ``nice`` key at all; the identical
+    entry once nested does) -- which then rounds the domain PAST an explicit
+    ``domainMax``/``domainMin`` headroom pin at render time, defeating
+    ``apply_domain_headroom_bounds``'s "exact, never nice-rounded" contract.
+    Pinning ``nice: false`` on ``measure_channel``'s scale here keeps the pin
+    exact after nesting. The guard is ``domainMax``/``domainMin`` presence, not
+    an explicit headroom author choice: ``y_zero_scale`` writes ``domainMin``
+    on every zero-anchored axis, so this fires on essentially every
+    zero-anchored dual-axis bar/area base; an authored or data-fit scale with
+    neither key is the only case left unaffected.
+    """
+    channel_enc = entry.encoding.get(measure_channel)
+    scale = channel_enc.get("scale") if isinstance(channel_enc, dict) else None
+    if isinstance(scale, dict) and ("domainMax" in scale or "domainMin" in scale):
+        scale["nice"] = False
+    if entry.mark == "layered":
+        entry.layers.append(rule)
+        return entry
+    return ChartSpec(mark="layered", layers=[entry, rule])
+
+
+def layer_encoding_owner(entry: ChartSpec) -> ChartSpec:
+    """The sub-entry that actually carries ``entry``'s own encoding.
+
+    ``nest_zero_rule`` may wrap a bare-mark entry in a fresh ``mark="layered"``
+    ChartSpec with no encoding of its own (nesting a zero rule inside the
+    wrapped entry's scale). A caller reading "this layer's own encoding" (to
+    patch a legend, stamp a tooltip-order transform, etc.) must unwrap to the
+    real owner instead of the empty wrapper.
+    """
+    if entry.mark == "layered" and not entry.encoding and entry.layers:
+        return entry.layers[0]
+    return entry
 
 
 def resolve_measure_y_scale(ay: ResolvedAxisStyle) -> VLDict:
@@ -713,8 +1379,37 @@ def resolve_measure_y_scale(ay: ResolvedAxisStyle) -> VLDict:
             y_scale.pop("zero", None)
         return y_scale
     y_ticks: list[float] = list(ay.tick_values) if ay.tick_values else []
-    y_scale = y_zero_scale(ay, tick_values=zero_anchor_domain_floor(ay, y_ticks))
+    y_scale = y_zero_scale(
+        ay,
+        tick_values=zero_anchor_domain_floor(
+            ay.scale.values if ay.scale is not None else None, y_ticks
+        ),
+    )
     return apply_domain_headroom_bounds(y_scale, ay.domain_max, ay.domain_min)
+
+
+def pin_normalize_axis_format(ay_vl: VLDict) -> None:
+    """Pin the render-local axis dict's percent format for a normalize stack.
+
+    A normalize-stacked axis is always a 0-100% share axis — that is what
+    ``stack: normalize`` means, unconditionally, not a default an author's
+    own ``axis_y.labels.format`` can opt out of. Vega-Lite's own auto-percent
+    inference agrees, but only for a lone series; it silently stops applying
+    once the axis merges with a sibling layer's own axis config (any overlay
+    layer sharing the y-scale), and the theme's plain SI-number default wins
+    instead (``250m`` instead of ``25%``). Pinned explicitly here so the
+    percent presentation doesn't depend on that merge behavior. Shared by
+    every ``stack: normalize``-capable family (bar, area) so the fix and its
+    reasoning live in one place.
+
+    Mutates only the render-local ``ay_vl`` dict (the VL axis config for this
+    encoding), never ``ay.labels.format`` on the resolved axis style: that
+    field is shared with value labels, stack-total labels, and tooltips, and
+    those must keep reading the raw column value/format — a value label on a
+    normalize-stacked bar shows its own count (``300``), not the axis's
+    share of the stack.
+    """
+    ay_vl["format"] = PREDEFINED_SPECS[PredefinedNumberFormat.percent_whole]
 
 
 def build_cartesian_y_encoding(
@@ -739,57 +1434,6 @@ def build_cartesian_y_encoding(
         "scale": resolve_measure_y_scale(ay),
         "format": tooltip_format,
     }
-
-
-# Sentinel for families with no authored stack_order override (e.g. area):
-# reproduces Vega-Lite's OWN default stack sort — descending on the raw color
-# field value — used when a chart's emitter wires no explicit `order` encoding
-# to override it. Not a user-facing value; bar's authored stack_order Literal
-# ("value" / "data" / "alphabetical") never carries this string.
-NATIVE_STACK_ORDER = "native"
-
-
-def sorted_series_by_stack_order(
-    series: list[str],
-    data: list[dict[str, Any]],
-    series_field: str,
-    stack_order: str | None,
-    *,
-    y_field: str = "",
-) -> list[str]:
-    """Return *series* sorted for stacked chart rendering by stack_order.
-
-    Baseline = cumulative zero (the series placed first paints at the bottom).
-    - None / "value": largest global sum at baseline (matches VL's joinaggregate default).
-      Requires *y_field* to be set.
-    - "alphabetical": alphabetically first series at baseline.
-    - "data": globally first-encountered series at baseline (first-encounter in *data*).
-    - ``NATIVE_STACK_ORDER``: Vega-Lite's own default (no order-channel override) —
-      descending string sort of the raw field value, alphabetically-last at baseline.
-    """
-    if stack_order == NATIVE_STACK_ORDER:
-        return sorted(series, reverse=True)
-    if stack_order == "alphabetical":
-        return sorted(series)
-    if stack_order == "data":
-        encounter: dict[str, int] = {}
-        for row in data:
-            s = row.get(series_field)
-            if s is not None:
-                key = str(s)
-                if key not in encounter:
-                    encounter[key] = len(encounter)
-        return sorted(series, key=lambda s: (encounter.get(s, len(encounter)), s))
-    # None / "value": sort by descending global sum.
-    global_sums: dict[str, float] = {}
-    for row in data:
-        s = row.get(series_field)
-        y = row.get(y_field)
-        if s is None or y is None:
-            continue
-        key = str(s)
-        global_sums[key] = global_sums.get(key, 0.0) + float(y)
-    return sorted(series, key=lambda s: (-global_sums.get(s, 0.0), s))
 
 
 def series_order_expression(color_field: str, order: list[str]) -> str:
@@ -830,21 +1474,96 @@ def distinct_series_values(data: list[dict[str, Any]], series_field: str) -> lis
 
 
 def spatial_color_scale(
-    series: list[str], palette: tuple[str, ...], order: list[str]
+    series: list[str],
+    palette: tuple[str, ...],
+    order: list[str],
+    scale: CategoryColorScale | None = None,
 ) -> VLDict:
     """Explicit VL color ``{domain, range}`` reordering DISPLAY only.
 
-    ``order`` becomes the legend/tooltip/label DISPLAY sequence, but each
-    series keeps the color Vega-Lite's own alphabetical default would have
-    assigned it — computed here from *series* (alphabetical) and *palette* —
-    never a color derived from the new display position.
+    ``series`` assigns palette slots; ``order`` independently becomes the
+    legend/tooltip/label display sequence. Callers that only reorder display
+    pass the alphabetical series domain. Stacked bars pass their baseline-first
+    order so stack rank and palette rank stay aligned.
+
+    A board ``scale`` overrides that positional assignment: each value takes
+    the slot it owns board-wide, so the same category is the same color on
+    every chart. Either way the color follows the value, never its new
+    display position.
     """
-    color_of = {s: palette[i % len(palette)] for i, s in enumerate(series)}
+    if scale is not None:
+        color_of = {s: color_at(scale, s, palette) for s in series}
+    else:
+        color_of = {s: palette[i % len(palette)] for i, s in enumerate(series)}
     return {"domain": list(order), "range": [color_of[s] for s in order]}
 
 
-def last_nonnull_value_per_series(
+def emitted_categorical_color_scale(
+    *color_encodings: VLDict | None,
+) -> dict[str, str] | None:
+    """Return the first explicit categorical color mapping in emitted order."""
+    for color_encoding in color_encodings:
+        if not isinstance(color_encoding, dict):
+            continue
+        scale = color_encoding.get("scale")
+        if not isinstance(scale, dict):
+            continue
+        domain = scale.get("domain")
+        color_range = scale.get("range")
+        if (
+            isinstance(domain, list)
+            and isinstance(color_range, list)
+            and all(isinstance(series, str) for series in domain)
+            and all(isinstance(fill, str) for fill in color_range)
+        ):
+            return dict(zip(domain, color_range, strict=True))
+    return None
+
+
+def companion_color_for_fill(
+    fill: str, palette: list[str] | tuple[str, ...], companions: tuple[str, ...]
+) -> str:
+    """Return the companion ink occupying the emitted fill's palette slot."""
+    try:
+        index = palette.index(fill)
+    except ValueError:
+        return fill
+    return companions[index] if index < len(companions) else fill
+
+
+# x is a row's raw x-field value (str/date/int, whatever the query returned);
+# only ever compared with >= below, never introspected.
+_AnchorXY = dict[str, tuple[Any, float]]  # type-state: explicit_any — see comment above
+
+
+def last_nonnull_xy_per_series(
     data: list[dict[str, Any]], x_field: str, y_field: str, series_field: str
+) -> _AnchorXY:
+    """Each series' own most-recent non-null (x, y) pair.
+
+    A trailing null, or a series that ends early, never collapses its
+    position — this tracks the last ACTUAL (x, y) per series independently,
+    not the value at the single global-last x row. The one walk-back both
+    ``last_nonnull_value_per_series`` (line/area rail, value only) and the
+    stacked rail's per-series anchor column (``_stacked_midpoints`` in
+    ``features/endpoint_labels.py``, which also needs the x) build on.
+    """
+    latest: _AnchorXY = {}
+    for row in data:
+        s, x, y = row.get(series_field), row.get(x_field), row.get(y_field)
+        if s is None or x is None or y is None:
+            continue
+        key = str(s)
+        if key not in latest or x >= latest[key][0]:
+            latest[key] = (x, float(y))
+    return latest
+
+
+def last_nonnull_value_per_series(
+    data: list[dict[str, Any]],  # type-state: explicit_any — row values are dynamic
+    x_field: str,
+    y_field: str,
+    series_field: str,
 ) -> dict[str, float]:
     """Each series' value at its own most-recent non-null (x, y) pair.
 
@@ -852,17 +1571,12 @@ def last_nonnull_value_per_series(
     position — this tracks the last ACTUAL value per series independently,
     not the value at the single global-last x row.
     """
-    latest_x: dict[str, Any] = {}
-    latest_y: dict[str, float] = {}
-    for row in data:
-        s, x, y = row.get(series_field), row.get(x_field), row.get(y_field)
-        if s is None or x is None or y is None:
-            continue
-        key = str(s)
-        if key not in latest_x or x >= latest_x[key]:
-            latest_x[key] = x
-            latest_y[key] = float(y)
-    return latest_y
+    return {
+        s: y
+        for s, (_x, y) in last_nonnull_xy_per_series(
+            data, x_field, y_field, series_field
+        ).items()
+    }
 
 
 def sorted_series_by_last_value(
@@ -897,6 +1611,8 @@ __all__ = [
     "build_x_enc",
     "cartesian_x_scale_domain",
     "chart_sort_to_vl",
+    "companion_color_for_fill",
+    "emitted_categorical_color_scale",
     "distinct_series_values",
     "resolve_xy_titles",
     "wide_measures_title",
@@ -907,7 +1623,5 @@ __all__ = [
     "resolve_measure_y_scale",
     "series_order_expression",
     "sorted_series_by_last_value",
-    "sorted_series_by_stack_order",
     "spatial_color_scale",
-    "zero_anchor_domain_floor",
 ]

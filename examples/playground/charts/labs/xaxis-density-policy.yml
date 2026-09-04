@@ -1,0 +1,28 @@
+title: "Axis density: what the engine chooses when nothing collides"
+notes: >
+  Two narrow panels, no authored cadence — the engine picks. Left: 11 months of
+  monthly data. Right: 18 months of weekly data. Neither render below has
+  overlapping text; the only question is which cadence the engine should prefer.
+extends: clarity
+style:
+  frame:
+    width: 900
+rows:
+  - cols: [monthly_11, weekly_72]
+charts:
+  monthly_11:
+    type: line
+    title: "11 monthly points"
+    x: month
+    y: v
+    query:
+      sql: "SELECT CAST(d AS DATE) AS month, 60+25*sin(row_number() OVER (ORDER BY d)/1.7) AS v FROM generate_series(DATE '2025-09-01', DATE '2026-07-01', INTERVAL 1 MONTH) AS t(d)"
+      source: duckdb_local
+  weekly_72:
+    type: line
+    title: "72 weekly points"
+    x: wk
+    y: v
+    query:
+      sql: "SELECT CAST(d AS DATE) AS wk, 60+25*sin(row_number() OVER (ORDER BY d)/6.0) AS v FROM generate_series(DATE '2024-12-23', DATE '2026-05-04', INTERVAL 1 WEEK) AS t(d)"
+      source: duckdb_local

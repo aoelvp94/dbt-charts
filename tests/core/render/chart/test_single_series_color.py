@@ -84,7 +84,7 @@ def _reset():  # pyright: ignore[reportUnusedFunction]
 
 @pytest.mark.parametrize(
     "theme_name",
-    ["stark", "editorial", "cream", "plain", "vivid", "neon"],
+    ["stark", "clarity", "paper", "vivid", "neon"],
 )
 def test_every_shipped_theme_populates_single_series_palette(theme_name):
     """The theme corpus smoke test — every built-in theme resolves a
@@ -102,7 +102,7 @@ def test_every_shipped_theme_populates_single_series_palette(theme_name):
 # ── Render path: single-series mark gets the theme value ─────────────────────
 
 
-@pytest.mark.parametrize("theme_name", ["stark", "editorial", "cream", "neon"])
+@pytest.mark.parametrize("theme_name", ["stark", "clarity", "paper", "neon"])
 def test_single_series_bar_uses_theme_single_series_palette(
     monkeypatch: pytest.MonkeyPatch, theme_name: str
 ) -> None:
@@ -136,7 +136,7 @@ def _find_layer_with_stroke(
     return {}
 
 
-@pytest.mark.parametrize("theme_name", ["stark", "editorial", "cream", "neon"])
+@pytest.mark.parametrize("theme_name", ["stark", "clarity", "paper", "neon"])
 def test_single_series_line_uses_theme_single_series_palette(
     monkeypatch: pytest.MonkeyPatch, theme_name: str
 ) -> None:
@@ -165,7 +165,7 @@ def test_single_series_line_uses_theme_single_series_palette(
     )
 
 
-@pytest.mark.parametrize("theme_name", ["stark", "editorial", "cream", "neon"])
+@pytest.mark.parametrize("theme_name", ["stark", "clarity", "paper", "neon"])
 def test_single_series_area_uses_theme_single_series_palette(
     monkeypatch: pytest.MonkeyPatch, theme_name: str
 ) -> None:
@@ -209,7 +209,7 @@ def test_chart_level_style_color_overrides_single_series_palette(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Authored chart-local `style.color` wins over the theme default."""
-    monkeypatch.setenv("DCT_DEFAULT_THEME", "editorial")
+    monkeypatch.setenv("DCT_DEFAULT_THEME", "clarity")
     chart = _bar(
         style=BarChartStylePatch.model_validate({"color": {"static": "#abc123"}})
     )
@@ -226,7 +226,7 @@ def test_chart_level_palette_override_beats_single_series_palette(
     expresses their intent."""
     from dbt_charts.core.compile.resolve.style.palette import palette as resolve_palette
 
-    monkeypatch.setenv("DCT_DEFAULT_THEME", "editorial")
+    monkeypatch.setenv("DCT_DEFAULT_THEME", "clarity")
     chart = _bar(
         style=BarChartStylePatch.model_validate(
             {"color": {"categorical": {"palette": "dbt-seq-rust"}}}
@@ -245,9 +245,9 @@ def test_multi_series_chart_has_no_single_series_fill(
 ) -> None:
     """When a color encoding is present, the VL color scale owns mark
     color and mark.fill must not be set to single_series_palette."""
-    monkeypatch.setenv("DCT_DEFAULT_THEME", "editorial")
+    monkeypatch.setenv("DCT_DEFAULT_THEME", "clarity")
     ssc = resolve_style(
-        get_theme_style("editorial")
+        get_theme_style("clarity")
     ).chart_defaults.single_series_palette[0]
     chart = _bar(color="category")
     _rc = resolve(chart, _MULTI_DATA, chart_style_context=_BOARD_STYLE)
@@ -262,9 +262,9 @@ def test_multi_series_line_with_color_encoding_does_not_collapse_to_single_ink(
     NOT have every foreground line stroke set to single_series_palette. The
     halo path's single-series fallback must yield to the color encoding.
     Regression for the dundersign-commercial-finance Win Rate chart bug."""
-    monkeypatch.setenv("DCT_DEFAULT_THEME", "editorial")
+    monkeypatch.setenv("DCT_DEFAULT_THEME", "clarity")
     ssc = resolve_style(
-        get_theme_style("editorial")
+        get_theme_style("clarity")
     ).chart_defaults.single_series_palette[0]
     chart = LineChart(
         id="t",
@@ -299,9 +299,9 @@ def test_multi_series_area_with_color_encoding_does_not_collapse_to_single_ink(
 ) -> None:
     """Area chart variant of the same bug — multi-series areas must not
     paint every fg fill with single_series_palette."""
-    monkeypatch.setenv("DCT_DEFAULT_THEME", "editorial")
+    monkeypatch.setenv("DCT_DEFAULT_THEME", "clarity")
     ssc = resolve_style(
-        get_theme_style("editorial")
+        get_theme_style("clarity")
     ).chart_defaults.single_series_palette[0]
     chart = AreaChart(
         id="t",
@@ -338,12 +338,16 @@ def test_rhythm_slot_picks_indexed_palette_stop(
 ) -> None:
     """A non-None rhythm_slot makes the render reach into the right stop
     of single_series_palette, not slot 0. Pinned at render to confirm the
-    Chart → ResolvedChart slot field reaches _effective_single_series_fill."""
-    monkeypatch.setenv("DCT_DEFAULT_THEME", "editorial")
+    Chart → ResolvedChart slot field reaches _effective_single_series_fill.
+
+    Uses ``paper``, not ``clarity``: clarity's single_series_palette is one
+    fixed ink (no rotation to pick a slot from); paper keeps its warm
+    three-ink rotation."""
+    monkeypatch.setenv("DCT_DEFAULT_THEME", "paper")
     palette = resolve_style(
-        get_theme_style("editorial")
+        get_theme_style("paper")
     ).chart_defaults.single_series_palette
-    assert len(palette) >= 2, "editorial palette must have multiple stops for this test"
+    assert len(palette) >= 2, "paper palette must have multiple stops for this test"
     chart = _bar()
     chart.rhythm_slot = 1
     _rc = resolve(chart, _DATA, chart_style_context=_BOARD_STYLE)
@@ -352,11 +356,16 @@ def test_rhythm_slot_picks_indexed_palette_stop(
 
 
 def test_rhythm_slot_wraps_past_palette_length(monkeypatch: pytest.MonkeyPatch) -> None:
-    """slot >= len(palette) wraps modulo palette length."""
-    monkeypatch.setenv("DCT_DEFAULT_THEME", "editorial")
+    """slot >= len(palette) wraps modulo palette length.
+
+    Uses ``paper``, not ``clarity``: clarity's single_series_palette is one
+    fixed ink, so modulo and clamping are indistinguishable there. Same
+    reasoning as its two siblings above."""
+    monkeypatch.setenv("DCT_DEFAULT_THEME", "paper")
     palette = resolve_style(
-        get_theme_style("editorial")
+        get_theme_style("paper")
     ).chart_defaults.single_series_palette
+    assert len(palette) >= 2, "paper palette must have multiple stops for this test"
     chart = _bar()
     chart.rhythm_slot = len(palette)  # wraps back to slot 0
     _rc = resolve(chart, _DATA, chart_style_context=_BOARD_STYLE)
@@ -374,9 +383,9 @@ def test_multi_metric_layered_chart_does_not_use_single_series_palette(
     carry a literal fill.  Checking isinstance guards against calling .get() on
     a string while still catching any dict-mark layer that accidentally bakes SSC.
     """
-    monkeypatch.setenv("DCT_DEFAULT_THEME", "editorial")
+    monkeypatch.setenv("DCT_DEFAULT_THEME", "clarity")
     ssc = resolve_style(
-        get_theme_style("editorial")
+        get_theme_style("clarity")
     ).chart_defaults.single_series_palette[0]
     chart = _bar(y=["revenue", "target"])
     _rc = resolve(chart, _MULTI_METRIC_DATA, chart_style_context=_BOARD_STYLE)
@@ -405,7 +414,7 @@ def test_multi_metric_layered_line_does_not_bake_literal_stroke_over_color_encod
     sub-layer carries a literal background-colored stroke intentionally (it is
     a knockout mask). The foreground line must not — a literal stroke there
     collapses all metrics to one color."""
-    monkeypatch.setenv("DCT_DEFAULT_THEME", "editorial")
+    monkeypatch.setenv("DCT_DEFAULT_THEME", "clarity")
     chart = LineChart(
         id="t",
         type="line",
@@ -416,7 +425,7 @@ def test_multi_metric_layered_line_does_not_bake_literal_stroke_over_color_encod
     )
     _rc = resolve(chart, _MULTI_METRIC_DATA, chart_style_context=_BOARD_STYLE)
     spec = generate_vega_lite_spec(chart, _MULTI_METRIC_DATA)
-    # The fold path puts color at the top level. With endpoint labels (editorial
+    # The fold path puts color at the top level. With endpoint labels (clarity
     # theme default) the spec is wrapped in an hconcat; unwrap to the unit spec.
     unit = spec.get("hconcat", [spec])[0]
     top_color = unit.get("encoding", {}).get("color", {})
@@ -451,7 +460,7 @@ def test_multi_metric_layered_area_does_not_bake_literal_fill_over_color_encodin
     """Area chart variant of the same bug — a literal ``mark.fill`` baked
     identically onto every metric layer must not shadow that layer's own
     ``encoding.color``."""
-    monkeypatch.setenv("DCT_DEFAULT_THEME", "editorial")
+    monkeypatch.setenv("DCT_DEFAULT_THEME", "clarity")
     chart = AreaChart(
         id="t",
         type="area",
@@ -492,7 +501,7 @@ _LINE_DATA = [{"month": "Jan", "orders": 100}, {"month": "Feb", "orders": 200}]
 
 
 def _board_with_visible_points(
-    theme_name: str = "editorial", size: float = 40.0, **point_overrides: Any
+    theme_name: str = "clarity", size: float = 40.0, **point_overrides: Any
 ):
     """Resolve a board with ``style.line.marks.point.size > 0`` so the
     halo-path fg-point layer is emitted. Mirrors
@@ -524,7 +533,7 @@ def _fg_point_layer(spec: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-@pytest.mark.parametrize("theme_name", ["stark", "editorial", "cream", "neon"])
+@pytest.mark.parametrize("theme_name", ["stark", "clarity", "paper", "neon"])
 def test_single_series_line_with_points_color_matches_line(
     monkeypatch: pytest.MonkeyPatch, theme_name: str
 ) -> None:
@@ -565,13 +574,16 @@ def test_single_series_line_with_points_rhythm_slot_reaches_dot(
 ) -> None:
     """The fg-point's color must follow the chart's ``rhythm_slot``, not
     slot 0 — confirms the rhythm allocator's choice reaches the point
-    overlay (the bug ignored the slot)."""
-    monkeypatch.setenv("DCT_DEFAULT_THEME", "editorial")
-    board_rs, board_ctx = _board_with_visible_points("editorial")
+    overlay (the bug ignored the slot).
+
+    Uses ``paper``, not ``clarity``: clarity's single_series_palette is one
+    fixed ink with no rotation to pick a slot from."""
+    monkeypatch.setenv("DCT_DEFAULT_THEME", "paper")
+    board_rs, board_ctx = _board_with_visible_points("paper")
     palette = resolve_style(
-        get_theme_style("editorial")
+        get_theme_style("paper")
     ).chart_defaults.single_series_palette
-    assert len(palette) >= 2, "editorial palette must have multiple stops"
+    assert len(palette) >= 2, "paper palette must have multiple stops"
     chart = LineChart(
         id="t",
         type="line",
@@ -596,11 +608,11 @@ def test_line_points_authored_point_color_wins_over_single_series_ink(
     injection's ``"color" not in fg_point_mark`` guard defers when the
     author has expressed a point-level color preference.
 
-    Regression for the cream-themed doc fence that authors
+    Regression for the paper-themed doc fence that authors
     ``point.color: "#7c2d12"``.
     """
-    monkeypatch.setenv("DCT_DEFAULT_THEME", "cream")
-    board_rs, board_ctx = _board_with_visible_points("cream", color="#7c2d12")
+    monkeypatch.setenv("DCT_DEFAULT_THEME", "paper")
+    board_rs, board_ctx = _board_with_visible_points("paper", color="#7c2d12")
     chart = LineChart(
         id="t",
         type="line",

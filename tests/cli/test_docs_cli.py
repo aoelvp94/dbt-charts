@@ -27,7 +27,7 @@ def patch_syntax_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Monkeypatch ``_SYNTAX_FILE`` to a controlled corpus for every CLI test."""
     fake = tmp_path / "DBT_CHARTS_SYNTAX.md"
     fake.write_text(
-        "# Dataface YAML Syntax\n\n"
+        "# dbt charts YAML Syntax\n\n"
         "## Cheatsheet\nOne-screen reference.\n\n"
         "## Board\nThe board is the root dashboard object.\n\n"
         "## Queries\nQueries are the data layer.\n\n"
@@ -81,7 +81,7 @@ class TestDocsTopic:
     def test_all_returns_whole_file(self) -> None:
         result = runner.invoke(app, ["docs", "all"])
         assert result.exit_code == 0, result.output
-        assert "Dataface YAML Syntax" in result.output
+        assert "dbt charts YAML Syntax" in result.output
         assert "## Cheatsheet" in result.output
         assert "## Charts" in result.output
 

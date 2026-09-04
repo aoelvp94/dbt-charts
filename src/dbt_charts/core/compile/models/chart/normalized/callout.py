@@ -52,11 +52,11 @@ class CalloutChart(BaseModel):
         description="Always None — callout has no query. Present so build_resolved_board "
         "can access compiled.query_name directly without isinstance guards.",
     )
-    description: str = Field(
+    notes: str = Field(
         default="",
-        description="Always empty — callout has no description. Present so generic "
+        description="Always empty — callout has no notes. Present so generic "
         "chart-iteration code (ChartIdentity.from_normalized) can access "
-        "chart.description without isinstance guards, mirroring the same "
+        "chart.notes without isinstance guards, mirroring the same "
         "structural-parity field on ResolvedCalloutChart.",
     )
     query_is_inline: bool = Field(

@@ -6,10 +6,10 @@ leaked through to the renderer as literal strings (e.g. stroke="dbt-creams.subti
 
 Coverage:
 - Axis: axis_x.ticks.color, axis_y.grid.color, axis_quantitative.label.font.color
-- Top-level chart style: background, color, border.color
+- Top-level chart style: background, color
 - Title / legend: title.font.color, legend.label.font.color
 - Per-chart-type: bar.stroke, kpi.background, spark_bar.bar.color
-- Borders: kpi.border.color, spark_bar.border.color
+- Borders: kpi.border.color
 - Table: table.background, table.row.font.color, table.header.background
 - Conditional formatting: rules[0].background, rules[0].font.color
 - Failure case: unknown token raises UnknownColorError at compile time
@@ -127,15 +127,6 @@ class TestTopLevelChartStyleTokenResolution:
         )
         assert effective.color == HEX
 
-    def test_border_color_token(self) -> None:
-        effective = build_chart_style_context(
-            _board(),
-            BarChart(
-                id="t", type="bar", style=_patch({"bar": {"border": {"color": TOKEN}}})
-            ),
-        )
-        assert effective.bar.border.color == HEX
-
 
 # ── Title and legend ──────────────────────────────────────────────────────────
 
@@ -221,17 +212,6 @@ class TestBorderColorTokenResolution:
             ),
         )
         assert effective.kpi.border.color == HEX
-
-    def test_spark_bar_border_color_token(self) -> None:
-        effective = build_chart_style_context(
-            _board(),
-            SparkBarChart(
-                id="t",
-                type="spark_bar",
-                style=_patch({"spark_bar": {"border": {"color": TOKEN}}}),
-            ),
-        )
-        assert effective.spark_bar.border.color == HEX
 
 
 # ── Table fields ──────────────────────────────────────────────────────────────
@@ -323,8 +303,8 @@ class TestBracketRoleTokensInChartStyle:
 
     THEME_FAMILY = (
         ("stark", "vivid-10"),
-        ("editorial", "editorial-10"),
-        ("cream", "editorial-10"),
+        ("clarity", "editorial-10"),
+        ("paper", "editorial-10"),
     )
 
     @pytest.mark.parametrize(("theme", "family"), THEME_FAMILY)

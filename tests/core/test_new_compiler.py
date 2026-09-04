@@ -225,7 +225,7 @@ rows:
         assert chart.id == "minimal_chart"
         assert chart.title == ""  # Omitted title stays omitted.
         assert chart.subtitle == ""  # Default empty string
-        assert chart.description == ""  # Default empty string
+        assert chart.notes == ""  # Default empty string
         assert chart.query_name == "q"
         assert chart.query is not None
         # Check query has required attributes
@@ -245,7 +245,7 @@ charts:
     type: bar
     title: Revenue
     subtitle: Current quarter only
-    x: revenue
+    y: revenue
 rows:
   - c
 """
@@ -254,13 +254,13 @@ rows:
         assert result.success
         assert result.board.charts["c"].subtitle == "Current quarter only"
 
-    def test_query_description_is_preserved(self):
-        """Query description metadata should survive compilation."""
+    def test_query_notes_is_preserved(self):
+        """Query notes metadata should survive compilation."""
         yaml_content = """
 title: Test
 queries:
   q:
-    description: "Monthly revenue by region for executive trend charts"
+    notes: "Monthly revenue by region for executive trend charts"
     sql: SELECT 1 AS revenue
     source: test_profile
 charts:
@@ -273,7 +273,7 @@ rows:
         result = compile(yaml_content)
 
         assert result.success
-        assert result.board.queries["q"].description == (
+        assert result.board.queries["q"].notes == (
             "Monthly revenue by region for executive trend charts"
         )
 
@@ -300,7 +300,7 @@ rows:
         # Required fields are always present
         assert board.id is not None
         assert board.title == ""  # Empty since not provided
-        assert board.description == ""
+        assert board.notes == ""
         assert board.layout is not None
         assert isinstance(board.layout, Layout)
         assert board.variables is not None  # Empty dict, not None
@@ -418,36 +418,6 @@ rows:
         query = result.board.queries["explicit"]
         assert query.query_type == "sql"
         assert query.source == "test_profile"
-
-    def test_metricflow_query_type_without_dbt_profile_source_errors(self):
-        """MetricFlow queries lower to SQL at compile time via MetricFlow's own
-        compiler against a dbt semantic manifest — a metricflow
-        query with no dbt_profile source can't compile. Full successful lowering
-        + execution is covered end-to-end in test_normalize_metricflow.py, which
-        builds a real dbt project + manifest fixture.
-        """
-        yaml_content = """
-title: Test
-queries:
-  mf_query:
-    metrics:
-      - revenue
-      - orders
-    dimensions:
-      - date_day
-charts:
-  c:
-    query: mf_query
-    type: line
-    x: date_day
-    y: revenue
-rows:
-  - c
-"""
-        result = compile(yaml_content)
-
-        assert not result.success
-        assert any("dbt_profile" in e.message for e in result.errors)
 
 
 class TestNestedBoards:
@@ -1326,30 +1296,6 @@ rows:
         assert result.success, f"Compilation failed: {result.errors}"
         assert "sales_chart" in result.board.charts
 
-    def test_inline_metricflow_query_without_dbt_profile_source_errors(self):
-        """Inline metricflow queries lower via MetricFlow's compiler at compile
-        time via compile-time MetricFlow lowering — they need a real dbt_profile source + manifest, so an
-        inline query with no source can't compile. Full successful lowering is
-        covered in test_normalize_metricflow.py.
-        """
-        yaml_content = """
-title: Test Dashboard
-charts:
-  revenue_chart:
-    query:
-      metrics: [total_revenue]
-      dimensions: [month]
-    type: bar
-    x: month
-    y: total_revenue
-rows:
-  - revenue_chart
-"""
-        result = compile(yaml_content)
-
-        assert not result.success
-        assert any("dbt_profile" in e.message for e in result.errors)
-
     def test_inline_query_in_layout(self):
         """Test inline query definition directly in layout."""
         yaml_content = """
@@ -1569,11 +1515,13 @@ rows:
             f"got {chart.total.label!r}"
         )
 
-    def test_donut_auto_total_defaults_format_to_three_sig_figs(self):
-        """Auto-filled donut center total must carry ``format: ".3~s"`` so the
-        rendered value stops at three significant digits (``68.5k``) instead
-        of the wide D3 SI default (``68.473k``), matching Cleveland / Knaflic /
-        Economist guidance for a single summary number.
+    def test_donut_auto_total_defaults_format_to_integer_preset(self):
+        """Auto-filled donut center total must carry the ``integer`` preset
+        name (resolves to ``,.0f``) so the rendered value keeps full
+        precision with thousands separators (``68,473``) instead of losing
+        digits to a 3-significant-figure SI abbreviation (``68.5k``). The
+        donut hole has room for the whole number; abbreviating it discards
+        precision the source data has.
         """
         yaml_content = """
 queries:
@@ -1596,14 +1544,15 @@ rows:
         assert result.success, f"Compilation failed: {result.errors}"
         chart = result.board.charts["my_donut"]
         assert chart.total is not None
-        assert chart.total.format == ".3~s", (
-            f"auto-filled donut total must default format to '.3~s' (3 sig figs, "
-            f"strip trailing zeros); got {chart.total.format!r}"
+        assert chart.total.format == "integer", (
+            f"auto-filled donut total must default format to the 'integer' "
+            f"preset (full precision, thousands separators); got "
+            f"{chart.total.format!r}"
         )
 
     def test_donut_authored_total_format_wins_over_auto_default(self):
         """Authored ``chart.total.format`` must survive — the auto-fill only
-        runs when ``chart.total:`` is omitted entirely. This pins the contract
+        supplies the fields the author left unset. This pins the contract
         so a future refactor doesn't accidentally stomp authored formats.
         """
         yaml_content = """
@@ -1634,6 +1583,82 @@ rows:
         assert chart.total.format == ",.0f", (
             f"authored chart.total.format must win over the auto-fill default; "
             f"got {chart.total.format!r}"
+        )
+
+    def test_donut_authored_format_only_still_auto_fills_label(self):
+        """An author fixing the center-total format (``total: {format: ...}``)
+        without authoring a ``label`` must still get the auto-derived caption
+        — the auto-fill guard must not be all-or-nothing on the presence of
+        *any* ``total:`` block. Only the label is filled in; the author's
+        format is preserved untouched.
+        """
+        yaml_content = """
+queries:
+  data:
+    columns: [bucket, value]
+    values:
+      - ["A", 12345]
+      - ["B", 56128]
+charts:
+  my_donut:
+    query: data
+    type: donut
+    theta: value
+    color: bucket
+    total:
+      format: ",d"
+rows:
+  - my_donut
+"""
+        result = compile(yaml_content)
+
+        assert result.success, f"Compilation failed: {result.errors}"
+        chart = result.board.charts["my_donut"]
+        assert chart.total is not None
+        assert chart.total.format == ",d", (
+            f"authored format must be preserved untouched; got {chart.total.format!r}"
+        )
+        assert chart.total.label == "Total Value", (
+            f"omitted label must still be auto-derived even though the "
+            f"author authored a total: block for format; got "
+            f"{chart.total.label!r}"
+        )
+
+    def test_donut_authored_label_only_still_auto_fills_format(self):
+        """The mirror of the format-only case: an author who names the caption
+        but no format must still get the non-abbreviating default rather than
+        an unformatted raw number. Label and format fill independently.
+        """
+        yaml_content = """
+queries:
+  data:
+    columns: [bucket, value]
+    values:
+      - ["A", 12345]
+      - ["B", 56128]
+charts:
+  my_donut:
+    query: data
+    type: donut
+    theta: value
+    color: bucket
+    total:
+      label: Sessions
+rows:
+  - my_donut
+"""
+        result = compile(yaml_content)
+
+        assert result.success, f"Compilation failed: {result.errors}"
+        chart = result.board.charts["my_donut"]
+        assert chart.total is not None
+        assert chart.total.label == "Sessions", (
+            f"authored label must be preserved untouched; got {chart.total.label!r}"
+        )
+        assert chart.total.format == "integer", (
+            f"omitted format must still auto-fill to the 'integer' preset, or "
+            f"the center renders an unformatted raw number; got "
+            f"{chart.total.format!r}"
         )
 
     def test_donut_auto_label_preserves_acronyms_and_unit_suffixes(self):

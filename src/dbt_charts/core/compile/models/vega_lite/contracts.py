@@ -1,7 +1,7 @@
-"""Hand-owned Vega-Lite contracts for Dataface.
+"""Hand-owned Vega-Lite contracts for dbt charts.
 
 Replaces the auto-generated 458-model Pydantic tree with a small set of
-structural contracts that Dataface actually needs.  Every model uses
+structural contracts that dbt charts actually needs.  Every model uses
 ``extra="allow"`` so unknown Vega-Lite properties pass through without
 error — the contracts enforce *shape*, not exhaustive field-level typing.
 

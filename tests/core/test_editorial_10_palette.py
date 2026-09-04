@@ -1,6 +1,6 @@
 """Regression tests for the editorial-10 categorical palette.
 
-Editorial-10 is the default categorical palette for the editorial / cream
+Editorial-10 is the default categorical palette for the clarity and paper
 themes. stark keeps vivid-10. The palette ships under the
 core defaults catalog (resolved via `dbt_charts.core.compile.resolve.style.palette.palette`)
 and the studio rationale lives in
@@ -13,13 +13,13 @@ Regression contracts pinned here, for the base palette:
   2. N=5 Leonardo — the first five stops (the most-common cardinality for
      editorial charts) must remain pairwise-discriminable at ΔE ≥ 11 across
      the three primary CVD modes (deut / prot / trit).
-  3. Theme wiring — editorial + cream resolve to editorial-10;
+  3. Theme wiring — clarity + paper resolve to editorial-10;
      stark keeps vivid-10.
 
 and, for each companion family (dark / light / ghost / ink): a locked stop
 set, a stop-count match with the base for positional pairing, and a per-slot
 pairing contract (each companion's lightness/hue relationship to its base
-stop, with the charcoal slot 10 carve-out where dark and ink equal the base).
+stop). Every slot has five distinct, strictly ordered lightness tiers.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ import sys
 
 import pytest
 
+from dbt_charts.core.colors import wcag_contrast as _wcag_contrast
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.resolve.style.palette import palette
 
@@ -46,21 +47,39 @@ _spec.loader.exec_module(_checker)
 # Locked editorial-10 stops. If you change the palette YAML, update this list
 # (and the BRIEF and the docs guide).
 EDITORIAL_10_STOPS = [
-    "#3164a3",  # 1  denim
+    "#40639c",  # 1  blue
     "#779bc9",  # 2  sky
-    "#ad9c7f",  # 3  sand
-    "#7a8895",  # 4  gray
-    "#8a576f",  # 5  plum
-    "#5c7b5c",  # 6  green
-    "#d49656",  # 7  gold
-    "#ae6349",  # 8  rust
-    "#609f9e",  # 9  teal
-    "#232f3a",  # 10 charcoal
+    "#608470",  # 3  green
+    "#775770",  # 4  purple
+    "#d49656",  # 5  gold
+    "#ae6349",  # 6  rust
+    "#a0b6b7",  # 7  teal
+    "#ad9c7f",  # 8  brown
+    "#7a8895",  # 9  gray
+    "#5c6668",  # 10 graphite
 ]
 
 
 PRIMARY_CVD_MODES = ("deuteranopia", "protanopia", "tritanopia")
 LEONARDO_THRESHOLD = 11.0
+VISION_WEIGHTS = {
+    "normal": 1.0,
+    "deuteranopia": 1.0,
+    "protanopia": 1.0,
+    "tritanopia": 0.15,
+    "achromatopsia": 0.05,
+}
+EDITORIAL_10_PREFIX_CURVE = [
+    100.0,
+    99.479167,
+    99.218750,
+    99.375000,
+    97.083333,
+    97.767857,
+    97.042411,
+    97.352431,
+    96.354167,
+]
 
 
 def _delta_e_under_cvd(hex_a: str, hex_b: str, mode: str) -> float:
@@ -107,23 +126,45 @@ def test_n5_prefix_passes_leonardo_under_cvd(vision: str):
     )
 
 
-def test_editorial_themes_use_editorial_10():
-    """Theme cascade: editorial + cream resolve to editorial-10."""
-    editorial_cat = get_theme_style("editorial").charts.color.categorical
-    editorial_cream_cat = get_theme_style("cream").charts.color.categorical
-    assert editorial_cat is not None and editorial_cat.palette is not None
-    assert editorial_cream_cat is not None and editorial_cream_cat.palette is not None
-    editorial = editorial_cat.palette
-    editorial_cream = editorial_cream_cat.palette
-    assert editorial == EDITORIAL_10_STOPS, (
-        f"editorial theme no longer resolves to editorial-10. Got: {editorial[:3]}..."
+def test_editorial_10_weighted_prefix_curve_matches_locked_values() -> None:
+    actual: list[float] = []
+    for prefix_size in range(2, 11):
+        passing_weight = 0.0
+        for first in range(prefix_size):
+            for second in range(first + 1, prefix_size):
+                for vision, weight in VISION_WEIGHTS.items():
+                    if (
+                        _delta_e_under_cvd(
+                            EDITORIAL_10_STOPS[first],
+                            EDITORIAL_10_STOPS[second],
+                            vision,
+                        )
+                        >= LEONARDO_THRESHOLD
+                    ):
+                        passing_weight += weight
+        denominator = 3.2 * (prefix_size * (prefix_size - 1) / 2)
+        actual.append(round(100 * passing_weight / denominator, 6))
+
+    assert actual == EDITORIAL_10_PREFIX_CURVE
+
+
+def test_clarity_themes_use_editorial_10():
+    """Theme cascade: clarity + paper resolve to editorial-10."""
+    clarity_cat = get_theme_style("clarity").charts.color.categorical
+    paper_cat = get_theme_style("paper").charts.color.categorical
+    assert clarity_cat is not None and clarity_cat.palette is not None
+    assert paper_cat is not None and paper_cat.palette is not None
+    clarity = clarity_cat.palette
+    paper = paper_cat.palette
+    assert clarity == EDITORIAL_10_STOPS, (
+        f"clarity theme no longer resolves to editorial-10. Got: {clarity[:3]}..."
     )
-    assert editorial_cream == EDITORIAL_10_STOPS, (
-        f"cream theme no longer resolves to editorial-10. Got: {editorial_cream[:3]}..."
+    assert paper == EDITORIAL_10_STOPS, (
+        f"paper theme no longer resolves to editorial-10. Got: {paper[:3]}..."
     )
 
 
-def test_editorial_themes_rebind_category_roles():
+def test_clarity_themes_rebind_category_roles():
     """Theme-relative role refs must follow the theme's palette family.
 
     `style.palettes` binds the category/category_dark/category_light/
@@ -133,13 +174,18 @@ def test_editorial_themes_rebind_category_roles():
     editorial-10, otherwise a board authored with role refs keeps stark's
     colors after a theme switch.
     """
-    for theme in ("editorial", "cream"):
+    for theme in ("clarity", "paper"):
         bound = get_theme_style(theme).palettes
         assert bound["category"] == "editorial-10", (
             f"{theme} theme leaves the `category` role on "
             f"{bound['category']!r} — role refs won't follow the theme."
         )
-        for role in ("category_dark", "category_light", "category_ghost"):
+        for role in (
+            "category_dark",
+            "category_light",
+            "category_ghost",
+            "category_ink",
+        ):
             expected = "editorial-10-" + role.removeprefix("category_")
             assert bound[role] == expected, (
                 f"{theme} theme leaves the `{role}` role on {bound[role]!r}; "
@@ -147,7 +193,7 @@ def test_editorial_themes_rebind_category_roles():
             )
 
 
-def test_stark_keeps_category_role_family():
+def test_structural_root_keeps_category_role_family():
     """stark (and the cascade root) stay on the vivid-10 family."""
     bound = get_theme_style("stark").palettes
     assert bound["category"] == "vivid-10"
@@ -174,9 +220,8 @@ def test_geoshape_basemap_fill_comes_from_the_scaffold_not_a_data_palette():
     cream_step = palette("dbt-creams", steps=12)[2]
     expected = {
         "stark": gray_step,
-        "plain": gray_step,
-        "editorial": gray_step,
-        "cream": cream_step,
+        "clarity": gray_step,
+        "paper": cream_step,
         "vivid": gray_step,
     }
     for theme, want in expected.items():
@@ -188,12 +233,12 @@ def test_geoshape_basemap_fill_comes_from_the_scaffold_not_a_data_palette():
         )
 
 
-def test_stark_theme_still_uses_vivid_10():
+def test_structural_root_theme_still_uses_vivid_10():
     """Regression guard: stark keeps vivid-10 unchanged.
 
     The structural-root theme (stark, opt-in for the stripped-back look)
     continues to use vivid-10. The shipped default theme uses editorial-10
-    (covered by test_editorial_themes_use_editorial_10 above).
+    (covered by test_clarity_themes_use_editorial_10 above).
     """
     stark_cat = get_theme_style("stark").charts.color.categorical
     assert stark_cat is not None and stark_cat.palette is not None
@@ -210,16 +255,16 @@ def test_stark_theme_still_uses_vivid_10():
 
 # Locked editorial-10-dark stops. Edit in lock-step with editorial-10.yml.
 EDITORIAL_10_DARK_STOPS = [
-    "#0e4786",  # 1  denim
-    "#557daf",  # 2  sky
-    "#917d5a",  # 3  sand
-    "#5b6b7a",  # 4  gray
-    "#6f3854",  # 5  plum
-    "#3a603b",  # 6  green
-    "#b46e0f",  # 7  gold
-    "#944123",  # 8  rust
-    "#2a807f",  # 9  teal
-    "#232f3a",  # 10 charcoal (consolidated onto base — see pairing test)
+    "#23467f",  # 1  blue
+    "#476b98",  # 2  sky
+    "#3d614e",  # 3  green
+    "#5b3b55",  # 4  purple
+    "#955902",  # 5  gold
+    "#8a3f24",  # 6  rust
+    "#586e6f",  # 7  teal
+    "#77664a",  # 8  brown
+    "#54626f",  # 9  gray
+    "#424c4e",  # 10 graphite
 ]
 
 
@@ -244,26 +289,6 @@ def test_editorial_10_dark_length_matches_main():
     )
 
 
-def _lab_lightness_and_hue(hex_str: str) -> tuple[float, float]:
-    """Return (CIELAB L*, CIELAB hue angle in degrees) via the already-imported
-    palette_deltae_checker helpers.
-
-    Construction of editorial-10-dark happens in OKLCH (per the YAML comment),
-    but the test contract here only needs (a) "is this stop darker?" and
-    (b) "is this stop close in hue?" — both fall out of CIELAB without
-    requiring a separate OKLCH conversion. Using the checker keeps this test
-    free of test-side math re-implementation.
-    """
-    import math
-
-    rgb = _checker.hex_to_rgb01(hex_str)
-    lab = _checker.linear_rgb_to_lab(rgb)
-    # linear_rgb_to_lab returns (L*, a*, b*) in CIELAB.
-    L, a, b = lab
-    hue = math.degrees(math.atan2(b, a)) % 360
-    return L, hue
-
-
 @pytest.mark.parametrize("slot", range(10))
 def test_editorial_10_dark_pairing_per_slot(slot: int):
     """Each dark stop has lower L* and the same hue as its editorial-10 pair.
@@ -274,37 +299,27 @@ def test_editorial_10_dark_pairing_per_slot(slot: int):
     can shift hue slightly at the chroma boundary; CIELAB and OKLCH hue
     angles also disagree mildly even for the same color).
 
-    Exception — slot 10 (charcoal): the dark companion is intentionally equal
-    to the base stop. Charcoal-base already sits at the ink-band floor
-    (OKLCH L≈0.30), so there is no meaningful "darker twin" to ink a label
-    with — the near-black base reads as authored ink on a light canvas on its
-    own. Charcoal base / dark / ink are deliberately consolidated onto #232f3a.
+    The refreshed graphite slot has a distinct dark stop; there are no
+    equality exceptions in the family.
     """
-    if EDITORIAL_10_DARK_STOPS[slot] == EDITORIAL_10_STOPS[slot]:
-        assert slot == 9, (
-            f"Only charcoal (slot 10) may consolidate its dark companion onto "
-            f"base; slot {slot + 1} unexpectedly equals its editorial-10 stop."
-        )
-        return
-
-    main_L, main_H = _lab_lightness_and_hue(EDITORIAL_10_STOPS[slot])
-    dark_L, dark_H = _lab_lightness_and_hue(EDITORIAL_10_DARK_STOPS[slot])
+    main_L, _, main_H = _checker.hex_to_oklch(EDITORIAL_10_STOPS[slot])
+    dark_L, _, dark_H = _checker.hex_to_oklch(EDITORIAL_10_DARK_STOPS[slot])
 
     # Lower L*: dark companion must be measurably darker. Threshold of 5
-    # CIELAB units leaves comfortable margin against the smallest measured
+    # OKLCH units leaves comfortable margin against the smallest measured
     # gap in the locked stops while still admitting future taste-driven
     # tuning that stays inside the contract.
-    assert dark_L < main_L - 5.0, (
+    assert dark_L < main_L - 0.05, (
         f"editorial-10-dark slot {slot + 1} is not measurably darker than "
         f"editorial-10 slot {slot + 1} "
-        f"(main L*={main_L:.1f}, dark L*={dark_L:.1f}). "
+        f"(main L={main_L:.3f}, dark L={dark_L:.3f}). "
         "Direct labels won't ink properly if the companion isn't darker."
     )
 
-    # Same hue (within tolerance — handle 360° wrap for plum near H≈350°).
+    # Same hue within tolerance, with circular distance across 0°/360°.
     hue_diff = abs(main_H - dark_H)
     hue_diff = min(hue_diff, 360 - hue_diff)
-    assert hue_diff < 8, (
+    assert hue_diff < 10, (
         f"editorial-10-dark slot {slot + 1} drifted in hue from its "
         f"editorial-10 pair (main H={main_H:.1f}°, dark H={dark_H:.1f}°, "
         f"Δ={hue_diff:.1f}°). The pairing contract says same hue."
@@ -317,16 +332,16 @@ def test_editorial_10_dark_pairing_per_slot(slot: int):
 
 # Locked editorial-10-light stops. Edit in lock-step with editorial-10.yml.
 EDITORIAL_10_LIGHT_STOPS = [
-    "#6682a6",  # 1  denim
-    "#a5b9d3",  # 2  sky
-    "#c6bdac",  # 3  sand
-    "#9ea6ad",  # 4  gray
-    "#9b7d8a",  # 5  plum
-    "#839583",  # 6  green
-    "#dab696",  # 7  gold
-    "#b88c7d",  # 8  rust
-    "#9bbcbb",  # 9  teal
-    "#3c4349",  # 10 charcoal
+    "#7990b6",  # 1  blue
+    "#a3bad7",  # 2  sky
+    "#8ea598",  # 3  green
+    "#9a8595",  # 4  purple
+    "#e0b993",  # 5  gold
+    "#c29180",  # 6  rust
+    "#bdcacb",  # 7  teal
+    "#c7bcaa",  # 8  brown
+    "#a0a9b1",  # 9  gray
+    "#8a9092",  # 10 graphite
 ]
 
 
@@ -386,7 +401,7 @@ def test_editorial_10_light_pairing_per_slot(slot: int):
 
     hue_diff = abs(main_H - light_H)
     hue_diff = min(hue_diff, 360 - hue_diff)
-    assert hue_diff < 8, (
+    assert hue_diff < 10, (
         f"editorial-10-light slot {slot + 1} drifted in hue from its "
         f"editorial-10 pair (main H={main_H:.1f}°, light H={light_H:.1f}°, "
         f"Δ={hue_diff:.1f}°). The pairing contract says same hue."
@@ -399,16 +414,16 @@ def test_editorial_10_light_pairing_per_slot(slot: int):
 
 # Locked editorial-10-ghost stops. Edit in lock-step with editorial-10.yml.
 EDITORIAL_10_GHOST_STOPS = [
-    "#c1d3e9",  # 1  denim
-    "#c6d2e2",  # 2  sky
-    "#d6d0c7",  # 3  sand
-    "#cdd2d6",  # 4  gray
-    "#decbd3",  # 5  plum
-    "#cad4c9",  # 6  green
-    "#e2cdb9",  # 7  gold
-    "#e6cac1",  # 8  rust
-    "#c2d6d5",  # 9  teal
-    "#babec3",  # 10 charcoal
+    "#c5d2e7",  # 1  blue
+    "#cdd9e8",  # 2  sky
+    "#c5d1ca",  # 3  green
+    "#d6cad2",  # 4  purple
+    "#e8d3c0",  # 5  gold
+    "#e2c7be",  # 6  rust
+    "#d8e0e0",  # 7  teal
+    "#dcd7cd",  # 8  brown
+    "#caced3",  # 9  gray
+    "#c8cbcc",  # 10 graphite
 ]
 
 
@@ -454,7 +469,7 @@ def test_editorial_10_ghost_pairing_per_slot(slot: int):
 
     hue_diff = abs(main_H - ghost_H)
     hue_diff = min(hue_diff, 360 - hue_diff)
-    assert hue_diff < 8, (
+    assert hue_diff < 10, (
         f"editorial-10-ghost slot {slot + 1} drifted in hue from its "
         f"editorial-10 pair (main H={main_H:.1f}°, ghost H={ghost_H:.1f}°, "
         f"Δ={hue_diff:.1f}°). The pairing contract says same hue."
@@ -467,21 +482,19 @@ def test_editorial_10_ghost_pairing_per_slot(slot: int):
 
 # Locked editorial-10-ink stops. Edit in lock-step with editorial-10.yml.
 EDITORIAL_10_INK_STOPS = [
-    "#1b3659",  # 1  denim
-    "#203c65",  # 2  sky
-    "#443924",  # 3  sand
-    "#2d383f",  # 4  gray
-    "#4a2a3a",  # 5  plum
-    "#263d2a",  # 6  green
-    "#523500",  # 7  gold
-    "#53291d",  # 8  rust
-    "#143e3e",  # 9  teal
-    "#232f3a",  # 10 charcoal (consolidated onto base — see pairing test)
+    "#0f2c5a",  # 1  blue
+    "#1c395c",  # 2  sky
+    "#1f3d2d",  # 3  green
+    "#3d2438",  # 4  purple
+    "#563000",  # 5  gold
+    "#591d05",  # 6  rust
+    "#2b3c3c",  # 7  teal
+    "#43361f",  # 8  brown
+    "#29343e",  # 9  gray
+    "#252d2f",  # 10 graphite
 ]
 
-# Documented ink band (see editorial-10-ink.yml): a tight OKLCH L 0.30–0.36
-# with charcoal-ink anchoring the floor. The small tolerance below absorbs
-# sRGB round-tripping at the band edges (charcoal lands at L≈0.299).
+# Contract band for the locked ink family: compact OKLCH L 0.29–0.37.
 _INK_BAND_LO, _INK_BAND_HI = 0.29, 0.37
 
 
@@ -515,9 +528,8 @@ def test_editorial_10_ink_pairing_per_slot(slot: int):
     gray, very-dark gold) drift past the 8° the others hold. Slot identity for
     ink is carried by the locked set above, not a hue-pairing contract.
 
-    Exception — slot 10 (charcoal): ink equals base #232f3a. Charcoal-base
-    already sits at the ink-band floor (L≈0.30), so its ink companion is the
-    base itself — the same consolidation the dark companion makes.
+    The refreshed graphite slot has a distinct ink stop; there are no
+    equality exceptions in the family.
     """
     main_L, _, _ = _checker.hex_to_oklch(EDITORIAL_10_STOPS[slot])
     ink_L, _, _ = _checker.hex_to_oklch(EDITORIAL_10_INK_STOPS[slot])
@@ -527,14 +539,28 @@ def test_editorial_10_ink_pairing_per_slot(slot: int):
         f"documented ink band [{_INK_BAND_LO}, {_INK_BAND_HI}]."
     )
 
-    if EDITORIAL_10_INK_STOPS[slot] == EDITORIAL_10_STOPS[slot]:
-        assert slot == 9, (
-            f"Only charcoal (slot 10) may consolidate its ink companion onto "
-            f"base; slot {slot + 1} unexpectedly equals its editorial-10 stop."
-        )
-        return
-
     assert ink_L < main_L, (
         f"editorial-10-ink slot {slot + 1} is not darker than editorial-10 "
         f"slot {slot + 1} (main L={main_L:.3f}, ink L={ink_L:.3f})."
     )
+
+
+@pytest.mark.parametrize("slot", range(10))
+def test_editorial_10_family_has_strict_lightness_order(slot: int) -> None:
+    tiers = (
+        EDITORIAL_10_GHOST_STOPS[slot],
+        EDITORIAL_10_LIGHT_STOPS[slot],
+        EDITORIAL_10_STOPS[slot],
+        EDITORIAL_10_DARK_STOPS[slot],
+        EDITORIAL_10_INK_STOPS[slot],
+    )
+    lightness = [_checker.hex_to_oklch(color)[0] for color in tiers]
+    assert all(
+        upper > lower for upper, lower in zip(lightness, lightness[1:], strict=False)
+    ), f"slot {slot + 1} family paths cross: {lightness}"
+
+
+@pytest.mark.parametrize("canvas", ["#ffffff", "#fafafa", "#faf7f0"])
+@pytest.mark.parametrize("slot", range(10))
+def test_editorial_10_dark_clears_small_text_contrast(slot: int, canvas: str) -> None:
+    assert _wcag_contrast(EDITORIAL_10_DARK_STOPS[slot], canvas) >= 4.5

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 import pytest
@@ -164,6 +165,7 @@ def _make_resolved_axes(
 
 def _scatter(scatter_style: ResolvedScatterStyle) -> ResolvedScatterChart:
     ax, ay = _make_resolved_axes()
+    ay = dataclasses.replace(ay, is_quantitative=True, zero_anchored=True)
     return ResolvedScatterChart(
         panel_axes=(),
         id="scatter1",
@@ -643,6 +645,7 @@ def test_line_emit_point_overlay_layers_when_point_size_set() -> None:
             font_family="Inter",
             font_size=11.0,
             font_weight="400",
+            font_style="normal",
             dark_companion_palette=(),
             gap_px=18.2,
         ),
@@ -787,32 +790,6 @@ def test_scatter_emit_encoding_has_x_and_y(scatter_style: ResolvedScatterStyle) 
     assert "y" in spec.encoding
 
 
-def test_scatter_nominal_y_drops_numeric_format(
-    scatter_style: ResolvedScatterStyle,
-) -> None:
-    """A nominal y (dot plot) must not carry the numeric axis format.
-
-    The baked axis format ('~s') applied to category strings makes Vega coerce
-    every tick label to NaN; the emitter must strip it for a discrete y.
-    """
-    from dbt_charts.core.render.chart.emitters import get_emitter
-
-    ax, ay = _make_resolved_axes()
-    chart = ResolvedScatterChart(
-        panel_axes=(),
-        id="scatter_dot",
-        chart_type="scatter",
-        x="hours",
-        y="team",
-        style=scatter_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
-        **_C,
-    )
-    data = [{"team": "Onboarding", "hours": 1.8}, {"team": "Support", "hours": 2.4}]
-    spec = get_emitter(chart).emit(chart, _DEFAULT_BOX, regroup((), data))
-    assert spec.encoding["y"]["type"] in ("nominal", "ordinal")
-    assert "format" not in spec.encoding["y"].get("axis", {})
-
-
 def test_scatter_categorical_y_sort_stays_out_of_bar_stack_blast_radius(
     scatter_style: ResolvedScatterStyle,
 ) -> None:
@@ -825,7 +802,12 @@ def test_scatter_categorical_y_sort_stays_out_of_bar_stack_blast_radius(
     from dbt_charts.core.compile.models.chart.authored import ChartSort
     from dbt_charts.core.render.chart.emitters import get_emitter
 
-    ax, ay = _make_resolved_axes()
+    # A nominal y bake, not the default quantitative one: a real resolve()
+    # never bakes a quantitative theme format onto a categorical y (that
+    # mismatch can't happen in production — see gate_label_format's
+    # docstring), and the quantitative default's baked format now correctly
+    # raises rather than silently dropping.
+    ax, ay = _make_resolved_axes("scatter", "quantitative", "nominal")
     chart = ResolvedScatterChart(
         id="scatter_dot_sorted",
         chart_type="scatter",
@@ -936,7 +918,7 @@ def test_horizontal_stacked_bar_emits_stack_order(bar_style: ResolvedBarStyle) -
         BarEmitter,
     )
 
-    ax, ay = _make_resolved_axes("bar", "quantitative", "nominal")
+    ax, ay = _make_resolved_axes("bar", "nominal", "quantitative")
     ch = ResolvedStyleChannel(channel="color", mode="series", data_field="priority")
     bar = ResolvedBarChart(
         panel_axes=(),
@@ -970,7 +952,7 @@ def test_horizontal_grouped_bar_no_stack_order(bar_style: ResolvedBarStyle) -> N
     from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
     from dbt_charts.core.render.chart.emitters.bar import BarEmitter
 
-    ax, ay = _make_resolved_axes("bar", "quantitative", "nominal")
+    ax, ay = _make_resolved_axes("bar", "nominal", "quantitative")
     ch = ResolvedStyleChannel(channel="color", mode="series", data_field="priority")
     bar = ResolvedBarChart(
         panel_axes=(),
@@ -1096,12 +1078,15 @@ def test_area_emit_honors_baked_zero_scale(area_style: ResolvedAreaStyle) -> Non
 
 
 def test_pie_emitter_donut_uses_vl_expr(pie_style: ResolvedPieStyle) -> None:
-    """inner_radius emitted as VL expr matching oracle _map_slice.
+    """inner_radius emitted as a VL expr sourced from the shared hole geometry.
 
-    Oracle: arc_mark["outerRadius"] = {"expr": "min(width, height) / 2 * 0.9"}
-            arc_mark["innerRadius"] = {"expr": "min(width, height) / 2 * 0.9 * 0.6"}
+    innerRadius must be exactly pie_hole_radius_expr(outer_fraction, inner_ratio)
+    so the emitted hole and the overflow detector's measured hole cannot drift.
     """
-    from dbt_charts.core.render.chart.emitters.pie import PieEmitter
+    from dbt_charts.core.render.chart.emitters.pie import (
+        PieEmitter,
+        pie_hole_radius_expr,
+    )
 
     pie = ResolvedPieChart(
         id="p",
@@ -1129,8 +1114,8 @@ def test_pie_emitter_donut_uses_vl_expr(pie_style: ResolvedPieStyle) -> None:
     assert isinstance(inner, dict) and "expr" in inner, (
         f"innerRadius must be a VL expr, got {inner!r}"
     )
-    assert "0.6" in inner["expr"], (
-        f"inner_ratio 0.6 must appear in innerRadius expr: {inner['expr']!r}"
+    assert inner["expr"] == pie_hole_radius_expr(0.9, 0.6), (
+        f"innerRadius must come from the shared hole geometry: {inner['expr']!r}"
     )
 
 
@@ -1662,6 +1647,66 @@ def test_geoshape_complex_projection_emits_params(
     }
 
 
+def test_geoshape_categorical_color_field_uses_board_slot(
+    geoshape_style: ResolvedGeoshapeStyle,
+) -> None:
+    """A board-bound `color:` field paints the choropleth by slot, not gradient.
+
+    Distinct from the ordinary numeric choropleth (value_field magnitude): a
+    genuinely categorical, board-bound color field must key each region's
+    fill off `category_colors`, the same as any other chart's color channel.
+    """
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
+    from dbt_charts.core.compile.models.style.theme.category_colors import (
+        CategoryColorScale,
+    )
+    from dbt_charts.core.render.chart.emitters.geo import GeoshapeEmitter
+
+    scale = CategoryColorScale(
+        field="status", slots={"Warm": 1, "Cold": 0}, overrides={}
+    )
+    geo = ResolvedGeoshapeChart(
+        id="geo1",
+        chart_type="geoshape",
+        geo_url="https://example.com/us-10m.json",
+        geo_format_type="topojson",
+        geo_feature="states",
+        geo_join_key="id",
+        geo_projection_type="albersUsa",
+        lookup_field="state_name",
+        value_field="status",
+        category_colors=(scale,),
+        style=geoshape_style,
+        **{
+            **_B,
+            "palette": ("#111111", "#222222"),
+            "resolved_channels": {
+                "color": ResolvedStyleChannel(
+                    channel="color", mode="series", data_field="status"
+                )
+            },
+        },
+    )
+    data = [
+        {"state_name": "California", "status": "Warm"},
+        {"state_name": "Texas", "status": "Cold"},
+    ]
+    spec = GeoshapeEmitter().emit(geo, _DEFAULT_BOX, regroup((), data))
+    color_enc = spec.layers[1].encoding["color"]
+    assert color_enc["type"] == "nominal"
+    color_of = dict(
+        zip(color_enc["scale"]["domain"], color_enc["scale"]["range"], strict=True)
+    )
+    assert color_of["Warm"] == "#222222"
+    assert color_of["Cold"] == "#111111"
+    # The tooltip must follow the categorical color type — a quantitative
+    # d3 format applied to a string ("Warm"/"Cold") renders NaN.
+    tooltip_fields = spec.layers[1].encoding["tooltip"]
+    status_tooltip = next(f for f in tooltip_fields if f["field"] == "status")
+    assert status_tooltip["type"] == "nominal"
+    assert "format" not in status_tooltip
+
+
 def test_resolve_geo_projection_structured_projection_extracts_type() -> None:
     """_resolve_geo_projection must extract .type from a Projection object, not str() it.
 
@@ -1760,6 +1805,58 @@ def test_pie_emitter_no_color_arc_and_label_share_palette_zero(
     arc_layer = spec.layers[0]
     assert arc_layer.mark == "arc"
     assert arc_layer.mark_props.get("fill") == chart.palette[0]
+
+
+def test_pie_emitter_total_value_font_style_reaches_mark(
+    pie_style: ResolvedPieStyle,
+) -> None:
+    """font.style authored on pie.total.value reaches the center-total value
+    mark as VL's fontStyle — the shared FontStyle→mark helper's contract."""
+    from dbt_charts.core.compile.models.chart.authored import ChartTotal
+    from dbt_charts.core.render.chart.emitters.pie import PieEmitter
+
+    total_style = pie_style.total_style
+    italic_value = total_style.value.model_copy(
+        update={"font": total_style.value.font.model_copy(update={"style": "italic"})}
+    )
+    style = pie_style.model_copy(
+        update={"total_style": total_style.model_copy(update={"value": italic_value})}
+    )
+    chart = _pie(style).model_copy(update={"total": ChartTotal(visible=True)})
+    spec = PieEmitter().emit(chart, _DEFAULT_BOX, regroup((), []))
+
+    value_layer = next(
+        layer for layer in spec.layers if layer.mark_props.get("baseline") == "bottom"
+    )
+    assert value_layer.mark_props.get("fontStyle") == "italic"
+
+
+def test_pie_emitter_slice_label_font_style_reaches_mark(
+    pie_style: ResolvedPieStyle,
+) -> None:
+    """font.style authored on the slice-labels font reaches the leader-line
+    label mark as VL's fontStyle, mirroring family/size/weight."""
+    from dbt_charts.core.render.chart.emitters.pie import PieEmitter
+
+    labels = pie_style.slice_mark.labels
+    assert labels is not None
+    italic_labels = labels.model_copy(
+        update={"font": labels.font.model_copy(update={"style": "italic"})}
+    )
+    style = pie_style.model_copy(
+        update={
+            "slice_mark": pie_style.slice_mark.model_copy(
+                update={"labels": italic_labels}
+            )
+        }
+    )
+    chart = _pie(style)
+    spec = PieEmitter().emit(chart, _DEFAULT_BOX, regroup((), []))
+
+    label_layer = next(
+        layer for layer in spec.layers if "lineHeight" in layer.mark_props
+    )
+    assert label_layer.mark_props.get("fontStyle") == "italic"
 
 
 def test_geoshape_emitter_color_uses_only_resolved_channels(
@@ -2819,3 +2916,319 @@ def test_resolved_chart_is_fully_frozen(bar_style: ResolvedBarStyle) -> None:
     chart = _bar(bar_style)
     with pytest.raises((ValidationError, TypeError)):
         chart.height = 999.0  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Exhaustive binding-capability guard
+# ---------------------------------------------------------------------------
+
+
+def _find_color_scale(spec: ChartSpec) -> dict[str, Any] | None:
+    """First explicit ``encoding.color.scale`` in ``spec`` or any nested layer.
+
+    Chart-family-agnostic: the exhaustive test below drives eight different
+    emitters, each nesting its color-bearing mark at a different depth (a
+    plain bar's color sits on the outer spec; a pie's sits on its arc
+    sub-layer; a geoshape's sits on its choropleth sub-layer) — this walks
+    every layer rather than hard-coding one family's shape.
+    """
+    color = (spec.encoding or {}).get("color")
+    if isinstance(color, dict) and isinstance(color.get("scale"), dict):
+        return color["scale"]
+    for layer in spec.layers:
+        found = _find_color_scale(layer)
+        if found is not None:
+            return found
+    return None
+
+
+def test_binding_capability_matches_every_authored_chart_family(
+    bar_style: ResolvedBarStyle,
+    line_style: ResolvedLineStyle,
+    area_style: ResolvedAreaStyle,
+    scatter_style: ResolvedScatterStyle,
+    heatmap_style: ResolvedHeatmapStyle,
+    pie_style: ResolvedPieStyle,
+    geoshape_style: ResolvedGeoshapeStyle,
+    point_map_style: ResolvedPointMapStyle,
+) -> None:
+    """Exhaustive drift guard for board-wide category-color binding.
+
+    This is the test that ends the whack-a-mole played
+    with ``categorical_channel_fields``'s capability list: every
+    ``AuthoredChart`` family (enumerated live from ``AUTHORED_CHART_TYPE_TAGS``,
+    never hand-copied) must make an explicit binding-capability choice in
+    ``_BINDING_CAPABLE_CHART_TYPES`` (``compile/resolve/style/category_colors.py``),
+    and a declared-capable one must actually paint an explicit,
+    board-consistent ``scale`` from its real emitter — not merely widen the
+    domain and leave it unread.
+
+    A new chart family (or a chart-type tag added to an existing class, the
+    way ``histogram`` shares ``BarChart``) that is not added to this test's
+    own ``_EXPECTED_CAPABLE``/``_NORMALIZED`` tables fails immediately with a
+    ``KeyError`` or a set-mismatch assertion — there is no path through this
+    test that silently ignores an unenumerated tag.
+    """
+    from dbt_charts.core.compile.models.chart.authored import AUTHORED_CHART_TYPE_TAGS
+    from dbt_charts.core.compile.models.chart.normalized.area import (
+        AreaChart as NormAreaChart,
+    )
+    from dbt_charts.core.compile.models.chart.normalized.bar import (
+        BarChart as NormBarChart,
+    )
+    from dbt_charts.core.compile.models.chart.normalized.callout import (
+        CalloutChart as NormCalloutChart,
+    )
+    from dbt_charts.core.compile.models.chart.normalized.geoshape import (
+        GeoshapeChart as NormGeoshapeChart,
+    )
+    from dbt_charts.core.compile.models.chart.normalized.heatmap import (
+        HeatmapChart as NormHeatmapChart,
+    )
+    from dbt_charts.core.compile.models.chart.normalized.kpi import (
+        KpiChart as NormKpiChart,
+    )
+    from dbt_charts.core.compile.models.chart.normalized.line import (
+        LineChart as NormLineChart,
+    )
+    from dbt_charts.core.compile.models.chart.normalized.pie import (
+        PieChart as NormPieChart,
+    )
+    from dbt_charts.core.compile.models.chart.normalized.point_map import (
+        PointMapChart as NormPointMapChart,
+    )
+    from dbt_charts.core.compile.models.chart.normalized.scatter import (
+        ScatterChart as NormScatterChart,
+    )
+    from dbt_charts.core.compile.models.chart.normalized.spark_bar import (
+        SparkBarChart as NormSparkBarChart,
+    )
+    from dbt_charts.core.compile.models.chart.normalized.table import (
+        TableChart as NormTableChart,
+    )
+    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
+    from dbt_charts.core.compile.models.chart.resolved.geoshape import (
+        ResolvedGeoshapeChart,
+    )
+    from dbt_charts.core.compile.models.style.theme.category_colors import (
+        CategoryColorScale,
+    )
+    from dbt_charts.core.compile.resolve.style.category_colors import (
+        categorical_channel_fields,
+    )
+    from dbt_charts.core.render.chart.emitters import get_emitter
+
+    # tag -> minimal normalized instance, with color="cat" set whenever the
+    # family declares the channel at all (whether or not it's capable).
+    normalized_by_tag: dict[str, Any] = {
+        "bar": NormBarChart(id="t", type="bar", x="x", color="cat"),
+        "histogram": NormBarChart(id="t", type="histogram", x="x", color="cat"),
+        "line": NormLineChart(id="t", type="line", x="x", y="y", color="cat"),
+        "area": NormAreaChart(id="t", type="area", x="x", y="y", color="cat"),
+        "scatter": NormScatterChart(id="t", type="scatter", x="x", y="y", color="cat"),
+        "heatmap": NormHeatmapChart(id="t", type="heatmap", x="x", y="y", color="cat"),
+        "pie": NormPieChart(id="t", type="pie", theta="v", color="cat"),
+        "donut": NormPieChart(id="t", type="donut", theta="v", color="cat"),
+        "kpi": NormKpiChart(id="t", type="kpi", value="v"),
+        "table": NormTableChart(id="t", type="table"),
+        "point_map": NormPointMapChart(id="t", type="point_map", color="cat"),
+        "bubble_map": NormPointMapChart(id="t", type="bubble_map", color="cat"),
+        "map": NormGeoshapeChart(id="t", type="map", color="cat"),
+        "geoshape": NormGeoshapeChart(id="t", type="geoshape", color="cat"),
+        "callout": NormCalloutChart(id="t", type="callout", message="hi"),
+        "spark_bar": NormSparkBarChart(
+            id="t", type="spark_bar", x="x", y="y", color="cat"
+        ),
+    }
+    assert set(normalized_by_tag) == set(AUTHORED_CHART_TYPE_TAGS), (
+        "every AuthoredChart family tag needs a fixture in this table -- a "
+        "tag present in one set but not the other means this test itself is "
+        "out of sync with the schema, which is exactly the drift this test "
+        "exists to catch"
+    )
+
+    expected_capable: dict[str, bool] = {
+        "bar": True,
+        "histogram": False,
+        "line": True,
+        "area": True,
+        "scatter": True,
+        "heatmap": True,
+        "pie": True,
+        "donut": True,
+        "kpi": False,
+        "table": False,
+        "point_map": True,
+        "bubble_map": True,
+        "map": True,
+        "geoshape": True,
+        "callout": False,
+        "spark_bar": False,
+    }
+    assert set(expected_capable) == set(AUTHORED_CHART_TYPE_TAGS)
+
+    for tag in AUTHORED_CHART_TYPE_TAGS:
+        drawn = categorical_channel_fields(normalized_by_tag[tag])
+        if expected_capable[tag]:
+            assert drawn == ("cat",), (
+                f"{tag!r} is declared binding-capable but "
+                f"categorical_channel_fields returned {drawn!r}"
+            )
+        else:
+            assert drawn == (), (
+                f"{tag!r} is declared NOT binding-capable but "
+                f"categorical_channel_fields returned {drawn!r} -- an "
+                "unconverted family must never widen the board's domain"
+            )
+
+    # Behavioral half: every declared-capable tag's underlying RESOLVED
+    # family (donut shares pie's; map/bubble_map share geoshape's/point_map's)
+    # must have its real emitter actually paint a board-consistent scale --
+    # not just a compile-time declaration nothing reads.
+    scale = CategoryColorScale(field="cat", slots={"A": 0, "B": 1}, overrides={})
+    palette = ("#111111", "#222222")
+    channel = {
+        "color": ResolvedStyleChannel(channel="color", mode="series", data_field="cat")
+    }
+
+    def _proof(spec: ChartSpec) -> None:
+        found = _find_color_scale(spec)
+        assert found is not None, f"no color scale in emitted spec: {spec}"
+        color_of = dict(zip(found["domain"], found["range"], strict=True))
+        assert {"A", "B"} <= set(color_of), found
+        assert color_of["A"] == palette[0]
+        assert color_of["B"] == palette[1]
+
+    bar_chart = _bar(bar_style).model_copy(
+        update={
+            "color": "cat",
+            "stack": "none",
+            "resolved_channels": channel,
+            "category_colors": (scale,),
+            "palette": palette,
+        }
+    )
+    bar_data = [
+        {"month": "Jan", "revenue": 10, "cat": "A"},
+        {"month": "Feb", "revenue": 20, "cat": "B"},
+    ]
+    _proof(get_emitter(bar_chart).emit(bar_chart, _DEFAULT_BOX, regroup((), bar_data)))
+
+    line_chart = _line(line_style).model_copy(
+        update={
+            "color": "cat",
+            "resolved_channels": channel,
+            "category_colors": (scale,),
+            "palette": palette,
+        }
+    )
+    line_data = [
+        {"date": "2024-01-01", "value": 10, "cat": "A"},
+        {"date": "2024-01-02", "value": 20, "cat": "B"},
+    ]
+    _proof(
+        get_emitter(line_chart).emit(line_chart, _DEFAULT_BOX, regroup((), line_data))
+    )
+
+    area_chart = _area(area_style).model_copy(
+        update={
+            "color": "cat",
+            "resolved_channels": channel,
+            "category_colors": (scale,),
+            "palette": palette,
+        }
+    )
+    area_data = [
+        {"date": "2024-01-01", "value": 10, "cat": "A"},
+        {"date": "2024-01-02", "value": 20, "cat": "B"},
+    ]
+    _proof(
+        get_emitter(area_chart).emit(area_chart, _DEFAULT_BOX, regroup((), area_data))
+    )
+
+    scatter_chart = _scatter(scatter_style).model_copy(
+        update={
+            "color": "cat",
+            "resolved_channels": channel,
+            "category_colors": (scale,),
+            "palette": palette,
+        }
+    )
+    scatter_data = [
+        {"x_val": 1, "y_val": 10, "cat": "A"},
+        {"x_val": 2, "y_val": 20, "cat": "B"},
+    ]
+    _proof(
+        get_emitter(scatter_chart).emit(
+            scatter_chart, _DEFAULT_BOX, regroup((), scatter_data)
+        )
+    )
+
+    heatmap_chart = _heatmap(heatmap_style).model_copy(
+        update={
+            "color": "cat",
+            "resolved_channels": channel,
+            "category_colors": (scale,),
+            "palette": palette,
+        }
+    )
+    heatmap_data = [
+        {"col": "c1", "row": "r1", "cat": "A"},
+        {"col": "c2", "row": "r2", "cat": "B"},
+    ]
+    _proof(
+        get_emitter(heatmap_chart).emit(
+            heatmap_chart, _DEFAULT_BOX, regroup((), heatmap_data)
+        )
+    )
+
+    pie_data = [{"sales": 10, "cat": "A"}, {"sales": 20, "cat": "B"}]
+    pie_chart = _pie(pie_style).model_copy(
+        update={
+            "color": "cat",
+            "resolved_channels": channel,
+            "category_colors": (scale,),
+            "palette": palette,
+            "presentation_fingerprint": pie_presentation_fingerprint(pie_data),
+            "dark_companion_stops": ("#000000", "#111111"),
+        }
+    )
+    _proof(get_emitter(pie_chart).emit(pie_chart, _DEFAULT_BOX, regroup((), pie_data)))
+
+    geo_chart = ResolvedGeoshapeChart(
+        id="geo1",
+        chart_type="geoshape",
+        geo_url="https://example.com/us-10m.json",
+        geo_format_type="topojson",
+        geo_feature="states",
+        geo_join_key="id",
+        geo_projection_type="albersUsa",
+        lookup_field="region",
+        value_field="cat",
+        category_colors=(scale,),
+        style=geoshape_style,
+        **{**_B, "palette": palette, "resolved_channels": channel},
+    )
+    geo_data = [{"region": "r1", "cat": "A"}, {"region": "r2", "cat": "B"}]
+    _proof(get_emitter(geo_chart).emit(geo_chart, _DEFAULT_BOX, regroup((), geo_data)))
+
+    point_map_chart = _point_map(point_map_style).model_copy(
+        update={
+            "latitude": "lat",
+            "longitude": "lon",
+            "resolved_channels": channel,
+            "category_colors": (scale,),
+            "palette": palette,
+        }
+    )
+    # Real CONUS coordinates -- albersUsa (this fixture's default projection)
+    # drops out-of-region rows before the color scale is even built.
+    point_map_data = [
+        {"lat": 40.7, "lon": -74.0, "cat": "A"},
+        {"lat": 34.0, "lon": -118.2, "cat": "B"},
+    ]
+    _proof(
+        get_emitter(point_map_chart).emit(
+            point_map_chart, _DEFAULT_BOX, regroup((), point_map_data)
+        )
+    )

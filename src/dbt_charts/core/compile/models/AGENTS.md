@@ -12,7 +12,7 @@ Each domain folder splits types by stage:
 
 Single-file domains (`config.py`, `source.py`, `primitives.py`, `factories.py`) live at the package root when the domain has no meaningful stage split.
 
-`models/primitives.py`, `compile/normalize/dispatch.py`, and `compile/data_table.py` import validators and helpers from `compile/resolve/style/` (e.g. `resolve.style.palette` for palette-token validation). This is the intended direction: `models/` types depend on `resolve/`'s resolution-stage helpers where a value needs resolving at model-construction time, never the reverse — no file under `models/` is itself part of `resolve/`.
+`models/primitives.py`, `compile/normalize/dispatch.py`, and `compile/support_table.py` import validators and helpers from `compile/resolve/style/` (e.g. `resolve.style.palette` for palette-token validation). This is the intended direction: `models/` types depend on `resolve/`'s resolution-stage helpers where a value needs resolving at model-construction time, never the reverse — no file under `models/` is itself part of `resolve/`.
 
 ## Migrations are mandatory
 
@@ -20,10 +20,13 @@ A structural change to an `authored.py` model or a `*Patch` type (a field
 rename, move, or removal) is a change to the dbt charts YAML grammar. It must
 ship with a corresponding migration module in
 `dbt-charts/src/dbt_charts/core/compile/migrations/versions/`, or a clear reason
-one is not needed (a pure addition, or a semantic change that must fail loud
-per the guide below rather than silently transform). Read
-`docs/guides/dbt-charts-yaml-schemas-and-migrations.md` before making the
-change; a PR missing this is a CRITICAL review finding.
+one is not needed. A pure addition qualifies. "It cannot be migrated safely"
+does not, unless a test in `dbt-charts/tests/core/compile/` demonstrates the
+failure — that claim has twice been asserted and twice been wrong. Read
+`dbt-charts/src/dbt_charts/core/compile/migrations/AGENTS.md` (`## Implementation
+philosophy`) before declaring the
+change unmigratable, and `docs/guides/dbt-charts-yaml-schemas-and-migrations.md`
+before making it; a PR missing this is a CRITICAL review finding.
 
 ## Implementation philosophy
 
@@ -41,7 +44,7 @@ Two equivalent forms are allowed for the authored stage:
 
 These coexist because each form is the most natural fit for its domain — board has a single root authored shape, chart spreads authored input across several shapes that share a `Chart` root, and style is entirely patch-shaped (all-Optional cascade overlays). For the normalized stage, names are always unprefixed (`Board`, `Chart`, `Style`, `FrameStyle`, `AxisStyle`). For the resolved tier, names use the `Resolved*` prefix (`ResolvedBoard`, `ResolvedStyle`, `ResolvedChart`). These are frozen dataclasses produced by merging a normalized `Style` with optional `*Patch` overlays; they are the final resolved shape consumed by renderers — construction-final, never copied-with-update (`dataclasses.replace()`/`model_copy(update=...)` on a `Resolved*` value is a boundary violation; see `dbt-charts/tests/test_no_replace_on_resolved.py`). Theme-stage Pydantic classes (`TitleStyle`, `TextStyle`, `LayoutStyle`, etc.) are themselves the final shape where no per-board cascade is needed — they live in `style/theme/` and carry no prefix.
 
-`ChartStyleContext` (`style/context.py`) is the deliberate exception to the `Resolved*` naming rule: it is compiler *working state* for the chart-local style cascade — sparse axis overlays, chart-local patch sentinels, palette/role token bindings, and the pre-inherit `Style` tree — produced alongside `ResolvedStyle` by the same board-level cascade (`resolve_style_and_context()`) but never exposed by `ResolvedBoard` itself (no field on `ResolvedBoard`/`ResolvedChart`/`ResolvedStyle` carries it, and it never serializes into the board-resolved artifact). It does cross into a handful of render entry points that perform runtime chart resolution rather than mechanical emission — `render/layout_sizing.py`'s sizing pass, `render/board_resolve.py`'s static resolvers, `render/board_to_dict.py`'s row-truncated resolution, and the two documented `render/chart/vega_lite.py` entry points (`render_chart()`, `generate_vega_lite_spec()`) — see `dbt-charts/src/dbt_charts/core/AGENTS.md`'s render-boundary section for the full list and why each is resolution, not emission. Runtime chart resolution (`compile/resolve/`, `compile/data_table.py`, normalized `Board.chart_style_context`, execute orchestration, and those render entry points) consumes it directly; render's other, mechanical consumers only ever see the final `Resolved*` outputs it projects into (`ResolvedStyle`, `ResolvedChartDefaults`, and each chart's own `Resolved<Family>Style`). Because it carries no `Resolved` prefix, `dataclasses.replace()` on a `ChartStyleContext` is legitimate — that is exactly the working-state cascade this split exists to keep off `Resolved*` types.
+`ChartStyleContext` (`style/context.py`) is the deliberate exception to the `Resolved*` naming rule: it is compiler *working state* for the chart-local style cascade — sparse axis overlays, chart-local patch sentinels, palette/role token bindings, and the pre-inherit `Style` tree — produced alongside `ResolvedStyle` by the same board-level cascade (`resolve_style_and_context()`) but never exposed by `ResolvedBoard` itself (no field on `ResolvedBoard`/`ResolvedChart`/`ResolvedStyle` carries it, and it never serializes into the board-resolved artifact). It does cross into a handful of render entry points that perform runtime chart resolution rather than mechanical emission — `render/layout_sizing.py`'s sizing pass, `render/board_resolve.py`'s static resolvers, `render/board_to_dict.py`'s row-truncated resolution, and the two documented `render/chart/vega_lite.py` entry points (`render_chart()`, `generate_vega_lite_spec()`) — see `dbt-charts/src/dbt_charts/core/AGENTS.md`'s render-boundary section for the full list and why each is resolution, not emission. Runtime chart resolution (`compile/resolve/`, `compile/support_table.py`, normalized `Board.chart_style_context`, execute orchestration, and those render entry points) consumes it directly; render's other, mechanical consumers only ever see the final `Resolved*` outputs it projects into (`ResolvedStyle`, `ResolvedChartDefaults`, and each chart's own `Resolved<Family>Style`). Because it carries no `Resolved` prefix, `dataclasses.replace()` on a `ChartStyleContext` is legitimate — that is exactly the working-state cascade this split exists to keep off `Resolved*` types.
 
 Do not add a `Compiled*` prefix to any new class in this tree. The `dbt-charts/scripts/check_models.py` checker enforces this.
 

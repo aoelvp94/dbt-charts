@@ -69,6 +69,10 @@ docs_color:
   tool: "docs(topic=\"color\")"
   dct: "dct docs color"
 
+docs_charts:
+  tool: "docs(topic=\"charts\")"
+  dct: "dct docs charts"
+
 skill_analyst_runbook:
   tool: "get_skill('analyst-runbook')"
   dct: "dct skills analyst-runbook"

@@ -17,27 +17,29 @@ class SparkBarChart(_SharedChartFields):
 
     model_config = ConfigDict(extra="forbid")
 
-    type: Annotated[Literal["spark_bar"], Field(description="SparkBar chart type.")]
+    type: Annotated[
+        Literal["spark_bar"], Field(description="Selects the chart family.")
+    ]
     # None = auto-detected from query columns.
     x: Annotated[
         str | None,
         Channel(),
-        Field(default=None, description="X-axis (label) column name."),
+        Field(default=None, description="Bar-magnitude (numeric) column name."),
     ]
     y: Annotated[
         str | list[str] | None,
         Channel(),
-        Field(default=None, description="Y-axis (value) column name(s)."),
+        Field(default=None, description="Bar-label (category) column name(s)."),
     ]
     style: Annotated[
         SparkBarChartStylePatch | None,
-        Field(default=None, description="Chart-local style overrides."),
+        Field(default=None, description="Appearance overrides for this chart alone."),
     ]
 
     @model_validator(mode="after")
     def _validate_single_series(self) -> SparkBarChart:
-        # A spark bar is one row of bars against one value column; there is no
-        # second encoding to separate a second measure by.
+        # A spark bar is one row of bars against one label column; there is no
+        # second encoding to separate a second series by.
         if isinstance(self.y, list) and len(self.y) != 1:
             raise ValueError(
                 f"SparkBar chart requires a single y column; got {len(self.y)}: "

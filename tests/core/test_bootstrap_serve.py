@@ -86,7 +86,7 @@ class TestFindDctRoot:
         subdir.mkdir(parents=True)
         assert find_dct_root(subdir) == dbt_repo
 
-    def test_finds_dataface_yml(self, tmp_path: Path) -> None:
+    def test_finds_dbt_charts_yml(self, tmp_path: Path) -> None:
         """Finds project root via dbt_charts.yml (no dbt)."""
         (tmp_path / "dbt_charts.yml").write_text("# config\n")
         subdir = tmp_path / "charts"
@@ -141,8 +141,8 @@ class TestDbtAdapterTarget:
 # ---------------------------------------------------------------------------
 
 
-class TestInitDatafaceYml:
-    def test_creates_dataface_yml(self, dbt_repo: Path) -> None:
+class TestInitDbtChartsYml:
+    def test_creates_dbt_charts_yml(self, dbt_repo: Path) -> None:
         result = init_command(project_dir=dbt_repo)
         config_path = dbt_repo / "dbt_charts.yml"
         assert config_path.exists()
@@ -154,7 +154,7 @@ class TestInitDatafaceYml:
         assert (dbt_repo / "dbt_charts.yml").read_text() == "custom: true\n"
         assert Path("dbt_charts.yml") in result.skipped_files
 
-    def test_force_overwrites_dataface_yml(self, dbt_repo: Path) -> None:
+    def test_force_overwrites_dbt_charts_yml(self, dbt_repo: Path) -> None:
         (dbt_repo / "dbt_charts.yml").write_text("custom: true\n")
         result = init_command(project_dir=dbt_repo, force=True)
         assert (dbt_repo / "dbt_charts.yml").read_text() != "custom: true\n"
@@ -162,14 +162,14 @@ class TestInitDatafaceYml:
         assert Path("dbt_charts.yml") in result.refreshed_files
         assert Path("dbt_charts.yml") not in result.created_files
 
-    def test_dataface_yml_is_valid_yaml(self, dbt_repo: Path) -> None:
+    def test_dbt_charts_yml_is_valid_yaml(self, dbt_repo: Path) -> None:
         init_command(project_dir=dbt_repo)
         content = (dbt_repo / "dbt_charts.yml").read_text()
         # Should parse as valid YAML (comments-only parses to None, that's fine)
         parsed = yaml.safe_load(content)
         assert parsed is None or isinstance(parsed, dict)
 
-    def test_non_dbt_repo_also_gets_dataface_yml(self, tmp_path: Path) -> None:
+    def test_non_dbt_repo_also_gets_dbt_charts_yml(self, tmp_path: Path) -> None:
         result = init_command(project_dir=tmp_path)
         assert (tmp_path / "dbt_charts.yml").exists()
         assert Path("dbt_charts.yml") in result.created_files

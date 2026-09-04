@@ -638,3 +638,46 @@ class TestUsedFaces:
         renderer.render(parse("Plain"), width=300, padding=0.0)
         renderer.render(parse("*Emphasised*"), width=300, padding=0.0)
         assert {"regular", "italic"} <= renderer.used_faces
+
+
+class TestResolveFontsDir:
+    """Pins the vendored-fonts lookup: the prefix, and the fail-vs-skip split.
+
+    The lookup once searched a directory name that no longer existed, so the
+    fixture skipped and ~20 font tests went quietly green.
+    """
+
+    def _make(self, root: Path, *prefix: str) -> Path:
+        fonts = root.joinpath(*prefix, "dbt_charts", "core", "render", "fonts")
+        fonts.mkdir(parents=True)
+        return fonts
+
+    def test_finds_monorepo_layout(self, resolve_fonts_dir, tmp_path: Path) -> None:
+        fonts = self._make(tmp_path, "dbt-charts", "src")
+        assert resolve_fonts_dir(tmp_path) == fonts
+
+    def test_finds_standalone_export_layout(
+        self, resolve_fonts_dir, tmp_path: Path
+    ) -> None:
+        fonts = self._make(tmp_path, "src")
+        assert resolve_fonts_dir(tmp_path) == fonts
+
+    def test_raises_when_the_monorepo_layout_is_missing_fonts(
+        self, resolve_fonts_dir, tmp_path: Path
+    ) -> None:
+        """A stale monorepo path must be loud — a skip here is the bug, not a pass."""
+        (tmp_path / "dbt-charts").mkdir()
+        # Skipped must be in the tuple: it is a BaseException, so on its own
+        # pytest.raises(AssertionError) would let it escape and report green —
+        # which is exactly the mutation (dropping the raise) this test catches.
+        with pytest.raises((AssertionError, pytest.skip.Exception)) as caught:
+            resolve_fonts_dir(tmp_path)
+        assert isinstance(caught.value, AssertionError), (
+            f"a stale monorepo path must raise, not skip — got {caught.value!r}"
+        )
+
+    def test_skips_outside_the_monorepo(
+        self, resolve_fonts_dir, tmp_path: Path
+    ) -> None:
+        with pytest.raises(pytest.skip.Exception):
+            resolve_fonts_dir(tmp_path)

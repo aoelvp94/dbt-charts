@@ -12,7 +12,7 @@ Anchors:
   ?model=...&column=... params; hide the directory from the listing.
 - inspect/ filter must be root-only: nested charts/reports/inspect/ should remain
   visible in the /reports/ listing.
-- charts/dbt_charts.yml collision: DFT_ROOT_MARKERS includes "dbt_charts.yml", so
+- charts/dbt_charts.yml collision: DCT_ROOT_MARKERS includes "dbt_charts.yml", so
   find_project_root stops at charts/ when charts/dbt_charts.yml exists,
   treating charts/ as the project root — which has no sources: section, causing
   every chart to error "Source not found". The scaffold uses guide.yaml instead.
@@ -147,7 +147,7 @@ class TestInspectHiddenFromListing:
 
 
 # ---------------------------------------------------------------------------
-# Anchor 3: charts/dbt_charts.yml collision with DFT_ROOT_MARKERS
+# Anchor 3: charts/dbt_charts.yml collision with DCT_ROOT_MARKERS
 # ---------------------------------------------------------------------------
 
 
@@ -156,10 +156,10 @@ class TestProjectRootConfigNotCollided:
     sources:), not a boards-local dbt_charts.yml scaffold that has no sources:.
 
     Regression for: dct init scaffolded charts/dbt_charts.yml, whose filename
-    matches the DFT_ROOT_MARKERS sentinel "dbt_charts.yml" in project_roots.py.
+    matches the DCT_ROOT_MARKERS sentinel "dbt_charts.yml" in project_roots.py.
     discover_render_context walks up from a board, stops at charts/dbt_charts.yml,
     and treats charts/ as the project root — so every chart errors "Source not found".
-    Fix: scaffold guide.yaml instead; guide.yaml is not a DFT_ROOT_MARKERS match.
+    Fix: scaffold guide.yaml instead; guide.yaml is not a DCT_ROOT_MARKERS match.
     """
 
     def test_guide_yaml_does_not_collide_with_project_markers(
@@ -182,10 +182,10 @@ class TestProjectRootConfigNotCollided:
         assert project_root == tmp_path, (
             f"find_project_root must resolve to the project root ({tmp_path}), "
             f"not the charts/ dir ({boards_dir}). Got: {project_root}. "
-            "charts/guide.yaml must not trigger the dbt_charts.yml DFT_ROOT_MARKERS sentinel."
+            "charts/guide.yaml must not trigger the dbt_charts.yml DCT_ROOT_MARKERS sentinel."
         )
 
-    def test_boards_dataface_yml_would_collide(self, tmp_path: Path) -> None:
+    def test_boards_dbt_charts_yml_would_collide(self, tmp_path: Path) -> None:
         """Confirm the collision: charts/dbt_charts.yml causes find_project_root to
         stop at charts/ instead of the real project root. This is the bug the rename fixes.
         """

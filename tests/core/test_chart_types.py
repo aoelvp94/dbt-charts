@@ -1,6 +1,6 @@
 """Tests for chart type mappings and special chart handling.
 
-Tests the dataface.render.vega_lite module for generating
+Tests the dbt_charts.core.render.vega_lite module for generating
 Vega-Lite specifications for all supported chart types.
 """
 
@@ -150,6 +150,30 @@ class TestHistogramChart:
         _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
         spec = generate_vega_lite_spec(chart, data)
         assert spec["encoding"]["color"]["field"] == "category"
+
+    def test_colored_histogram_baseline_category_receives_first_palette_slot(
+        self, make_chart
+    ):
+        chart = make_chart("histogram", x="value", y=None, color="category")
+        data = [
+            {"value": 10, "category": "A"},
+            {"value": 11, "category": "Z"},
+            {"value": 12, "category": "Z"},
+            {"value": 13, "category": "Z"},
+        ]
+        resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
+
+        spec = generate_vega_lite_spec(chart, data)
+
+        color_scale = spec["encoding"]["color"]["scale"]
+        color_by_category = dict(
+            zip(color_scale["domain"], color_scale["range"], strict=True)
+        )
+        assert color_by_category == {
+            "Z": resolved.palette[0],
+            "A": resolved.palette[1],
+        }
+        assert "order" in spec["encoding"]
 
     def test_histogram_pins_angle_without_replacing_resolved_axis(self, make_chart):
         from dbt_charts.core.render.chart.emitters import bar

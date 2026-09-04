@@ -89,8 +89,9 @@ class Query(BaseModel, ABC):
     """
 
     # Common fields all queries can have
-    description: str | None = Field(
-        default=None, description="Human-readable description of this query."
+    notes: str | None = Field(
+        default=None,
+        description="Human-readable notes about this query. Never rendered.",
     )
     limit: int | None = Field(
         default=None, description="Maximum number of rows to return."
@@ -124,6 +125,17 @@ class Query(BaseModel, ABC):
     variable_dependencies: frozenset[str] = Field(
         default_factory=frozenset,
         description="Variable names this query references in SQL (computed during normalization).",
+    )
+
+    # Incremental refresh watermark column — stamped by normalize_query from
+    # the board→query cascade. None means full refresh on every cache miss.
+    incremental: str | None = Field(
+        default=None,
+        description=(
+            "Column used as the monotonic watermark for incremental refresh. "
+            "When set, the executor fetches only rows after the prior "
+            "watermark and merges them with the cached result set."
+        ),
     )
 
     model_config = ConfigDict(extra="forbid")
@@ -417,6 +429,16 @@ class SchemaQuery(Query):
     column: str | None = Field(
         default=None, description="Column name (omit for full table profile)."
     )
+    fields: list[str] | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Project the result rows to exactly these keys, in this order: "
+            "the schema-query counterpart of a SQL SELECT list. A projected "
+            "key a row lacks yields null (metadata key sets vary with "
+            "profiling depth). Omit to return every key each row carries."
+        ),
+    )
 
     # populate_by_name=True: 'schema' is a Pydantic BaseModel class method name
     # (BaseModel.schema() in v1 / model_json_schema() in v2), so using it as a
@@ -424,14 +446,20 @@ class SchemaQuery(Query):
     # `schema_name`; YAML authors write `schema:` and the alias bridges the two.
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    @field_validator("source", "schema_name", "table", "column", mode="before")
+    @field_validator(
+        "source", "schema_name", "table", "column", "fields", mode="before"
+    )
     @classmethod
     def _no_jinja(cls, v: Any) -> Any:
-        if isinstance(v, str) and any(tok in v for tok in ("{{", "{%", "{#")):
-            raise ValueError(
-                "schema fields must be literal strings; "
-                "Jinja templates ({{ }}, {% %}, {# #}) are not supported."
-            )
+        # `fields` arrives as a list — check each element; the scalar fields
+        # fall through the isinstance(str) branch unchanged.
+        values = v if isinstance(v, (list, tuple)) else [v]
+        for item in values:
+            if isinstance(item, str) and any(tok in item for tok in ("{{", "{%", "{#")):
+                raise ValueError(
+                    "schema fields must be literal strings; "
+                    "Jinja templates ({{ }}, {% %}, {# #}) are not supported."
+                )
         return v
 
     @model_validator(mode="after")
@@ -446,6 +474,15 @@ class SchemaQuery(Query):
             )
         return self
 
+    def project(
+        self,
+        data: list[dict[str, Any]],  # type-state: explicit_any — raw query rows
+    ) -> list[dict[str, Any]]:  # type-state: explicit_any — raw query rows
+        """Apply the ``fields:`` projection (no-op when unset)."""
+        if self.fields is None:
+            return data
+        return [{f: row.get(f) for f in self.fields} for row in data]
+
     @property
     def source_description(self) -> str:
         parts: list[str] = []
@@ -457,7 +494,13 @@ class SchemaQuery(Query):
             parts.append(self.table)
         if self.column:
             parts.append(self.column)
-        return f"schema: {'.'.join(parts) if parts else '(all sources)'}"
+        base = f"schema: {'.'.join(parts) if parts else '(all sources)'}"
+        # The projection is part of what this query yields — and non-SQL cache
+        # identity hashes source_description, so two queries over the same
+        # target with different `fields:` must not share a description.
+        if self.fields is not None:
+            base += f" → {', '.join(self.fields)}"
+        return base
 
 
 # ============================================================================

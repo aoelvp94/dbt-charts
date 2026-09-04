@@ -12,6 +12,7 @@ from dbt_charts.core.compile.models.markers import (
 )
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _CartesianChartStyle,
+    _QuantitativeAxisChartStyleMixin,
 )
 from dbt_charts.core.compile.models.style.theme.marks import (
     PointMarkStyle,
@@ -44,7 +45,7 @@ class ScatterLayerStyle(BaseModel):
     )
 
 
-class ScatterChartStyle(_CartesianChartStyle):
+class ScatterChartStyle(_CartesianChartStyle, _QuantitativeAxisChartStyleMixin):
     """Scatter chart style: chart-level fields + marks sub-block."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)

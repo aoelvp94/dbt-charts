@@ -180,13 +180,13 @@ def test_right_edge_house_alias_wired_through_full_resolve():
 
 def test_right_edge_theme_default_format_wired_through_full_resolve():
     """A right-edge y-axis that authors NO format at all -- inheriting the
-    theme's own baseline (``axis_quantitative.labels.format: number_default``,
+    theme's own baseline (``axis_quantitative.labels.format: number``,
     itself a predefined name) -- must still force label.align == 'right'.
 
     ``format_is_alias`` used to only ever become True when an author
     explicitly wrote ``format: <alias>`` at an authored layer (board 6-9,
     fallback 10, or chart-local 11-13); the theme-default
-    layer (1-3) was invisible to it. Since `number_default` is the format
+    layer (1-3) was invisible to it. Since `number` is the format
     every unformatted quantitative axis actually gets, that gap meant the
     overwhelming common case -- a plain axis with no format authored -- never
     got the auto-right-align guarantee at all.
@@ -339,7 +339,7 @@ rows:
 
 def test_compile_time_diagnostic_fires_for_theme_default_format_no_chart_format():
     """WARN_AXIS_ALIGN_DISCARDED fires even when the chart authors NO format
-    at all -- inheriting the theme's own baseline (number_default, a
+    at all -- inheriting the theme's own baseline (number, a
     predefined name) -- as long as align is authored on an explicit
     right-edge axis. Mirrors the force-right fix: the diagnostic must see
     the same theme-default case _force_right does, not just a chart-local

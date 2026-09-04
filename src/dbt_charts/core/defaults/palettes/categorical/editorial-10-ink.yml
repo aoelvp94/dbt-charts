@@ -1,55 +1,23 @@
-# Categorical palette — editorial-10-ink
+# Categorical palette: editorial-10-ink
 #
-# Ink-grade companion to editorial-10. Each stop is the dark counterpart
-# of the same slot in `editorial-10.yml`, designed as the **symmetric
-# opposite of editorial-10-ghost**: where ghost lifts every stop into a
-# pale band, ink drops every stop into a tight dark band that varies by
-# hue and chroma, not by lightness.
-#
-# Use case: theme-level default ink for non-layered, single-encoding
-# charts (bar/line/area fill or stroke, table inline-bars,
-# spark_bar.bar.color). Themes pick a subset by inlining hexes into
-# `style.charts.single_series_palette` — they do not reference this
-# palette name directly. The shipped themes today inline one stop each:
-#
-#   editorial → sky-ink   #203c65   (slot 2)
-#   cream     → sand-ink  #443924   (slot 3)
-#
-# Stark and dark theme do not pull from this palette (literal black on
-# stark, literal near-white on dark).
-#
-# Pairing is positional: stop N here is the ink companion of stop N in
-# editorial-10. Reviewers edit the variant set together when the
-# editorial palette changes.
-#
-# Design discipline — the ink band:
-#   - Target band: L 0.30–0.36 in OKLCH (0.06 wide). Charcoal-ink
-#     anchors the floor at L 0.30 — it equals the charcoal base stop
-#     (#232f3a), which already sits at that floor; the other nine stops
-#     cluster around L 0.33–0.36.
-#   - Stops vary by hue and chroma. Slot identity is carried by hue,
-#     not by lightness.
-#   - Chroma preserved from the editorial-10 base (within reason at the
-#     lower L); each ink slot reads as the dark version of its base hue,
-#     not a desaturated near-gray.
+# Darkest compact-lightness companion. It stays distinct from the direct-label
+# dark tier at every slot and carries identity through hue rather than large
+# lightness differences. Aliases inherit from editorial-10 by position.
 
 name: editorial-10-ink
 extends: editorial-10
 description: |
-  Ink-grade companion to editorial-10 — the symmetric opposite of
-  editorial-10-ghost. Ten slots clustered in a tight L 0.30–0.36 band,
-  varying by hue and chroma. Designed as theme-level default ink for
-  non-layered, single-encoding chart marks; themes pick subsets by
-  inlining hexes into `style.charts.single_series_palette`.
+  Ink-grade companion to editorial-10. Ten hue-preserving stops in a compact
+  OKLCH lightness band, all distinct from the direct-label dark tier.
 
 colors:
-  - "#1b3659"    # 1  — denim-ink     (companion to #3164a3, L 0.33)
-  - "#203c65"    # 2  — sky-ink       (companion to #779bc9, L 0.36)
-  - "#443924"    # 3  — sand-ink      (companion to #ad9c7f, L 0.35)
-  - "#2d383f"    # 4  — gray-ink      (companion to #7a8895, L 0.33)
-  - "#4a2a3a"    # 5  — plum-ink      (companion to #8a576f, L 0.33)
-  - "#263d2a"    # 6  — green-ink     (companion to #5c7b5c, L 0.34)
-  - "#523500"    # 7  — gold-ink      (companion to #d49656, L 0.36)
-  - "#53291d"    # 8  — rust-ink      (companion to #ae6349, L 0.33)
-  - "#143e3e"    # 9  — teal-ink      (companion to #609f9e, L 0.34)
-  - "#232f3a"    # 10 — charcoal-ink  (= base #232f3a, L 0.30)
+  - "#0f2c5a"    # 1  blue
+  - "#1c395c"    # 2  sky
+  - "#1f3d2d"    # 3  green
+  - "#3d2438"    # 4  purple
+  - "#563000"    # 5  gold
+  - "#591d05"    # 6  rust
+  - "#2b3c3c"    # 7  teal
+  - "#43361f"    # 8  brown
+  - "#29343e"    # 9  gray
+  - "#252d2f"    # 10 graphite

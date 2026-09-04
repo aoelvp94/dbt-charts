@@ -154,14 +154,21 @@ def test_unmapped_value_raises_migration_error() -> None:
     """_apply_move raises MigrationError immediately when a Move's value_map
     doesn't cover the popped value -- never passes an unmapped value through.
 
-    allow_html is strictly `type: boolean` in the frozen schemas, so no
-    non-bool value can reach this Move via the real registry (schema
-    recognition rejects it first) -- this exercises _apply_move directly to
-    cover the value_map safety net itself, independent of any one field's
-    schema.
+    A non-bool `allow_html:` does now reach this Move through the real registry:
+    recognition asks which retired constructs are present, not whether the whole
+    document validates under a frozen grammar, so the key's presence is what
+    engages the transition and its value is not screened first. `_apply_move`
+    is the screen, and `prepare_board_mapping` routes what it raises to the
+    parser rather than out of the loader
+    (test_migration_recognition.py::test_a_migration_that_cannot_be_applied_reaches_the_parser_not_the_user).
+    Exercised directly here to cover the value_map safety net itself,
+    independent of any one field's schema. Sourced from 0.4.0 rather than
+    `_CURRENT` because `_apply_move` is schema-gated: it rewrites a key only
+    where the source grammar declares it, and 0.4.0 is the newest schema that
+    still declares `allow_html`.
     """
     move = Move(
-        source_schema=_CURRENT,
+        source_schema="0.4.0",
         target_schema=_CURRENT,
         old_path=("allow_html",),
         new_path=("html_policy",),
@@ -170,7 +177,7 @@ def test_unmapped_value_raises_migration_error() -> None:
     mapping: dict[str, Any] = {"allow_html": "maybe"}
 
     with pytest.raises(MigrationError, match="allow_html"):
-        _apply_move(mapping, move)
+        _apply_move(mapping, move, load_yaml_schema_catalog())
 
 
 def test_apply_move_rejects_non_scalar_source() -> None:
@@ -179,7 +186,7 @@ def test_apply_move_rejects_non_scalar_source() -> None:
     scalar domain, so anything else is a migration author's error to fix,
     not a value to guess through."""
     move = Move(
-        source_schema=_CURRENT,
+        source_schema="0.4.0",
         target_schema=_CURRENT,
         old_path=("allow_html",),
         new_path=("html_policy",),
@@ -188,4 +195,4 @@ def test_apply_move_rejects_non_scalar_source() -> None:
     mapping: dict[str, Any] = {"allow_html": ["not", "scalar"]}
 
     with pytest.raises(MigrationError, match="allow_html"):
-        _apply_move(mapping, move)
+        _apply_move(mapping, move, load_yaml_schema_catalog())

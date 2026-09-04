@@ -358,7 +358,7 @@ class TestItalicOutsideMarkdownEmphasis:
     def test_conditional_formatting_italic_cell(self, tmp_path, local_project) -> None:
         """An authored feature: one cell painted italic by a rule on the data.
 
-        Applied to a text column on purpose. A numeric column paints in DFT Sans
+        Applied to a text column on purpose. A numeric column paints in dbt Sans
         Tabular, which ships no italic row at all, so there is nothing to carry and
         the browser synthesizes an oblique — on a live board too, not only in an
         export."""

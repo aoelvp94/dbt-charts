@@ -433,7 +433,7 @@ def test_geoshape_legend_labels_do_not_derive_from_raw_data() -> None:
 
     Regression: `data` here is pre-lookup-join. VL's own rendered domain is
     computed from whichever rows survive the client-side geo-key join (which
-    Dataface never parses/validates here) — a row whose lookup key doesn't
+    dbt charts never parses/validates here) — a row whose lookup key doesn't
     match a real feature (e.g. a zero-padded FIPS code against an unpadded
     preset) still counts toward `data`'s min/max, so trusting the raw extent
     can label an endpoint that corresponds to nothing shaded on the map. Only

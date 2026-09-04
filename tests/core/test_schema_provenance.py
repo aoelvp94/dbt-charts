@@ -69,7 +69,9 @@ def _make_manifest(
             }
             for name, info in sources.items()
         }
-    return ref_index(LoadedManifest(raw=raw, relpath="target/manifest.json"))
+    return ref_index(
+        LoadedManifest(raw=raw, relpath="target/manifest.json", version="v1")
+    )
 
 
 class TestResolveDbtRefsWithProvenance:

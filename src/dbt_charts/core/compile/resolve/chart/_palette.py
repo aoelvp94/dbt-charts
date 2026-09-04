@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Protocol
 
 from dbt_charts.core.compile.config import get_chart_rendering
-from dbt_charts.core.compile.format import resolve_format
+from dbt_charts.core.compile.format import resolve_format_for_values
 from dbt_charts.core.compile.models.primitives import (
     ColorStyle,
     StaticGradientColorStyle,
@@ -158,9 +159,14 @@ def _resolved_series_label(
     renderer slices ``[:n_series]``). Font fields are required post-cascade.
     """
     font = chart_style_context.series_label.font
-    if font.family is None or font.size is None or font.weight is None:
+    if (
+        font.family is None
+        or font.size is None
+        or font.weight is None
+        or font.style is None
+    ):
         raise ValueError(
-            "series_label.font.{family,size,weight} must be non-None after cascade"
+            "series_label.font.{family,size,weight,style} must be non-None after cascade"
         )
     eff_palette = _effective_palette(chart_style_context, primary)
     compact = width_tier(width) in ("tiny", "narrow")
@@ -170,6 +176,7 @@ def _resolved_series_label(
         font_family=font.family,
         font_size=font_size,
         font_weight=font_weight_as_css(font.compact_weight if compact else font.weight),
+        font_style=font.style,
         dark_companion_palette=tuple(resolve_dark_companion_stops(list(eff_palette))),
         gap_px=font_size * multiplier,
     )
@@ -188,6 +195,7 @@ def _cartesian_style_tail(
     chart_style_context: ChartStyleContext,
     ax: ResolvedAxisStyle,
     ay: ResolvedAxisStyle,
+    tooltip_format_values: Iterable[float | None],
 ) -> dict[str, Any]:
     """Common ResolvedXxxStyle kwargs shared by every cartesian family.
 
@@ -195,10 +203,18 @@ def _cartesian_style_tail(
     on the resolved chart envelope (``chart.background``) instead — emitters
     read it from there so it always agrees with the VL spec root, rather
     than duplicating it here as a second, independently-populated field.
+
+    ``tooltip_format_values`` is every value the chart's own quantitative
+    measure(s) will paint — passed to resolve_format_for_values so the
+    board-default tooltip format (this function's fallback candidate)
+    floors the same way the chart-authored candidate in
+    ``_measure_tooltip_format`` does.
     """
     return {
-        "tooltip_format": resolve_format(
-            chart_style_context.tooltip.format, chart_style_context.formats
+        "tooltip_format": resolve_format_for_values(
+            chart_style_context.tooltip.format,
+            chart_style_context.formats,
+            tooltip_format_values,
         ),
         "axis_x": ax,
         "axis_y": ay,

@@ -1,5 +1,5 @@
 title: "Markdown code & blockquote styling"
-description: >
+notes: >
   Reference specimen for markdown prose box tokens: inline code,
   syntax-highlighted fenced code, and blockquotes painted from the theme via
   style.text.code and style.text.blockquote.

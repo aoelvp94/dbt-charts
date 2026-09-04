@@ -1,0 +1,305 @@
+title: "Theme surface matrix — gray single-series"
+notes: >
+  Every authorable chart family plus the non-chart surfaces a theme paints —
+  prose, code, blockquote, variables, table pagination, legends, tooltips.
+  Clarity plus the gray single-series override (see gray-single-series.yml).
+  Render to HTML and drive it in a browser: the tooltip, hover and paginator
+  states do not exist in a static SVG.
+theme: clarity
+style:
+  charts:
+    color:
+      categorical:
+        single_series_palette: [dbt-grays.heading]
+source: examples_db
+
+variables:
+  region:
+    placeholder: "All regions"
+    options:
+      static: [North, South, East, West]
+  window:
+    input: daterange
+
+queries:
+  orders: SELECT * FROM ecommerce_orders
+  states: SELECT * FROM us_states
+  by_product: |
+    SELECT product, category, SUM(revenue) AS revenue, SUM(units_sold) AS units
+    FROM ecommerce_orders GROUP BY 1, 2 ORDER BY 3 DESC
+  by_day: |
+    SELECT date, category, SUM(revenue) AS revenue
+    FROM ecommerce_orders GROUP BY 1, 2 ORDER BY 1
+  by_day_total: |
+    SELECT date, SUM(revenue) AS revenue
+    FROM ecommerce_orders GROUP BY 1 ORDER BY 1
+  by_cat: |
+    SELECT category, SUM(revenue) AS revenue FROM ecommerce_orders
+    GROUP BY 1 ORDER BY 2 DESC
+  totals: |
+    SELECT SUM(revenue) AS revenue, SUM(units_sold) AS units,
+           COUNT(*) AS orders, AVG(revenue) AS aov
+    FROM ecommerce_orders
+  stores:
+    columns: [name, state, latitude, longitude, revenue, store_type]
+    values:
+      - ["Los Angeles", "CA", 34.0522, -118.2437, 2500000, "flagship"]
+      - ["San Francisco", "CA", 37.7749, -122.4194, 3200000, "flagship"]
+      - ["Seattle", "WA", 47.6062, -122.3321, 1800000, "standard"]
+      - ["Denver", "CO", 39.7392, -104.9903, 1200000, "standard"]
+      - ["Austin", "TX", 30.2672, -97.7431, 2100000, "flagship"]
+      - ["Chicago", "IL", 41.8781, -87.6298, 2800000, "flagship"]
+      - ["New York", "NY", 40.7580, -73.9855, 4500000, "flagship"]
+      - ["Miami", "FL", 25.7617, -80.1918, 1350000, "standard"]
+
+rows:
+  - text: |
+      ## Cartesian families
+
+      Single-series marks below should be **neutral** (`dbt-grays.heading`) because
+      nothing is encoded by hue. The grouped bar, the multi-series line and the
+      heatmap all encode by colour, so they take the vivid-10 palette. That
+      difference is the theme's whole rule — check it reads as intentional.
+
+  - cols: [c_bar, c_bar_grouped]
+  - cols: [c_line, c_area]
+  - cols: [c_scatter, c_histogram]
+  - cols: [c_heatmap, c_spark]
+
+  - text: |
+      ## Radial, KPI and callout
+
+      Pie and donut always encode by hue, so they stay coloured. The KPI row
+      exercises semantic tones (positive / negative / warning) — those are
+      *meaning*, not decoration, and must survive a grayscale-default theme.
+
+  - cols: [c_pie, c_donut]
+  - cols: [k_pos, k_neg, k_warn, k_plain]
+  - cols: [c_callout_pos, c_callout_neg]
+
+  - text: |
+      ## Geographic
+
+      `geoshape` fill (regions with no joined data) is a theme token — check the
+      unjoined regions recede rather than reading as a data value.
+
+  - cols: [c_map]
+  - cols: [c_bubble, c_point]
+
+  - text: |
+      ## Table surfaces
+
+      Header, value and label tiers, zebra stripe, inline bars, conditional
+      formatting, and the paginator (page 2 is where the inactive/disabled
+      paginator colours show).
+
+  - cols: [c_table]
+
+  - text: |
+      ## Prose surfaces
+
+      Body prose, `inline code`, and the two block treatments below are all
+      theme-painted and easy to forget.
+
+      ```sql
+      SELECT category, SUM(revenue) AS revenue
+      FROM ecommerce_orders
+      GROUP BY 1
+      ORDER BY 2 DESC
+      ```
+
+      > Blockquote: border colour, italic font and muted ink all come from the
+      > theme's `text.blockquote` block.
+
+      | Column | Meaning |
+      |---|---|
+      | Markdown table | borders and header weight are themed too |
+      | Second row | check the stripe |
+
+charts:
+  c_bar:
+    type: bar
+    title: "Bar — single series"
+    subtitle: "No colour channel: expect a neutral mark"
+    query: by_cat
+    x: category
+    y: revenue
+    style:
+      orientation: vertical
+
+  c_bar_grouped:
+    type: bar
+    title: "Bar — grouped, colour encoded"
+    subtitle: "Has a colour channel: expect vivid-10"
+    query: by_product
+    x: category
+    y: revenue
+    color: product
+
+  c_line:
+    type: line
+    title: "Line — multi series"
+    subtitle: "Direct endpoint labels, no legend"
+    query: by_day
+    x: date
+    y: revenue
+    color: category
+
+  c_area:
+    type: area
+    title: "Area — single series"
+    subtitle: "Expect neutral fill + neutral edge"
+    query: by_day_total
+    x: date
+    y: revenue
+
+  c_scatter:
+    type: scatter
+    title: "Scatter — colour + size"
+    subtitle: "The one family that keeps a legend"
+    query: by_product
+    x: units
+    y: revenue
+    color: category
+    size: units
+
+  c_histogram:
+    type: histogram
+    title: "Histogram — single series"
+    subtitle: "Distribution of order revenue"
+    query: orders
+    x: revenue
+
+  c_heatmap:
+    type: heatmap
+    title: "Heatmap — sequential scale"
+    subtitle: "Colour IS the encoding; check the legend ramp"
+    query: by_product
+    x: category
+    y: product
+    color: revenue
+
+  c_spark:
+    type: spark_bar
+    title: "Spark bar"
+    subtitle: "Track background is a theme token"
+    query: by_cat
+    x: revenue
+    y: category
+
+  c_pie:
+    type: pie
+    title: "Pie"
+    query: by_cat
+    theta: revenue
+    color: category
+
+  c_donut:
+    type: donut
+    title: "Donut — with total"
+    query: by_cat
+    theta: revenue
+    color: category
+
+  k_pos:
+    type: kpi
+    label: "Revenue"
+    query: totals
+    value: revenue
+    support:
+      value: units
+      label: "units sold"
+      tone: positive
+
+  k_neg:
+    type: kpi
+    label: "Churn"
+    query: totals
+    value: aov
+    support:
+      value: orders
+      label: "accounts"
+      tone: negative
+
+  k_warn:
+    type: kpi
+    label: "At risk"
+    query: totals
+    value: orders
+    support:
+      value: units
+      label: "units sold"
+      tone: warning
+
+  k_plain:
+    type: kpi
+    label: "Orders"
+    query: totals
+    value: orders
+
+  c_callout_pos:
+    type: callout
+    title: "Callout — positive tone"
+    message: >
+      Semantic tone colours must stay legible on a grayscale-default theme;
+      they carry meaning, so the theme's no-colour-by-default rule does not
+      apply to them.
+    style:
+      tone: positive
+
+  c_callout_neg:
+    type: callout
+    title: "Callout — negative tone"
+    message: >
+      The negative tone should read as a warning without shouting louder than
+      the data marks around it.
+    style:
+      tone: negative
+
+  c_map:
+    type: map
+    title: "Map — filled regions, sequential scale"
+    subtitle: "Unjoined regions use the geoshape theme fill"
+    query: states
+    geo_source: us-states
+    lookup: id
+    value: population
+    projection: albersUsa
+
+  c_bubble:
+    type: bubble_map
+    title: "Bubble map — size + colour"
+    query: stores
+    latitude: latitude
+    longitude: longitude
+    size: units
+    color: store_type
+    projection: albersUsa
+    geo_source: us-states
+
+  c_point:
+    type: point_map
+    title: "Point map — no colour channel"
+    subtitle: "Expect neutral points"
+    query: stores
+    latitude: latitude
+    longitude: longitude
+    projection: albersUsa
+    geo_source: us-states
+
+  c_table:
+    type: table
+    title: "Table — all cell treatments"
+    subtitle: "Stripe, inline bar, conditional format, paginator"
+    query: by_product
+    style:
+      columns:
+        product:
+          label: Product
+        category:
+          label: Category
+        revenue:
+          label: Revenue
+          format: currency
+        units:
+          label: Units

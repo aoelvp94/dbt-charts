@@ -326,6 +326,75 @@ def test_callout_missing_message_raises() -> None:
         normalize_chart("c", {"type": "callout", "query": "q"}, qr, sources={})
 
 
+def test_multiples_self_crossed_raises() -> None:
+    """multiples.rows and multiples.columns naming the same field raises at
+    compile time — before any query ever runs, not merely a degraded render.
+    """
+    from dbt_charts.core.compile.errors import CompilationError
+    from dbt_charts.core.compile.normalize.charts import normalize_chart
+
+    qr = _registry(q=_sql("SELECT month, region, revenue FROM t"))
+    with pytest.raises(CompilationError, match="multiples.rows and multiples.columns"):
+        normalize_chart(
+            "c",
+            {
+                "type": "bar",
+                "x": "month",
+                "y": "revenue",
+                "query": "q",
+                "multiples": {"rows": "region", "columns": "region"},
+            },
+            qr,
+            sources={},
+        )
+
+
+def test_multiples_self_crossed_raises_on_every_cartesian_family() -> None:
+    """Refused regardless of family — every family multiples supports (bar,
+    histogram, line, area, scatter, heatmap) rejects the same shape.
+    """
+    from dbt_charts.core.compile.errors import CompilationError
+    from dbt_charts.core.compile.normalize.charts import normalize_chart
+
+    qr = _registry(q=_sql("SELECT month, region, revenue FROM t"))
+    for chart_type in ("bar", "histogram", "line", "area", "scatter", "heatmap"):
+        chart_def = {
+            "type": chart_type,
+            "x": "month",
+            "y": "revenue",
+            "query": "q",
+            "multiples": {"rows": "region", "columns": "region"},
+        }
+        with pytest.raises(
+            CompilationError, match="multiples.rows and multiples.columns"
+        ):
+            normalize_chart(f"c_{chart_type}", chart_def, qr, sources={})
+
+
+def test_multiples_different_rows_and_columns_does_not_raise() -> None:
+    """rows and columns naming different fields is a legitimate grid — must
+    not be swept up by the self-crossed check.
+    """
+    from dbt_charts.core.compile.normalize.charts import normalize_chart
+
+    qr = _registry(q=_sql("SELECT month, region, product, revenue FROM t"))
+    compiled = normalize_chart(
+        "c",
+        {
+            "type": "bar",
+            "x": "month",
+            "y": "revenue",
+            "query": "q",
+            "multiples": {"rows": "region", "columns": "product"},
+        },
+        qr,
+        sources={},
+    )
+    assert compiled.multiples is not None
+    assert compiled.multiples.rows == "region"
+    assert compiled.multiples.columns == "product"
+
+
 def test_kpi_background_passes_through() -> None:
     """KpiChart.background must be wired from flat Chart through the v2 compiler.
 
@@ -449,14 +518,14 @@ def test_normalize_table_passes_through_pivot_channels() -> None:
     assert compiled.values == ["revenue"]
 
 
-def test_table_chart_rejects_data_table() -> None:
-    """Normalized TableChart must not accept data_table — it belongs on cartesian types."""
+def test_table_chart_rejects_support_table() -> None:
+    """Normalized TableChart must not accept support_table — it belongs on cartesian types."""
     from pydantic import ValidationError
 
     from dbt_charts.core.compile.models.chart.normalized.table import TableChart
 
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-        TableChart(id="t", type="table", data_table={"entries": [{"source": "x"}]})
+        TableChart(id="t", type="table", support_table={"entries": [{"source": "x"}]})
 
 
 # ---------------------------------------------------------------------------
@@ -702,12 +771,12 @@ def test_geoshape_rejects_latitude_longitude() -> None:
         )
 
 
-def test_data_table_entry_inherits_measure_format_from_style_axis_y() -> None:
-    """v2 must match v1: a data_table entry reading chart.y with format=None
+def test_support_table_entry_inherits_measure_format_from_style_axis_y() -> None:
+    """v2 must match v1: a support_table entry reading chart.y with format=None
 
     inherits the chart's measure format (style.axis_y.format here), same as
     normalize_chart() does for v1. Regression: normalize_chart passed
-    authored.data_table straight through with no inheritance, so v2 strip
+    authored.support_table straight through with no inheritance, so v2 strip
     cells rendered unformatted.
     """
     from dbt_charts.core.compile.normalize.charts import normalize_chart
@@ -721,14 +790,14 @@ def test_data_table_entry_inherits_measure_format_from_style_axis_y() -> None:
             "y": "revenue",
             "query": "q",
             "style": {"axis_y": {"labels": {"format": "$,.0f"}}},
-            "data_table": [{"source": "revenue"}, {"source": "count"}],
+            "support_table": [{"source": "revenue"}, {"source": "count"}],
         },
         qr,
         sources={},
     )
     assert isinstance(compiled, BarChart)
-    assert compiled.data_table is not None
-    entries = compiled.data_table.entries
+    assert compiled.support_table is not None
+    entries = compiled.support_table.entries
     assert entries[0].format == "$,.0f", (
         "measure entry must inherit style.axis_y.format, matching v1"
     )

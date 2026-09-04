@@ -160,7 +160,7 @@ class TestBuildContextSection:
 
 
 class TestSharedPromptComposition:
-    """Shared Dataface prompt composition is the only generic AI instruction path."""
+    """Shared dbt charts prompt composition is the only generic AI instruction path."""
 
     def test_data_exploration_skill_renders_tool_surface(self) -> None:
         prompt = load_shared_prompt("data-exploration", surface="tool")

@@ -23,7 +23,7 @@ Package layout (one file per concern, mirroring chart/normalized/):
   geoshape.py, point_map.py — one *ChartMarksStyle + one *ChartStyle per family
   callout.py     — callout chart family
   kpi.py         — KPI chart family
-  table.py       — table chart family + attached data_table primitive
+  table.py       — table chart family + attached support_table primitive
   spark_bar.py   — spark_bar (standalone chart) family
   charts.py      — ChartsStyle registry (aggregates every *ChartStyle)
   layout.py      — layout containers (rows, cols, grid, tabs, details)
@@ -42,6 +42,7 @@ from dbt_charts.core.compile.models.style.theme._chart_base import (
     _GeoChartStyle,
     _PaintedChartStyleBase,
     _PaintedChartStyleBaseAllOptional,
+    _QuantitativeAxisChartStyleMixin,
     _RadialChartStyle,
 )
 from dbt_charts.core.compile.models.style.theme.area import (
@@ -213,10 +214,6 @@ from dbt_charts.core.compile.models.style.theme.style import (
     Style,
 )
 from dbt_charts.core.compile.models.style.theme.table import (
-    DataTableLabelStyle,
-    DataTableRowPaddingStyle,
-    DataTableRowStyle,
-    DataTableStyle,
     PaginatorStyle,
     SparkAreaStyle,
     SparkBarCellStyle,
@@ -226,6 +223,10 @@ from dbt_charts.core.compile.models.style.theme.table import (
     SparkEmptyStyle,
     SparkSingleValueStyle,
     SparkStyle,
+    SupportTableLabelStyle,
+    SupportTableRowPaddingStyle,
+    SupportTableRowStyle,
+    SupportTableStyle,
     TableChartStyle,
     TableColumnsStyle,
     TableEdgeStyle,
@@ -288,10 +289,10 @@ __all__ = [
     "ChartsStyle",
     "CircleMarkStyle",
     "ColumnRuleStyle",
-    "DataTableLabelStyle",
-    "DataTableRowPaddingStyle",
-    "DataTableRowStyle",
-    "DataTableStyle",
+    "SupportTableLabelStyle",
+    "SupportTableRowPaddingStyle",
+    "SupportTableRowStyle",
+    "SupportTableStyle",
     "DetailsArrowFontStyle",
     "DetailsArrowStyle",
     "DetailsStyle",
@@ -406,6 +407,7 @@ __all__ = [
     "_GeoChartStyle",
     "_PaintedChartStyleBase",
     "_PaintedChartStyleBaseAllOptional",
+    "_QuantitativeAxisChartStyleMixin",
     "_RadialChartStyle",
     "_normalize_overflow_value",
     "coerce_gap",

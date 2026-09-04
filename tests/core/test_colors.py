@@ -3,6 +3,10 @@
 sanitize_color and is_sanitizable_color validate foreign SVG/CSS strings, not
 compile policy, so they live in dbt_charts.core.colors (a neutral leaf) rather
 than under compile/.
+
+color_at/ink_at (board-slot → paint resolution) live one layer up, in
+dbt_charts.core.compile.models.style.theme.category_colors — see
+dbt-charts/tests/core/compile/models/style/theme/test_category_colors.py.
 """
 
 from __future__ import annotations
@@ -11,8 +15,10 @@ import pytest
 
 from dbt_charts.core.colors import (
     InvalidColorError,
+    ensure_readable_ink,
     is_sanitizable_color,
     sanitize_color,
+    wcag_contrast,
 )
 
 
@@ -49,3 +55,48 @@ def test_is_sanitizable_color_accepts_hex_and_keywords():
 
 def test_is_sanitizable_color_rejects_invalid():
     assert is_sanitizable_color("not-a-color") is False
+
+
+def test_ensure_readable_ink_returns_color_unchanged_when_already_readable():
+    assert ensure_readable_ink("#000000", "#ffffff") == "#000000"
+
+
+def test_ensure_readable_ink_darkens_a_light_fill_on_a_light_background():
+    ink = ensure_readable_ink("#d7d7d7", "#ffffff")
+    assert ink != "#d7d7d7"
+    assert wcag_contrast(ink, "#ffffff") >= 4.5
+
+
+def test_ensure_readable_ink_lightens_a_dark_fill_on_a_dark_background():
+    ink = ensure_readable_ink("#222222", "#000000")
+    assert ink != "#222222"
+    assert wcag_contrast(ink, "#000000") >= 4.5
+
+
+def test_ensure_readable_ink_picks_the_higher_contrast_endpoint_for_a_midtone_background():
+    """HIGH regression: the black/white equal-contrast crossover is
+    luminance ≈0.18, not the 0.5 midpoint -- a background between those two
+    thresholds must still search toward the endpoint that actually wins.
+    ``#808080`` (luminance ≈0.216) sits in exactly that band: black gives
+    5.32:1, white only 3.95:1, so a 0.5-pivoted search picks the WRONG
+    (lower-contrast, still-failing) direction.
+    """
+    for bg in ("#808080", "#949494", "#b0b0b0"):
+        ink = ensure_readable_ink("#ffffff", bg)
+        assert wcag_contrast(ink, bg) >= 4.5, (bg, ink)
+        # The winning direction is toward black -- confirms the search moved
+        # the RIGHT way, not just that it eventually stumbled onto a legal L.
+        assert wcag_contrast("#000000", bg) > wcag_contrast("#ffffff", bg)
+        from dbt_charts.core.colors import hex_to_oklch
+
+        assert hex_to_oklch(ink)[0] < 0.5, (bg, ink)
+
+
+def test_ensure_readable_ink_raises_when_no_ink_clears_the_floor():
+    """HIGH regression: a background where NEITHER black nor white can
+    clear an unreasonably high ratio must raise, not silently return ink
+    that still fails -- ``_table_surface_seq``'s own precedent
+    (``compile/resolve/style/palette.py``) for a WCAG floor that can't be met.
+    """
+    with pytest.raises(ValueError, match="no ink clears"):
+        ensure_readable_ink("#808080", "#808080", min_ratio=21.0)

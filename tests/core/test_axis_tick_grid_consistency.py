@@ -25,6 +25,7 @@ from typing import get_args
 
 import pytest
 
+from dbt_charts.core.colors import wcag_contrast as _wcag_contrast
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.schema_names import ThemeName
 from dbt_charts.core.compile.resolve.style.axis_cascade import (
@@ -35,7 +36,6 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.compile.resolve.style.palette import _wcag_contrast
 
 THEMES = get_args(ThemeName)
 

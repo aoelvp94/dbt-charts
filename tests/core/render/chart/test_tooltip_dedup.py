@@ -98,10 +98,10 @@ def test_vertical_stacked_bar_measure_formatted_in_aria_label():
     formatted = [
         lb
         for lb in labels
-        if "Count: 5.5" in lb or "Count: 3.3" in lb or "Count: 2.7" in lb
+        if "count: 5.5" in lb or "count: 3.3" in lb or "count: 2.7" in lb
     ]
     assert formatted, (
-        f"Expected at least one aria-label with formatted count (e.g. 'Count: 5.5').\n"
+        f"Expected at least one aria-label with formatted count (e.g. 'count: 5.5').\n"
         f"Actual aria-labels: {labels!r}"
     )
 
@@ -150,12 +150,12 @@ def test_horizontal_stacked_bar_measure_formatted_in_aria_label():
     formatted = [
         lb
         for lb in labels
-        if "Ticket Count: 20.5" in lb
-        or "Ticket Count: 5.5" in lb
-        or "Ticket Count: 8.3" in lb
+        if "ticket count: 20.5" in lb
+        or "ticket count: 5.5" in lb
+        or "ticket count: 8.3" in lb
     ]
     assert formatted, (
-        f"Expected at least one aria-label with formatted ticket_count (e.g. 'Ticket Count: 20.5').\n"
+        f"Expected at least one aria-label with formatted ticket_count (e.g. 'ticket count: 20.5').\n"
         f"Actual aria-labels: {labels!r}"
     )
 

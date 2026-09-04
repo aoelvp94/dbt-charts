@@ -143,6 +143,46 @@ def test_compile_error_stamps_relpath_not_absolute(
     assert err.range.file == "charts/bad.yml"
 
 
+def test_compile_reserved_word_query_ref_returns_clean_error(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """A {{ queries.X }} reference to a reserved-word query name must return a
+    CompileResult(success=False), not raise uncaught.
+
+    detect_query_dependencies() (core/compile/template/jinja.py) raises a bare
+    CompilationError for this case via _validate_query_ref_name — JinjaError's
+    *parent*, not a subclass — while compiler.py's STEP 5 only catches
+    `except JinjaError`. The reserved-word check escapes uncaught through
+    compile_file() and crashes every caller (dct query --validate/--describe,
+    dct render, ...).
+    """
+    board_yaml = (
+        "source: warehouse\n"
+        "queries:\n"
+        "  order:\n"
+        "    sql: SELECT 1 AS one\n"
+        "  bad:\n"
+        "    sql: SELECT * FROM {{ queries.order }}\n"
+        "charts:\n"
+        "  c:\n"
+        "    query: bad\n"
+        "    type: kpi\n"
+        "    value: one\n"
+    )
+    board_path = tmp_path / "board.yml"
+    board_path.write_text(board_yaml)
+
+    project = local_project(tmp_path)
+    project.__dict__["sources"] = ProjectSourcesConfig(
+        sources={"warehouse": {"type": "duckdb", "path": str(tmp_path / "wh.duckdb")}},
+    )
+
+    result = compile_file(project.path("board.yml").read_board())
+
+    assert not result.success
+    assert any("reserved word" in e.message for e in result.errors), result.errors
+
+
 def test_compile_stamps_the_correct_list_item_not_the_first_match() -> None:
     """The old regex-based line finder walked the raw text key-by-key and had
     no notion of *which* list item a nested field error belonged to — it

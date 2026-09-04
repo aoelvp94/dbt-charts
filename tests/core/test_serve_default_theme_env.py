@@ -20,7 +20,7 @@ from dbt_charts.core.compile.config import (
 
 
 class TestGetDefaultThemeName:
-    def test_reads_dft_default_theme_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_reads_dct_default_theme_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("DCT_DEFAULT_THEME", "neon")
         assert get_default_theme_name() == "neon"
 
@@ -46,7 +46,7 @@ class TestGetDefaultThemeName:
 class TestServeStartupThemeValidation:
     """Serve command validates DCT_DEFAULT_THEME before serving any request."""
 
-    def test_invalid_dft_default_theme_not_in_built_in_list(
+    def test_invalid_dct_default_theme_not_in_built_in_list(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -55,7 +55,7 @@ class TestServeStartupThemeValidation:
         assert get_default_theme_name() == "nonexistent-theme-xyz"
         assert "nonexistent-theme-xyz" not in list_built_in_themes()
 
-    def test_valid_dft_default_theme_passes_validation(
+    def test_valid_dct_default_theme_passes_validation(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Valid DCT_DEFAULT_THEME must be in built-in themes."""
@@ -64,10 +64,10 @@ class TestServeStartupThemeValidation:
         assert "neon" in list_built_in_themes()
 
 
-class TestDatafaceYmlThemeRemoved:
+class TestDbtChartsYmlThemeRemoved:
     """dbt_charts.yml: theme: is no longer accepted — raises pydantic ValidationError."""
 
-    def test_theme_key_in_dataface_yml_raises(
+    def test_theme_key_in_dbt_charts_yml_raises(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,

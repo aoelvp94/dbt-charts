@@ -22,7 +22,7 @@ def _reset():
 
 
 def _default_resolved_style():
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     return resolve_style(compiled)
 
 

@@ -63,7 +63,7 @@ class TestFiltersAndLimitOffTheBase:
     The authored base holds identity/plumbing only (source, description, cache,
     ignore). limit:
     survives only on the families whose query language cannot express it in-band
-    (metricflow, http).
+    (http).
     """
 
     def test_authored_sql_query_rejects_filters(self) -> None:
@@ -84,13 +84,9 @@ class TestFiltersAndLimitOffTheBase:
         with pytest.raises(ValidationError, match="limit"):
             AuthoredValuesQuery(rows=[{"a": 1}], limit=5)
 
-    def test_limit_survives_on_metricflow_http(self) -> None:
-        from dbt_charts.core.compile.models.query.authored import (
-            AuthoredHttpQuery,
-            AuthoredMetricflowQuery,
-        )
+    def test_limit_survives_on_http(self) -> None:
+        from dbt_charts.core.compile.models.query.authored import AuthoredHttpQuery
 
-        assert AuthoredMetricflowQuery(metrics=["revenue"], limit=20).limit == 20
         assert AuthoredHttpQuery(url="https://api.example.com", limit=20).limit == 20
 
     def test_board_level_sql_filters_rejected_at_parse(self) -> None:

@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from dbt_charts.core.compile.models.markers import Format
+from dbt_charts.core.compile.models.markers import DisplayText, Format
 from dbt_charts.core.compile.models.schema_names import FormatAlias
 
 
@@ -26,7 +26,8 @@ class LayerAxisYTicks(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     count: int | None = Field(
-        default=None, description="Requested number of y-axis ticks for this layer."
+        default=None,
+        description="Target number of ticks on this layer's y axis; a target, never an exact count.",
     )
 
 
@@ -40,8 +41,8 @@ class LayerAxisYGrid(BaseModel):
     )
 
 
-class LayerAxisYLabel(BaseModel):
-    """Per-layer y-axis label format patch."""
+class LayerAxisYLabels(BaseModel):
+    """Per-layer y-axis tick-label format patch."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -59,20 +60,25 @@ class LayerAxisYStyle(BaseModel):
     position: Literal["left", "right"] | None = Field(
         default=None, description="Y-axis side for this layer (left or right)."
     )
-    title: str | None = Field(
-        default=None, description="Y-axis title override for this layer."
+    title: Annotated[str | None, DisplayText()] = Field(
+        default=None,
+        description="Title on this layer's own y axis; defaults to the layer's label.",
     )
     scale: LayerAxisYScale | None = Field(
-        default=None, description="Scale overrides for this layer's y axis."
+        default=None,
+        description="Scale options for this layer's y axis, holding the [min, max] domain.",
     )
     ticks: LayerAxisYTicks | None = Field(
-        default=None, description="Tick overrides for this layer's y axis."
+        default=None,
+        description="Tick options for this layer's y axis, holding the target count.",
     )
     grid: LayerAxisYGrid | None = Field(
-        default=None, description="Grid overrides for this layer's y axis."
+        default=None,
+        description="Grid options for this layer's y axis, holding its visibility.",
     )
-    label: LayerAxisYLabel | None = Field(
-        default=None, description="Label format override for this layer's y axis."
+    labels: LayerAxisYLabels | None = Field(
+        default=None,
+        description="Tick-label options for this layer's y axis, holding the number format.",
     )
 
 
@@ -106,14 +112,16 @@ class TypedLayerBase(BaseModel):
         default=None, description="Y-axis column name for this layer."
     )
     label: str | None = Field(
-        default=None, description="Label column name for this layer."
+        default=None,
+        description="Name for this layer's measure wherever the layer is identified. Defaults to its y column name.",
     )
     color: str | None = Field(
         default=None,
-        description="Color data channel for this layer: bare column name only.",
+        description="Column whose values split this layer into colored series; bare column name only.",
     )
     axis_y: LayerAxisYStyle | None = Field(
-        default=None, description="Y-axis settings for this layer (orientation, title)."
+        default=None,
+        description="This layer's own y axis: which side it sits on, its title, scale, ticks, grid.",
     )
 
     @field_validator("color", mode="before")
@@ -138,7 +146,7 @@ class TypedLayerBase(BaseModel):
     def _reject_vl_passthrough_fields(cls, data: Any) -> Any:
         if isinstance(data, dict) and "encoding" in data:
             raise ValueError(
-                "`encoding` is not part of the authored Dataface layer surface. "
+                "`encoding` is not part of the authored dbt charts layer surface. "
                 "Use typed layer channels (`color`) instead."
             )
         return data
@@ -147,42 +155,51 @@ class TypedLayerBase(BaseModel):
 class BarLayer(TypedLayerBase):
     """A bar-type layer on a cartesian chart."""
 
-    type: Annotated[Literal["bar"], Field(description="Bar mark layer.")]
+    type: Annotated[Literal["bar"], Field(description="Selects the layer's mark.")]
     style: Annotated[
         BarLayerStylePatch | None,
-        Field(default=None, description="Bar layer mark style overrides."),
+        Field(
+            default=None, description="Appearance overrides for this layer's bar marks."
+        ),
     ] = None
 
 
 class LineLayer(TypedLayerBase):
     """A line-type layer on a cartesian chart."""
 
-    type: Annotated[Literal["line"], Field(description="Line mark layer.")]
+    type: Annotated[Literal["line"], Field(description="Selects the layer's mark.")]
     style: Annotated[
         LineLayerStylePatch | None,
-        Field(default=None, description="Line layer mark style overrides."),
+        Field(
+            default=None,
+            description="Appearance overrides for this layer's line marks.",
+        ),
     ] = None
 
 
 class AreaLayer(TypedLayerBase):
     """An area-type layer on a cartesian chart."""
 
-    type: Annotated[Literal["area"], Field(description="Area mark layer.")]
+    type: Annotated[Literal["area"], Field(description="Selects the layer's mark.")]
     style: Annotated[
         AreaLayerStylePatch | None,
-        Field(default=None, description="Area layer mark style overrides."),
+        Field(
+            default=None,
+            description="Appearance overrides for this layer's area marks.",
+        ),
     ] = None
 
 
 class ScatterLayer(TypedLayerBase):
     """A scatter-type layer on a cartesian chart."""
 
-    type: Annotated[
-        Literal["scatter"], Field(description="Scatter (point) mark layer.")
-    ]
+    type: Annotated[Literal["scatter"], Field(description="Selects the layer's mark.")]
     style: Annotated[
         ScatterLayerStylePatch | None,
-        Field(default=None, description="Scatter layer mark style overrides."),
+        Field(
+            default=None,
+            description="Appearance overrides for this layer's point marks.",
+        ),
     ] = None
 
 
@@ -193,3 +210,10 @@ CartesianLayer = Annotated[
     BarLayer | LineLayer | AreaLayer | ScatterLayer,
     Field(discriminator="type"),
 ]
+
+# Chart `type:` values whose authored class declares a `layers` field.
+# BarChart's `type:` also covers "histogram", which does NOT support layers
+# (see BarChart._reject_histogram_layers) — kept out of this set on purpose.
+CARTESIAN_LAYER_SUPPORTED_CHART_TYPES: frozenset[str] = frozenset(
+    {"area", "bar", "line", "scatter"}
+)

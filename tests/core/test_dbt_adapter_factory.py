@@ -501,7 +501,7 @@ class TestReadOnlyDuckDB:
             adapter = build_adapter(
                 {"type": "duckdb", "path": str(db_path)}, read_only=True
             )
-            with adapter.connection_named("dft_schema_list_relations"):
+            with adapter.connection_named("dct_schema_list_relations"):
                 _, table = adapter.execute(
                     "SELECT id FROM t", auto_begin=True, fetch=True
                 )
@@ -556,7 +556,7 @@ class TestReadOnlyDuckDB:
                 },
                 read_only=True,
             )
-            with adapter.connection_named("dft_schema_inspect"):
+            with adapter.connection_named("dct_schema_inspect"):
                 _, table = adapter.execute(
                     "SELECT id FROM t", auto_begin=True, fetch=True
                 )

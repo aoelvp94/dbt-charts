@@ -210,7 +210,7 @@ class DefaultSourceResolver:
 
         The result is wrapped in DbtTargetSourceConfig, not parsed into an
         authored model like DuckDBSourceConfig: dbt owns profiles.yml, so
-        re-validating its output against Dataface's closed models is what rejected
+        re-validating its output against dbt charts' closed models is what rejected
         valid dbt config. The registry still re-routes on the concrete type.
 
         Called at every return point in resolve() when the result is a
@@ -245,7 +245,7 @@ class DefaultSourceResolver:
         except (FileNotFoundError, ValueError) as exc:
             raise ExecutionError(str(exc)) from exc
 
-        # The authored attribution rides the Dataface source entry, not the dbt
+        # The authored attribution rides the dbt charts source entry, not the dbt
         # target — profiles.yml belongs to dbt and rejects keys it doesn't know — so
         # carry it across the expansion or it is lost for every dbt_profile source.
         return DbtTargetSourceConfig(**target_dict, attribution=cfg.attribution)

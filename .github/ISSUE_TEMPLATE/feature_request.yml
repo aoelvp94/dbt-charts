@@ -23,7 +23,7 @@ body:
     attributes:
       label: Proposed YAML syntax
       description: |
-        If this involves new or changed face/chart/theme YAML, show the
+        If this involves new or changed board/chart/theme YAML, show the
         syntax you'd want to write, e.g.:
 
         ```yaml

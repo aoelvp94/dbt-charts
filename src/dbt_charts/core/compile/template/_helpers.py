@@ -49,7 +49,7 @@ class _LenientUndefined(Undefined):
         return self
 
 
-_CACHE_REF_PREFIX = "__dft_cache_ref__"
+_CACHE_REF_PREFIX = "__dct_cache_ref__"
 _CACHE_REF_SUFFIX = "__"
 
 
@@ -59,7 +59,7 @@ class _QueryProxy:
     __str__ renders ``{{ queries.X }}`` as ``(<sql>) AS X`` — a parenthesized
     subquery aliased to the query name (valid on DuckDB and Postgres alike).
     .cache returns a sentinel string that marks the reference for cache-path
-    execution: ``__dft_cache_ref__<name>__``. The executor detects the sentinel,
+    execution: ``__dct_cache_ref__<name>__``. The executor detects the sentinel,
     swaps it for the bare upstream name, and runs the composing SQL over the
     registered upstream rows in an isolated in-process DuckDB.
     """

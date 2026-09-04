@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 import re
 from collections.abc import Iterator, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
 from urllib.parse import quote_plus
 
 from dbt_charts.core.compile.format import resolve_format
@@ -373,7 +373,7 @@ def resolve_row_role(row_role_spec: str | None, row: dict[str, Any]) -> str:
     Unknown values fall back to "value".
 
     The row-role signal comes from the query layer (ADR-010: data and its
-    meaning belong to the query). DFT does not auto-detect summary rows
+    meaning belong to the query). dbt charts does not auto-detect summary rows
     from content; the query must emit a column whose per-row value is
     the role.
     """
@@ -694,6 +694,22 @@ def _glyph_possible(
     )
 
 
+def _is_padded_numeric(
+    v: Any,  # type-state: explicit_any — arbitrary warehouse cell value
+) -> TypeGuard[int | float]:
+    """Whether a cell value is one the decimal pad applies to.
+
+    Mirrors both paint sites (`table.py`'s row-paint and lane-position loops),
+    which gate the pad on this shape. `bool` is an `int` subclass and is
+    excluded there too; `Decimal` is excluded because paint excludes it, even
+    though the bake reaches it via `coerce_numeric_cell`.
+
+    A `TypeGuard` rather than a plain `bool` so the numeric narrowing reaches
+    `format_kpi_parts`, whose signature takes `int | float | None`.
+    """
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
 def measure_column_demands(
     columns: list[str],
     column_configs: Mapping[str, TableColumnConfig],
@@ -774,11 +790,24 @@ def measure_column_demands(
                 num_val = float(val) if isinstance(val, str) else val
             except (ValueError, TypeError):
                 num_val = val
-            if (
-                shared_scale is not None
-                and isinstance(num_val, (int, float))
-                and not isinstance(num_val, bool)
-            ):
+            # One predicate, decided once and used for both computing the pad
+            # basis and applying it. Mirrors both paint sites exactly
+            # (table.py's row-paint and lane-position loops): numeric, not
+            # bool, not date-like. Deliberately narrower than the bake, which
+            # reaches Decimal via coerce_numeric_cell -- paint excludes it, so
+            # measure does. A wider predicate here mis-measures the column; a
+            # wider one at the compute also crashes, since format_kpi_parts
+            # sends the spec through d3 number parsing and a time-capable
+            # column may legally carry a strftime spec.
+            # Carries the narrowed value rather than a flag so the TypeGuard
+            # reaches format_kpi_parts below; None means "this cell is not on
+            # the column's decimal lane".
+            pad_num = (
+                num_val
+                if pad_table and _is_padded_numeric(num_val) and not is_date_like(val)
+                else None
+            )
+            if shared_scale is not None and _is_padded_numeric(num_val):
                 # A shared-scale column's real cell text is the scaled digit
                 # string, not the whole-precision SI string
                 # format_table_cell_value would render -- measure what will
@@ -794,15 +823,30 @@ def measure_column_demands(
                     is_anchor=True,
                 )
                 rendered = prefix + number + suffix
+                pad_basis = number
             else:
                 rendered = format_table_cell_value(val, fmt, formats)
+                # The pad is selected from the NUMBER lane, never the whole
+                # cell: decimal_pad_for counts every digit after the first '.',
+                # so an authored suffix carrying one (' CO2', 'm2', 'ft3')
+                # would inflate the observed depth past the table's precision
+                # and raise. Both paint sites pad the number lane alone --
+                # format_kpi_parts splits the suffix out before padding.
+                pad_basis = ""
+                if pad_num is not None:
+                    _, pad_basis, _ = format_kpi_parts(
+                        pad_num, fmt, formats, default_number=True, is_anchor=True
+                    )
             if glyph_possible:
                 rendered = (
                     cell_glyph_run(column_configs, column_when_rules, col, val)
                     + rendered
                 )
-            if pad_table:
-                rendered += decimal_pad_for(pad_table, rendered)
+            # Text format_table_cell_value produced by falling through to
+            # str(value) is not on the column's decimal lane -- its fractional
+            # depth owes nothing to the column's format -- so `pads` excludes it.
+            if pad_num is not None:
+                rendered += decimal_pad_for(pad_table, pad_basis)
             cell_widths.append(measurer.measure(rendered, font_size))
 
         if cell_widths:

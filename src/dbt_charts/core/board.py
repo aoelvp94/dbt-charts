@@ -225,7 +225,7 @@ def render_dashboard(
     max_rows_per_query: int = NO_ROW_CAP,
     **render_options: Any,
 ) -> BoardRenderResult:
-    """Validate, compile, and render a Dataface dashboard.
+    """Validate, compile, and render a dbt charts dashboard.
 
     Pass ``compile_result`` to skip the compile step when the caller has already
     compiled (e.g. the serve layer compiles once to read the board's theme for

@@ -55,7 +55,7 @@ class TestPrimaryFontPositionPreserved:
         assert _QUOTED in family
 
     def test_source_serif_4_is_first_in_editorial_cream_title(self) -> None:
-        compiled = get_theme_style("cream")
+        compiled = get_theme_style("paper")
         resolved = resolve_style(compiled)
         family = resolved.title.font.family
         assert family is not None

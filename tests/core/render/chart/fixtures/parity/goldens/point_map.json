@@ -13,16 +13,16 @@
     "font": "'Inter Variable', 'Noto Emoji', Inter, system-ui, sans-serif",
     "range": {
       "category": [
-        "#3164a3",
+        "#40639c",
         "#779bc9",
-        "#ad9c7f",
-        "#7a8895",
-        "#8a576f",
-        "#5c7b5c",
+        "#608470",
+        "#775770",
         "#d49656",
         "#ae6349",
-        "#609f9e",
-        "#232f3a"
+        "#a0b6b7",
+        "#ad9c7f",
+        "#7a8895",
+        "#5c6668"
       ]
     },
     "rule": {
@@ -104,7 +104,7 @@
   },
   "mark": {
     "clip": true,
-    "fill": "#203c65",
+    "fill": "#23467f",
     "opacity": 1.0,
     "size": 60.0,
     "tooltip": true,

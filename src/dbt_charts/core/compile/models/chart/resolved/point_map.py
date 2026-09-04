@@ -27,7 +27,7 @@ class ResolvedPointMapChart(_GeoResolvedChartFields):
     )
     size: str | None = Field(
         default=None,
-        description="Data column for bubble size encoding (bubble_map only).",
+        description="Quantitative column that scales point area. Mutually exclusive with `collapse`.",
     )
     collapse: bool = Field(
         description="Collapse marks sharing an exact latitude/longitude into one mark sized by count.",

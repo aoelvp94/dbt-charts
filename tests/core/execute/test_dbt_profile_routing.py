@@ -17,6 +17,9 @@ Tests:
   error path - missing profile name surfaces as QueryResult error
 - TestDbtProfileDuckdbRefResolution:
   the follow-on gap - routing to DuckDBAdapter must not lose ref() resolution
+- TestDbtProfileBoardRenderRefResolution:
+  the render-path gap - AdapterRegistry._compose_query_refs must resolve ref()
+  before its own strict-Jinja variable render, on the dct render/dct serve path
 - TestDbtOwnsTheProfileSchema:
   profiles.yml is dbt's file - the installed dbt adapter validates the target, so
   every field dbt accepts survives expansion (threads, canonical BigQuery
@@ -354,15 +357,178 @@ class TestDbtProfileDuckdbRefResolution:
         assert "undefined" not in result.error.lower()
 
 
+class TestDbtProfileBoardRenderRefResolution:
+    """`{{ ref() }}` in a board query must resolve on the `dct render` path too.
+
+    `TestDbtProfileDuckdbRefResolution` above only exercises the ad-hoc `dct
+    query` path (``registry.execute(query)``, no ``board=``). Passing a compiled
+    board with populated ``board.queries`` takes a different branch inside
+    ``AdapterRegistry._compose_query_refs``: with ``source_config`` resolved
+    (non-None, since 'prod' is a named dbt_profile source) that guard used to
+    render the raw, unresolved SQL through `render_parameterized_with_queries`
+    (StrictUndefined) before any `ref()`/`source()` resolution — so `ref()`
+    died as an undefined Jinja global on this path alone.
+    """
+
+    def test_ref_resolves_on_board_render_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        """A board query using ref() against a dbt_profile source resolves when
+        executed with board= set — the same path `dct render`/`dct serve` use."""
+        from dbt_charts.core.compile.compiler import compile
+        from dbt_charts.core.execute.adapters import build_adapter_registry
+
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+
+        db_path = tmp_path / "warehouse.duckdb"
+        conn = duckdb.connect(str(db_path))
+        conn.execute("CREATE TABLE orders (id INTEGER, revenue INTEGER)")
+        conn.execute("INSERT INTO orders VALUES (1, 100)")
+        conn.close()
+        _make_project(tmp_path, db_path)
+        _write_manifest(tmp_path)
+
+        board_yaml = (
+            "title: T\n"
+            "queries:\n"
+            "  q:\n"
+            "    sql: SELECT revenue FROM {{ ref('orders') }}\n"
+            "    source: prod\n"
+            "charts:\n"
+            "  c:\n"
+            "    query: q\n"
+            "    type: table\n"
+            "rows:\n"
+            "  - c\n"
+        )
+        result = compile(board_yaml)
+        assert result.success, result.diagnostics
+        board = result.board
+
+        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+
+        query_result = registry.execute(board.queries["q"], board=board)
+        assert query_result.error is None, f"ref() query failed: {query_result.error}"
+        assert query_result.data == [{"revenue": 100}]
+
+    def test_ref_without_manifest_names_the_missing_manifest_on_board_render_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        """With no manifest, the board render path also names the missing
+        manifest rather than an undefined-Jinja-variable error — mirrors
+        ``TestDbtProfileDuckdbRefResolution.test_ref_without_manifest_names_the_missing_manifest``
+        for the ``board=`` render path. (This doesn't distinguish a resolve-only
+        catch from a resolve-and-render catch — the resolver itself raises
+        before the render step runs either way; see
+        ``test_unbound_strict_variable_is_not_swallowed_as_a_ref_resolution_error``
+        below for that.)"""
+        from dbt_charts.core.compile.compiler import compile
+        from dbt_charts.core.execute.adapters import build_adapter_registry
+
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+
+        db_path = tmp_path / "warehouse.duckdb"
+        _make_duckdb_file(db_path)
+        _make_project(tmp_path, db_path)
+
+        board_yaml = (
+            "title: T\n"
+            "queries:\n"
+            "  q:\n"
+            "    sql: SELECT * FROM {{ ref('orders') }}\n"
+            "    source: prod\n"
+            "charts:\n"
+            "  c:\n"
+            "    query: q\n"
+            "    type: table\n"
+            "rows:\n"
+            "  - c\n"
+        )
+        result = compile(board_yaml)
+        assert result.success, result.diagnostics
+        board = result.board
+
+        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+
+        query_result = registry.execute(board.queries["q"], board=board)
+        assert query_result.error is not None
+        assert "manifest" in query_result.error.lower()
+        assert "undefined" not in query_result.error.lower()
+
+    def test_unbound_strict_variable_is_not_swallowed_as_a_ref_resolution_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        """A board query with no ref()/source() call but an unbound strict
+        variable must fail as the variable-Jinja render error it is — not get
+        relabeled 'dbt ref resolution failed' by a catch that's too wide.
+
+        This SQL has no dbt Jinja at all, so ``DbtRefResolver.resolve()``
+        short-circuits cleanly (``has_dbt_jinja`` is False) and cannot itself
+        raise; only ``render_parameterized_with_queries`` can fail here. If
+        ``_compose_query_refs`` ever again wraps that render call inside the
+        same ``except DbtChartsError`` as the resolve step, this
+        ``JinjaError`` (a ``DbtChartsError``) would be caught and returned as
+        a mislabeled ``QueryResult`` instead of propagating — this test pins
+        that it must propagate, matching every sibling adapter's separate
+        resolve-then-render error handling.
+        """
+        from dbt_charts.core.compile.compiler import compile
+        from dbt_charts.core.compile.errors import JinjaError
+        from dbt_charts.core.execute.adapters import build_adapter_registry
+
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+
+        db_path = tmp_path / "warehouse.duckdb"
+        _make_duckdb_file(db_path)
+        _make_project(tmp_path, db_path)
+
+        board_yaml = (
+            "title: T\n"
+            "variables:\n"
+            "  region:\n"
+            "    input: text\n"
+            "queries:\n"
+            "  q:\n"
+            "    sql: \"SELECT * FROM numbers WHERE n = '{{ region }}'\"\n"
+            "    source: prod\n"
+            "charts:\n"
+            "  c:\n"
+            "    query: q\n"
+            "    type: table\n"
+            "rows:\n"
+            "  - c\n"
+        )
+        result = compile(board_yaml)
+        assert result.success, result.diagnostics
+        board = result.board
+
+        registry = build_adapter_registry(local_project(tmp_path), read_only=True)
+
+        # No `variables=` passed — the registry composition path receives an
+        # empty variables dict, so `region` (declared but unbound) is
+        # StrictUndefined in the render.
+        with pytest.raises(JinjaError, match="region"):
+            registry.execute(board.queries["q"], board=board)
+
+
 # ---------------------------------------------------------------------------
-# profiles.yml is dbt's file: dbt validates the target, Dataface asserts no schema
+# profiles.yml is dbt's file: dbt validates the target, dbt charts asserts no schema
 # ---------------------------------------------------------------------------
 
 
 class TestDbtOwnsTheProfileSchema:
-    """Dataface must not type-check profiles.yml against its own source models.
+    """dbt charts must not type-check profiles.yml against its own source models.
 
-    Every key dbt accepts has to survive expansion — Dataface declares no schema
+    Every key dbt accepts has to survive expansion — dbt charts declares no schema
     for a file it does not own. dbt still validates (required fields, adapter
     type, target name), so bad profiles fail loudly with dbt's own message.
     """
@@ -497,11 +663,11 @@ class TestDbtOwnsTheProfileSchema:
         assert result.model_dump(by_alias=True)["path"] == str(tmp_path / "wh.duckdb")
 
 
-class TestDbtTargetReachesDatafaceReaders:
-    """dbt's spelling of a field is not always the spelling Dataface reads.
+class TestDbtTargetReachesDbtChartsReaders:
+    """dbt's spelling of a field is not always the spelling dbt charts reads.
 
     Handing dbt's target dict through untouched is right for fields nobody but the
-    adapter reads, but a few keys are consumed by Dataface's own code under its own
+    adapter reads, but a few keys are consumed by dbt charts' own code under its own
     name (the BigQuery default-dataset build, normalize_duckdb_config). Those must
     be translated at the boundary or the setting is silently lost.
     """
@@ -578,13 +744,13 @@ class TestDbtTargetReachesDatafaceReaders:
         """dbt renders Jinja, then validates. Validating first rejects any
         env_var() in a field dbt types as non-string (port, threads, …)."""
         monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
-        monkeypatch.setenv("DFT_TEST_PGPORT", "6543")
+        monkeypatch.setenv("DCT_TEST_PGPORT", "6543")
         result = self._resolve(
             tmp_path,
             {
                 "type": "postgres",
                 "host": "localhost",
-                "port": "{{ env_var('DFT_TEST_PGPORT') | int }}",
+                "port": "{{ env_var('DCT_TEST_PGPORT') | int }}",
                 "user": "analyst",
                 "password": "secret",
                 "dbname": "analytics",
@@ -654,12 +820,12 @@ class TestDbtTargetReachesDatafaceReaders:
         somewhere other than dbt would.
         """
         monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
-        monkeypatch.setenv("DFT_TEST_HOST", "{{ 1 + 1 }}")
+        monkeypatch.setenv("DCT_TEST_HOST", "{{ 1 + 1 }}")
         result = self._resolve(
             tmp_path,
             {
                 "type": "postgres",
-                "host": "{{ env_var('DFT_TEST_HOST') }}",
+                "host": "{{ env_var('DCT_TEST_HOST') }}",
                 "port": 5432,
                 "user": "analyst",
                 "password": "secret",
@@ -673,7 +839,7 @@ class TestDbtTargetReachesDatafaceReaders:
 
 
 class TestAttributionSurvivesTheProfileExpansion:
-    """`attribution:` rides the Dataface source entry, not the dbt target — dbt owns
+    """`attribution:` rides the dbt charts source entry, not the dbt target — dbt owns
     profiles.yml and rejects keys it doesn't know. The expansion builds a fresh
     config from dbt's target dict, so the authored value has to be carried across it
     or every dbt_profile source (the most common production shape) loses attribution.

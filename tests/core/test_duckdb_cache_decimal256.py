@@ -1,5 +1,5 @@
 """Regression test: high-precision decimals must round-trip through the DuckDB
-cache as numbers, without crashing — and without pyarrow installed.
+cache exactly, without crashing.
 
 DuckDB's DECIMAL is HUGEINT-backed and capped at precision 38. BigQuery's
 NUMERIC type allows up to 76 digits, and certain SUM-of-fan-out-deduplicated
@@ -7,11 +7,19 @@ queries can return precision-47/scale-38 results.
 
 History: the cache used to bulk-load via a pyarrow table, which auto-inferred
 ``decimal256`` for these values and then crashed ``conn.register`` with
-``NotImplementedException: Unsupported Internal Arrow Type for Decimal``. That
-pyarrow fast-path (and its ``decimal256`` workaround) has been removed — the
-cache now inserts natively, mapping ``Decimal`` columns to ``DOUBLE``. Float has
-15 significant digits — fine for dashboard rendering even if the original SQL
-had 38 digits of scale.
+``NotImplementedException: Unsupported Internal Arrow Type for Decimal``. The
+original fix mapped a ``Decimal`` column to ``DOUBLE`` (15 significant digits —
+lossy, but the crash was gone). That lossy coercion turned out to be a second
+bug: an incremental watermark column of restated NUMERIC values duplicated on every
+warm render, because a float-coerced prior key (``101.2``) never equalled the
+freshly-queried ``Decimal('101.20')`` tail key. The cache now stores a
+uniformly-Decimal column (every non-None value in the column is exactly
+``Decimal`` — see ``_uniform_decimal_columns``) as VARCHAR text
+(``str(value)``, exact) instead of DOUBLE, restored back to ``Decimal`` on
+read (``_restore_decimal_columns``) — which also sidesteps the original Arrow
+crash, since Arrow never sees a ``Decimal`` object for that column at all. A
+column that mixes Decimal with another type keeps the lossy DOUBLE coercion;
+exactness is only promised for a uniform column.
 
 Eval ``20260428-155000`` was the original production trigger: 12 queries on
 dashboards 955 + 2223 failed with this exact error before the original fix.
@@ -32,8 +40,9 @@ from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 def test_duckdb_cache_put_with_high_precision_decimal_round_trips(tmp_path):
     """End-to-end: cache.put with rows containing precision-47 decimals.
 
-    Must not crash, must be retrievable, and decimal columns must come back as
-    numbers (not strings). This runs with no pyarrow installed.
+    Must not crash, must be retrievable, and — since this column is uniformly
+    Decimal — must come back as the exact original Decimal, not a lossy float
+    stand-in (float's 15 significant digits would truncate 47).
     """
     cache = TrivialDuckDBCache(db_path=tmp_path / "test.duckdb")
     source_hash = compute_source_hash("test_source", {})
@@ -59,9 +68,10 @@ def test_duckdb_cache_put_with_high_precision_decimal_round_trips(tmp_path):
     assert len(hit.rows) == 2
     assert hit.rows[0]["id"] == 1
     assert hit.rows[1]["id"] == 2
-    # Decimal columns must round-trip as numbers, not stringified VARCHAR.
-    assert isinstance(hit.rows[0]["amount"], float)
-    assert hit.rows[0]["amount"] == float(high_precision)
+    # A uniformly-Decimal column round-trips exactly, full precision intact.
+    assert type(hit.rows[0]["amount"]) is Decimal
+    assert hit.rows[0]["amount"] == high_precision
+    assert hit.rows[1]["amount"] == Decimal("0." + "9" * 38)
 
 
 def test_duckdb_cache_list_column_round_trips_as_list(tmp_path):
@@ -124,7 +134,7 @@ def test_duckdb_cache_dict_column_round_trips_as_dict(tmp_path):
 
 
 def test_duckdb_cache_put_with_normal_decimal_round_trips(tmp_path):
-    """Ordinary (precision <= 38) decimals also come back as numbers."""
+    """Ordinary (precision <= 38) decimals also round-trip exactly."""
     cache = TrivialDuckDBCache(db_path=tmp_path / "test.duckdb")
     source_hash = compute_source_hash("s", {})
     query_hash = compute_query_hash("SELECT 1")
@@ -142,4 +152,5 @@ def test_duckdb_cache_put_with_normal_decimal_round_trips(tmp_path):
 
     hit = cache.get(source_hash, query_hash, variables_hash)
     assert hit is not None
-    assert [r["amount"] for r in hit.rows] == [1.50, 2.75]
+    assert [r["amount"] for r in hit.rows] == [Decimal("1.50"), Decimal("2.75")]
+    assert all(type(r["amount"]) is Decimal for r in hit.rows)

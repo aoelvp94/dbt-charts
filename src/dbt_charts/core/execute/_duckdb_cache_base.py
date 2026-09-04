@@ -33,7 +33,7 @@ import logging
 import threading
 import traceback as tb_mod
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path  # noqa: TID251 — DuckDB cache file (DCT_CACHE_PATH)
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -70,8 +70,10 @@ __all__ = [
     "_cache_safe_value",
     "_infer_type",
     "_q",
+    "_restore_decimal_columns",
     "_result_table_name",
     "_rows_from_result",
+    "_uniform_decimal_columns",
 ]
 
 
@@ -104,13 +106,62 @@ def _cache_safe_value(value: Any) -> Any:
     Decimals become float: DuckDB's DECIMAL is HUGEINT-backed and capped at
     precision 38, but BigQuery NUMERIC can return precision > 38 (e.g. NUMERIC(47,38)
     on fan-out-deduplicated SUM aggregates). float's 15 significant digits are
-    plenty for dashboard rendering. list/dict become JSON text for the JSON column.
+    plenty for dashboard rendering, but is lossy — a uniformly-Decimal column
+    (every value in the column is exactly a Decimal) is stored as VARCHAR
+    text instead, exact, via ``_uniform_decimal_columns``/callers of this
+    function; this float coercion only ever applies to a Decimal value in a
+    genuinely mixed-type column, where exactness is not promised (see
+    ``QueryResultCache.get``'s type-fidelity contract). list/dict become
+    JSON text for the JSON column.
     """
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, (list, dict)):
         return json.dumps(value)
     return value
+
+
+def _uniform_decimal_columns(rows: CacheRows) -> frozenset[str]:
+    """Columns whose every non-None value is exactly ``Decimal``.
+
+    DuckDB's fixed-precision DECIMAL can't hold every warehouse NUMERIC
+    (see ``_cache_safe_value``), and float coercion is lossy — so a
+    uniformly-Decimal column is stored as VARCHAR text (``str(value)``,
+    exact) instead, a sidecar type recorded in ``_query_outcomes.
+    decimal_columns`` and restored by ``_restore_decimal_columns`` on read.
+    A column that mixes Decimal with any other type is not uniform and
+    keeps the existing (lossy) float coercion — exactness is only promised
+    where every value in the column shares one type, same as the temporal
+    contract in ``PostgresResultCache``.
+    """
+    if not rows:
+        return frozenset()
+    decimal_cols = set()
+    for col in rows[0]:
+        values = [r[col] for r in rows if r.get(col) is not None]
+        if values and all(type(v) is Decimal for v in values):
+            decimal_cols.add(col)
+    return frozenset(decimal_cols)
+
+
+def _restore_decimal_columns(
+    rows: CacheRows, decimal_columns: frozenset[str]
+) -> CacheRows:
+    """Restore each *decimal_columns* entry's stored VARCHAR text to Decimal.
+
+    A None value (nullable column, NULL row) is left alone.
+    """
+    if not decimal_columns:
+        return rows
+    restored = []
+    for row in rows:
+        new_row = dict(row)
+        for col in decimal_columns:
+            value = new_row.get(col)
+            if value is not None:
+                new_row[col] = Decimal(value)
+        restored.append(new_row)
+    return restored
 
 
 def _infer_type(value: Any) -> str:
@@ -123,7 +174,17 @@ def _infer_type(value: Any) -> str:
     if isinstance(value, (float, Decimal)):
         return "DOUBLE"
     if isinstance(value, datetime):
-        return "TIMESTAMP"
+        # A naive datetime maps to DuckDB's naive TIMESTAMP; a tz-aware one
+        # (BigQuery TIMESTAMP, Postgres timestamptz, Snowflake TIMESTAMP_TZ)
+        # must map to TIMESTAMP WITH TIME ZONE or the round-trip silently
+        # drops tzinfo — the naive TIMESTAMP column has nowhere to put it.
+        return "TIMESTAMP" if value.tzinfo is None else "TIMESTAMP WITH TIME ZONE"
+    # datetime is itself a date subclass, so this must come after the
+    # datetime check — a bare date left unhandled here fell through to
+    # VARCHAR, and a DATE watermark round-tripped through the cache as a
+    # plain string.
+    if isinstance(value, date):
+        return "DATE"
     if isinstance(value, (list, dict)):
         return "JSON"
     return "VARCHAR"
@@ -196,12 +257,19 @@ class _Slots:
     row_count: int
     error: CachedQueryFailure | None
     truncated_reason: TruncatedReason | None
+    # Columns stored as VARCHAR text (see _uniform_decimal_columns) that
+    # get() must convert back to Decimal on read.
+    decimal_columns: frozenset[str]
 
     EMPTY: ClassVar[_Slots]
 
 
 _Slots.EMPTY = _Slots(
-    rows_written_at=None, row_count=0, error=None, truncated_reason=None
+    rows_written_at=None,
+    row_count=0,
+    error=None,
+    truncated_reason=None,
+    decimal_columns=frozenset(),
 )
 
 
@@ -258,7 +326,7 @@ class _DuckDBResultCacheBase:
         """
         row = self.conn.execute(
             """
-            SELECT row_count, written_at_utc, truncated_reason,
+            SELECT row_count, written_at_utc, truncated_reason, decimal_columns,
                    error_class, error_message, traceback, error_written_at_utc
             FROM _query_outcomes
             WHERE source_hash = ? AND query_hash = ? AND variables_hash = ?
@@ -271,6 +339,7 @@ class _DuckDBResultCacheBase:
             row_count,
             written_at_utc,
             truncated_reason,
+            decimal_columns_json,
             err_class,
             err_message,
             traceback,
@@ -304,6 +373,11 @@ class _DuckDBResultCacheBase:
             row_count=row_count or 0,
             error=error,
             truncated_reason=truncated_reason,
+            decimal_columns=(
+                frozenset(json.loads(decimal_columns_json))
+                if decimal_columns_json
+                else frozenset()
+            ),
         )
 
     def _write_rows_slot(
@@ -315,6 +389,7 @@ class _DuckDBResultCacheBase:
         board_slug: str,
         query_name: str,
         truncated_reason: TruncatedReason | None = None,
+        decimal_columns: frozenset[str] = frozenset(),
     ) -> None:
         """Record a successful run, clearing the error slot in the same statement.
 
@@ -324,21 +399,23 @@ class _DuckDBResultCacheBase:
 
         ``truncated_reason`` replaces wholesale, never merges — a re-run that
         comes back under the ceiling must clear a prior truncation, not keep
-        reporting one that no longer applies.
+        reporting one that no longer applies. ``decimal_columns`` replaces
+        wholesale too, same reasoning — see ``_uniform_decimal_columns``.
         """
         self.conn.execute(
             """
             INSERT INTO _query_outcomes
                 (source_hash, query_hash, variables_hash, board_slug, query_name,
-                 row_count, written_at_utc, truncated_reason,
+                 row_count, written_at_utc, truncated_reason, decimal_columns,
                  error_class, error_message, traceback, error_written_at_utc)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
             ON CONFLICT (source_hash, query_hash, variables_hash) DO UPDATE SET
                 board_slug = excluded.board_slug,
                 query_name = excluded.query_name,
                 row_count = excluded.row_count,
                 written_at_utc = excluded.written_at_utc,
                 truncated_reason = excluded.truncated_reason,
+                decimal_columns = excluded.decimal_columns,
                 error_class = NULL,
                 error_message = NULL,
                 traceback = NULL,
@@ -353,6 +430,7 @@ class _DuckDBResultCacheBase:
                 row_count,
                 _utc_wall_clock(),
                 truncated_reason,
+                json.dumps(sorted(decimal_columns)) if decimal_columns else None,
             ],
         )
 
@@ -520,6 +598,12 @@ class _DuckDBResultCacheBase:
         # would keep it missing, breaking the first INSERT naming it.
         if columns and "truncated_reason" not in columns:
             self._drop_stale_outcomes_and_payloads("pre-truncated_reason")
+            columns = self._column_names("_query_outcomes")
+        # Same pattern for decimal_columns, added to record which columns of
+        # a rows slot are stored as VARCHAR-text Decimal (see
+        # _uniform_decimal_columns) so get() knows to restore them.
+        if columns and "decimal_columns" not in columns:
+            self._drop_stale_outcomes_and_payloads("pre-decimal_columns")
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS _query_outcomes (
@@ -531,6 +615,7 @@ class _DuckDBResultCacheBase:
                 row_count BIGINT,
                 written_at_utc TIMESTAMP,
                 truncated_reason TEXT,
+                decimal_columns TEXT,
                 error_class TEXT,
                 error_message TEXT,
                 traceback TEXT,

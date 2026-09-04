@@ -38,7 +38,7 @@ Changes in this release:
   prior schema representation). Authors must remove these keys by hand.
 
 - style.board: renamed to style.frame: (BoardStyle -> FrameStyle) as part of
-  the 2026-08 rebrand vocabulary cut (dataface/AGENTS.md's terminology table).
+  the 2026-08 rebrand vocabulary cut (dbt-charts/AGENTS.md's terminology table).
   The rebrand's other rename, ``LayoutItem.type: "face"`` -> ``"board"``, has
   no Move here: that field lives only on the NORMALIZE-stage ``Board`` model
   (compile/models/board/normalized.py), never on ``AuthoredBoard`` -- no
@@ -72,7 +72,7 @@ Changes in this release:
   line, and area (the smart-zero baseline decision).  When the chart already
   has a style.axis_y: block, that field is relocated to
   style.axis_y.scale.continuous.zero automatically.  When the chart has no
-  style.axis_y block, dct migrate raises UnsupportedSchemaError — the
+  style.axis_y block, dct migrate raises IncompleteMigrationError — the
   author must add style.axis_y.scale.continuous.zero by hand.
   Histogram and heatmap had no functional sub-fields;
   their chart-level scale: fails loud on the new schema (extra_forbidden)

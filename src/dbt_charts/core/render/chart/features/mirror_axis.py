@@ -17,7 +17,11 @@ from dbt_charts.core.compile.models.chart.resolved._base import (
 )
 from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
+from dbt_charts.core.compile.models.chart.resolved.heatmap import (
+    ResolvedHeatmapChart,
+)
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
+from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
 from dbt_charts.core.compile.models.style.resolved._cartesian import (
     _CartesianResolvedStyle,
 )
@@ -26,21 +30,28 @@ from dbt_charts.core.compile.resolve.chart.tick_values import numeric_domain_bou
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_MIRROR_ENDPOINT_LABELS,
+    ERR_MIRROR_LAYERS,
     ERR_MIRROR_MULTI_SERIES,
     ERR_MULTIPLES_ENDPOINT_LABELS,
 )
 from dbt_charts.core.render.chart.emitters._measured_label_padding import (
-    DEFAULT_VL_LABEL_LIMIT,
-    cap_padding_to_label_limit,
     estimated_quantitative_tick_labels,
-    measured_label_padding,
     numeric_values,
     quantitative_tick_labels,
 )
 from dbt_charts.core.render.chart.feature import chart_rows
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
+from dbt_charts.core.render.chart.type_inference import (
+    HEATMAP_FORMAT_REMEDY,
+    gate_label_format,
+)
 from dbt_charts.core.render.chart.vl_field_maps import compose_axis_label_expr
 from dbt_charts.core.text.predefined_formats import PREDEFINED_NATIVE_NAMES
+from dbt_charts.core.utils import (
+    DEFAULT_VL_LABEL_LIMIT,
+    cap_padding_to_label_limit,
+    measured_label_padding,
+)
 
 
 def _primary_y_orient(spec: ChartSpec) -> str:
@@ -78,6 +89,41 @@ class MirrorAxisFeature:
         datasets: dict[str | None, list[dict[str, Any]]],
     ) -> ChartSpec:
         assert isinstance(chart, _CartesianResolvedChartFields)
+        # The mirror binds to the SPEC's own emitted y encoding — the one fact
+        # that decides whether there is anything to reflect. The resolved
+        # chart's `y` is the wrong proxy: a histogram resolves y=None yet
+        # emits a count y encoding (must mirror). With no SHARED y encoding,
+        # the resolved model says WHY it is missing, and the cases are not
+        # the same (`layers:` is refused above, before the encoding is read
+        # at all): a multi-measure
+        # heatmap folds its list y into per-measure sublayers (the
+        # multi-series refusal, naming the fields the author wrote); a chart
+        # with no y anywhere is inert, not an error (the design panel
+        # produces that shape by clearing y). Checked before the
+        # endpoint-label refusal so a y-less chart renders instead of
+        # raising a conflict about an axis it doesn't have. Reusing the
+        # emitted encoding also means the ghost binds the SAME
+        # field/type/scale (quantitative and categorical y alike); only the
+        # axis edge differs. `layers` is structurally absent on
+        # ResolvedHeatmapChart, hence the getattr.
+        # Checked before the encoding shape, not through it: `layers:` moves the
+        # measure encoding onto the sublayers on BOTH orientations, but a
+        # horizontal base still leaves its category on the outer `y`. Reading
+        # "no outer y" as the proxy therefore stopped refusing the horizontal
+        # case the moment the overlay began hoisting the category channel, and
+        # silently mirrored the category axis while the measure axis the layers
+        # live on got nothing.
+        if getattr(
+            chart, "layers", ()
+        ):  # type-state: silent_fallback — layers is structurally absent on ResolvedHeatmapChart; absent means "no overlays", not missing data
+            raise ChartDataError.from_code(ERR_MIRROR_LAYERS, chart_id=chart.id)
+        main_y = spec.encoding.get("y")
+        if not isinstance(main_y, dict):
+            if isinstance(chart.y, list):
+                raise ChartDataError.from_code(
+                    ERR_MIRROR_MULTI_SERIES, chart_id=chart.id, y=list(chart.y)
+                )
+            return spec
         # Endpoint labels compose the chart into a pane and claim the opposite edge
         # for the label rail — mirror can't also place an axis there. This is the
         # only place that knows BOTH facts at once (the composed spec's rail, and
@@ -107,13 +153,6 @@ class MirrorAxisFeature:
                 else ERR_MIRROR_ENDPOINT_LABELS
             )
             raise ChartDataError.from_code(code, chart_id=chart.id)
-        # Reuse the emitted y encoding so the ghost binds the SAME field/type/scale
-        # (works for quantitative and categorical y alike); only the axis edge differs.
-        main_y = spec.encoding.get("y")
-        if not isinstance(main_y, dict):
-            raise ChartDataError(
-                "axis_y.mirror could not find the chart's y encoding to mirror."
-            )
         primary = _primary_y_orient(spec)
         opposite = "left" if primary == "right" else "right"
         # Match the primary axis's tick format on the opposite edge; suppress its
@@ -132,6 +171,59 @@ class MirrorAxisFeature:
         mirror = chart.style.axis_y.mirror
         if isinstance(mirror, AxisMirrorStyle):
             if mirror.format is not None:
+                # mirror.format is authored-only (no theme default) and never
+                # passes through axis_to_vl — this is the one place that
+                # would otherwise paint $NaN over a categorical shared scale
+                # with no diagnostic, the same failure gate_label_format
+                # already refuses on the primary axis.
+                #
+                # Read both keys rather than indexing: a histogram emits a
+                # `{aggregate: "count"}` y with no `field` at all (see the
+                # y=None note above). That axis is quantitative, which the
+                # gate no-ops on anyway, so the miss is "nothing to gate" —
+                # not a suppressed diagnostic.
+                y_field = main_y.get("field")
+                y_vl_type = main_y.get("type")
+                if isinstance(y_field, str) and isinstance(y_vl_type, str):
+                    # `orientation: horizontal` flips the VL channels, never
+                    # the authored ones, so a
+                    # bar's measure stays style.axis_y in both orientations;
+                    # a scatter dot plot is the one family whose measure is
+                    # axis_x, its y being the category; a heatmap has no
+                    # measure axis at all — the value is on color. Naming the
+                    # wrong one routes the author into this same error code.
+                    move_it_to = (
+                        HEATMAP_FORMAT_REMEDY
+                        if isinstance(chart, ResolvedHeatmapChart)
+                        else (
+                            "Remove axis_y.mirror.format; to format the "
+                            "measure instead, author it on "
+                            + (
+                                "style.axis_x.labels.format."
+                                if isinstance(chart, ResolvedScatterChart)
+                                else "style.axis_y.labels.format."
+                            )
+                        )
+                    )
+                    gate_label_format(
+                        mirror.format,
+                        y_field,
+                        chart_rows(chart, datasets).all_rows(),
+                        y_vl_type,
+                        setting="axis_y.mirror.format",
+                        # Temporal takes the gate's own text: it names a time
+                        # spec / style.time_format, which is right on every
+                        # family, where this channel-swap advice would assert
+                        # the scale is categorical when it is a date.
+                        remedy=(
+                            "axis_y.mirror.format relabels the shared y-scale "
+                            "on the opposite edge, and that scale is "
+                            "categorical here — it can't carry a number "
+                            f"format. {move_it_to}"
+                        )
+                        if y_vl_type in ("nominal", "ordinal")
+                        else None,
+                    )
                 ghost_axis["format"] = mirror.format
                 # The primary may carry a labelExpr (style.axis_y.labels.expr),
                 # which VL prefers over format — drop the inherited copy so the
@@ -165,7 +257,7 @@ class MirrorAxisFeature:
         # vl_field_maps.py's measure_axis_to_vl guards against; reuse its
         # measured-labelPadding fix here rather than duplicating the reject.
         # A labelExpr override (mirror.expr) makes the rendered string an
-        # arbitrary Vega expression Dataface can't measure, so that path
+        # arbitrary Vega expression dbt charts can't measure, so that path
         # always falls back to rejecting. A font.case guard IS needed here,
         # same as measure_axis_to_vl's: inject_axis_label_case runs on the
         # PRIMARY axis, and the ghost inherits its labelExpr wholesale via
@@ -173,7 +265,7 @@ class MirrorAxisFeature:
         ghost_align = ghost_axis.get("labelAlign")
         if ghost_align in (opposite, "center"):
             ghost_format = ghost_axis.get("format")
-            # Whether the ghost's rendered string is something Dataface can
+            # Whether the ghost's rendered string is something dbt charts can
             # introspect and re-measure, decided from resolved fields rather
             # than sniffing "labelExpr" out of the VL dict (the ghost may
             # *inherit* a labelExpr from the primary that isn't authored at
@@ -276,7 +368,9 @@ class MirrorAxisFeature:
                         )
                     labels = estimated_quantitative_tick_labels(values, ghost_format)
             if labels:
-                padding = measured_label_padding(labels, axis_y.labels.font)
+                padding = measured_label_padding(
+                    labels, axis_y.labels.font.family, axis_y.labels.font.size
+                )
                 label_limit = (
                     axis_y.labels.max_width
                     if axis_y.labels.max_width is not None
@@ -291,7 +385,7 @@ class MirrorAxisFeature:
                     "combined with axis_y.mirror — the alignment that keeps "
                     f"labels outside the plot on the {primary} edge draws the "
                     f"mirrored {opposite}-edge labels back across the axis "
-                    "into the plot, and Dataface has no baked tick content to "
+                    "into the plot, and dbt charts has no baked tick content to "
                     "measure a safe labelPadding from. Omit labels.align; each "
                     "edge then uses Vega-Lite's safe per-orient default.",
                     chart_id=chart.id,

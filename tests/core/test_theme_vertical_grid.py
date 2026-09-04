@@ -6,7 +6,7 @@ the marks is noise. Line, area and scatter keep theirs.
 
 These tests assert the *relationships* the design encodes, never the widths or colors
 themselves (those are tunable theme values, and pinning them is banned — see
-`dataface/AGENTS.md`):
+`dbt-charts/AGENTS.md`):
 
   * every theme draws a vertical grid on line/area, and none draws one on bar;
   * where a theme differentiates the two axes, the vertical grid is a different
@@ -35,7 +35,7 @@ from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 # The themes that thin every gridline to a hairline. No width headroom left to
 # separate the axes, so they separate them by contrast instead. Hardcoded because
 # it is a design subset, not a roster — a new theme is not automatically hairline.
-HAIRLINE_THEMES = ["vivid", "neon", "solid"]
+HAIRLINE_THEMES = ["vivid", "neon"]
 # The canonical roster, so a newly added theme is swept in rather than escaping.
 ALL_THEMES = user_facing_theme_names()
 

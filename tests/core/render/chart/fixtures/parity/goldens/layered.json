@@ -5,7 +5,7 @@
     "resize": true,
     "type": "fit"
   },
-  "background": "#FAFAFA",
+  "background": "#FFFFFF",
   "config": {
     "circle": {
       "opacity": 1.0
@@ -16,16 +16,16 @@
     },
     "range": {
       "category": [
-        "#3164a3",
+        "#40639c",
         "#779bc9",
-        "#ad9c7f",
-        "#7a8895",
-        "#8a576f",
-        "#5c7b5c",
+        "#608470",
+        "#775770",
         "#d49656",
         "#ae6349",
-        "#609f9e",
-        "#232f3a"
+        "#a0b6b7",
+        "#ad9c7f",
+        "#7a8895",
+        "#5c6668"
       ]
     },
     "rule": {
@@ -109,7 +109,7 @@
         "paddingInner": 0.0
       },
       "sort": null,
-      "title": "Month",
+      "title": "month",
       "type": "nominal"
     }
   },
@@ -117,7 +117,7 @@
     {
       "encoding": {
         "color": {
-          "datum": "Revenue",
+          "datum": "revenue",
           "legend": {
             "direction": "horizontal",
             "labelColor": "#626366",
@@ -129,30 +129,30 @@
             "orient": "top",
             "symbolLimit": 20,
             "symbolSize": {
-              "expr": "indexof([\"Target\"], toString(datum.value)) >= 0 ? 400 : 100"
+              "expr": "(indexof([\"target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square') === 'stroke' ? 400 : 100"
             },
             "symbolStrokeWidth": {
-              "expr": "indexof([\"Target\"], toString(datum.value)) >= 0 ? 2 : 1.5"
+              "expr": "(indexof([\"target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square') === 'stroke' ? 2 : 1.5"
             },
             "symbolType": {
-              "expr": "indexof([\"Target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square'"
+              "expr": "indexof([\"target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square'"
             },
             "title": null
           },
           "scale": {
             "domain": [
-              "Revenue",
-              "Target"
+              "revenue",
+              "target"
             ],
             "range": [
-              "#3164a3",
+              "#40639c",
               "#779bc9"
             ]
           }
         },
         "description": {
           "value": {
-            "expr": "\"\\u2061\" + (datum[\"month\"]) + '; ' + \"\\u2062\" + (\"Revenue\") + '; ' + \"Revenue: \" + (format(datum[\"revenue\"], \",.2~f\"))"
+            "expr": "\"\\u2061\" + (datum[\"month\"]) + '; ' + \"\\u2062\" + (\"revenue\") + '; ' + \"revenue: \" + (format(datum[\"revenue\"], \",.2~f\"))"
           }
         },
         "x": {
@@ -185,7 +185,7 @@
             "paddingInner": 0.0
           },
           "sort": null,
-          "title": "Month",
+          "title": "month",
           "type": "nominal"
         },
         "y": {
@@ -199,7 +199,7 @@
             "gridOpacity": 1.0,
             "gridWidth": 1.5,
             "labelAlign": "right",
-            "labelColor": "#626366",
+            "labelColor": "#222222",
             "labelExpr": "format(datum.value,\",.0~f\")",
             "labelFont": "'dbt Sans Tabular', 'Noto Emoji', Inter, system-ui, sans-serif",
             "labelFontSize": 11.0,
@@ -228,15 +228,14 @@
             "domainMin": 0.0,
             "zero": true
           },
-          "title": "Revenue",
+          "title": "revenue",
           "type": "quantitative"
         }
       },
       "mark": {
-        "continuousBandSize": 20.0,
         "cornerRadiusEnd": 2.0,
-        "fill": "#3164a3",
-        "stroke": "#FAFAFA",
+        "fill": "#40639c",
+        "stroke": "#FFFFFF",
         "strokeWidth": 1.0,
         "tooltip": true,
         "type": "bar",
@@ -248,7 +247,7 @@
     {
       "encoding": {
         "color": {
-          "datum": "Target",
+          "datum": "target",
           "legend": {
             "direction": "horizontal",
             "labelColor": "#626366",
@@ -260,30 +259,30 @@
             "orient": "top",
             "symbolLimit": 20,
             "symbolSize": {
-              "expr": "indexof([\"Target\"], toString(datum.value)) >= 0 ? 400 : 100"
+              "expr": "(indexof([\"target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square') === 'stroke' ? 400 : 100"
             },
             "symbolStrokeWidth": {
-              "expr": "indexof([\"Target\"], toString(datum.value)) >= 0 ? 2 : 1.5"
+              "expr": "(indexof([\"target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square') === 'stroke' ? 2 : 1.5"
             },
             "symbolType": {
-              "expr": "indexof([\"Target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square'"
+              "expr": "indexof([\"target\"], toString(datum.value)) >= 0 ? 'stroke' : 'square'"
             },
             "title": null
           },
           "scale": {
             "domain": [
-              "Revenue",
-              "Target"
+              "revenue",
+              "target"
             ],
             "range": [
-              "#3164a3",
+              "#40639c",
               "#779bc9"
             ]
           }
         },
         "description": {
           "value": {
-            "expr": "\"\\u2061\" + (datum[\"month\"]) + '; ' + \"\\u2062\" + (\"Target\") + '; ' + \"Target: \" + (format(datum[\"target\"], \",.2~f\"))"
+            "expr": "\"\\u2061\" + (datum[\"month\"]) + '; ' + \"\\u2062\" + (\"target\") + '; ' + \"target: \" + (format(datum[\"target\"], \",.2~f\"))"
           }
         },
         "y": {
@@ -297,7 +296,7 @@
             "gridOpacity": 1.0,
             "gridWidth": 1.5,
             "labelAlign": "right",
-            "labelColor": "#626366",
+            "labelColor": "#222222",
             "labelExpr": "format(datum.value,\",.0~f\")",
             "labelFont": "'dbt Sans Tabular', 'Noto Emoji', Inter, system-ui, sans-serif",
             "labelFontSize": 11.0,
@@ -322,12 +321,13 @@
           },
           "field": "target",
           "format": ",.2~f",
-          "title": "Target",
+          "title": "target",
           "type": "quantitative"
         }
       },
       "layer": [
         {
+          "encoding": {},
           "mark": {
             "aria": false,
             "interpolate": "linear",
@@ -350,7 +350,7 @@
             "fill": "#779bc9",
             "filled": true,
             "opacity": 0,
-            "size": 300,
+            "size": 320.0,
             "tooltip": true,
             "type": "point"
           }

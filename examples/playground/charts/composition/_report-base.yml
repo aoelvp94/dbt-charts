@@ -5,11 +5,11 @@
 # It remains a valid standalone board — template boards must be self-contained.
 
 title: Report Base (template)
-description: >
+notes: >
   Base template for report-style dashboards.
   Extend this board to inherit the cream theme and compact card gap.
 
-extends: cream
+extends: paper
 
 style:
   frame:

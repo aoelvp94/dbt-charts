@@ -3,7 +3,7 @@
 Stage: EXECUTE
 
 psycopg2 opens a transaction on the first statement of a non-autocommit connection,
-and a Dataface read never commits — ``auto_begin=False`` only stops *dbt* from opening
+and a dbt charts read never commits — ``auto_begin=False`` only stops *dbt* from opening
 one. A pooled connection therefore sat ``idle in transaction`` holding an
 ``AccessShareLock`` on every table it had read, blocking the ``ACCESS EXCLUSIVE`` that
 a dbt table rebuild takes, until the pool was closed.

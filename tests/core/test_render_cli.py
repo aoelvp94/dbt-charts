@@ -76,7 +76,7 @@ class TestRenderFile:
         assert result.exit_code == 1
         combined = result.output + (result.stderr or "")
         assert "Traceback" not in combined
-        assert "No Dataface project found" in combined
+        assert "No dbt charts project found" in combined
 
     def test_render_file_not_found(self) -> None:
         """dct render <nonexistent> should fail with clear error."""

@@ -1,6 +1,6 @@
-"""YAML render output format — resolved dataface YAML.
+"""YAML render output format — resolved board YAML.
 
-Maps the dict produced by board_to_dict back to valid dataface YAML schema.
+Maps the dict produced by board_to_dict back to valid board YAML.
 The output can be re-compiled and rendered without a database connection.
 """
 
@@ -27,7 +27,7 @@ def _board_to_yaml_dict(
     board_dict: dict[str, Any],
     truncation_notes: list[str],
 ) -> dict[str, Any]:
-    """Convert a board_to_dict result into valid dataface YAML schema.
+    """Convert a board_to_dict result into valid board YAML.
 
     Row-cap truncations can't live inside the document (an extra query key
     would break the round-trip re-compile contract), so they're reported as
@@ -108,10 +108,10 @@ def render_board_yaml(
     error_collector: list[Diagnostic] | None = None,
     max_rows_per_query: int = NO_ROW_CAP,
 ) -> str:
-    """Render a compiled board to resolved dataface YAML.
+    """Render a compiled board to resolved board YAML.
 
     Walks the layout tree, executes queries, resolves charts, and produces
-    valid dataface YAML where queries use `values:` with inline data rows.
+    valid board YAML where queries use `values:` with inline data rows.
     The output can be fed back into `compile()` as valid input. A row cap
     truncates the inline rows; every truncation is declared in a comment
     header so the document is explicitly partial, never silently so.

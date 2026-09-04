@@ -1,4 +1,4 @@
-"""Table SVG rendering for Dataface dashboards.
+"""Table SVG rendering for dbt charts dashboards.
 
 Per-column paint comes from ``style.columns``; ``TableChart`` declares no
 mark channels (``color``/``background``/``opacity``/``stroke_*`` are
@@ -11,6 +11,7 @@ import html as html_module
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal
 from functools import cache
 from importlib.resources import files
 from typing import TYPE_CHECKING, Any
@@ -19,6 +20,7 @@ from dbt_charts.core.colors import (
     is_sanitizable_color,
     sanitize_color,
 )
+from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.chart.authored import (
     TableColumnConfig,
 )
@@ -29,12 +31,15 @@ from dbt_charts.core.compile.models.style.authored import (
 )
 from dbt_charts.core.compile.models.style.resolved import ResolvedTableColumnConfig
 from dbt_charts.core.compile.resolve import infer_pivot_measure_names
+from dbt_charts.core.font_measure import centered_baseline_offset
 from dbt_charts.core.utils import (
     coerce_numeric_cell,
     is_date_like,
 )
 
 if TYPE_CHECKING:
+    import datetime as dt
+
     from dbt_charts.core.compile.models.chart.authored import (
         FieldConditionalFormatting,
         SparkConfig,
@@ -65,13 +70,20 @@ from dbt_charts.core.fonts import (
     DBT_SANS_TABULAR_FONT_FAMILY,
     SOURCE_SERIF_4_FONT_FAMILY,
 )
+from dbt_charts.core.render.board_variables import current_board_variables
 from dbt_charts.core.render.chart.auto_link import (
     get_filter_variables_context,
     resolve_filter_cell_link,
 )
 from dbt_charts.core.render.chart.table_overflow import (
+    TableCramping,
     TableOverflow,
+    record_table_cramping,
     record_table_overflow,
+)
+from dbt_charts.core.render.chart.table_page_squeeze import (
+    TablePageSqueeze,
+    record_table_page_squeeze,
 )
 from dbt_charts.core.render.chart.table_static_pagination import (
     StaticPaginationCap,
@@ -88,6 +100,7 @@ from dbt_charts.core.render.chart.table_support import (
     is_total_role,
     measure_column_demands,
     measure_column_word_floors,
+    parse_column_width,
     resolve_cell_conditional_styles,
     resolve_cell_glyph,
     resolve_cell_glyph_from_overrides,
@@ -99,6 +112,7 @@ from dbt_charts.core.render.chart.table_support import (
     resolve_wrapped_headers,
 )
 from dbt_charts.core.render.chart.text_truncation import record_text_truncation
+from dbt_charts.core.render.chart.time_unit_detect import calendar_bucket_key
 from dbt_charts.core.render.chart.title_overflow import (
     compute_title_limit,
     prepare_title_text,
@@ -126,6 +140,12 @@ _PAGINATION_CONTROL_HEIGHT = 28
 # Default page_rows (20) x this cap covers a generously large standalone
 # table (400 rows) before the export starts truncating.
 _STATIC_MULTI_PAGE_MAX_PAGES = 20
+
+# Extra height reserved below the pager row when a static export hits the
+# cap above: the "Showing pages 1-N of M" note gets its own line rather than
+# sharing the row-range label's baseline (they collided pixel-for-pixel --
+# both left-anchored at the same x/y -- before this reservation existed).
+_PAGINATION_CAP_NOTE_HEIGHT = 20
 
 # Engine politeness for table pagination. When total_rows would overflow the
 # resolved page_rows by this many or fewer AND the rows physically fit in the
@@ -448,6 +468,7 @@ def _render_spark_cell(
     cell_font: FontStyle | None = None,
     resolved_style: ResolvedChartDefaults | None = None,
     column_max: float | None = None,
+    has_negative: bool = False,
 ) -> tuple[str, int, int]:
     """Render a spark chart for a table cell.
 
@@ -461,6 +482,8 @@ def _render_spark_cell(
             mark within the row's effective (possibly grown) height instead.
         cell_font: Table FontStyle to inherit for bar/bar-normalize value labels.
         column_max: Pre-computed column max for `bar` auto-max (None = use default).
+        has_negative: True when the table column contains a negative value
+            somewhere — bar/column switch to midline-anchored layout.
 
     Returns:
         ``(svg_content, spark_width, spark_height)``. ``svg_content`` is the
@@ -506,17 +529,14 @@ def _render_spark_cell(
     if spark_type == "bar" and spark_config.max is None and column_max is not None:
         options["max"] = column_max
 
-    # For single-bar sparklines, only render when value is numeric.
+    # For single-bar sparklines, only render when value is numeric and finite.
     # This lets mixed tables (text + numeric rows) use one spark config without
-    # replacing text cells with zero-width bars.
+    # replacing text cells with zero-width bars, and applies the same null
+    # rule as every other numeric-cell consumer (utils.coerce_numeric_cell):
+    # NaN/±Infinity render nothing rather than a full-extent bar.
     if spark_type in ("bar", "bar-normalize", "column"):
-        if isinstance(value, bool):
+        if coerce_numeric_cell(value) is None:
             return "", 0, 0
-        if not isinstance(value, (int, float)):
-            try:
-                float(str(value))
-            except (TypeError, ValueError):
-                return "", 0, 0
 
     # Render the spark SVG
     spark_svg = render_spark(
@@ -525,6 +545,7 @@ def _render_spark_cell(
         width=spark_width,
         height=spark_height,
         font=cell_font,
+        has_negative=has_negative,
         resolved_style=resolved_style,
         **options,
     )
@@ -614,6 +635,7 @@ def _resolve_visible_rows(
     page: int = 1,
     row_heights: list[int] | None = None,
     header_visible: bool = True,
+    chart_id: str | None = None,
 ) -> tuple[float, list[dict[str, Any]], int, int, list[int] | None, int, int]:
     """Resolve table height, visible rows, total page count, page offset, and rows-height.
 
@@ -621,8 +643,14 @@ def _resolve_visible_rows(
     visible_row_heights, rows_height, effective_row_height)``.
     ``rows_height`` is the vertical extent used for the data-row section
     (tallest page when paginated + multi-page, else this page's own rows) —
-    callers place pagination indicators off this value so controls sit at a
-    consistent y across pages.
+    it sizes ``table_height`` so the card doesn't resize between pages.
+    Pagination indicators do NOT place off this value: they place off the
+    CURRENT page's own rows height instead (each caller computes that
+    separately from ``visible_row_heights``), so a short page's pager sits
+    right below its own last row rather than inheriting the tallest page's
+    whitespace. The pager therefore sits at a different y on a short page
+    than a tall one -- an accepted design trade-off (favors no dead space
+    over a fixed pager position), not a bug.
 
     ``effective_row_height`` equals ``row_height`` unless the anti-dangle
     heuristic fired and squeezed it to collapse a 1-2 row trailing page.
@@ -632,6 +660,11 @@ def _resolve_visible_rows(
     When ``row_heights`` is provided, pagination splitting and fixed-height
     row-count calculations operate on real cumulative heights; otherwise
     the uniform ``row_height`` is used.
+
+    ``chart_id`` opts this call into recording a slot-squeezed page for
+    TABLE_PAGE_SQUEEZED. Only the one call that produces the rendered table
+    passes it — the layout probe and the per-page re-renders resolve the same
+    rows again and would record the same squeeze twice.
     """
     # Chart-local pagination is pre-merged into ``pagination`` by the cascade —
     # read the resolved page_rows off the merged value. When pagination is
@@ -775,13 +808,28 @@ def _resolve_visible_rows(
                 )
             else:
                 effective = probe_effective
+            # The slot, not the table, decided the page size: the sizer reserved
+            # room for `requested` rows and only `effective` fit. Record it so
+            # TABLE_PAGE_SQUEEZED can say so — otherwise the export photographs
+            # as a faithful table showing a fraction of the data.
+            requested = min(page_rows, len(data))
+            if chart_id is not None and effective < requested:
+                record_table_page_squeeze(
+                    chart_id,
+                    TablePageSqueeze(
+                        drawn_rows=effective,
+                        page_rows=requested,
+                        total_rows=len(data),
+                    ),
+                )
             total_pages = max(1, -(-len(data) // effective)) if data else 1
             page = min(page, total_pages)
             start = (page - 1) * effective
             visible_heights = _slice_heights(start, effective)
-            # Use the tallest page's rows_height so pagination controls sit
-            # at the same y across pages (otherwise they wobble as the user
-            # clicks prev/next on mixed-height data).
+            # Use the tallest page's rows_height for table_height, so the
+            # card doesn't resize as the user clicks prev/next -- callers
+            # place the pager off the CURRENT page's own rows instead (see
+            # this function's docstring), so this value governs sizing only.
             if row_heights is not None and total_pages > 1:
                 rows_height_out = _max_page_sum(row_heights, effective)
             else:
@@ -965,13 +1013,15 @@ def _render_pivot_group_header(
                 f'fill="{_hdr_bg}"/>',
             )
 
-        label_y = row_y + group_row_height / 2 + font_size * 0.35
+        label_y = (
+            row_y
+            + group_row_height / 2
+            + centered_baseline_offset(font_family, font_size)
+        )
 
         for group_label, first_leaf_idx, n_leaves in level:
             abs_first = n_row_dims + first_leaf_idx
             abs_last = abs_first + n_leaves - 1
-            if abs_first >= len(col_x_offsets) or abs_last >= len(col_x_offsets):
-                continue
             x_left = padding_x + col_x_offsets[abs_first]
             last_col_key = columns[abs_last]
             x_right = (
@@ -1718,6 +1768,63 @@ def _compute_wrap_layout(
     return heights, wrapped_by_row
 
 
+def _spark_column_layout(
+    columns: list[str],
+    column_configs: dict[str, ResolvedTableColumnConfig],
+    rows: list[dict[str, Any]],  # type-state: explicit_any — query rows
+    row_role_spec: str | None,
+) -> tuple[dict[str, float | None], dict[str, bool]]:
+    """Pre-compute per-table-column `bar` auto-max and signed (midline) layout.
+
+    ``rows`` must be the FULL dataset, not a page slice — every row in a
+    column must share one anchor (edge vs. midline) and one auto-max
+    ceiling, or a column's bars change meaning between pages of the same
+    paginated table (the row-number gutter width uses the same
+    whole-dataset rule; see ``_row_number_column_width``).
+
+    Summary/total rows are excluded from the scan, same rule and same
+    reason as ``_render_data_rows``'s ``scale_rows``: a grand-total value is
+    often 10-100x any detail value and would re-anchor or rescale every
+    detail row's bar for a sign/magnitude no detail row actually has.
+
+    Uses magnitude (abs), not the signed max, for `bar`'s auto-max ceiling —
+    a column mixing -100 and 50 scales against 100, otherwise -100 would
+    clamp against the smaller positive max and lose its true extent.
+    Equivalent to the old `max(non_null)` for any all-positive column (abs
+    is a no-op there).
+
+    `bar-normalize` is excluded from signed layout entirely: its background
+    track is a fixed-width "% of max" ruler (see `spark.py`'s
+    `bar-normalize` docstring), and halving the fill against an unchanged
+    track would silently rescale every reading (50% would read as 25%).
+    It keeps the original clamp-to-zero behavior for negatives.
+    """
+    from dbt_charts.core.compile.models.chart.authored import SparkConfig
+
+    detail_rows = [
+        row for row in rows if not is_summary_role(resolve_row_role(row_role_spec, row))
+    ]
+
+    bar_auto_max: dict[str, float | None] = {}
+    signed_layout_columns: dict[str, bool] = {}
+    for col in columns:
+        col_cfg = column_configs.get(col)
+        if not (col_cfg and isinstance(col_cfg.spark, SparkConfig)):
+            continue
+        spark_type = col_cfg.spark.type
+        if spark_type not in ("bar", "column"):
+            continue
+        non_null = [
+            n
+            for row in detail_rows
+            if (n := coerce_numeric_cell(row.get(col))) is not None
+        ]
+        if spark_type == "bar" and col_cfg.spark.max is None:
+            bar_auto_max[col] = max((abs(n) for n in non_null), default=None)
+        signed_layout_columns[col] = any(n < 0 for n in non_null)
+    return bar_auto_max, signed_layout_columns
+
+
 def _render_data_rows(
     svg_parts: list[str],
     *,
@@ -1753,6 +1860,8 @@ def _render_data_rows(
     wrap: bool,
     chart_root_link: str | None = None,
     chart_id: str = "",
+    bar_auto_max: dict[str, float | None],
+    signed_layout_columns: dict[str, bool],
 ) -> None:
     """Render all visible table rows.
 
@@ -1762,6 +1871,11 @@ def _render_data_rows(
                    plain middle data rows strip currency prefix and
                    magnitude/unit suffix. The "anchor" rows structurally
                    guide the reader at the top and bottom of the value field.
+
+    bar_auto_max / signed_layout_columns: per-table-column `bar`/`column`
+    spark layout, computed by ``_spark_column_layout`` over the FULL
+    dataset (not ``rows``, which may be a single page) — see that
+    function's docstring for why a page-scoped scan is a bug.
     """
     from dbt_charts.core.compile.models.chart.authored import SparkConfig
 
@@ -1782,25 +1896,6 @@ def _render_data_rows(
         cell_pad = int(table_config.column_layout.cell_padding)
     text_offset = table_config.text_baseline_offset
     truncation_measurer = get_font_measurer(cell_font.family)
-
-    # Pre-compute column max for `bar` sparks (absolute magnitude, no
-    # explicit ceiling). `bar-normalize` deliberately does NOT auto-max —
-    # see _render_spark_cell for the rationale.
-    bar_auto_max: dict[str, float | None] = {}
-    for col in columns:
-        col_cfg = column_configs.get(col)
-        if (
-            col_cfg
-            and isinstance(col_cfg.spark, SparkConfig)
-            and col_cfg.spark.type == "bar"
-            and col_cfg.spark.max is None
-        ):
-            non_null = [
-                n
-                for row in rows
-                if (n := coerce_numeric_cell(row.get(col))) is not None
-            ]
-            bar_auto_max[col] = max(non_null) if non_null else None
 
     # Anchor row for a shared-scale column's magnitude suffix: the first row
     # (in paint order) that can actually carry it. A zero or non-numeric
@@ -2141,6 +2236,13 @@ def _render_data_rows(
                     cell_font=cell_font,
                     resolved_style=resolved_style,
                     column_max=bar_auto_max.get(col),
+                    # signed_layout_columns only has entries for bar/column
+                    # spark types (_spark_column_layout); every other spark
+                    # type (line/area/columns/bar-normalize) correctly
+                    # defaults to unsigned/edge-anchored layout.
+                    has_negative=signed_layout_columns.get(
+                        col, False
+                    ),  # type-state: silent_fallback — see comment above
                 )
                 if spark_content:
                     # `column` is the only narrow mark — it needs explicit
@@ -2187,7 +2289,7 @@ def _render_data_rows(
                 resolve_conditional_styles(
                     when_rules,
                     value,
-                    tones=resolved_style.kpi.tones,
+                    tones=resolved_style.tones,
                 )
                 if when_rules
                 else {}
@@ -2700,6 +2802,10 @@ def _render_pagination_controls(
     y: float,
     font_family: str,
     paginator: PaginatorStyle,
+    row_start: int,
+    row_end: int,
+    total_rows: int,
+    padding: float,
 ) -> str:
     """Render a right-aligned paginator: ``\u2039 1 \u2026 4 5 6 \u2026 12 \u203a``.
 
@@ -2709,6 +2815,16 @@ def _render_pagination_controls(
     ``onclick=updateVariable(...)`` handler \u2014 this is the hit target.
     Disabled chevrons, the active page, and the ellipsis are non-interactive.
     Disabled state is signalled by colour (``color_disabled``), not opacity.
+
+    A muted ``"Rows {row_start}\u2013{row_end} of {total_rows}"`` label sits
+    left-aligned at ``padding`` in the same control band \u2014 an unlabelled
+    ``\u2039 1 2 \u2026 37 \u203a`` reads as "37 pages of dashboards", not "this
+    table has 37 pages of rows". ``row_start``/``row_end`` are this page's real
+    1-based row range (the caller's own page offset and painted row count, so
+    a short last page reports its true end, never ``page * page_rows``);
+    ``total_rows`` is ``len(data)``, never a page count. Dropped entirely
+    (never shrunk, and never shrinks the pager) if it would collide with the
+    right-anchored sequence.
     """
     window = _paginator_window(page=page, total=total_pages)
 
@@ -2753,7 +2869,26 @@ def _render_pagination_controls(
     total_width = sum(slot_widths)
     cursor_left = table_width - total_width
 
+    # Built outside the <g class="dbt-paginator"> group (returned separately
+    # below) so it survives strip_pagination_chrome: a raster/PDF export
+    # strips the clickable-looking chrome but keeps content, and this label
+    # is content -- the one line that answers "how much am I not seeing?" on
+    # a surface where the reader can't click a page number to find out.
+    label_svg = ""
+    label_text = f"Rows {row_start}–{row_end} of {total_rows}"
+    label_w = get_font_measurer(font_family).measure(label_text, float(font_size))
+    if padding + label_w <= cursor_left:
+        safe_label = html_module.escape(label_text, quote=True)
+        label_svg = (
+            f'<text x="{padding:.1f}" y="{text_y:.1f}" font-size="{font_size}" '
+            f'fill="{safe_inactive}" font-family="{safe_font}" '
+            f'font-weight="{paginator.weight_inactive}" '
+            f'style="font-variant-numeric: tabular-nums; user-select: none;">'
+            f"{safe_label}</text>\n"
+        )
+
     parts: list[str] = [f'<g class="dbt-paginator" data-paginator="{safe_var}">']
+
     for i, (role, glyph, target) in enumerate(sequence):
         slot_w = slot_widths[i]
         slot_left = cursor_left
@@ -2813,20 +2948,24 @@ def _render_pagination_controls(
         data_attrs = f' data-paginator-role="{role}"'
         if is_active_page:
             data_attrs += f' data-pagination-current="{safe_var}"'
-        # pointer-events="none" so the underlying <rect> catches hover/click
-        # over the painted glyph — without this, SVG's default visiblePainted
-        # behaviour makes the text capture events but no cursor:pointer or
-        # onclick lives there, so the hit feels broken.
+        # class="dbt-paginator-glyph" so the underlying <rect> catches hover/
+        # click over the painted glyph. A pointer-events="none" *attribute*
+        # cannot do this: the board stylesheet ships
+        # ``.dbt-chart text { pointer-events: auto }`` and a CSS declaration
+        # always beats a presentation attribute, so the glyph would take the
+        # pointer back — the same trap cell text solves via
+        # .dbt-table-cell-inert (see the reasoning above, and the matching
+        # rule emitted below).
         parts.append(
             f'<text x="{center_x:.1f}" y="{text_y:.1f}" '
             f'font-size="{font_size}" fill="{color}" text-anchor="middle" '
             f'font-family="{safe_font}" font-weight="{weight}" '
-            f'pointer-events="none" '
+            f'class="dbt-paginator-glyph" '
             f'style="{text_style}"{data_attrs}>{glyph}</text>'
         )
 
     parts.append("</g>")
-    return "\n".join(parts)
+    return label_svg + "\n".join(parts)
 
 
 def _render_static_pagination_cap_note(
@@ -2878,6 +3017,11 @@ def _table_pagination_script() -> str:
 
 
 _PAGINATOR_GROUP_RE = re.compile(r'<g class="dbt-paginator".*?</g>', re.DOTALL)
+# Stripped alongside the group: once every <g class="dbt-paginator"> is gone,
+# this rule matches nothing — dead CSS, not just inert.
+_PAGINATOR_GLYPH_CSS_RE = re.compile(
+    r"\s*\.dbt-chart text\.dbt-paginator-glyph \{.*?\}", re.DOTALL
+)
 
 
 def strip_pagination_chrome(svg: str) -> str:
@@ -2890,7 +3034,7 @@ def strip_pagination_chrome(svg: str) -> str:
     rasterizing; the visible page's rows are untouched, so a table simply
     shows its first page with no chrome — honest, not broken-looking.
     """
-    return _PAGINATOR_GROUP_RE.sub("", svg)
+    return _PAGINATOR_GLYPH_CSS_RE.sub("", _PAGINATOR_GROUP_RE.sub("", svg))
 
 
 def _as_resolved_table_column(
@@ -2958,7 +3102,24 @@ def _transpose_data_for_render(
     # set during resolve — the caller passes it directly, no chart reach-back needed.
     column_configs: dict[str, ResolvedTableColumnConfig] = dict(columns or {})
     row = data[0]
-    src_cols = list(column_configs) + [k for k in row if k not in column_configs]
+    # Same unreachable-authoring guard as the core render path: a `visible:`
+    # entry naming no query column would silently do nothing here too.
+    _unaddressed = sorted(
+        key
+        for key, cfg in column_configs.items()
+        if cfg.visible is False and key not in row
+    )
+    if _unaddressed:
+        raise ChartDataError(
+            f"style.table.transpose: style.columns sets `visible:` on"
+            f" {_unaddressed}, which match no query column — the transposable"
+            f" columns are {sorted(row)}. Check for a typo."
+        )
+    src_cols = [
+        c
+        for c in list(column_configs) + [k for k in row if k not in column_configs]
+        if (_cfg := column_configs.get(c)) is None or _cfg.visible is not False
+    ]
 
     pivoted: list[dict[str, Any]] = []
     for col in src_cols:
@@ -2989,6 +3150,68 @@ def _transpose_data_for_render(
         ),
     }
     return pivoted, pivoted_columns
+
+
+def _fanned_leaf_config(
+    base: ResolvedTableColumnConfig,
+    *,
+    fallback_label: str,
+    measure_identity: bool,
+    defaults: TableColumnDefaultsConfig | None,
+    values: list[Any],  # type-state: explicit_any — raw leaf cell values
+) -> ResolvedTableColumnConfig:
+    """Construct the leaf-key variant of a measure-keyed config.
+
+    Pivot leaf columns are a render-native key space, so this goes through
+    the same constructor pair as every other render-synthesized column
+    (``fill_table_column_defaults`` + ``_as_resolved_table_column``) — the
+    leaf value is built once with every field final, never by
+    copying-with-update a Resolved* value. The measure-keyed entry supplies
+    the styling source; ``fallback_label`` names the leaf.
+    ``measure_identity`` says whose identity the leaf header carries: True
+    when an entry exists in the resolved mapping under this leaf's display
+    name (a measure sub-label, or a leaf-part key — note this is a name
+    match against the resolved mapping, so a pivoted value string-equal to
+    another column's name adopts that entry), and False for entries reached
+    via the single-measure fallback, whose headers ARE pivoted values — the
+    measure's label and header link must not stamp themselves across every
+    column. The sizing slot (``width``/``max_width``) never fans: a
+    per-column width multiplied across N leaves would inflate the table (it
+    was inert on the old semantics).
+    Resolved-only fields the fill pair cannot see (``shared_scale``,
+    ``decimal_pad_table``, the baked ``scale``) are carried from ``base``
+    into the same construction, so the carried facts — shared-magnitude
+    anchoring, decimal padding, baked scale stops — match the flat-table
+    control (a data-domain gradient still computes its color domain per
+    rendered column at paint time).
+    """
+    fields = {name: getattr(base, name) for name in TableColumnConfig.model_fields}
+    fields["width"] = None
+    fields["max_width"] = None
+    if not measure_identity:
+        fields["label"] = None
+        fields["header_link"] = None
+    working = fill_table_column_defaults(
+        TableColumnConfig(**fields),
+        defaults,
+        fallback_label=fallback_label,
+        values=values,
+    )
+    # Carry every Resolved*-only field from the base (the format is the
+    # measure's own, so resolve's data-gated bakes are right for every leaf),
+    # computed from the model diff so a future resolved field can't silently
+    # vanish on pivot leaves. ``scale`` is annotated on both models, so its
+    # resolved instance is carried explicitly.
+    resolved_extras: dict[str, Any] = {  # type-state: explicit_any — dump payload
+        name: getattr(base, name)
+        for name in set(ResolvedTableColumnConfig.model_fields)
+        - set(TableColumnConfig.model_fields)
+    }
+    if base.scale is not None:
+        resolved_extras["scale"] = base.scale
+    return ResolvedTableColumnConfig.model_validate(
+        {**working.model_dump(exclude_none=True), **resolved_extras}
+    )
 
 
 def _render_table_svg_core(
@@ -3062,7 +3285,6 @@ def _render_table_svg_core(
         "background": tc.background or "",
         "header_background": tc.header.background or "",
         "label_color": tc.header.font.color or "",
-        "border": tc.border.color,
         "row_stripe": (tc.row.stripe.color if tc.row.stripe else None) or "",
         "color": tc.font.color or "",
         "title_color": table_style.title.font.color,
@@ -3082,7 +3304,6 @@ def _render_table_svg_core(
         tc.header.font.color,
         colors["label_color"],
     )
-    colors["border"] = sanitize_color(tc.border.color, colors["border"])
     colors["row_stripe"] = sanitize_color(
         tc.row.stripe.color if tc.row.stripe else None, colors["row_stripe"]
     )
@@ -3212,19 +3433,42 @@ def _render_table_svg_core(
     # column tuple (and measure when multi-measure) joined by _PIVOT_LEAF_SEP.
     # Single-dim single-measure leaves are plain col-values (no separator) — skipped.
     # _pivot_effective_values comes directly from pivot_table_data (no heuristics).
+    _addressed_via_expansion: set[str] = set()
     if _pivot_groups is not None and data:
         _leaf_cols_all = [k for k in data[0] if _PIVOT_LEAF_SEP in k]
         _effective_values_set = set(_pivot_effective_values)
 
         _expanded_cc: dict[str, ResolvedTableColumnConfig] = {}
+        # Multi-dim single-measure leafs carry no measure suffix, so the
+        # measure-keyed lookup below can never hit — fan the single measure's
+        # entry onto them here, same contract as every other pivot shape.
+        _single_measure_cfg: ResolvedTableColumnConfig | None = None
+        if len(_pivot_effective_values) == 1:
+            _single_measure_cfg = column_configs.get(_pivot_effective_values[0])
         for leaf in _leaf_cols_all:
             _parts = leaf.split(_PIVOT_LEAF_SEP)
             # Measure is the last part when it's a known measure; otherwise no measure.
             _measure_part = _parts[-1] if _parts[-1] in _effective_values_set else None
             _display_label = _measure_part if _measure_part is not None else _parts[-1]
             existing = column_configs.get(_display_label)
+            _authored_here = existing is not None
+            if existing is None and _measure_part is None and _single_measure_cfg:
+                existing = _single_measure_cfg
+                _addressed_via_expansion.add(_pivot_effective_values[0])
+            elif existing is not None:
+                _addressed_via_expansion.add(_display_label)
             if existing is not None:
-                _expanded_cc[leaf] = existing
+                # Identity survives the fan when the entry was authored under
+                # this leaf's own display name (a measure sub-label, or a
+                # leaf-part key); an entry reached via the single-measure
+                # fallback is a dimension-value leaf and keeps its own.
+                _expanded_cc[leaf] = _fanned_leaf_config(
+                    existing,
+                    fallback_label=slug_to_text(_display_label),
+                    measure_identity=_authored_here,
+                    defaults=column_defaults_promoted,
+                    values=[row.get(leaf) for row in data],
+                )
             else:
                 # Measure not explicitly authored — its key space (this leaf)
                 # only exists after the pivot transform above, so resolve
@@ -3250,12 +3494,32 @@ def _render_table_svg_core(
         column_when_rules = {**column_when_rules, **_expanded_cwr}
     elif pivot_columns and data:
         # Single-dim single-measure pivot: leaf keys are the bare pivoted
-        # values themselves (no separator, no measure-name lookup needed) --
-        # but that key space still only exists after the pivot transform
-        # above, so any key not already explicitly authored gets
-        # column_defaults applied here, same as the multi-measure case.
+        # values themselves (no separator). A measure-keyed entry fans out to
+        # every leaf, same authoring shape as the multi-measure branch — so
+        # `visible:` (and any styling) on the measure name means the same
+        # thing on both pivot shapes. A leaf-keyed entry still wins over the
+        # measure-keyed one. Un-authored leafs get column_defaults applied
+        # here (their key space only exists after the pivot transform above).
+        _measure_cfg: ResolvedTableColumnConfig | None = None
+        _single_measure = next(iter(_pivot_effective_values), None)
+        if _single_measure is not None and _single_measure in column_configs:
+            _measure_cfg = column_configs[_single_measure]
         for leaf in data[0]:
             if leaf == row_role_spec or leaf in column_configs:
+                continue
+            if _measure_cfg is not None and _single_measure is not None:
+                # Registered as addressed only when a fan actually happens —
+                # if every leaf carries its own entry, the measure key stays
+                # unaddressed and `visible:` on it fails loud instead of
+                # silently doing nothing.
+                _addressed_via_expansion.add(_single_measure)
+                column_configs[leaf] = _fanned_leaf_config(
+                    _measure_cfg,
+                    fallback_label=slug_to_text(leaf),
+                    measure_identity=False,
+                    defaults=column_defaults_promoted,
+                    values=[row.get(leaf) for row in data],
+                )
                 continue
             column_configs[leaf] = _as_resolved_table_column(
                 fill_table_column_defaults(
@@ -3270,31 +3534,107 @@ def _render_table_svg_core(
 
     header_overflow = resolve_header_overflow(table_config, header_overflow_promoted)
 
-    # Prefer explicit configured columns so helper/style columns can stay hidden.
-    # Dict keys preserve insertion order, so authored column order is honored.
-    #
-    # In pivot mode, columns_promoted's keys are the real leaf/pivoted-value
-    # keys ONLY for an explicitly-authored single-dim single-measure pivot
-    # (authors key style.columns by those bare values directly) — checked via
-    # the subset test below. For every other pivot shape (multi-measure/dim,
-    # or resolve's inferred row/pivot-dimension columns) columns_promoted is
-    # keyed by measure or dimension names that never match the actual
-    # post-transform keys, so the visible list must come from data instead.
-    # An empty `data` means the transform above never ran (nothing to check
-    # against) — honor the authored list so an authored table still shows
-    # its declared header in the empty-state render.
-    if columns_promoted and (
-        not pivot_columns or not data or set(columns_promoted).issubset(data[0])
-    ):
-        columns = list(columns_promoted.keys())
+    # A `visible: false` entry must address something the render can act on: a
+    # post-pivot column, or a measure key the leaf expansion above fanned
+    # out. Anything else is unreachable authoring — a typo, the wrong key
+    # form for this pivot shape, or the row-role marker (stripped
+    # unconditionally, so `visible:` on it can never do anything) — and
+    # hiding it would silently do nothing, which is exactly the failure
+    # `visible:` replaced. Only checkable when data exists (an empty result
+    # has no key space to compare against; the empty-state render keeps its
+    # headers).
+    if data:
+        _addressable = (set(data[0]) | _addressed_via_expansion) - {row_role_spec}
+        # Derived style-input hides carry visible=False the author never
+        # wrote; a pivot reshape can consume such a column, so exempt any key
+        # another entry references as a style input — the guard is for
+        # authored typos, not derivation.
+        _style_ref_targets = {
+            spec
+            for cfg in column_configs.values()
+            for spec in (
+                cfg.background,
+                cfg.font.color if cfg.font else None,
+                cfg.font.weight if cfg.font else None,
+            )
+            if isinstance(spec, str)
+        }
+        _unaddressed = sorted(
+            key
+            for key, cfg in column_configs.items()
+            if cfg.visible is False
+            and key not in _addressable
+            and key not in _style_ref_targets
+            # The row-role marker is stripped unconditionally — hiding it is
+            # already satisfied, not unreachable authoring.
+            and key != row_role_spec
+        )
+        if _unaddressed:
+            # Multi-measure leaf keys are _PIVOT_LEAF_SEP joins no author can
+            # type — show the parts, the same as the authorable measure names.
+            _shown = sorted(
+                {key.replace(_PIVOT_LEAF_SEP, " / ") for key in _addressable}
+            )
+            raise ChartDataError(
+                f"table {chart_id!r}: style.columns sets `visible:` on"
+                f" {_unaddressed}, which match no rendered column — this"
+                f" table's addressable columns are {_shown}."
+                " Check for a typo, or key the entry by the name the rendered"
+                " column actually carries (a pivot's measure name, or a bare"
+                " pivoted value)."
+            )
+
+    # The rendered column list is the query's own (post-pivot) result shape —
+    # style.columns is styling-only, so naming a column there never removes
+    # any column, named or not, and its key order never reorders the table.
+    # `visible: false` on a resolved entry is the sole way to hide a column.
+    # An empty `data` means the pivot transform above never ran (there is no
+    # post-pivot key space) — fall back to the resolved mapping's keys so an
+    # authored table still shows its declared headers in the empty-state
+    # render.
+    if data:
+        columns = list(data[0].keys())
+    elif columns_promoted:
+        columns = list(columns_promoted)
     else:
-        columns = list(data[0].keys()) if data else []
-        # row.role is a reshape/styling signal, never a display column — strip it
-        # whenever columns are derived from the data keys (flat OR pivot), else
-        # it renders as a spurious "Row Role" header column. (`row.role` cascades
-        # from the theme/board, so it lands on tables that never asked for it.)
-        if row_role_spec is not None:
-            columns = [c for c in columns if c != row_role_spec]
+        columns = []
+    # row.role is a reshape/styling signal, never a display column — strip it
+    # unconditionally, whichever branch supplied the list, else it renders as
+    # a spurious "Row Role" header column. (`row.role` cascades from the
+    # theme/board, so it lands on tables that never asked for it.)
+    if row_role_spec is not None:
+        columns = [c for c in columns if c != row_role_spec]
+    columns = [
+        c
+        for c in columns
+        if (_cfg := column_configs.get(c)) is None or _cfg.visible is not False
+    ]
+    # Group-span descriptors index the pre-filter leaf list — remap them to
+    # the surviving leaves so hiding a measure narrows each span instead of
+    # shifting every later group label off its columns (and drop spans whose
+    # leaves are all hidden).
+    if _pivot_groups is not None and data:
+        _pre_leaves = [k for k in data[0] if _PIVOT_LEAF_SEP in k]
+        _kept_leaves = {c for c in columns if _PIVOT_LEAF_SEP in c}
+        if len(_kept_leaves) != len(_pre_leaves):
+            _kept_before = [0]
+            for k in _pre_leaves:
+                _kept_before.append(_kept_before[-1] + (k in _kept_leaves))
+            _pivot_groups = [
+                [
+                    (label, _kept_before[first], n_kept)
+                    for label, first, n in level
+                    if (n_kept := _kept_before[first + n] - _kept_before[first]) > 0
+                ]
+                for level in _pivot_groups
+            ]
+
+    # Computed once over the full (post-pivot) dataset — not per page — so a
+    # column's bar/column spark layout can't flip anchor or auto-max between
+    # pages of the same paginated table. See _spark_column_layout.
+    bar_auto_max, signed_layout_columns = _spark_column_layout(
+        columns, column_configs, data, row_role_spec
+    )
 
     available_width = table_width - (padding * 2)
     cell_pad = int(table_config.column_layout.cell_padding)
@@ -3574,7 +3914,7 @@ def _render_table_svg_core(
         total_pages,
         page_offset,
         per_row_heights,
-        rows_height,
+        _max_page_rows_height,  # tallest-page sum; already folded into table_height above
         row_height,
     ) = _resolve_visible_rows(
         data,
@@ -3588,7 +3928,74 @@ def _render_table_svg_core(
         page=current_page,
         row_heights=all_row_heights,
         header_visible=tc.header.visible,
+        chart_id=chart_id,
     )
+    # Cramping capture: the renderer has now settled its column budget and its
+    # header wrapping, so the width rung of the degradation ladder is known.
+    # Recorded into the sink WARN_TABLE_CRAMPED reads (a no-op unless a
+    # warning sink is open). The height rung — a slot cutting rows-per-page —
+    # is recorded separately as a TablePageSqueeze where the paginator
+    # overrides the sizer.
+    #
+    # The demand is each column's own content width, or its header label plus
+    # its cell padding where that is wider — the padded width the wrap
+    # threshold compares against, so a suggestion sized from this sum actually
+    # unwraps the headers it names. (Measured on the base pad/font basis; when
+    # the fit cascade has dropped to the compact basis the threshold is
+    # narrower, so this over-states demand — the suggestion still clears.) A column the author pinned (``width:``)
+    # demands exactly its pin — met by construction — and a ``max_width:`` cap
+    # bounds what its column could ever take, so neither inflates the
+    # shortfall with growth no board width can deliver. Compared against the
+    # budget the columns were actually divided into, not against the settled
+    # widths: calculate_column_layout scales columns down to fit, so after
+    # allocation the two always agree and the shortfall is gone.
+    # A collapsed slot can hand the table a zero (or negative) column
+    # budget; no width arithmetic is meaningful there — the physical
+    # overflow capture owns that territory, and a %-pin would divide by
+    # the budget below.
+    if data_column_budget > 0:
+        _demand = 0.0
+        _relative_fraction = 0.0
+        for col in real_columns:
+            _cfg = column_configs.get(col)
+            _width_hint = _cfg.width if _cfg is not None else None
+            _pinned = parse_column_width(_width_hint, data_column_budget)
+            if _pinned is not None:
+                _demand += _pinned
+                if isinstance(_width_hint, str) and _width_hint.strip().endswith("%"):
+                    # A %-pinned column's demand is a slice of the budget itself;
+                    # the detector solves for the budget where the absolute rest
+                    # fits into what these leave over.
+                    _relative_fraction += _pinned / data_column_budget
+                continue
+            _col_demand = max(col_demands[col], col_header_demands[col] + 2 * cell_pad)
+            _max_hint = _cfg.max_width if _cfg is not None else None
+            _cap = parse_column_width(_max_hint, data_column_budget)
+            # A %-string max_width is itself budget-relative — treating the raw
+            # demand as absolute over-states it, which only overshoots the
+            # suggestion; a px cap bounds the demand exactly.
+            if _cap is not None and not (
+                isinstance(_max_hint, str) and _max_hint.strip().endswith("%")
+            ):
+                _col_demand = min(_col_demand, _cap)
+            _demand += _col_demand
+        _wrapped_count = sum(1 for lines in wrapped_headers.values() if len(lines) > 1)
+        # Mirror record_table_page_squeeze: recorded only when the renderer
+        # actually degraded — both arms, matching the detector, so a record the
+        # only reader would ignore is never stored (and can never overwrite a
+        # real one under last-write-wins).
+        if _demand > data_column_budget and _wrapped_count:
+            record_table_cramping(
+                chart_id,
+                TableCramping(
+                    required_width=_demand,
+                    available_width=data_column_budget,
+                    wrapped_headers=_wrapped_count,
+                    column_count=len(real_columns),
+                    relative_demand_fraction=_relative_fraction,
+                ),
+            )
+
     # Slice cached wrapped-lines to align with visible_data.
     visible_wrapped_lines: list[dict[str, list[str]]] | None = None
     if all_wrapped_lines is not None:
@@ -3606,6 +4013,13 @@ def _render_table_svg_core(
     pagination_active = total_pages > 1
     static_multi_page = (
         pagination_active and bool(chart_id) and not controls_are_interactive()
+    )
+    # Computed early -- needs only total_pages, already known from the outer
+    # _resolve_visible_rows call above -- so table_height can reserve room
+    # for the cap note's own line before table_height_s is finalized below.
+    static_export_capped = (
+        static_multi_page
+        and min(total_pages, _STATIC_MULTI_PAGE_MAX_PAGES) < total_pages
     )
 
     # Add breathing room before summary/total rows so double rules don't
@@ -3653,6 +4067,17 @@ def _render_table_svg_core(
     pagination_control_height = _PAGINATION_CONTROL_HEIGHT if pagination_active else 0
     if pagination_active and not (height and height > 0):
         table_height += pagination_control_height
+
+    # The cap note's own line. Gated the same way as pagination_control_height
+    # just above: layout_sizing._get_table_height_from_data already reserves
+    # _PAGINATION_CAP_NOTE_HEIGHT (beside its own _PAGINATION_CONTROL_HEIGHT
+    # add) whenever it estimates more pages than the static-export cap, so an
+    # explicit height already includes it -- adding it again here would
+    # double-reserve and, on a grid: layout, paint 20px into whatever sits
+    # below (grid items are placed at a precomputed pixel_y that a sibling's
+    # height never corrects, unlike rows:/cols:).
+    if static_export_capped and not (height and height > 0):
+        table_height += _PAGINATION_CAP_NOTE_HEIGHT
 
     # Start building SVG
     svg_parts: list[str] = []
@@ -3831,18 +4256,37 @@ def _render_table_svg_core(
             wrap=wrap_cells,
             chart_root_link=link,
             chart_id=chart_id,
+            bar_auto_max=bar_auto_max,
+            signed_layout_columns=signed_layout_columns,
         )
 
-    # rows_height comes from _resolve_visible_rows so indicator_y can't desync
-    # from table_height (both use the tallest-page sum when paginated).
-    indicator_y = current_y + rows_height + bottom_padding
+    # The pager sits off the CURRENT page's own rows height, not `rows_height`
+    # (the tallest page in the dataset — see _max_page_sum). Table sizing still
+    # reserves the tallest-page height so the card doesn't resize between
+    # pages; only the pager's y-position follows the page actually painted,
+    # so a short page doesn't carry a taller page's whitespace above it.
+    # `per_row_heights`/`visible_data`/`row_height` (effective) are the
+    # current page's own values regardless of pagination — _resolve_visible_rows
+    # only substitutes the max-page sum into the sizing return, not these.
+    current_page_rows_height = (
+        sum(per_row_heights)
+        if per_row_heights is not None
+        else len(visible_data) * row_height
+    )
+    indicator_y = current_y + current_page_rows_height + bottom_padding
+
+    # Gates the .dbt-paginator-glyph CSS rule below (see paginator_glyph_css
+    # near the end of this function): a paginator-free table's <style>
+    # should ship no dead CSS for a class it never paints.
+    paginator_rendered = False
 
     if static_multi_page:
         assert chart_id is not None  # static_multi_page requires a truthy chart_id
+        paginator_rendered = True
         page_var_name = f"{chart_id}_page"
         safe_chart_id = html_module.escape(chart_id, quote=True)
         rendered_pages = min(total_pages, _STATIC_MULTI_PAGE_MAX_PAGES)
-        capped = rendered_pages < total_pages
+        capped = static_export_capped
         if capped:
             record_static_pagination_cap(
                 chart_id,
@@ -3854,6 +4298,12 @@ def _render_table_svg_core(
         # to show — fall back to the last rendered page rather than leaving
         # every toggle group hidden.
         initial_page = min(current_page, rendered_pages)
+        # Tracks the tallest RENDERED page's own indicator_y, for the cap
+        # note's anchor below -- the outer _max_page_sum value spans every
+        # page in the whole dataset, including pages past the rendered_pages
+        # cap that never paint, which would push the note lower than
+        # necessary.
+        max_rendered_page_indicator_y: float | None = None
         for page_n in range(1, rendered_pages + 1):
             (
                 _page_table_h,
@@ -3862,7 +4312,7 @@ def _render_table_svg_core(
                 page_offset_n,
                 page_row_heights,
                 _page_rows_height,
-                _page_row_h,
+                page_row_h,
             ) = _resolve_visible_rows(
                 data,
                 height=height,
@@ -3876,6 +4326,21 @@ def _render_table_svg_core(
                 row_heights=all_row_heights,
                 header_visible=tc.header.visible,
             )
+            # This page's own pager y — see the outer indicator_y comment
+            # above: each pre-rendered toggle group carries its own rows
+            # height, not the tallest page's, so the pager sits right below
+            # ITS rows when toggled visible.
+            page_current_rows_height = (
+                sum(page_row_heights)
+                if page_row_heights is not None
+                else len(page_visible_data) * page_row_h
+            )
+            page_indicator_y = current_y + page_current_rows_height + bottom_padding
+            if (
+                max_rendered_page_indicator_y is None
+                or page_indicator_y > max_rendered_page_indicator_y
+            ):
+                max_rendered_page_indicator_y = page_indicator_y
             page_wrapped_lines = (
                 all_wrapped_lines[
                     page_offset_n : page_offset_n + len(page_visible_data)
@@ -3897,9 +4362,13 @@ def _render_table_svg_core(
                     total_pages=rendered_pages,
                     page_var_name=page_var_name,
                     table_width=table_width,
-                    y=indicator_y,
+                    y=page_indicator_y,
                     font_family=table_font_family,
                     paginator=table_config.paginator,
+                    row_start=page_offset_n + 1,
+                    row_end=page_offset_n + len(page_visible_data),
+                    total_rows=len(data),
+                    padding=padding,
                 )
             )
             display = "" if page_n == initial_page else "none"
@@ -3910,16 +4379,38 @@ def _render_table_svg_core(
                 + "</g>"
             )
         if capped:
-            svg_parts.append(
-                _render_static_pagination_cap_note(
-                    rendered_pages=rendered_pages,
-                    total_pages=total_pages,
-                    padding=padding,
-                    y=indicator_y,
-                    font_family=table_font_family,
-                    paginator=table_config.paginator,
+            assert max_rendered_page_indicator_y is not None  # loop always sets it
+            # One line below the tallest RENDERED page's own pager + label:
+            # no rendered page's own indicator_y can exceed this value, so
+            # the note clears every one of them regardless of which page is
+            # initially visible.
+            cap_note_y = max_rendered_page_indicator_y + _PAGINATION_CAP_NOTE_HEIGHT
+            # A slot shorter than the table's natural height squeezes out the
+            # band the note was going to occupy. Drop the note rather than
+            # clamp it upward — clamping lands it on the row-range label, two
+            # muted strings at the same baseline, which is the collision the
+            # band exists to prevent. Same choice the label itself makes when
+            # it would collide with the pager, and the author still learns
+            # about the truncation from WARN-STATIC-PAGINATION-CAPPED, which
+            # does not depend on this line rendering.
+            # No second bottom_padding on the right-hand side: cap_note_y is
+            # measured off page_indicator_y, which already carries one, and
+            # table_height reserves the note's band as a flat
+            # _PAGINATION_CAP_NOTE_HEIGHT on both the sizer and the renderer
+            # side. Subtracting bottom_padding again demands room nobody
+            # reserved, dropping the note under any bottom_padding above ~8.
+            note_bottom = cap_note_y + _PAGINATION_CAP_NOTE_HEIGHT
+            if note_bottom <= table_height:
+                svg_parts.append(
+                    _render_static_pagination_cap_note(
+                        rendered_pages=rendered_pages,
+                        total_pages=total_pages,
+                        padding=padding,
+                        y=cap_note_y,
+                        font_family=table_font_family,
+                        paginator=table_config.paginator,
+                    )
                 )
-            )
         svg_parts.append(_table_pagination_script())
     else:
         _paint_data_rows(
@@ -3930,6 +4421,7 @@ def _render_table_svg_core(
         if len(data) > len(visible_data):
             if pagination_active and chart_id:
                 # Interactive pagination controls
+                paginator_rendered = True
                 page_var_name = f"{chart_id}_page"
                 controls_svg = _render_pagination_controls(
                     page=current_page,
@@ -3939,6 +4431,10 @@ def _render_table_svg_core(
                     y=indicator_y,
                     font_family=table_font_family,
                     paginator=table_config.paginator,
+                    row_start=page_offset + 1,
+                    row_end=page_offset + len(visible_data),
+                    total_rows=len(data),
+                    padding=padding,
                 )
                 svg_parts.append(controls_svg)
             else:
@@ -3982,6 +4478,22 @@ def _render_table_svg_core(
         else ""
     )
 
+    # Only emitted when a paginator actually rendered: a paginator-free
+    # table's SVG should ship no dead CSS for a class it never paints, same
+    # as row_link_css just below only appearing when a chart-root link
+    # exists. (Also keeps test assertions like `"dbt-paginator" not in svg`
+    # honest — but that's a side effect of the gate, not the reason for it;
+    # no production code greps rendered SVG for this substring.)
+    paginator_glyph_css = (
+        """
+  .dbt-chart text.dbt-paginator-glyph {
+    pointer-events: none;
+    cursor: pointer;
+  }"""
+        if paginator_rendered
+        else ""
+    )
+
     # Wrap in SVG
     svg_result = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{table_width_s}" height="{table_height_s}" viewBox="0 0 {table_width_s} {table_height_s}">
 <style>
@@ -3996,7 +4508,7 @@ def _render_table_svg_core(
   a:focus-visible {{
     outline: 2px solid currentColor;
     outline-offset: 2px;
-  }}{row_link_css}
+  }}{paginator_glyph_css}{row_link_css}
 </style>
 {"".join(svg_parts)}
 </svg>"""
@@ -4028,13 +4540,23 @@ def render_table_svg(
     *,
     board_style: ResolvedStyle,
     is_placeholder: bool = False,
-    variables: dict[str, Any] | None = None,
+    variables: VariableValues | None = None,
 ) -> str:
     """Render a ResolvedTableChart as SVG.
 
     The resolved chart owns every chart-local presentation decision. The board
     style supplies only board chrome and placeholder tokens.
+
+    ``variables`` is an explicit override for direct/test callers. A caller
+    that omits it (every production caller except tests) gets the board's
+    current variable values from ``current_board_variables()`` instead of
+    silently pagination-ing to page 1 — the ContextVar is the only source a
+    caller cannot forget to wire up, unlike a parameter each call site has to
+    remember to pass. See ``board_variables.py``.
     """
+    effective_variables = (
+        variables if variables is not None else current_board_variables()
+    )
     data = normalize_data_types(data)
     columns = chart.columns
 
@@ -4068,7 +4590,7 @@ def render_table_svg(
         width=width,
         height=height,
         is_placeholder=is_placeholder,
-        variables=variables,
+        variables=effective_variables,
     )
 
 
@@ -4170,7 +4692,7 @@ def _build_pivot_levels(
     Multi-measure emits all ``k`` col-dim levels; single-measure emits the outer
     ``k - 1`` (the innermost dim is itself the leaf label, so emitting it again
     would duplicate the header). Each level is a list of
-    ``(label, first_leaf_idx, n_leaves)`` spans over the first-seen ``col_tuples``.
+    ``(label, first_leaf_idx, n_leaves)`` spans over the ordered ``col_tuples``.
     """
     n_col_tuples = len(col_tuples)
     leaves_per_tuple = n_measures if n_measures > 1 else 1
@@ -4192,6 +4714,89 @@ def _build_pivot_levels(
             i = j
         levels.append(level)
     return levels
+
+
+# Per-dimension order key: (0, comparable) for a real value, (1, 0) for null.
+# The comparable is homogeneous within a dimension (all instants, all numbers,
+# or all first-seen ints), so the union is never cross-compared.
+_PivotDimOrderKey = tuple[int, "dt.datetime | int | float | Decimal"]
+
+
+def _order_col_tuples(
+    col_tuples: list[tuple[str, ...]],
+    columns: list[str],
+    data: list[dict[str, Any]],  # type-state: explicit_any — query rows
+) -> list[tuple[str, ...]]:
+    """Order pivot col-tuples canonically where a dimension has such an order.
+
+    A reader assumes a pivot dimension's columns follow its natural order —
+    chronological for dates, ascending for numbers (every reference tool sorts
+    them) — so first-seen order there is actively misleading while looking
+    deliberate. Per dimension: chronological when every non-null raw value
+    parses to a calendar instant (``calendar_bucket_key`` — date/datetime
+    objects, ISO strings, bucket strings like "Jan 2026"), ascending when every
+    non-null raw value is a number (bools and NaN excluded — bools aren't
+    values a reader ranks, and NaN doesn't order), first-seen otherwise. Plain
+    strings have no canonical order, so query order stays the author's lever
+    (business-ordered categories, the documented trailing-"Total" column); a
+    dimension mixing parseable and unparseable values keeps first-seen order
+    too — sorting half a dimension would be guessing. Nulls order last in a
+    sorted dimension.
+
+    When no dimension has a canonical order the tuples come back unchanged —
+    including any first-seen interleaving of outer-dim values. Otherwise the
+    sort key covers every dimension: an unsortable dimension is keyed by each
+    value's first appearance (one consistent order across the whole header,
+    not per-outer-group query order), so outer-dim groups come out contiguous
+    and ``_build_pivot_levels`` emits one span per group — barring distinct
+    labels that tie on the same sort key (two spellings of one instant), where
+    the tie falls back to inner-dim order.
+    """
+    dim_keys: list[dict[str, _PivotDimOrderKey] | None] = []
+    for col in columns:
+        raw_by_str: dict[str, Any] = {}  # type-state: explicit_any — raw cells
+        for row in data:
+            raw_by_str.setdefault(str(row[col]), row[col])
+        non_null = {s: v for s, v in raw_by_str.items() if v is not None}
+        instants = {
+            s: instant
+            for s, v in non_null.items()
+            if (instant := calendar_bucket_key(v)) is not None
+        }
+        keys: dict[str, _PivotDimOrderKey] | None
+        if non_null and len(instants) == len(non_null):
+            keys = {s: (0, i) for s, i in instants.items()}
+        elif non_null and all(
+            # v == v is the NaN filter: Decimal("NaN") raises on <, float NaN
+            # sorts arbitrarily — either poisons the whole dimension's order.
+            isinstance(v, (int, float, Decimal)) and not isinstance(v, bool) and v == v
+            for v in non_null.values()
+        ):
+            keys = {s: (0, v) for s, v in non_null.items()}
+        else:
+            keys = None
+        if keys is not None:
+            for s in raw_by_str:
+                keys.setdefault(s, (1, 0))  # nulls after every real value
+        dim_keys.append(keys)
+
+    if all(k is None for k in dim_keys):
+        return col_tuples
+
+    first_seen: list[dict[str, int]] = []
+    for dim_idx in range(len(columns)):
+        seen: dict[str, int] = {}
+        for ct in col_tuples:
+            seen.setdefault(ct[dim_idx], len(seen))
+        first_seen.append(seen)
+
+    def tuple_key(ct: tuple[str, ...]) -> tuple[_PivotDimOrderKey, ...]:
+        return tuple(
+            keys[v] if keys is not None else (0, first_seen[i][v])
+            for i, (v, keys) in enumerate(zip(ct, dim_keys, strict=True))
+        )
+
+    return sorted(col_tuples, key=tuple_key)
 
 
 def pivot_table_data(
@@ -4219,7 +4824,12 @@ def pivot_table_data(
         columns: Pivot-column field(s) whose distinct values become column headers.
             Single field → single-dimension pivot. Multiple fields → nested
             multi-dimension pivot (outer dim first, inner dim last). Empty or
-            ``None`` → not a pivot; ``data`` comes back unchanged.
+            ``None`` → not a pivot; ``data`` comes back unchanged. Column order
+            per dimension: canonical when one exists — chronological for
+            temporal values, ascending for numeric — else first-seen (query)
+            order, which keeps ``ORDER BY`` the author's lever for
+            business-ordered categories and the trailing "Total" column
+            (``_order_col_tuples``).
         values: Measure field names.  When ``None``, infers as all query columns
             not in ``rows``, not any column field, and not the role marker,
             preserving query column order.
@@ -4239,9 +4849,11 @@ def pivot_table_data(
 
     Returns:
         ``(wide_data, levels, effective_values)`` where:
-        - ``wide_data`` is a list of dicts with row-dim keys + leaf columns, in
-          first-seen (query) order — total-role rows included. Render never
-          reorders; a query that wants a bottom total row orders it last.
+        - ``wide_data`` is a list of dicts with row-dim keys + leaf columns.
+          Rows come in first-seen (query) order — total-role rows included;
+          render never reorders rows, so a query that wants a bottom total row
+          orders it last. Leaf-column order is ``_order_col_tuples``'s
+          contract (canonical per dimension where one exists, else first-seen).
         - ``effective_values`` is the resolved measure list (inferred or explicit).
         - ``levels`` is ``None`` for the single-dim single-measure case (leaf keys
           are the raw col-values).
@@ -4292,15 +4904,17 @@ def pivot_table_data(
     n_measures = len(effective_values)
     single_dim = len(columns) == 1
 
-    # Enumerate the ACTUAL distinct col-tuples across ALL rows (detail + total),
-    # in first-seen order. A total row's column value earns a leaf slot even
-    # when no detail row shares it — dropping that cell would silently discard
-    # a number the query returned. Do NOT use itertools.product — that would
-    # create phantom columns for sparse data where not all (outer, inner, …)
-    # combinations are present.
+    # Enumerate the ACTUAL distinct col-tuples across ALL rows (detail + total).
+    # A total row's column value earns a leaf slot even when no detail row
+    # shares it — dropping that cell would silently discard a number the query
+    # returned. Do NOT use itertools.product — that would create phantom
+    # columns for sparse data where not all (outer, inner, …) combinations are
+    # present. Dimensions with a canonical order (temporal, numeric) then sort;
+    # others keep this first-seen order — see _order_col_tuples.
     col_tuples: list[tuple[str, ...]] = list(
         dict.fromkeys(tuple(str(row[c]) for c in columns) for row in data)
     )
+    col_tuples = _order_col_tuples(col_tuples, columns, data)
 
     # Build ordered leaf columns.
     # Leaf key format:
@@ -4370,9 +4984,11 @@ def pivot_table_data(
             filled[row_key].add(leaf)
 
     # Wide rows come out in first-seen (query) order — total-role rows included.
-    # Render never reorders (chart AGENTS.md #3: data belongs to queries, wrong
-    # ordering is fixed in the query). A query that wants a bottom total row
-    # orders it last — see the ORDER BY in the docs example.
+    # Render never reorders rows (chart AGENTS.md #3: data belongs to queries,
+    # wrong ordering is fixed in the query). A query that wants a bottom total
+    # row orders it last — see the ORDER BY in the docs example. Leaf-column
+    # order is different: that axis is synthesized by this reshape and carries
+    # #3's pivot carve-out — see _order_col_tuples.
     wide_rows = list(row_map.values())
 
     if single_dim and n_measures == 1:

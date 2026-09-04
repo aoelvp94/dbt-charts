@@ -1137,7 +1137,7 @@ class TestDftRenderFormatInference:
         assert result.exit_code == 1
         combined = result.output + (result.stderr or "")
         assert "Traceback" not in combined
-        assert "No Dataface project found" in combined
+        assert "No dbt charts project found" in combined
 
     def test_render_multi_board_no_project_reports_clean_error_not_per_board(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1163,7 +1163,7 @@ class TestDftRenderFormatInference:
         )
         assert result.exit_code == 1
         combined = result.output + (result.stderr or "")
-        assert "No Dataface project found" in combined
+        assert "No dbt charts project found" in combined
         assert "Error rendering" not in combined
 
 

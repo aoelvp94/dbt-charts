@@ -522,8 +522,8 @@ class TestProjectSources:
 
         load_project_sources does not cache; each call re-reads disk.
         """
-        dataface_yml = tmp_path / "dbt_charts.yml"
-        dataface_yml.write_text(
+        dbt_charts_yml = tmp_path / "dbt_charts.yml"
+        dbt_charts_yml.write_text(
             "sources:\n  first:\n    type: duckdb\n    path: first.duckdb\n"
         )
 
@@ -531,7 +531,7 @@ class TestProjectSources:
         assert "first" in first.sources
 
         # Edit the file in place — no invalidation call.
-        dataface_yml.write_text(
+        dbt_charts_yml.write_text(
             "sources:\n  second:\n    type: duckdb\n    path: second.duckdb\n"
         )
 
@@ -549,12 +549,12 @@ class TestProjectSources:
     def test_pre_rename_config_names_are_no_longer_read(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """dataface.yml/.yaml are no longer a recognized project config.
+        """Pre-rename config spellings are not a recognized project config.
 
-        A project carrying only a pre-rename spelling now loads zero sources
-        rather than silently reviving a filename dft no longer authors.
+        A project carrying only a legacy config filename loads zero sources
+        rather than silently reviving a filename dct no longer authors.
         """
-        (tmp_path / "dataface.yml").write_text(
+        (tmp_path / "legacy_config.yml").write_text(
             "sources:\n  legacy:\n    type: duckdb\n    path: l.duckdb\n"
         )
 
@@ -605,6 +605,39 @@ class TestProjectSources:
         assert "second_db" in second_sources.sources
         assert "first_db" not in second_sources.sources
         assert "second_db" not in first_sources.sources
+
+    def test_load_config_does_not_leak_sources_into_another_project(
+        self, tmp_path, local_project: Callable[..., FilesystemProject]
+    ):
+        """A served project's registry must not become another project's registry.
+
+        ``load_config`` installs its argument's dbt_charts.yml into the
+        process-global ``_config``. One Cloud worker serves many orgs and one
+        pytest process runs many packages' suites, so a later project reading
+        its own registry must see only its own ``sources:`` — never the last
+        project ``load_config`` happened to be called with.
+        """
+        from dbt_charts.core.compile.config import load_config, reset_config
+
+        served = tmp_path / "served"
+        other = tmp_path / "other"
+        served.mkdir()
+        other.mkdir()
+
+        (served / "dbt_charts.yml").write_text(
+            "sources:\n  served_db:\n    type: duckdb\n    path: served.duckdb\n"
+        )
+        (other / "dbt_charts.yml").write_text(
+            "sources:\n  other_db:\n    type: duckdb\n    path: other.duckdb\n"
+        )
+
+        try:
+            load_config(local_project(served))
+            sources = load_project_sources(local_project(other)).sources
+        finally:
+            reset_config()
+
+        assert set(sources) == {"other_db"}
 
     def test_load_project_sources_resolves_env_vars(
         self, tmp_path, monkeypatch, local_project: Callable[..., FilesystemProject]
@@ -967,7 +1000,7 @@ class TestSourcesDefaultRemoved:
     Steps 1-3 of the worksheet: written first, must fail until implemented.
     """
 
-    def test_sources_default_in_dataface_yml_raises_error(
+    def test_sources_default_in_dbt_charts_yml_raises_error(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """Step 1: sources.default in dbt_charts.yml raises a clear error, not silently honored."""
@@ -1088,7 +1121,7 @@ rows:
 
     def test_default_source_injection_skips_http_and_schema_queries(self) -> None:
         """A board-level default source only injects into SQL-shaped queries
-        (sql, metricflow) — http and schema queries have no connection
+        (sql) — http and schema queries have no connection
         source to inject into and must be unaffected.
         """
         yaml_content = """
@@ -1114,7 +1147,7 @@ rows:
         assert result.success, f"Compilation failed: {result.errors}"
         assert result.board.queries["probe"].source is None
 
-    def test_sources_only_in_dataface_yml_loads(
+    def test_sources_only_in_dbt_charts_yml_loads(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """Step 3: sources authored in dbt_charts.yml load correctly with no _sources.yaml."""
@@ -1136,7 +1169,7 @@ rows:
             "_sources.yaml must not be loaded after removal of _sources.yaml support"
         )
 
-    def test_compile_file_loads_sources_from_dataface_yml(
+    def test_compile_file_loads_sources_from_dbt_charts_yml(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """Step 3: compile_file merges project sources from dbt_charts.yml, not _sources.yaml."""
@@ -1738,3 +1771,91 @@ class TestRegistryTypedAtLoad:
         with pytest.raises(CompilationError) as exc:
             load_project_sources(local_project(tmp_path))
         assert "wh" in str(exc.value)
+
+
+class TestExecuteTimeSourceCodePropagation:
+    """The resolver's diagnostic code must survive the adapter registry's
+    QueryResult flattening — a zero-source deployment's per-chart failure is
+    ERR-SOURCE-NOT-FOUND-EMPTY, not the ERR-INTERNAL fallback (which downstream
+    surfaces, e.g. Cloud's Data Sources mapping, can do nothing with).
+    """
+
+    def test_unknown_source_query_error_carries_resolver_code(
+        self, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.core.diagnostics.execution import QueryError
+        from dbt_charts.core.execute import Executor
+
+        yaml_content = """
+title: Test
+
+queries:
+  q:
+    source: warehouse_prod
+    sql: SELECT 1 AS value
+
+charts:
+  c:
+    query: q
+    type: kpi
+    value: value
+
+rows:
+  - c
+"""
+        # Empty registry: compile skips the source-name check, so the failure
+        # happens at execute time via the resolver.
+        result = compile(yaml_content, project_sources=ProjectSourcesConfig(sources={}))
+        assert result.success
+        executor = Executor(
+            result.board,
+            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            query_registry=result.query_registry,
+        )
+
+        with pytest.raises(QueryError) as exc:
+            executor.execute_query("q")
+        assert exc.value.code is not None
+        assert exc.value.code.code == "ERR-SOURCE-NOT-FOUND-EMPTY"
+        assert "warehouse_prod" in str(exc.value)
+
+    def test_allowlisted_not_found_diagnostic_keeps_code_and_hints(
+        self, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """The Cloud-shaped path: AllowlistedSourceResolver raises
+        ERR-SOURCE-NOT-FOUND with structured fields; the registry's
+        QueryResult flattening must carry both so the rebuilt QueryError's
+        Diagnostic keeps the code AND its hint_generator gets the `source`
+        field it requires. Forwarding the code without the fields made the
+        hint call raise ``TypeError: suggest_close_source() missing 1
+        required positional argument: 'source'`` — extra fields are absorbed
+        by its ``**_kwargs``, missing ones are not — failing the whole board
+        render.
+        """
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.executor import _query_error_from_result
+        from dbt_charts.core.execute.source_resolver import (
+            AllowlistedSourceResolver,
+        )
+
+        registry = build_adapter_registry(
+            local_project(Path.cwd()), resolver=AllowlistedSourceResolver()
+        )
+        result = registry.execute(
+            SqlQuery(sql="SELECT 1", source="warehouse_prod", limit=None),
+            query_name="q",
+        )
+        assert not result.is_success
+        assert result.error_code is not None
+        assert result.error_code.code == "ERR-SOURCE-NOT-FOUND"
+        assert result.fields is not None
+        assert result.fields["source"] == "warehouse_prod"
+
+        diagnostic = _query_error_from_result(result, "q").to_diagnostic()
+        assert diagnostic.code == "ERR-SOURCE-NOT-FOUND"
+        assert "warehouse_prod" in diagnostic.message
+        # Query attribution rides structurally, not as a message suffix:
+        # from_code skips ExecutionError's " (query: q)" decoration, and
+        # display_message() re-appends it from this field for CLI/SVG output.
+        assert diagnostic.query == "q"

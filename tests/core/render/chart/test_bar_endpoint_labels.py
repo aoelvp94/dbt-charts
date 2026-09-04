@@ -64,16 +64,22 @@ def resolve_bar_chart(make_chart, seed_with_bar_endpoint_labels):
         color: str | None = "series",
         stack: Any = "zero",
         author_asked: bool = False,
+        orientation: str | None = None,
     ):
         kwargs: dict[str, Any] = {}
         if color is not None:
             kwargs["color"] = color
         if stack is not None:
             kwargs["stack"] = stack
+        style: dict[str, Any] = {}
+        if orientation is not None:
+            style["orientation"] = orientation
         if author_asked:
             # The chart's own patch, not the board seed: only this outranks the
             # shape-based disqualifiers in _bar_endpoint_labels_for_stack.
-            kwargs["style"] = {"endpoint_labels": {"visible": True}}
+            style["endpoint_labels"] = {"visible": True}
+        if style:
+            kwargs["style"] = style
         chart = make_chart("bar", x="date", y="value", **kwargs)
         board_style = seed_with_bar_endpoint_labels(enabled)
         rc = resolve(chart, data, chart_style_context=board_style)
@@ -189,6 +195,34 @@ def test_stacked_anchors_are_segment_midpoints(resolve_bar_chart):
     assert by_series == {"B": 30.0, "A": 80.0}
 
 
+def test_stacked_anchors_follow_query_order_not_category_alphabetization(
+    resolve_bar_chart,
+) -> None:
+    """The rail anchors on the last axis category in first-occurrence order."""
+    data = [
+        {"date": "Before", "value": 10, "series": "A"},
+        {"date": "Before", "value": 90, "series": "B"},
+        {"date": "After", "value": 40, "series": "A"},
+        {"date": "After", "value": 60, "series": "B"},
+    ]
+    rc = resolve_bar_chart(
+        data=data,
+        enabled=True,
+        stack="zero",
+        author_asked=True,
+        orientation="vertical",
+    )
+    assert rc.style.endpoint_labels.visible
+    spec = _render(rc, data)
+
+    assert "hconcat" in spec
+    assert spec["hconcat"][0]["encoding"]["x"]["sort"] is None
+    assert {row["series"]: row["__y"] for row in _label_rows(spec)} == {
+        "B": 30.0,
+        "A": 80.0,
+    }
+
+
 def test_normalize_anchors_on_unit_scale(resolve_bar_chart):
     """Stacked normalize ('normalize'): midpoints are shares of the column total."""
     data = _multi_series_stacked_data()
@@ -219,17 +253,24 @@ def test_grouped_anchors_at_bar_tops(resolve_bar_chart):
 
 
 def _series_missing_from_final_column_data() -> list[dict[str, Any]]:
-    """Three series where C has no row at the trailing x.
+    """Three series where C has no row at the trailing x, but has a real row
+    at Jan — the case this anchors on its own last non-null segment, not a
+    zero-height seam (contrast with
+    ``test_series_with_no_rows_anywhere_still_anchors_at_the_seam``, where C
+    truly has no data anywhere).
 
     Global sums: B=110, C=60, A=50 → value ordering stacks B, C, A from the
-    baseline up, putting the absent series in the middle of the stack.
+    baseline up.
 
-    Trailing x = 2024-02-01: B=60, A=40, C absent.
-      B at baseline: 0..60   → midpoint 30
-      C zero-height: 60..60  → seam at 60
-      A on top:      60..100 → midpoint 80
-    Column totals are 120 (Jan) and 100 (Feb), so the cascade domain is
-    [0, 120] and the ≥20 anchor gaps clear the collision threshold untouched.
+    C anchors at Jan (its own last real value), where the stack is
+    {A: 10, B: 50, C: 60} in series_order [B, C, A]:
+      B at baseline: 0..50    → midpoint 25
+      C:             50..110  → midpoint 80
+    A and B still anchor at the trailing x (Feb, where both have real
+    values): B stays at 30, A at 80 — unaffected by C's anchor moving. C and
+    A land on the same raw midpoint (80.0) by coincidence of these numbers;
+    that is fine here since this data feeds the raw, un-cascaded assertions
+    below, not a render through the greedy cascade.
     """
     return [
         {"date": "2024-01-01", "value": 10, "series": "A"},
@@ -257,11 +298,16 @@ def test_stacked_labels_name_series_absent_from_final_column(resolve_bar_chart) 
     )
 
 
-def test_absent_series_anchors_at_its_zero_height_stack_seam(resolve_bar_chart) -> None:
-    """The absent series anchors where its band would start, not at a neighbour.
+def test_absent_series_anchors_at_its_own_last_real_segment(resolve_bar_chart) -> None:
+    """A series absent from the trailing column, but present earlier, anchors
+    at its own last real segment — not a zero-height seam in a column it
+    never actually appears in.
 
-    C is zero-height in the trailing column, so its seam is the boundary
-    between B (below) and A (above) — 60 on a [0, 120] domain.
+    Regression for trailing-nulls-anchor-the-stacked-label-rail-to-the-
+    baseline-instead-of-the-last-real-value: the zero-height-seam contract
+    (``test_series_with_no_rows_anywhere_still_anchors_at_the_seam``) covers
+    a series with no rows at all — C here has a real Jan row, so it gets its
+    own midpoint there instead.
     """
     data = _series_missing_from_final_column_data()
     rc = resolve_bar_chart(data=data, enabled=True, stack="zero")
@@ -269,7 +315,7 @@ def test_absent_series_anchors_at_its_zero_height_stack_seam(resolve_bar_chart) 
 
     rows = _label_rows(spec)
     by_series = {r["series"]: r["__y"] for r in rows}
-    assert by_series == {"B": 30.0, "C": 60.0, "A": 80.0}
+    assert by_series == {"B": 30.0, "C": 80.0, "A": 80.0}
 
 
 def test_grouped_by_default_anchors_at_bar_top(resolve_bar_chart):
@@ -448,7 +494,7 @@ def test_negative_values_auto_disable_endpoint_labels(resolve_bar_chart):
     )
 
 
-def test_alphabetical_stack_order_independent_of_data_row_order(resolve_bar_chart):
+def test_stack_order_independent_of_series_row_order(resolve_bar_chart):
     """Stacked-bar anchors must depend only on series → value mapping at
     the trailing x, not on the order rows arrive in. _apply_stacked_bar_z_order
     defaults to value ordering (largest series at baseline); the resolver must
@@ -459,18 +505,18 @@ def test_alphabetical_stack_order_independent_of_data_row_order(resolve_bar_char
         {"date": "2024-02-01", "value": 40, "series": "A"},
         {"date": "2024-02-01", "value": 60, "series": "B"},
     ]
-    reversed_rows = list(reversed(forward))
+    reordered_rows = [forward[1], forward[0], forward[3], forward[2]]
 
     rc_fwd = resolve_bar_chart(data=forward, enabled=True, stack="zero")
-    rc_rev = resolve_bar_chart(data=reversed_rows, enabled=True, stack="zero")
+    rc_reordered = resolve_bar_chart(data=reordered_rows, enabled=True, stack="zero")
     rows_fwd = _label_rows(_render(rc_fwd, forward))
-    rows_rev = _label_rows(_render(rc_rev, reversed_rows))
+    rows_reordered = _label_rows(_render(rc_reordered, reordered_rows))
 
     by_series_fwd = {r["series"]: r["__y"] for r in rows_fwd}
-    by_series_rev = {r["series"]: r["__y"] for r in rows_rev}
+    by_series_reordered = {r["series"]: r["__y"] for r in rows_reordered}
     # Value ordering: B (60, larger) at baseline (mid 30), A (40) on top (mid 80).
     assert by_series_fwd == {"B": 30.0, "A": 80.0}
-    assert by_series_fwd == by_series_rev
+    assert by_series_fwd == by_series_reordered
 
 
 def test_cascade_nudges_clustered_anchors(resolve_bar_chart):
@@ -494,13 +540,13 @@ def test_cascade_nudges_clustered_anchors(resolve_bar_chart):
     # to 1000) is much larger than the 3-unit raw gap, so the cascade must
     # push the labels further apart.
     data = [
-        {"date": "2024-01-01", "value": 2, "series": "A"},
-        {"date": "2024-01-01", "value": 4, "series": "B"},
-        # A second x with a very tall total so the chart's effective y-domain
+        # An earlier x with a very tall total so the chart's effective y-domain
         # is large and the font-derived min_data_gap (in data units) clearly
         # exceeds the 3-unit raw separation between the trailing-x midpoints.
         {"date": "2023-12-01", "value": 500, "series": "A"},
         {"date": "2023-12-01", "value": 500, "series": "B"},
+        {"date": "2024-01-01", "value": 2, "series": "A"},
+        {"date": "2024-01-01", "value": 4, "series": "B"},
     ]
     rc = resolve_bar_chart(data=data, enabled=True, stack="zero")
     spec = _render(rc, data)
@@ -690,3 +736,192 @@ def test_vertical_stacked_labels_follow_an_authored_sort(resolve_bar_chart):
     # 2024-01 last, so its segments are the anchors: B=50 at the baseline
     # (0..50, mid 25) with A=30 on top (50..80, mid 65).
     assert by_series == {"A": 65.0, "B": 25.0}
+
+
+# ---------------------------------------------------------------------------
+# Trailing nulls anchor at each series' own last real value
+# ---------------------------------------------------------------------------
+
+
+def _trailing_null_data() -> list[dict[str, Any]]:
+    """B carries a real *row* with a null value at the trailing x, not an
+    absent row — the exact shape a query returns for a series that stops
+    early, as opposed to `_series_missing_from_final_column_data`'s absent
+    row for the same underlying case.
+
+    Global sums (null rows contribute nothing): B=50 (Jan only), A=30
+    (10+20) → value ordering puts B at the baseline, A on top — same stack
+    order the old baseline-collapse bug also produced, so this isolates the
+    anchor value from the ordering.
+    """
+    return [
+        {"date": "2024-01-01", "value": 10, "series": "A"},
+        {"date": "2024-01-01", "value": 50, "series": "B"},
+        {"date": "2024-02-01", "value": 20, "series": "A"},
+        {"date": "2024-02-01", "value": None, "series": "B"},
+    ]
+
+
+def test_trailing_null_anchors_at_its_own_last_real_segment(resolve_bar_chart) -> None:
+    """A trailing-null series anchors at its own last non-null segment, not
+    the baseline of the column it went null in.
+
+    Regression for trailing-nulls-anchor-the-stacked-label-rail-to-the-
+    baseline-instead-of-the-last-real-value: before the fix, every series
+    was seeded 0.0 at the trailing column regardless of whether it actually
+    has a value there, so B (null at Feb) collapsed to the baseline (0.0)
+    instead of its own real Jan midpoint (25.0).
+    """
+    data = _trailing_null_data()
+    rc = resolve_bar_chart(data=data, enabled=True, stack="zero")
+    spec = _render(rc, data)
+
+    rows = _label_rows(spec)
+    by_series = {r["series"]: r["__y"] for r in rows}
+    # A anchors at Feb (its own last real value, 20): stack there is
+    # {B: 0 (null), A: 20} in series_order [B, A] -> A's midpoint = 0 + 10 = 10.
+    # B anchors at Jan (its own last real value, 50): stack there is
+    # {B: 50, A: 10} -> B's midpoint = 0 + 25 = 25.
+    assert by_series == {"A": 10.0, "B": 25.0}
+
+
+def test_series_with_no_rows_anywhere_still_anchors_at_the_seam() -> None:
+    """A series absent from the data entirely still gets the seam anchor —
+    the one case the 0.0 seeding contract legitimately covers.
+
+    Direct call: `series_names` including a name absent from every row is
+    not reachable through the resolved-chart pipeline (the observed color
+    domain always comes from the data itself), but `_stacked_midpoints`'s
+    own contract must still hold for any caller that passes one.
+    """
+    from dbt_charts.core.render.chart.features.endpoint_labels import (
+        _stacked_midpoints,
+    )
+
+    data = [
+        {"date": "2024-01-01", "value": 10, "series": "A"},
+        {"date": "2024-01-01", "value": 50, "series": "B"},
+        {"date": "2024-02-01", "value": 40, "series": "A"},
+        {"date": "2024-02-01", "value": 60, "series": "B"},
+    ]
+    result = _stacked_midpoints(
+        data,
+        "date",
+        "value",
+        "series",
+        ["A", "B", "C"],
+        "zero",
+        max_column_total=100.0,
+        sort_by="",
+        descending=False,
+        stack_order=None,
+    )
+    by_series = dict(result)
+    # C has no rows at all, so its global sum is 0 -> every stack_order mode
+    # places it last (no signal to sort it by). It falls through to the
+    # domain's trailing column (last_x) with a 0.0 seed there, same as the
+    # pre-fix contract: B (60) at the baseline, A (40) above it, C
+    # zero-height at the very top of the stack (the seam past A).
+    assert by_series == {"B": 30.0, "A": 80.0, "C": 100.0}
+
+
+def test_label_order_matches_stack_order_when_anchors_are_all_null_at_the_tail(
+    resolve_bar_chart,
+) -> None:
+    """When every series is null at the domain's last column, the rendered
+    (cascaded) rail still orders labels by stack order — not scrambled by a
+    downstream tie-break over degenerate (all-zero) values.
+
+    Mirrors the chart case matrix's 09D cell: 5 series whose trailing run is
+    null for every one of them. Pre-fix, every series collapsed to the same
+    0.0 anchor, so the cascade measured no slope and fell back to
+    `_distribute_evenly`, whose stable tie-break (keyed off insertion order)
+    reordered the rail to Series 02, 03, 01, 04, 05 instead of the real
+    stack order. Post-fix, each series anchors at its own real Jan value, so
+    the cascade has a real slope to place them by — which, for genuine
+    (non-degenerate) stack data, already sorts by stack order (see
+    ``test_stack_order_matches_value_convention``).
+    """
+    from dbt_charts.core.render.converters.chart import render_vega_spec
+
+    series_names = [f"Series {n:02d}" for n in range(1, 6)]
+    data = []
+    for i, s in enumerate(series_names):
+        data.append({"date": "2024-01-01", "value": 10.0 + i, "series": s})
+        data.append({"date": "2024-02-01", "value": None, "series": s})
+
+    rc = resolve_bar_chart(data=data, enabled=True, stack="zero")
+    spec = _render(rc, data)
+    render_vega_spec(
+        spec,
+        "svg",
+        _BOARD_STYLE,
+        width=400,
+        height=300,
+        is_placeholder=False,
+        chart_id="chart",
+    )
+    rows = _label_rows(spec)
+    # Largest global sum (Series 05) at the baseline -> lowest y-value ->
+    # bottom of the rendered rail, last in this top-to-bottom list. Smallest
+    # (Series 01) is the topmost segment -> highest y-value -> first.
+    assert [r["series"] for r in rows] == [
+        "Series 01",
+        "Series 02",
+        "Series 03",
+        "Series 04",
+        "Series 05",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# normalize/center use each series' own anchor column's total, not the
+# trailing column's
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_uses_the_anchor_columns_own_total(resolve_bar_chart) -> None:
+    """A series anchored off the trailing column normalizes by ITS OWN
+    column's total, not the trailing column's — the two differ whenever a
+    series' anchor lands on a different x than the others.
+
+    Uses ``_series_missing_from_final_column_data``: C anchors at Jan (own
+    last real value, 60), where the column total is 120, not Feb's 100.
+    An implementation that hoisted the divisor back out to the trailing
+    column's total (100) would silently give C 80/100 = 0.8 instead of the
+    correct 80/120 = 0.667 — no test using only trailing-column-anchored
+    fixtures can tell the two apart.
+    """
+    data = _series_missing_from_final_column_data()
+    rc = resolve_bar_chart(data=data, enabled=True, stack="normalize")
+    spec = _render(rc, data)
+
+    rows = _label_rows(spec)
+    by_series = {r["series"]: r["__y"] for r in rows}
+    assert by_series["C"] == pytest.approx(80.0 / 120.0), (
+        f"C's own anchor column (Jan) totals 120, not Feb's 100; got {by_series['C']}"
+    )
+    assert by_series["B"] == pytest.approx(0.3)
+    assert by_series["A"] == pytest.approx(0.8)
+
+
+def test_center_uses_the_anchor_columns_own_total(resolve_bar_chart) -> None:
+    """Center-stack (streamgraph) offset uses each series' OWN anchor
+    column's total for ``(max_column_total - this_column_total) / 2``, not
+    the trailing column's.
+
+    C anchors at Jan, whose column total (120) equals ``max_column_total``
+    itself, so C's offset is zero — a reverted implementation using Feb's
+    total (100) would add a nonzero ``(120 - 100) / 2 = 10`` offset instead.
+    """
+    data = _series_missing_from_final_column_data()
+    rc = resolve_bar_chart(data=data, enabled=True, stack="center")
+    spec = _render(rc, data)
+
+    rows = _label_rows(spec)
+    by_series = {r["series"]: r["__y"] for r in rows}
+    # Jan total (120) is the max column total, so C's offset is 0.
+    assert by_series["C"] == pytest.approx(80.0), f"got {by_series['C']}"
+    # B and A anchor at Feb (own total 100); offset = (120 - 100) / 2 = 10.
+    assert by_series["B"] == pytest.approx(40.0)
+    assert by_series["A"] == pytest.approx(90.0)

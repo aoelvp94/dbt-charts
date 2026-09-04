@@ -112,8 +112,8 @@ class DetailsStyle(BaseModel):
 class LayoutStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    rows: LayoutGapStyle = Field(description="Row layout gap configuration.")
-    cols: LayoutGapStyle = Field(description="Column layout gap configuration.")
+    rows: LayoutGapStyle = Field(description="Gap sizing between rows.")
+    cols: LayoutGapStyle = Field(description="Gap sizing between columns.")
     grid: GridLayoutStyle = Field(description="Grid layout configuration.")
     tabs: TabsStyle = Field(description="Tabs layout style.")
     details: DetailsStyle = Field(description="Details (accordion) layout style.")

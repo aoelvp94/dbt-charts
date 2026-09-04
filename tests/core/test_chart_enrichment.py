@@ -8,7 +8,7 @@ from dbt_charts.core.compile.resolve.chart.enrich import (
 )
 
 # Chart types where zero anchoring is optional (smart-auto heuristic applies).
-_OPTIONAL_ZERO_TYPES = ("line", "scatter", "area")
+_OPTIONAL_ZERO_TYPES = ("line", "scatter")
 
 
 class TestSmartAutoZero:
@@ -54,16 +54,18 @@ class TestSmartAutoZero:
         assert result is not None
         assert result.get("zero") is False
 
-    def test_bar_skips_optional_zero_branch_for_mid_range(self) -> None:
-        """Bar skips the optional-zero branch for mid-range data (ratio=0.41).
-
-        Bar falls through to the non-optional-zero path (always zero=True for
-        all-positive data) to avoid truncated bars — a known misleading chart
-        pattern.
+    @pytest.mark.parametrize("chart_type", ["bar", "area"])
+    def test_non_optional_zero_types_skip_the_ratio_branch_for_mid_range(
+        self, chart_type: str
+    ) -> None:
+        """Bar and area both skip the optional-zero branch for mid-range data
+        (ratio=0.41): both fall through to the non-optional-zero path (always
+        zero=True for all-positive data) — a bar's length and an area's fill
+        are both absolute-magnitude encodings, and truncating either misleads.
         """
-        # (75k, 183k) ratio=0.41 — bar is not optional-zero, so always zero:True.
+        # (75k, 183k) ratio=0.41 — not optional-zero, so always zero:True.
         profile = ColumnProfile(min_val=75000, max_val=183000)
-        result = _pick_scale(profile, chart_type="bar")
+        result = _pick_scale(profile, chart_type=chart_type)
         assert result is not None
         assert result.get("zero") is True
 

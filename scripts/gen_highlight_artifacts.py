@@ -13,8 +13,8 @@ import json
 import sys
 from pathlib import Path
 
-# parents[1] is the dataface package root in both monorepo (dataface/scripts/)
-# and standalone export (scripts/ after Copybara core.move("dataface", "")).
+# parents[1] is the dbt-charts package root in both monorepo (dbt-charts/scripts/)
+# and standalone export (scripts/ after Copybara core.move("dbt-charts", "")).
 _DBT_CHARTS_DIR = Path(__file__).resolve().parents[1]
 _MONOREPO_ROOT = _DBT_CHARTS_DIR.parent
 

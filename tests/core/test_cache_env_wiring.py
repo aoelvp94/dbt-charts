@@ -23,11 +23,7 @@ import pytest
 from dbt_charts.core.compile import compile as df_compile
 from dbt_charts.core.execute import Executor, QueryError
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure
-from dbt_charts.core.execute.duckdb_cache import (
-    compute_query_hash,
-    compute_source_hash,
-    compute_variables_hash,
-)
+from dbt_charts.core.execute.duckdb_cache import compute_cache_key
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 BOARD_YAML = """\
@@ -66,15 +62,18 @@ class TestExecutorFailureCacheBlocksAdapter:
         """A cached failure for the query means adapter.execute is never called."""
         db = tmp_path / "cache.duckdb"
 
-        # Seed with the correct source_hash matching what executor computes.
-        # BOARD_YAML's `source: memory` is a name reference with no registry
-        # entry (D-09: boards can't define sources inline) — board.sources is
-        # empty, so compute_source_hash falls back to hashing the bare name.
+        # Seed using compute_cache_key — the single source of truth — so the
+        # seeded key always matches what execute_query will look up.
+        result_for_seed = df_compile(BOARD_YAML)
+        query = result_for_seed.board.queries["my_query"]
+        source_hash, query_hash, variables_hash = compute_cache_key(
+            query, board_sources=result_for_seed.board.sources
+        )
         seed = TrivialDuckDBCache(db_path=db, failure_ttl_seconds=9000)
         seed.put(
-            compute_source_hash("memory", board_sources={}),
-            compute_query_hash("SELECT 1 as value"),
-            compute_variables_hash({}),
+            source_hash,
+            query_hash,
+            variables_hash,
             RuntimeError("pre-seeded failure"),
             board_slug="test",
             query_name="my_query",

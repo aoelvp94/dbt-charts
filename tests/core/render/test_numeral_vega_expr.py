@@ -1,6 +1,6 @@
 """Parity: the Vega numeral-register expression must match ``format_d3``.
 
-Values Dataface formats itself go through ``format_d3``'s analytic/narrative
+Values dbt charts formats itself go through ``format_d3``'s analytic/narrative
 post-process. Values Vega-Lite paints (axis ticks, mark labels) are formatted
 by Vega's own d3 implementation from a bare spec string, so the post-process
 never runs on them — ``numeral_vega_expr`` builds the Vega expression

@@ -13,13 +13,13 @@ from ._base import BasemapConfig, _ConditionalFormattingField, _GeoChartFields
 
 
 class PointMapChart(_GeoChartFields, _ConditionalFormattingField):
-    """Authored patch for point_map and bubble_map charts."""
+    """Authored patch for point_map and bubble_map charts; the two type spellings are synonyms."""
 
     model_config = ConfigDict(extra="forbid")
 
     type: Annotated[
         Literal["point_map", "bubble_map"],
-        Field(description="Point map or bubble map chart type."),
+        Field(description="Selects the chart family."),
     ]
     # None = lat/lon not specified. point_map/bubble_map-only: geoshape has no
     # render support for them, so they live here rather than on the shared
@@ -46,7 +46,7 @@ class PointMapChart(_GeoChartFields, _ConditionalFormattingField):
         Channel(),
         Field(
             default=None,
-            description="Data column used to scale bubble radius (quantitative). Only meaningful on bubble_map.",
+            description="Quantitative column that scales point area. Mutually exclusive with `collapse`.",
         ),
     ]
     # Opt-in aggregation: collapses marks sharing an exact latitude/longitude
@@ -67,7 +67,7 @@ class PointMapChart(_GeoChartFields, _ConditionalFormattingField):
     ]
     style: Annotated[
         PointMapChartStylePatch | None,
-        Field(default=None, description="Chart-local style overrides."),
+        Field(default=None, description="Appearance overrides for this chart alone."),
     ]
 
     @model_validator(mode="after")

@@ -61,24 +61,12 @@ _UNION_DISCRIMINATOR_PREFIXES = (
 # Branch names that are literal Pydantic type names (not real YAML fields)
 _PRIMITIVE_TYPE_DISCRIMINATORS = {"str", "int", "float", "bool", "bytes", "None"}
 
-# Names of our known union-branch model types (not real YAML fields)
-_MODEL_TYPE_DISCRIMINATORS = {
-    "ChartPatch",
-    "AuthoredBoard",
-    "Variable",
-    "VariableRef",
-    "QueryRef",
-    "ChartRef",
-}
-
 
 def _is_union_discriminator(part: Any) -> bool:
     """Return True when a loc element is a Pydantic union-branch label, not a YAML key."""
     if not isinstance(part, str):
         return False
     if part in _PRIMITIVE_TYPE_DISCRIMINATORS:
-        return True
-    if part in _MODEL_TYPE_DISCRIMINATORS:
         return True
     # Functional discriminator tags (authored.py) use '@' prefix to prevent collision
     # with user-chosen YAML keys ('ref', 'inline', etc.).
@@ -116,7 +104,7 @@ def _collapse_union_validation_errors(
     """Collapse Pydantic union-branch noise into the most informative errors.
 
     Pydantic tries every branch of a union type annotation (str | AuthoredBoard
-    | ChartPatch | dict[str,ChartPatch]) for each
+    | AuthoredChart | dict[str, AuthoredChart]) for each
     layout row. A single invalid row can produce 14+ error dicts — one per
     (branch × wrong-field) combination. This function keeps only the errors
     from the best-matching branch per unique loc prefix.
@@ -229,6 +217,39 @@ _CARTESIAN_CHART_TYPES = frozenset(
     {"bar", "line", "area", "scatter", "heatmap", "histogram"}
 )
 
+# Families with no per-chart card render surface — style.font/style.border
+# validate structurally but have no VL "card" to paint them onto.
+_CARD_STYLE_UNSUPPORTED_CHART_TYPES = _CARTESIAN_CHART_TYPES | {"pie", "donut"}
+
+
+def _card_style_slot_chart_type(
+    field_name: str,
+    field_path: list[str],
+    yaml_content: str | None,
+) -> str | None:
+    """Chart family for a style.font / style.border error at a card-style slot.
+
+    Two authoring positions reach the same narrowed per-family patch type:
+    ``style.charts.<family>.<field>`` (board-level) and
+    ``charts.<id>.style.<field>`` (chart-local).  Both put the field directly
+    under the slot, so both are matched by position rather than by a membership
+    test over the whole path: ``font`` and ``border`` are among the most reused
+    key names in the style tree, and a deeper hit like ``style.axis_x.ticks.font``
+    or ``style.marks.border`` is a different, still-valid field that merely
+    shares the name.  Telling that author to delete the key would be worse than
+    the generic unknown-field error.
+    """
+    if field_name not in ("font", "border"):
+        return None
+    if field_path[0:2] == ["style", "charts"] and len(field_path) == 4:
+        family = field_path[2]
+        return family if family in _CARD_STYLE_UNSUPPORTED_CHART_TYPES else None
+    if field_path[0:1] == ["charts"] and field_path[-2:-1] == ["style"]:
+        chart_type = _chart_type_from_error_path(field_path, yaml_content)
+        if chart_type in _CARD_STYLE_UNSUPPORTED_CHART_TYPES:
+            return chart_type
+    return None
+
 
 def _unsupported_known_chart_field_hint(
     field_name: str,
@@ -264,6 +285,13 @@ def _unsupported_known_chart_field_hint(
                 f"`{field_name}:` is not supported on `type: table`. "
                 "Use `style.columns.<column_name>.format:` per column instead."
             )
+
+    if field_name == "axis_quantitative" and chart_type == "heatmap":
+        return (
+            "`axis_quantitative:` is not supported on `type: heatmap`. "
+            "Heatmap's axes are both nominal, so it has no quantitative axis "
+            "to style. Use `axis_band:` instead."
+        )
 
     supporting_types = tuple(
         candidate_type
@@ -369,6 +397,63 @@ def _annotations_at_path(path: list[str]) -> list[Any]:
     return annotations
 
 
+def _segment_is_tag(
+    annotation: Any,  # type-state: explicit_any — typing-introspection value
+    segment: str,
+) -> bool:
+    """True when *segment* is only reachable as a ``Tag(...)`` discriminator
+    somewhere in the union arms of *annotation* -- schema plumbing (e.g.
+    ``@inline``, a chart-family literal like ``bar``, a query-type literal
+    like ``sql``) rather than a real YAML mapping key or list index."""
+    if get_origin(annotation) is Annotated:
+        matched, inner = _tagged_annotated_inner(annotation, segment)
+        return matched or _segment_is_tag(inner, segment)
+    origin = get_origin(annotation)
+    if origin in (Union, UnionType):
+        return any(
+            _segment_is_tag(arg, segment)
+            for arg in get_args(annotation)
+            if arg is not type(None)
+        )
+    return False
+
+
+def _display_path(path: list[str]) -> list[str]:
+    """*path* with pure schema-plumbing segments (union-tag discriminators)
+    dropped, for messages an author reads -- unlike ``_annotations_at_path``,
+    which needs those segments to walk the type tree and must see the full
+    (tagged) path."""
+    from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+
+    annotations: list[Any] = [AuthoredBoard]  # type-state: explicit_any — typing value
+    display: list[str] = []
+    for segment in path:
+        if not any(_segment_is_tag(annotation, segment) for annotation in annotations):
+            display.append(segment)
+        next_annotations: list[Any] = []  # type-state: explicit_any — typing value
+        for annotation in annotations:
+            next_annotations.extend(_next_annotations_for_segment(annotation, segment))
+        annotations = next_annotations
+        if not annotations:
+            break
+    return display
+
+
+def _parent_is_grid_layout(parent_path: list[str]) -> bool:
+    """True when *parent_path* lands on the board-layout ``grid:`` block.
+
+    Distinguishes it from the axis-gridline ``grid:`` blocks, which share the
+    name at several depths (chart style, theme style, per-layer y axis).
+    """
+    from dbt_charts.core.compile.models.board.authored import GridLayout
+
+    return any(
+        model is GridLayout
+        for annotation in _annotations_at_path(parent_path)
+        for model in _model_types_from_annotation(annotation)
+    )
+
+
 def _model_types_from_annotation(annotation: Any) -> list[type[BaseModel]]:
     _, annotation = _tagged_annotated_inner(annotation, "")
 
@@ -444,6 +529,52 @@ def _extra_field_diagnostic(
         "docs_topic": docs_topic,
     }
 
+    # description: was renamed to notes: at every position that authors it
+    # (board, chart, query, grid item, tab item, variable) -- the two words
+    # share no substring difflib's cutoff would catch, so the generic
+    # suggest_similar_value fallback below never fires for this rename. It is
+    # the fallback wherever NOTES_RENAMES cannot reach -- a self-nested
+    # sub-board, a union arm that never declared the field, a board past the
+    # transparent-migration cutoff -- so it must name the replacement
+    # explicitly rather than fall through to a plain allowed-keys dump. Gated on `"notes" in allowed_keys` rather than
+    # firing unconditionally: a chart family with no notes field (e.g.
+    # CalloutChart) correctly falls through to the generic diagnostic
+    # instead of naming a replacement that doesn't exist there.
+    if field_name == "description" and "notes" in allowed_keys:
+        fields["suggestion"] = "notes"
+        # `parent_path` can carry union-tag discriminators picked up from the
+        # Pydantic error loc (`@inline`, a chart-family literal like `bar`, a
+        # query-type literal like `sql`) that were never a YAML key the
+        # author wrote -- e.g. a query-level description lands at loc
+        # `queries.q.@inline.sql.description`. `_display_path` walks the same
+        # schema tree and drops exactly those segments, so the hint names the
+        # key's real parent (`queries.q`) instead of a schema-internal path.
+        display_parent = _format_parent_path(_display_path(parent_path))
+        return _ExtraFieldDiagnostic(
+            message=message,
+            hint=(
+                f"`description:` was renamed to `notes:`. Rename the key at "
+                f"{display_parent} to `notes:`. See: dct docs {docs_topic}"
+            ),
+            fields=fields,
+        )
+
+    # Authored grid.gap was inert (resolve reads style.layout.grid.gap instead)
+    # and could not ship a Deletion: the ("grid", "gap") tail still matches the
+    # live style key, so stripping it would take the working one with it.
+    # `grid:` also names axis-gridline blocks, which are a different key
+    # entirely -- so ask the schema which model the parent is rather than
+    # guessing from the path's names.
+    if field_name == "gap" and _parent_is_grid_layout(parent_path):
+        return _ExtraFieldDiagnostic(
+            message=message,
+            hint=(
+                "Grid spacing is set by `style.layout.grid.gap` (pixels) — "
+                "the `grid.gap` key never had any effect and should be removed."
+            ),
+            fields=fields,
+        )
+
     _SIZING_FIELDS = frozenset(("aspect_ratio", "min_height", "max_height"))
 
     # Theme-level style.charts.kpi.* / style.charts.table.* sizing fields.
@@ -465,6 +596,40 @@ def _extra_field_diagnostic(
                 f"`style.charts.{chart_family}` uses a fixed sizing contract — "
                 f"`{field_name}` has no effect on {chart_family} charts "
                 "and should be removed."
+            ),
+            fields=fields,
+        )
+
+    # Theme-level style.charts.heatmap.axis_quantitative. Heatmap's axes are
+    # both nominal — there is no quantitative axis for this field to style.
+    if (
+        field_name == "axis_quantitative"
+        and field_path[0:2] == ["style", "charts"]
+        and len(field_path) >= 4
+        and field_path[2] == "heatmap"
+    ):
+        return _ExtraFieldDiagnostic(
+            message=message,
+            hint=(
+                "`style.charts.heatmap.axis_quantitative` is not supported — "
+                "heatmap's axes are both nominal, so it has no quantitative "
+                "axis to style. Use `style.charts.heatmap.axis_band` instead."
+            ),
+            fields=fields,
+        )
+
+    card_style_chart_type = _card_style_slot_chart_type(
+        field_name, field_path, yaml_content
+    )
+    if card_style_chart_type is not None:
+        return _ExtraFieldDiagnostic(
+            message=message,
+            hint=(
+                f"`style.{field_name}` is not supported on "
+                f"`type: {card_style_chart_type}` — {card_style_chart_type} has no "
+                "per-chart card to paint it onto (it renders via Vega-Lite with no "
+                "card surface separate from the board frame). The field has no "
+                "effect and should be removed."
             ),
             fields=fields,
         )
@@ -632,6 +797,65 @@ def suggest_similar_value(
     return None
 
 
+def _newer_schema_version_hint(yaml_content: str | None) -> str | None:
+    """A hint when *yaml_content* declares a ``_schema_version`` newer than the
+    latest frozen schema this build knows about.
+
+    ``_schema_version`` is informational (``dct migrate``-written, never
+    validated) -- this signals "the file may need a newer dbt charts", not a
+    guarantee. Does not raise on a malformed value: the value is read from a
+    raw re-parsed mapping with no Pydantic coercion, so a YAML float,
+    non-numeric text, or a malformed version degrades to no hint rather than
+    a crash inside error formatting itself. This does not extend to
+    pathological YAML the earlier ``yaml.safe_load`` call above could itself
+    choke on (e.g. runaway nesting) -- that risk already exists on every
+    other path through this same re-parse and is not new here.
+
+    Only fires across a real release boundary: within one dev cycle, a file
+    this build's ``dct migrate`` stamps carries ``catalog.latest.version``,
+    the same value this build compares against, so ``declared <= latest`` and
+    no hint fires. The hint is for a reader *older* than the build that wrote
+    the stamp, which by definition can't be this build.
+    """
+    if not yaml_content:
+        return None
+    try:
+        data = yaml.safe_load(yaml_content)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    declared = data.get("_schema_version")
+    if not isinstance(declared, str):
+        return None
+
+    from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
+        parse_dotted_version,
+    )
+
+    declared_parts = parse_dotted_version(declared)
+    if declared_parts is None:
+        return None
+
+    # _board_migration_context (not the public load_yaml_schema_catalog) on
+    # purpose: it's @cache'd and already warm here -- every call site of this
+    # formatter is reached only after prepare_board_mapping already ran (and
+    # would itself have raised on a broken migration declaration, well before
+    # any diagnostic gets formatted), so this never pays the first-call cost
+    # of re-reading and sha256-verifying every frozen schema from disk.
+    from dbt_charts.core.compile.migrations.migrations import _board_migration_context
+
+    catalog, _ = _board_migration_context()
+    latest_parts = parse_dotted_version(catalog.latest.version)
+    if latest_parts is None or declared_parts <= latest_parts:
+        return None
+    return (
+        f"This board declares _schema_version {declared}, newer than the "
+        f"{catalog.latest.version} schema this build of dbt charts understands. "
+        "Upgrade dbt charts to parse it correctly."
+    )
+
+
 def format_validation_errors_structured(
     error: Any,
     yaml_content: str | None = None,
@@ -649,8 +873,10 @@ def format_validation_errors_structured(
 
     Args:
         error: A pydantic.ValidationError instance.
-        yaml_content: Raw YAML string — used for extra-field key suggestions,
-            not for line resolution.
+        yaml_content: Raw YAML string -- used for extra-field key suggestions
+            and (when it declares a newer ``_schema_version``) an upgrade hint
+            appended to every returned diagnostic; not used for line
+            resolution.
 
     Returns:
         list of Diagnostic (≤ MAX_GROUPS elements).
@@ -668,6 +894,7 @@ def format_validation_errors_structured(
         return [Diagnostic.from_code(ERR_INTERNAL, message=str(error))]
 
     collapsed = _collapse_union_validation_errors(raw_errors)
+    newer_schema_hint = _newer_schema_version_hint(yaml_content)
 
     structured: list[Diagnostic] = []
     for err in collapsed:
@@ -745,6 +972,16 @@ def format_validation_errors_structured(
             else:
                 hint = f"Valid input types: {', '.join(valid_types)}."
 
+        if newer_schema_hint is not None:
+            if hint:
+                # Not every existing hint ends in sentence punctuation (e.g.
+                # "See: dct docs board") -- force a boundary so the two don't
+                # run together mid-sentence.
+                sep = "" if hint.endswith((".", "!", "?")) else "."
+                hint = f"{hint}{sep} {newer_schema_hint}"
+            else:
+                hint = newer_schema_hint
+
         fields = extra_field_diagnostic.fields if extra_field_diagnostic else {}
 
         # No range here — the caller's compile-level source map resolves
@@ -765,6 +1002,29 @@ def format_validation_errors_structured(
 
 _SHAPE_NOUN_SEPARATORS = re.compile(r"[\s_-]+")
 
+# Trailing words that name the medium rather than the shape. Authors and agents
+# reach for "bullet graph" and "bullet chart" as readily as "bullet", and a
+# table keyed on the bare noun answers none of them. Stripped only as a FALLBACK
+# after the full spelling misses, never as part of the primary normalization:
+# "dot plot" and "box plot" are shapes whose own last word is in this set, and
+# folding them eagerly would collapse them onto "dot" and "box".
+_SHAPE_NOUN_GENERIC_TAILS = ("chart", "graph", "plot", "diagram")
+
+
+def _shape_noun_keys(value: str) -> tuple[str, ...]:
+    """The spellings to try for one authored noun, most specific first.
+
+    The full normalized spelling always wins; the generic-tail-stripped form is
+    consulted only when it misses, so a shape that legitimately ends in one of
+    those words keeps its own entry.
+    """
+    normalized = _normalize_shape_noun(value)
+    keys = [normalized]
+    for tail in _SHAPE_NOUN_GENERIC_TAILS:
+        if normalized.endswith(tail) and len(normalized) > len(tail):
+            keys.append(normalized[: -len(tail)])
+    return tuple(keys)
+
 
 def _normalize_shape_noun(value: str) -> str:
     """Fold the spellings of one shape noun together.
@@ -776,7 +1036,7 @@ def _normalize_shape_noun(value: str) -> str:
     return _SHAPE_NOUN_SEPARATORS.sub("", value.strip().lower())
 
 
-# Chart shapes the world names that Dataface draws by composing existing fields
+# Chart shapes the world names that dbt charts draws by composing existing fields
 # rather than by a `type:` tag. The value spells the recipe out: an author who
 # reached this error already looked for the noun and did not find it, so a bare
 # pointer to the docs repeats the failure. Every entry is pinned by a spec
@@ -816,9 +1076,48 @@ _CHART_SHAPE_RECIPES = {
     "row_chart": "type: bar with style.orientation: horizontal",
     "vertical_bar": "type: bar with style.orientation: vertical",
     "stream_chart": "type: area with color: and style.stack: center",
+    # Shapes composed from a base plus a `layers:` entry, or from one family
+    # pointed at an unusual column. Measured by rendering each recipe and
+    # looking at it, not by reasoning about whether it ought to work.
+    "lollipop": (
+        "type: bar with style.marks.bar.band_width thinned to a stem, plus a "
+        "layers: scatter on the same y (style.marks.bar.size is a separate "
+        "fixed-pixel mode and does not thin the bar)"
+    ),
+    "bullet": (
+        "type: bar with style.stack: zero, style.stack_order: data and color: "
+        "on the qualitative range column — one row per (category, band) — plus "
+        "a layers: bar on the value and a layers: line on the target, both "
+        "reading their own one-row-per-category source via layers[].query "
+        "(sharing the ranges' rows multiplies each by the band count). Thin "
+        "the value bar with style.marks.bar.band_width so the ranges stay "
+        "visible, give the target style.marks.line.curve: step with "
+        "connect: false for the goal tick, and set style.orientation: vertical"
+    ),
+    "slope": (
+        "type: line with a two-category x and color: on the series column "
+        "(year-shaped x values resolve to a continuous temporal scale, which "
+        "fills in the span between the pair)"
+    ),
+    "bump": (
+        "type: line on a rank column with color: on the series column (the data "
+        "is entity x period x rank, so without it the rows collide on the "
+        "period key) and a descending style.axis_y.scale.continuous.domain "
+        "(e.g. [6, 1]) so rank 1 is on top"
+    ),
+    "dot_plot": (
+        "type: scatter with a categorical x and a measure y; for several dots "
+        "per category use long-format rows with color: on the series column "
+        "rather than layers:, which keeps the shape rotatable"
+    ),
+    "cleveland_dot_plot": (
+        "type: scatter with a categorical x and a measure y; for several dots "
+        "per category use long-format rows with color: on the series column "
+        "rather than layers:, which keeps the shape rotatable"
+    ),
 }
 
-# Shapes Dataface cannot draw at all. Naming them is the half a recipe cannot
+# Shapes dbt charts cannot draw at all. Naming them is the half a recipe cannot
 # cover: without it an author settles for the nearest tag, which validates clean
 # and renders the wrong chart.
 _UNSUPPORTED_CHART_SHAPES = frozenset(
@@ -839,6 +1138,15 @@ _UNSUPPORTED_CHART_SHAPES = frozenset(
         "word cloud",
         "network",
         "candlestick",
+        # Both need one mark to span two values (VL's y/y2). Every layerable
+        # mark takes a single measure channel, and a bar is anchored at zero,
+        # so the connector between a pair — and the interval behind a dot —
+        # cannot be drawn at all. A dot plot of the two ends draws; the thing
+        # that makes it a dumbbell does not.
+        "dumbbell",
+        "barbell",
+        "connected_dot_plot",
+        "ranged_dot",
     }
 )
 
@@ -873,17 +1181,19 @@ def _format_chart_type_discriminator_error(
 
     # A known shape noun beats a fuzzy tag guess: both branches below answer the
     # question the author actually asked, so neither falls through to "did you mean".
-    normalized = _normalize_shape_noun(invalid_type)
-    recipe = _RECIPE_BY_NORMALIZED_NOUN.get(normalized)
+    noun_keys = _shape_noun_keys(invalid_type)
+    recipe = next(
+        (r for k in noun_keys if (r := _RECIPE_BY_NORMALIZED_NOUN.get(k))), None
+    )
     if recipe:
         return (
-            f"Unknown chart type {invalid_type!r}. Dataface draws that shape as "
+            f"Unknown chart type {invalid_type!r}. dbt charts draws that shape as "
             f"{recipe}. Run `dct docs charts` for the chart reference. "
             f"Supported chart types: {supported}."
         )
-    if normalized in _NORMALIZED_UNSUPPORTED_SHAPES:
+    if any(k in _NORMALIZED_UNSUPPORTED_SHAPES for k in noun_keys):
         return (
-            f"Unknown chart type {invalid_type!r}. Dataface cannot draw that shape "
+            f"Unknown chart type {invalid_type!r}. dbt charts cannot draw that shape "
             f"today. Supported chart types: {supported}."
         )
 

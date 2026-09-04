@@ -8,7 +8,7 @@ sign of each datum's value.
 This widens the hover hit-target for near-zero bars without touching the rendered visual.
 
 Hover band properties:
-- mark="bar", mark_props={"opacity": 0, "style": "dft-hover-band"} -- no aria
+- mark="bar", mark_props={"opacity": 0, "style": "dct-hover-band"} -- no aria
   override, no data/transform of its own; inherits spec.data and the shared
   structured-tooltip description like any ordinary sub-layer, so it gets its
   own correct aria-label (see module docstring in bar_hover_band.py for why
@@ -59,7 +59,7 @@ _STACKED_TINY_DATA = [
 @pytest.fixture(autouse=True)
 def _reset(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     reset_config()
-    monkeypatch.setenv("DFT_DEFAULT_THEME", "stark")
+    monkeypatch.setenv("DCT_DEFAULT_THEME", "stark")
     yield
     reset_config()
 
@@ -430,7 +430,7 @@ def test_value_label_layers_survive_layered_promotion() -> None:
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     new_labels = compiled.charts.marks.bar.labels.model_copy(update={"visible": True})
     new_bar = compiled.charts.marks.bar.model_copy(update={"labels": new_labels})
     new_marks = compiled.charts.marks.model_copy(update={"bar": new_bar})
@@ -675,7 +675,7 @@ def test_hover_band_stays_interactive_on_legend_bearing_chart() -> None:
     """A color-encoded (legend-bearing) bar chart's hover band must not get
     pointer-events:none.
 
-    Regression: LegendToggleFeature's dft_legend param stamping (translate.py)
+    Regression: LegendToggleFeature's dct_legend param stamping (translate.py)
     skips opacity=0 layers when deciding which layers need the param bound --
     without `tooltip: True` in the band's own mark_props, Vega compiles that
     skip straight to `pointer-events: none` on the WHOLE band mark group, so
@@ -750,6 +750,17 @@ def test_bar_hover_band_pixel_geometry() -> None:
 
     data = [{"cat": "A", "val": 190}, {"cat": "B", "val": 0.01}]
     spec = _bar_spec(data)
+
+    # Suppress both axis titles so the plot area is exactly the injected
+    # height below — axis titles are visible by default now (see the
+    # default-axis-titles-casing task) and would otherwise eat into the
+    # plot area, decoupling the actual rendered height from the 200px this
+    # test controls for. This test is about hover-band fraction math, not
+    # axis-title chrome.
+    for channel in ("x", "y"):
+        axis = spec.get("encoding", {}).get(channel, {}).get("axis")
+        if isinstance(axis, dict):
+            axis["title"] = None
 
     # Inject a known height so the 10% check is predictable.
     plot_height = 200.0

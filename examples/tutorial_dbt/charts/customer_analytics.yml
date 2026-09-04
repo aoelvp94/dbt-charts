@@ -2,7 +2,7 @@
 # Analyzes customer behavior, segments, and lifetime value
 
 title: "Customer Analytics"
-description: "Deep dive into customer segments, behavior, and value"
+notes: "Deep dive into customer segments, behavior, and value"
 source: dbt_charts_examples
 
 variables:
@@ -128,7 +128,7 @@ charts:
     value: avg_customer_value
     style:
       value:
-        format: currency
+        format: currency_full
 
   avg_order_value:
     label: "Avg Order Value"
@@ -137,7 +137,7 @@ charts:
     value: avg_order_value
     style:
       value:
-        format: currency
+        format: currency_full
 
   segment_pie:
     title: "Customer Segments"
@@ -186,11 +186,15 @@ charts:
           label: Orders
         total_revenue:
           label: Total Revenue
-          format: currency
+          format: currency_full
         avg_order_value:
           label: Avg Order
-          format: currency
+          format: currency_full
 
+        first_order:
+          visible: false
+        last_order:
+          visible: false
 rows:
   - cols:
       - total_customers

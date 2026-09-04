@@ -54,7 +54,7 @@ class TestCodesExecute:
         assert "prj_production" in msg
         assert "sources:" in msg
 
-    def test_source_not_found_empty_message_mentions_dataface_yml(self) -> None:
+    def test_source_not_found_empty_message_mentions_dbt_charts_yml(self) -> None:
         from dbt_charts.core.diagnostics.codes_execute import (
             ERR_SOURCE_NOT_FOUND_EMPTY,
         )

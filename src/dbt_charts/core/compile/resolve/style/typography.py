@@ -1,4 +1,4 @@
-"""DFT typographic system: title size, weight, and family resolution.
+"""dbt charts typographic system: title size, weight, and family resolution.
 
 Two title roles, one H-stack
 ----------------------------
@@ -358,7 +358,7 @@ def board_title_markdown(
 
     Formats the title as an h1 heading (``# title``). Callers pass ``h1_size``
     to ``get_compact_style(h1_size=…)`` so the h1 renders at the exact pixel
-    size, and ``font_weight`` to ``heading_font_weight`` so the DFT weight tier
+    size, and ``font_weight`` to ``heading_font_weight`` so the dbt charts weight tier
     is applied. The pixel size comes from ``style.title.sizes`` indexed by the
     semantic level — width does not enter (see ``board_title_spec``).
 

@@ -195,7 +195,7 @@ def render_command(
                format (always prints to stdout).
         format: Output format (svg, html, png, pdf, terminal, json, text,
                 yaml, data)
-        project: The resolved Dataface project (injected by @with_project)
+        project: The resolved dbt charts project (injected by @with_project)
         variables: Variable values to pass to the render (key=value pairs)
         use_cache: Whether to use cached query results. False (--no-cache) skips
             opening a cache backend entirely, overriding project config.
@@ -298,7 +298,7 @@ def render_command_from_yaml(
                Use "-" to force stdout. Ignored for terminal format.
         format: Output format (svg, html, png, pdf, terminal, json, text,
                 yaml, data)
-        project: The resolved Dataface project (injected by @with_project)
+        project: The resolved dbt charts project (injected by @with_project)
         variables: Variable values to pass to the render
         use_cache: Whether to use cached query results. False (--no-cache) skips
             opening a cache backend entirely, overriding project config.

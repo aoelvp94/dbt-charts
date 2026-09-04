@@ -7,7 +7,7 @@
    transform, so anything laid *over* a board comes out at the board's scale.
 
    A committed value rewrites the URL and asks for a fresh render, so controls
-   only work where a server can serve one — `dft serve`, Cloud, the Playground.
+   only work where a server can serve one — `dct serve`, Cloud, the Playground.
    Those hosts inject this script and the controls stylesheet into their page.
 
    This script handles:
@@ -147,7 +147,7 @@
             /*{# Suite registers this hook to re-render in place (no page reload). #}*/
             window.__dfHandleVariableUpdate(url);
         } else {
-            /*{# Plain dft serve: full page reload. Save scroll so #}*/
+            /*{# Plain dct serve: full page reload. Save scroll so #}*/
             /*{# restoreScrollIfSaved can put it back after the new page renders. #}*/
             try {
                 sessionStorage.setItem('__dfScrollY_' + window.location.pathname, String(window.scrollY));
@@ -262,7 +262,7 @@
         }
 
         if (!inIframe && !hasHook) {
-            /*{# Standalone dft serve: let the browser navigate, but save scroll #}*/
+            /*{# Standalone dct serve: let the browser navigate, but save scroll #}*/
             /*{# first so restoreScrollIfSaved() can recover position after reload. #}*/
             try {
                 sessionStorage.setItem('__dfScrollY_' + window.location.pathname, String(window.scrollY));
@@ -323,7 +323,7 @@
         return allVars;
     }
 
-    /*{# Restore scroll position saved before a standalone page reload (dft serve). #}*/
+    /*{# Restore scroll position saved before a standalone page reload (dct serve). #}*/
     function restoreScrollIfSaved() {
         try {
             var key = '__dfScrollY_' + window.location.pathname;
@@ -479,6 +479,22 @@
         return text ? text.textContent.replace(/:$/, '') : '';
     }
 
+    /*{# A control is the one drawn thing whose primary gesture is *using* it, #}*/
+    /*{# so a host has nowhere to mean "select this variable" unless some part #}*/
+    /*{# of it is not a value surface. The renderer tags the label run — the #}*/
+    /*{# one part of a control that is not a value — and every pointer gesture #}*/
+    /*{# declines it, so selecting a variable or renaming its label never rides #}*/
+    /*{# on top of a filter change. An untagged label means no handle at all #}*/
+    /*{# (imported board), and then the whole control is value surface again. #}*/
+    /*{# Keyboard is unsplit: the control is one tab stop, Enter operates it. #}*/
+    function _onValueGesture(el, handler) {
+        el.addEventListener('click', function(e) {
+            var run = e.target.closest('[data-authored-kind="label"]');
+            if (run && el.contains(run)) return;
+            handler(e);
+        });
+    }
+
     /*{# Checkbox commits in place: no overlay, no popover, nothing to position. #}*/
     /*{# Build a select popover at page level from the options the render #}*/
     /*{# published. Page-level is the whole point: a popover inside the board #}*/
@@ -580,7 +596,7 @@
         /*{# that swallows the event is the one thing on the board it cannot #}*/
         /*{# see. The outside-click handler below already spares the trigger it #}*/
         /*{# came from, so nothing here needs stopPropagation to stay open. #}*/
-        el.addEventListener('click', function() {
+        _onValueGesture(el, function() {
             if (isOpen()) close(); else open();
         });
         el.addEventListener('keydown', function(e) {
@@ -689,7 +705,7 @@
                 else if (e.key === 'Escape') { e.preventDefault(); commit(false); }
             });
         }
-        el.addEventListener('click', lift);
+        _onValueGesture(el, lift);
         el.addEventListener('keydown', function(e) {
             if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); lift(); }
         });
@@ -891,7 +907,7 @@
         }
         el.setAttribute('aria-expanded', 'false');
         /*{# Bubbles, for the reason the select's trigger does. #}*/
-        el.addEventListener('click', function() {
+        _onValueGesture(el, function() {
             if (isOpen()) close(); else open();
         });
         el.addEventListener('keydown', function(e) {
@@ -1104,7 +1120,7 @@
             var checked = el.getAttribute('data-dbt-checked') === 'true';
             updateVariable(name, !checked);
         }
-        el.addEventListener('click', toggle);
+        _onValueGesture(el, toggle);
         el.addEventListener('keydown', function(e) {
             if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggle(); }
         });

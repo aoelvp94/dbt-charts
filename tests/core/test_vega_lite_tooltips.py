@@ -55,8 +55,11 @@ class TestChartTooltips:
         spec = generate_vega_lite_spec(chart, data)
         enc = spec["encoding"]
         xy_titles = {enc.get("x", {}).get("title"), enc.get("y", {}).get("title")}
-        assert "Order Date" in xy_titles
-        assert "Total Revenue" in xy_titles
+        # Default axis/tooltip titles are tokenized but preserve the column's
+        # own casing (lowercase) — an authored x_label/y_label is what gets
+        # title case.
+        assert "order date" in xy_titles
+        assert "total revenue" in xy_titles
 
     def test_tooltip_quantitative_fields_have_format(self, make_chart):
         chart = make_chart("bar", x="category", y="value")
@@ -83,8 +86,11 @@ class TestChartTooltips:
         data = [{"date": "2024-01-01", "value": 10}]
         spec = generate_vega_lite_spec(chart, data)
         layers = spec["layer"]
-        # Last line layer is the foreground line; it shows tooltips.
-        fg = layers[1]
+        # A single point is always past the density-auto-on trigger
+        # (bake_point_companions), so layers are [halo line, halo point,
+        # foreground line, foreground point, hover overlay] -- the
+        # foreground line (the one that shows tooltips) is index 2.
+        fg = layers[2]
         assert fg["mark"]["type"] == "line"
         assert fg["mark"]["tooltip"] is True
         assert "expr" in spec["encoding"]["description"]["value"]
@@ -141,7 +147,7 @@ class TestSpecialChartTypeTooltips:
         # x channel carries title (bin range entry in aria-label); y is the
         # auto-aggregated count.
         assert spec["encoding"]["x"]["field"] == "value"
-        assert spec["encoding"]["x"]["title"] == "Value"
+        assert spec["encoding"]["x"]["title"] == "value"
 
     def test_pie_chart_has_tooltips(self, make_chart):
         # Pie/donut now layers by default (arc + default labels), so the

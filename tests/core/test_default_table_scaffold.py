@@ -285,7 +285,7 @@ class TestApparatusRefactor:
             "in the universal default (headers carry more visual weight than cells)."
         )
 
-    def test_dataface_default_theme_has_no_apparatus_header_size(self):
+    def test_dbt_charts_default_theme_has_no_apparatus_header_size(self):
         """stark theme no longer hard-codes apparatus header.font.size."""
         from dbt_charts.core.compile.config import (
             get_theme_style,

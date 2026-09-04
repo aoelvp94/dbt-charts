@@ -129,7 +129,7 @@ def test_source_config_names_in_prompt_matches_union():
 
 
 def test_valid_query_types_matches_authored_query_literal():
-    """VALID_QUERY_TYPES must be exactly the seven authored query types.
+    """VALID_QUERY_TYPES must be exactly the four authored query types.
 
     Pinned as an explicit literal set: VALID_QUERY_TYPES is itself derived from
     the AuthoredQuery union, so deriving the expectation from the same union
@@ -140,7 +140,6 @@ def test_valid_query_types_matches_authored_query_literal():
 
     expected = {
         "sql",
-        "metricflow",
         "http",
         "values",
         "schema",

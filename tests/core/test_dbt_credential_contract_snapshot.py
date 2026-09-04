@@ -1,4 +1,4 @@
-"""Keep Dataface's closed source models aligned with installed dbt credentials."""
+"""Keep dbt charts' closed source models aligned with installed dbt credentials."""
 
 import json
 

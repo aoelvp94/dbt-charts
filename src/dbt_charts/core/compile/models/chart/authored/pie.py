@@ -12,7 +12,7 @@ from ._base import _ConditionalFormattingField, _RadialChartFields
 
 
 class PieChart(_RadialChartFields, _ConditionalFormattingField):
-    """Authored patch for pie and donut charts.
+    """Authored patch for pie and donut charts; donut defaults `style.inner_radius` to 0.6.
 
     Pie charts use theta (angular) and color (segment) channels.
     x/y/format/sort and other cartesian fields are not valid here.
@@ -21,9 +21,10 @@ class PieChart(_RadialChartFields, _ConditionalFormattingField):
     model_config = ConfigDict(extra="forbid")
 
     type: Annotated[
-        Literal["pie", "donut"], Field(description="Pie or donut chart type.")
+        Literal["pie", "donut"],
+        Field(description="Selects the chart family."),
     ]
     style: Annotated[
         PieChartStylePatch | None,
-        Field(default=None, description="Chart-local style overrides."),
+        Field(default=None, description="Appearance overrides for this chart alone."),
     ]

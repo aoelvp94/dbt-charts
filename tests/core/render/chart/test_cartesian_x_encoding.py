@@ -32,13 +32,14 @@ def _axis(
     ticks_count: int | None = None,
     ticks_time_unit: str | None = None,
     ticks_step: int | None = None,
+    clock: int | None = None,
 ) -> Any:
     """Build a minimal ResolvedAxisStyle-like namespace for tests.
 
     ``scale=None`` mirrors ResolvedAxisStyle's real field so production code
     can read ``axis.scale`` directly instead of a defensive ``getattr``.
     """
-    labels = types.SimpleNamespace(time_unit=label_time_unit)
+    labels = types.SimpleNamespace(time_unit=label_time_unit, format=None, clock=clock)
     ticks = types.SimpleNamespace(
         count=ticks_count, time_unit=ticks_time_unit, step=ticks_step
     )
@@ -56,10 +57,16 @@ def _scale(
     zero: bool | str | None = None,
     scale_type: str | None = None,
     base: float | None = None,
+    domain: tuple[Any, Any] | None = None,
 ) -> Any:
     # Mirrors ResolvedScaleStyle: continuous-scale fields are nested in .continuous,
     # and log/pow/symlog params are further nested one level under that.
-    has_continuous = zero is not None or scale_type is not None or base is not None
+    has_continuous = (
+        zero is not None
+        or scale_type is not None
+        or base is not None
+        or domain is not None
+    )
     log = types.SimpleNamespace(base=base) if base is not None else None
     continuous = (
         types.SimpleNamespace(
@@ -68,7 +75,7 @@ def _scale(
             log=log,
             pow=None,
             symlog=None,
-            domain=None,
+            domain=domain,
         )
         if has_continuous
         else None
@@ -92,9 +99,11 @@ def _axis_with_scale(
     scale_zero: bool | str | None = None,
     scale_type: str | None = None,
     scale_base: float | None = None,
+    scale_domain: tuple[Any, Any] | None = None,
+    clock: int | None = None,
 ) -> Any:
-    scale = _scale(scale_zero, scale_type, scale_base)
-    labels = types.SimpleNamespace(time_unit=label_time_unit)
+    scale = _scale(scale_zero, scale_type, scale_base, scale_domain)
+    labels = types.SimpleNamespace(time_unit=label_time_unit, format=None, clock=clock)
     ticks = types.SimpleNamespace(count=None, time_unit=None, step=None)
     return types.SimpleNamespace(
         time_unit=time_unit,
@@ -331,6 +340,211 @@ class TestBuildCartesianXEncodingDensityGate:
         _, ax_vl, _tu = build_cartesian_x_encoding(_rows(dates), "date", ax, {}, "bar")
         assert "labelExpr" in ax_vl
         assert "utcmonth" in ax_vl["labelExpr"]
+
+
+# ---------------------------------------------------------------------------
+# build_cartesian_x_encoding — fine-grain (day/week) scaffold-budget gate
+# ---------------------------------------------------------------------------
+
+
+def _sparse_daily_dates(n: int = 10, gap_days: int = 45) -> list[str]:
+    """n dates spaced gap_days apart — daily grain, far sparser than daily."""
+    first = dt.date(2023, 1, 1)
+    return [(first + dt.timedelta(days=gap_days * i)).isoformat() for i in range(n)]
+
+
+class TestFineGrainScaffoldBudgetGate:
+    """A detected yearweek/yearmonthdate grain bands only while the ordinal
+    scaffold gap-fill would enumerate stays within budget
+    (synthesized empty buckets ≤ max(distinct buckets, max_ordinal_buckets)).
+    Past that, the data is sparser than its detected grain — e.g. quarterly
+    rows plus two stray mid-month dates reading as "daily" — and banding
+    renders sub-pixel bars across thousands of near-empty slots. Those charts
+    flip to a continuous temporal scale with no timeUnit banding."""
+
+    def test_sparse_daily_bar_flips_to_continuous_temporal(self) -> None:
+        ax = _axis()
+        vl_type, x_enc, tu = build_cartesian_x_encoding(
+            _rows(_sparse_daily_dates()), "date", ax, {}, "bar"
+        )
+        assert vl_type == "temporal"
+        assert tu is None
+
+    def test_quarterly_with_stray_dates_flips_to_continuous_temporal(self) -> None:
+        # The reported repro: quarterly data plus two NULL-measure pad rows at
+        # arbitrary dates. The strays flip detection to yearmonthdate; without
+        # the gate that enumerated ~1370 daily buckets and every bar vanished.
+        quarters = [
+            f"{y}-{m:02d}-01" for y in range(2023, 2027) for m in (1, 4, 7, 10)
+        ][:15]
+        dates = ["2022-11-17", *quarters, "2026-08-15"]
+        ax = _axis()
+        vl_type, _, tu = build_cartesian_x_encoding(_rows(dates), "date", ax, {}, "bar")
+        assert vl_type == "temporal"
+        assert tu is None
+
+    def test_month_end_monthly_bar_flips_to_continuous_temporal(self) -> None:
+        # LAST_DAY()-style monthly buckets read as yearmonthdate (day != 1);
+        # 36 of them span ~1100 days — daily banding would be ~30x empty slots
+        # per real bar.
+        dates = []
+        d = dt.date(2023, 1, 1)
+        for _ in range(36):
+            next_month = (d.replace(day=28) + dt.timedelta(days=4)).replace(day=1)
+            dates.append((next_month - dt.timedelta(days=1)).isoformat())
+            d = next_month
+        ax = _axis()
+        vl_type, _, tu = build_cartesian_x_encoding(_rows(dates), "date", ax, {}, "bar")
+        assert vl_type == "temporal"
+        assert tu is None
+
+    def test_dense_daily_bar_stays_ordinal(self) -> None:
+        # Contiguous daily data has zero synthesized buckets — banding stands
+        # (mirrors test_high_density_daily_unaffected_already_handled_by_label_upgrade).
+        ax = _axis()
+        vl_type, _, tu = build_cartesian_x_encoding(
+            _rows(_daily_dates(500)), "date", ax, {}, "bar"
+        )
+        assert tu == "yearmonthdate"
+        assert vl_type == "ordinal"
+
+    def test_business_day_bar_stays_ordinal(self) -> None:
+        # Weekday-only daily data: the weekend gaps synthesize ~2 buckets per
+        # 5 real ones — well within budget, banding stands.
+        first = dt.date(2024, 1, 1)
+        dates = []
+        d = first
+        while len(dates) < 260:
+            if d.weekday() < 5:
+                dates.append(d.isoformat())
+            d += dt.timedelta(days=1)
+        ax = _axis()
+        vl_type, _, tu = build_cartesian_x_encoding(_rows(dates), "date", ax, {}, "bar")
+        assert tu == "yearmonthdate"
+        assert vl_type == "ordinal"
+
+    def test_small_multiples_disjoint_windows_stay_ordinal(self) -> None:
+        # Gap-fill enumerates each panel's OWN [min, max] range, never the
+        # pooled one (emitters/_channels.py's fill_one_panel). Two panels of
+        # contiguous dailies 20 years apart synthesize ZERO empty buckets, so
+        # banding must stand — measuring the pooled span instead would see a
+        # ~7,200-bucket deficit and collapse both clusters onto a 20-year
+        # continuous domain, which is strictly worse than not gating at all.
+        rows = [
+            {"date": d, "panel": "a"} for d in _daily_dates(60, start="2000-01-01")
+        ] + [{"date": d, "panel": "b"} for d in _daily_dates(60, start="2020-01-01")]
+        ax = _axis()
+        vl_type, _, tu = build_cartesian_x_encoding(
+            rows, "date", ax, {}, "bar", panel_fields=("panel",)
+        )
+        assert tu == "yearmonthdate"
+        assert vl_type == "ordinal"
+
+    def test_small_multiples_each_panel_sparse_still_flips(self) -> None:
+        # Per-panel measurement is not a blanket exemption for faceted charts:
+        # when each panel is itself sparser than its detected grain, the
+        # deficit is real in every panel and the chart still flips.
+        rows = [{"date": d, "panel": "a"} for d in _sparse_daily_dates()] + [
+            {"date": d, "panel": "b"} for d in _sparse_daily_dates()
+        ]
+        ax = _axis()
+        vl_type, _, tu = build_cartesian_x_encoding(
+            rows, "date", ax, {}, "bar", panel_fields=("panel",)
+        )
+        assert vl_type == "temporal"
+        assert tu is None
+
+    def test_sparse_weekly_bar_flips_to_continuous_temporal(self) -> None:
+        # The yearweek arm's flip direction, which no other test covers.
+        # It does NOT pin the step_days == 7 constant and cannot: a 1-day step
+        # only ever yields a LARGER deficit, so sparse weekly data flips
+        # either way. The constant is pinned in the banding direction by
+        # test_weekly_bar_79_buckets_is_ordinal, which fails when it is
+        # mutated to 1. detect_time_unit returns yearweek only when every
+        # value shares one weekday, so both clusters stay on the same lattice.
+        first = dt.date(2020, 1, 6)  # a Monday
+        near = [(first + dt.timedelta(weeks=i)).isoformat() for i in range(10)]
+        far = [(first + dt.timedelta(weeks=260 + i)).isoformat() for i in range(10)]
+        ax = _axis()
+        vl_type, _, tu = build_cartesian_x_encoding(
+            _rows(near + far), "date", ax, {}, "bar"
+        )
+        assert vl_type == "temporal"
+        assert tu is None
+
+    def test_verdict_is_invariant_in_panel_count(self) -> None:
+        # The band scale is SHARED, so a bucket two panels both cover is one
+        # band. Summing each panel's span separately would make the verdict a
+        # function of panel count — identical per-panel data flipping to
+        # continuous purely by gaining a sibling — while the axis it describes
+        # never changed.
+        first = dt.date(2024, 1, 1)
+        one_panel = [(first + dt.timedelta(days=3 * i)).isoformat() for i in range(30)]
+        ax = _axis()
+        verdicts = set()
+        for n_panels in (1, 2, 3, 6):
+            rows = [
+                {"date": d, "panel": f"p{p}"}
+                for p in range(n_panels)
+                for d in one_panel
+            ]
+            vl_type, _, tu = build_cartesian_x_encoding(
+                rows, "date", ax, {}, "bar", panel_fields=("panel",)
+            )
+            verdicts.add((vl_type, tu))
+        # Assert the SPECIFIC verdict, not mere uniformity: with a thin margin
+        # a stricter max_ordinal_buckets makes every panel count resolve
+        # ("temporal", None), which is uniform and pins nothing.
+        assert verdicts == {("ordinal", "yearmonthdate")}, verdicts
+
+    def test_panel_fields_absent_matches_single_panel_verdict(self) -> None:
+        # The N=1 case must be bit-identical to no panel_fields at all — the
+        # non-faceted path is what every existing test in this class pins.
+        dates = _sparse_daily_dates()
+        ax = _axis()
+        flat = build_cartesian_x_encoding(_rows(dates), "date", ax, {}, "bar")
+        panelled = build_cartesian_x_encoding(
+            [{"date": d, "panel": "only"} for d in dates],
+            "date",
+            ax,
+            {},
+            "bar",
+            panel_fields=("panel",),
+        )
+        assert (flat[0], flat[2]) == (panelled[0], panelled[2])
+
+    def test_authored_time_unit_is_never_overridden(self) -> None:
+        # An explicit time_unit is an instruction, not a guess — the budget
+        # gate only applies to auto-detected grains.
+        ax = _axis(time_unit="yearmonthdate")
+        vl_type, _, tu = build_cartesian_x_encoding(
+            _rows(_sparse_daily_dates()), "date", ax, {}, "bar"
+        )
+        assert tu == "yearmonthdate"
+        assert vl_type == "ordinal"
+
+    def test_sparse_daily_line_area_scatter_keep_grain(self) -> None:
+        # line/area/scatter never band mark widths, so the budget gate must
+        # not touch their grain: the timeUnit's UTC day-flooring and the
+        # curated label ladder resolve exactly as before at any sparsity.
+        for mark in ("line", "area", "scatter"):
+            vl_type, ax_vl, tu = build_cartesian_x_encoding(
+                _rows(_sparse_daily_dates()), "date", _axis(), {}, mark
+            )
+            assert vl_type == "temporal", mark
+            assert tu == "yearmonthdate", mark
+            assert "labelExpr" in ax_vl, mark
+
+    def test_authored_temporal_sparse_daily_drops_time_unit(self) -> None:
+        # style.axis_x.type: temporal with sparse daily-grain data: the scale
+        # is already continuous, but an emitted daily timeUnit would still
+        # band mark widths to one day (~sub-pixel over a multi-year span).
+        ax = _axis(axis_type="temporal")
+        vl_type, _, tu = build_cartesian_x_encoding(
+            _rows(_sparse_daily_dates()), "date", ax, {}, "bar"
+        )
+        assert vl_type == "temporal"
+        assert tu is None
 
 
 # ---------------------------------------------------------------------------
@@ -602,12 +816,20 @@ class TestBuildCartesianXEncodingLabelExpr:
         _, ax_vl, _tu = build_cartesian_x_encoding(data, "date", ax, {}, "bar")
         assert "labelExpr" not in ax_vl
 
-    def test_no_time_unit_no_label_expr_for_non_grain_data(self):
-        # Non-grain timestamps — no labelExpr injected.
+    def test_no_calendar_grain_gets_the_subday_clock_default(self):
+        # Non-grain, sub-day timestamps get the default clock vocabulary
+        # rather than no labelExpr at all — see
+        # TestBuildCartesianXEncodingSubdayClock below for the full ladder.
+        # Requires a known chart width: the vocabulary's tick-cadence gate
+        # predicts Vega's own tick step from (domain span, chart width), so
+        # without a width it can't tell whether this 25h13m domain is safe.
         ax = _axis()
         data = [{"date": "2025-01-15T08:30:00"}, {"date": "2025-01-16T09:45:00"}]
-        _, ax_vl, _tu = build_cartesian_x_encoding(data, "date", ax, {}, "bar")
-        assert "labelExpr" not in ax_vl
+        _, ax_vl, _tu = build_cartesian_x_encoding(
+            data, "date", ax, {}, "bar", outer_chart_width=600.0
+        )
+        assert "labelExpr" in ax_vl
+        assert "minutes(datum.value) !== 0" in ax_vl["labelExpr"]
 
     def test_yearquarter_label_expr_references_quarter(self):
         ax = _axis(time_unit="yearquarter")
@@ -644,6 +866,247 @@ class TestBuildCartesianXEncodingLabelExpr:
         )
         assert "labelExpr" in ax_vl
         assert "[" in ax_vl["labelExpr"]
+
+
+# ---------------------------------------------------------------------------
+# build_cartesian_x_encoding — sub-day clock default
+# ---------------------------------------------------------------------------
+
+# One calendar day of hourly instants — a single-midnight domain.
+_ONE_DAY_HOURLY = _rows([f"2026-08-11T{h:02d}:00:00" for h in range(24)])
+
+
+class TestBuildCartesianXEncodingSubdayClock:
+    """The sub-day clock vocabulary is the default on a continuous temporal axis."""
+
+    def test_default_clock_is_the_noon_midnight_words(self):
+        ax = _axis()
+        _, ax_vl, tu = build_cartesian_x_encoding(
+            _ONE_DAY_HOURLY, "date", ax, {}, "line", outer_chart_width=600.0
+        )
+        assert tu is None
+        assert "labelExpr" in ax_vl
+        assert "'Midnight'" in ax_vl["labelExpr"]
+        assert "'Noon'" in ax_vl["labelExpr"]
+
+    def test_clock_24_authored_is_a_plain_format(self):
+        ax = _axis(clock=24)
+        _, ax_vl, _tu = build_cartesian_x_encoding(
+            _ONE_DAY_HOURLY, "date", ax, {}, "line", outer_chart_width=600.0
+        )
+        assert ax_vl["labelExpr"] == "timeFormat(datum.value, '%H:%M')"
+
+    def test_narrow_card_falls_back_to_compact_numerals(self):
+        ax = _axis()
+        _, ax_vl, _tu = build_cartesian_x_encoding(
+            _ONE_DAY_HOURLY,
+            "date",
+            ax,
+            {},
+            "line",
+            outer_chart_width=300,
+        )
+        assert "labelExpr" in ax_vl
+        assert "Midnight" not in ax_vl["labelExpr"]
+        assert "Noon" not in ax_vl["labelExpr"]
+
+    def test_wide_card_keeps_the_words(self):
+        ax = _axis()
+        _, ax_vl, _tu = build_cartesian_x_encoding(
+            _ONE_DAY_HOURLY,
+            "date",
+            ax,
+            {},
+            "line",
+            outer_chart_width=700,
+        )
+        assert "'Midnight'" in ax_vl["labelExpr"]
+
+    def test_authored_scale_domain_drives_the_gate_not_the_data_extent(self):
+        """An authored axis_x.scale.continuous.domain is what
+        Vega actually renders across — cartesian_x_scale_domain applies it to
+        the compiled spec AFTER this function decides. 11 points at 1-minute
+        spacing (09:00 -> 09:10) clear the tick-cadence gate on the DATA's
+        own extent, but the AUTHORED domain here spans a full calendar day
+        (two midnights), which the gate must see to add the date-context
+        row — otherwise two ticks read bare "Midnight" for different days
+        with no date row to disambiguate them (rule 5's exact hazard).
+        """
+        data = _rows(
+            [f"2026-08-11T09:{m:02d}:00" for m in range(11)],
+        )
+        ax = _axis_with_scale(
+            scale_domain=("2026-08-11T00:00:00", "2026-08-12T00:00:00")
+        )
+        _, ax_vl, _tu = build_cartesian_x_encoding(
+            data, "date", ax, {}, "line", outer_chart_width=600.0
+        )
+        assert "labelExpr" in ax_vl
+        assert ax_vl["labelExpr"].startswith("[")
+        assert "'%b %-d'" in ax_vl["labelExpr"]
+
+    def test_date_only_authored_domain_mixed_with_naive_data_bails(self):
+        """A date-only authored domain (Vega parses
+        date-only strings as UTC midnight) framing naive sub-day data (Vega
+        parses those as local) is the same "neither accessor can get right"
+        hazard the values-only mixed-clock bail already exists to catch --
+        the gate must compare the domain against the data, not just the
+        domain against itself.
+        """
+        data = _rows(
+            [
+                "2026-08-11T06:00:00",
+                "2026-08-11T12:00:00",
+                "2026-08-11T20:00:00",
+            ]
+        )
+        ax = _axis_with_scale(scale_domain=("2026-08-11", "2026-08-12"))
+        _, ax_vl, _tu = build_cartesian_x_encoding(
+            data, "date", ax, {}, "line", outer_chart_width=600.0
+        )
+        assert "labelExpr" not in ax_vl
+
+    def test_reserved_chrome_narrows_the_predicted_tick_count(self):
+        """Passing our own known chrome reservation (e.g. the endpoint-label
+        rail) narrows the predicted tick count further than the card width
+        alone would, correctly withholding the vocabulary for a domain that
+        card width alone would still (over-confidently) admit.
+        """
+        start = dt.datetime(2026, 8, 11, 0, 0)
+        data = _rows(
+            [
+                (start + dt.timedelta(hours=h)).isoformat()
+                for h in range(0, int(9.5 * 24) + 1, 3)
+            ]
+        )
+        ax = _axis()
+        _, no_reserve, _tu = build_cartesian_x_encoding(
+            data, "date", ax, {}, "line", outer_chart_width=650.0
+        )
+        assert "labelExpr" in no_reserve
+        _, with_reserve, _tu = build_cartesian_x_encoding(
+            data,
+            "date",
+            ax,
+            {},
+            "line",
+            outer_chart_width=650.0,
+            plot_width=600.0,
+        )
+        assert "labelExpr" not in with_reserve
+
+    def test_word_vocabulary_boundary_at_600px(self):
+        """Real-render measurements (a plain line chart, no reserved chrome,
+        TZ=UTC, hourly data at 600px): an 8-day domain renders the words cleanly, but 10.0/10.4/11.0
+        days all rendered "Midnight" on every tick before this fix (Vega's
+        own generator lands on day-grain ticks there) — vl_convert's own
+        ``autosize: fit`` reserves y-axis chrome Python can't see before
+        compiling the spec, so the width-only prediction has to assume a
+        conservative allowance for it (``_ESTIMATED_Y_AXIS_CHROME_PX``)
+        rather than the bare card width. The identical 9.5-day domain, which
+        rendered correctly before this fix (20 ticks, no duplicates), now
+        conservatively falls back to Vega's own default format rather than
+        the vocabulary — a deliberate trade for never wrongly applying it.
+        """
+        start = dt.datetime(2026, 8, 11, 0, 0)
+
+        def applies(span_days: float) -> bool:
+            data = _rows(
+                [
+                    (start + dt.timedelta(hours=h)).isoformat()
+                    for h in range(0, int(span_days * 24) + 1, 3)
+                ]
+            )
+            _, ax_vl, _tu = build_cartesian_x_encoding(
+                data, "date", _axis(), {}, "line", outer_chart_width=600.0
+            )
+            return "labelExpr" in ax_vl
+
+        assert applies(8.0) is True
+        assert applies(10.0) is False
+        assert applies(10.4) is False
+        assert applies(11.0) is False
+
+    def test_authored_tick_count_overrides_the_width_prediction(self):
+        """An authored ticks.count is the axis's real tick count — the gate
+        must read it instead of predicting from width. A 3-day hourly domain
+        applies the vocabulary by default (Vega draws Midnight/6am/Noon/6pm
+        ticks), but thinning to 3 ticks makes every one of them a day
+        boundary, so the vocabulary must withhold rather than print
+        "Midnight" four times over.
+        """
+        start = dt.datetime(2026, 8, 11, 0, 0)
+        data = _rows(
+            [(start + dt.timedelta(hours=h)).isoformat() for h in range(3 * 24 + 1)]
+        )
+        default_ax = _axis()
+        _, default_vl, _tu = build_cartesian_x_encoding(
+            data, "date", default_ax, {}, "line", outer_chart_width=600.0
+        )
+        assert "labelExpr" in default_vl
+        thinned_ax = _axis(ticks_count=3)
+        _, thinned_vl, _tu = build_cartesian_x_encoding(
+            data, "date", thinned_ax, {}, "line", outer_chart_width=600.0
+        )
+        assert "labelExpr" not in thinned_vl
+
+    def test_authored_tick_time_unit_always_bails(self):
+        """ticks.time_unit only ever names a day-grain-or-coarser interval
+        (_TEMPORAL_TICK_INTERVAL's finest entry is "day") — every tick it
+        produces lands on local midnight or coarser, so the vocabulary can
+        never apply once it's authored, regardless of span or width.
+        """
+        ax = _axis(ticks_time_unit="yearmonthdate")
+        _, ax_vl, _tu = build_cartesian_x_encoding(
+            _ONE_DAY_HOURLY, "date", ax, {}, "line", outer_chart_width=600.0
+        )
+        assert "labelExpr" not in ax_vl
+
+    def test_authored_expr_wins_over_the_default(self):
+        # outer_chart_width is required: without it the subday gate's
+        # tick_count is unresolvable and the guarded block never runs at
+        # all, so the "authored wins" assertion below would pass whether or
+        # not the precedence check inside the block is actually correct.
+        ax = _axis()
+        _, ax_vl, _tu = build_cartesian_x_encoding(
+            _ONE_DAY_HOURLY,
+            "date",
+            ax,
+            {"labelExpr": "datum.value"},
+            "line",
+            outer_chart_width=600.0,
+        )
+        assert ax_vl["labelExpr"] == "datum.value"
+
+    def test_authored_format_wins_over_the_default(self):
+        # See test_authored_expr_wins_over_the_default's comment on
+        # outer_chart_width — required for this test to exercise anything.
+        ax = _axis()
+        _, ax_vl, _tu = build_cartesian_x_encoding(
+            _ONE_DAY_HOURLY,
+            "date",
+            ax,
+            {"format": "%H"},
+            "line",
+            outer_chart_width=600.0,
+        )
+        assert "labelExpr" not in ax_vl
+        assert ax_vl["format"] == "%H"
+
+    def test_daily_continuous_data_with_no_subday_component_is_untouched(self):
+        # Calendar-only continuous data (no hour/minute/second) is not this
+        # vocabulary's concern. Same weekday, 63 days apart (> the 14-day
+        # weekly-cadence ceiling): detect_time_unit returns None because no
+        # bucketed grain fits, not because of a sub-day component. A width is
+        # passed so the assertion actually exercises _has_subday_component
+        # rather than short-circuiting on the "no tick count to gate on" bail.
+        ax = _axis()
+        data = _rows(["2025-01-06", "2025-03-10"])
+        _, ax_vl, tu = build_cartesian_x_encoding(
+            data, "date", ax, {}, "line", outer_chart_width=600.0
+        )
+        assert tu is None
+        assert "labelExpr" not in ax_vl
 
 
 # ---------------------------------------------------------------------------
@@ -881,6 +1344,30 @@ class TestBuildCartesianXEncodingLabelThinning:
         assert "'Q'" in ax_vl["labelExpr"]
         assert "'%b'" not in ax_vl["labelExpr"]
 
+    def test_authored_quarter_grain_anchors_at_its_own_grain_even_when_visibility_promotes_further(
+        self,
+    ):
+        """An authored coarser grain (``label_time_unit: yearquarter``) sets
+        ``label_tick_cadence`` and, per ``default_label_expr_for``'s
+        ``anchor_grain`` docstring, the anchor comparison must run at that
+        authored grain (``%Y-%m``) even when render-local ladder promotion
+        (``visibility_time_unit``) thins the label cadence further, to
+        ``year``. Comparing at the coarser visibility grain instead would
+        match every tick inside the anchor's year, not just the anchor's own
+        quarter -- the exact defect ``anchor_grain`` exists to prevent."""
+        ax = _axis(time_unit="yearmonth", label_time_unit="yearquarter")
+        dates = _monthly_dates(48, start=(2025, 1))
+        _, ax_vl, _tu = build_cartesian_x_encoding(
+            _rows(dates),
+            "date",
+            ax,
+            {},
+            "bar",
+            visibility_time_unit="year",
+        )
+        assert "'%Y-%m') === " in ax_vl["labelExpr"]
+        assert "'%Y') === " not in ax_vl["labelExpr"]
+
     def test_same_grain_visibility_keeps_ticks_off_and_full_values(self):
         # Same-grain visibility may still parity-skip label text later, but it
         # does not remove ticks.
@@ -898,6 +1385,10 @@ class TestBuildCartesianXEncodingLabelThinning:
         assert ax_vl["ticks"] is False
 
     def test_weekly_bar_promoted_to_month_labels_and_ticks(self):
+        # Render-local (non-authored) promotion restores ticks for every
+        # weekly band — `values` never re-grains to just the month openers;
+        # only the label TEXT thins via labelExpr gating. See
+        # type_inference.py's label_tick_cadence vs visibility_thinned split.
         ax = _axis()  # no authored time_unit or label_time_unit
         dates = [
             (dt.date(2023, 1, 2) + dt.timedelta(weeks=i)).isoformat() for i in range(20)
@@ -913,13 +1404,7 @@ class TestBuildCartesianXEncodingLabelThinning:
         )
         assert tu == "yearweek"
         assert ax_vl["ticks"] is True
-        assert ax_vl["values"] == [
-            "2023-01-02",
-            "2023-02-06",
-            "2023-03-06",
-            "2023-04-03",
-            "2023-05-01",
-        ]
+        assert ax_vl["values"] == dates
         assert "'%b'" in ax_vl["labelExpr"]
         assert "W%V" not in ax_vl["labelExpr"]
         assert "utcdate(toDate(datum.value)) <= 7" in ax_vl["labelExpr"]
@@ -971,6 +1456,8 @@ class TestBuildCartesianXEncodingLabelThinning:
         assert "'%-d'" in ax_vl["labelExpr"]
 
     def test_daily_bar_promoted_to_mondays_changes_ticks_with_format(self) -> None:
+        # Render-local promotion: every daily band keeps its tick (`values`
+        # stays the full daily list); only the label text thins to Mondays.
         ax = _axis(time_unit="yearmonthdate")
         dates = _daily_dates(21)
         _, ax_vl, _tu = build_cartesian_x_encoding(
@@ -982,9 +1469,7 @@ class TestBuildCartesianXEncodingLabelThinning:
             format_time_unit="yearweek",
             visibility_time_unit="yearweek",
         )
-        assert ax_vl["values"] == [
-            date for date in dates if dt.date.fromisoformat(date).weekday() == 0
-        ]
+        assert ax_vl["values"] == dates
         assert ax_vl["ticks"] is True
         assert "utcday(toDate(datum.value)) === 1" in ax_vl["labelExpr"]
 
@@ -1005,9 +1490,18 @@ class TestBuildCartesianXEncodingLabelThinning:
         assert '"\'"' in ax_vl["labelExpr"]
         assert "'%y'" in ax_vl["labelExpr"]
 
-    def test_temporal_auto_promoted_month_labels_use_source_month_openers(
+    def test_temporal_auto_promoted_month_labels_use_real_openers_not_tickcount(
         self,
     ) -> None:
+        # Render-local promotion (no authored labels.time_unit): the axis
+        # DOES collapse to an explicit month-opener `values` list. Relying on
+        # VL's own tickCount interval instead is what dropped the domain's
+        # leading label whenever its date isn't itself a calendar boundary
+        # (e.g. a weekly series opening on a non-1st-of-month date) — Vega's
+        # month-interval generator only places ticks on true calendar
+        # boundaries within the domain, so a non-boundary domain start never
+        # gets a tick at all. Explicit `values`, built from the real
+        # calendar-bucket openers, always includes it.
         ax = _axis(time_unit="yearweek")
         dates = [
             (dt.date(2023, 1, 2) + dt.timedelta(weeks=i)).isoformat() for i in range(70)
@@ -1021,24 +1515,12 @@ class TestBuildCartesianXEncodingLabelThinning:
             format_time_unit="yearmonth",
             visibility_time_unit="yearmonth",
         )
-        assert ax_vl["values"] == [
-            "2023-01-02",
-            "2023-02-06",
-            "2023-03-06",
-            "2023-04-03",
-            "2023-05-01",
-            "2023-06-05",
-            "2023-07-03",
-            "2023-08-07",
-            "2023-09-04",
-            "2023-10-02",
-            "2023-11-06",
-            "2023-12-04",
-            "2024-01-01",
-            "2024-02-05",
-            "2024-03-04",
-            "2024-04-01",
-        ]
+        # Thinned to one opener per represented month (16), not the full
+        # 70-week list — a regression back to the untinned week list would
+        # still pass an values[0]-only check.
+        assert len(ax_vl["values"]) == 16
+        assert ax_vl["values"][0] == dates[0]
+        assert ax_vl["values"][1] == "2023-02-06"
         assert "tickCount" not in ax_vl
         assert "'%b'" in ax_vl["labelExpr"]
 
@@ -1116,6 +1598,9 @@ class TestBuildCartesianXEncodingHeatmapMarkType:
     def test_weekly_nominal_thins_ticks_and_labels_to_month_openers(self):
         # 52 weekly bands promoted to 12 month-opener ticks — mirrors
         # test_weekly_bar_promoted_to_month_labels_and_ticks, forced nominal.
+        # Unlike bar/histogram, heatmap has no _LABEL_THINNING_TICK_MARK_TYPES
+        # restoration, so a render-local promotion collapses `values` (ticks
+        # and labels stay in lockstep) instead of keeping every band.
         ax = _axis()
         dates = [
             (dt.date(2023, 1, 2) + dt.timedelta(weeks=i)).isoformat() for i in range(20)

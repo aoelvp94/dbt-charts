@@ -28,6 +28,7 @@ __all__ = [
     "_bar_orientation",
     "_channels_for",
     "_classify_to_channel_type",
+    "_column_numeric_values",
 ]
 
 
@@ -118,3 +119,27 @@ def _classify_to_channel_type(
         return "quantitative"
     ct = classify_column_type(field, samples)
     return "temporal" if ct == "temporal" else "nominal"
+
+
+def _column_numeric_values(
+    data: list[dict[str, Any]],  # type-state: explicit_any — query-row boundary values
+    field: str | None,
+) -> list[float]:
+    """Every numeric value one column paints, for a per-chart format vote.
+
+    Shared extraction step behind ``resolve_format_for_values`` (compile/
+    format.py): a donut's theta column, a cartesian family's y (and
+    scatter's x) measure(s), and a geo/heatmap chart's color/size channel
+    all need "pull this column's raw values off ``data``" before voting on
+    the sub-$1 register. A non-numeric field (e.g. scatter's nominal y in a
+    dot plot) silently contributes nothing, so the vote falls through to
+    today's unchanged spec rather than crashing on a formatting-only
+    decision.
+    """
+    if not field:
+        return []
+    return [
+        float(raw)
+        for raw in (row.get(field) for row in data)
+        if isinstance(raw, (int, float, Decimal)) and not isinstance(raw, bool)
+    ]

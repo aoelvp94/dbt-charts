@@ -47,6 +47,7 @@ from dbt_charts.core.execute.adapters.base import (
     RowFetchLimit,
     apply_row_limit_truncation,
     classify_warehouse_error,
+    connection_failure,
     handle_adapter_error,
     resolve_effective_row_limit,
     resolve_setup_sql,
@@ -204,7 +205,7 @@ class _SourcePool:
         # Persistent worker threads: connections built here survive across renders
         # (render-level ThreadPoolExecutors are ephemeral and would reconnect cold).
         self._pool = ThreadPoolExecutor(
-            max_workers=max_workers, thread_name_prefix="dft-srcpool"
+            max_workers=max_workers, thread_name_prefix="dct-srcpool"
         )
 
     def execute(
@@ -331,10 +332,13 @@ class _SourcePool:
 
         Failures here raise _ConnectionSetupFailed (bad credentials, unreachable
         host): they happen before any SQL reaches the warehouse, so the caller
-        routes them to handle_adapter_error rather than
-        classify_warehouse_error — distinct from _run() raising, which means the
-        warehouse received and rejected a query. Labeling a credentials failure
-        a "warehouse rejected the query" outcome asserts a cause that is false.
+        routes them to connection_failure (typed ERR-WAREHOUSE-CONNECTION)
+        rather than classify_warehouse_error — distinct from _run() raising,
+        which means the warehouse received and rejected a query. Labeling a
+        credentials failure a "warehouse rejected the query" outcome asserts a
+        cause that is false. The lazy connection handle is forced open for
+        every dialect (not just bigquery/postgres/snowflake) so a connect
+        failure on any dialect is caught here rather than leaking into _run().
         """
         adapter = getattr(self._tls, "adapter", None)
         if adapter is not None:
@@ -354,13 +358,25 @@ class _SourcePool:
             ctx = adapter.connection_named(f"dbt_charts_pool_{threading.get_ident()}")
             ctx.__enter__()
 
+            # Force the LazyHandle open here, for every dialect: a connect
+            # failure (bad credentials, unreachable host) must raise inside
+            # this try so the caller wraps it as _ConnectionSetupFailed
+            # instead of surfacing later from _run() as a false "warehouse
+            # rejected the query" outcome. Postgres/Snowflake already force it
+            # via the statement_timeout_sql send below; BigQuery needs the
+            # handle itself to attach default_query_job_config. Without this,
+            # a dialect with neither (databricks, spark, mysql, athena,
+            # sqlserver — redshift inherits statement_timeout_sql from
+            # PostgresDialect) never touches the handle here, so its connect
+            # failure leaks past this classification entirely.
+            handle = adapter.connections.get_thread_connection().handle
+
             # Must follow ctx.__enter__() so get_thread_connection() returns the live
             # handle — same structural reason the DuckDB SET search_path follows
             # conn.execute.
             if self._source_config.get("type") == "bigquery":
                 from google.cloud import bigquery
 
-                handle = adapter.connections.get_thread_connection().handle
                 handle.default_query_job_config = bigquery.QueryJobConfig(
                     default_dataset=bigquery_default_dataset(self._source_config),
                     # BigQuery has no session-level statement_timeout SQL — the cap
@@ -449,7 +465,7 @@ class SqlAdapter(BaseAdapter):
         """Initialize SQL adapter.
 
         Args:
-            project: The Dataface project (for resolving relative file paths).
+            project: The dbt charts project (for resolving relative file paths).
             dbt_project_path: Path to dbt project, or None if no dbt project.
             profile_type: Database type for dialect selection (e.g., 'postgres').
             max_workers: Width of the per-source connection pool.
@@ -725,7 +741,7 @@ class SqlAdapter(BaseAdapter):
             # Building/connecting the worker's dbt adapter failed (bad
             # credentials, unreachable host) — the warehouse never saw the
             # query, so this is not a warehouse rejection either.
-            return handle_adapter_error(f"{dialect_name} query setup", e.cause)
+            return connection_failure(dialect_name, e.cause)
         except Exception as e:  # noqa: BLE001
             return classify_warehouse_error(
                 f"{dialect_name} SQL execution", e, dialect_name

@@ -1,5 +1,5 @@
 title: link Click-Through Examples
-description: |
+notes: |
   Demonstrates all three link usage patterns:
     1. Static URL — every bar/point navigates to the same page
     2. Dynamic URL — field value is interpolated into the path

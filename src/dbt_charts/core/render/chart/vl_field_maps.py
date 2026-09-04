@@ -17,16 +17,19 @@ from dbt_charts.core.compile.models.style.theme.marks import BarMarkStyle
 from dbt_charts.core.compile.resolve.chart.tick_values import numeric_domain_bounds
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.emitters._measured_label_padding import (
-    DEFAULT_VL_LABEL_LIMIT,
-    cap_padding_to_label_limit,
     estimated_quantitative_tick_labels,
-    measured_label_padding,
     numeric_values,
     quantitative_tick_labels,
 )
 from dbt_charts.core.render.numeral_expr import numeral_vega_expr
 from dbt_charts.core.text.numeral_scale import SuffixMode, with_symbol
 from dbt_charts.core.text.predefined_formats import PREDEFINED_NATIVE_NAMES
+from dbt_charts.core.utils import (
+    DEFAULT_VL_LABEL_LIMIT,
+    cap_padding_to_label_limit,
+    coerce_numeric_cell,
+    measured_label_padding,
+)
 
 # ``type``/log.base/pow.exponent/symlog.constant emit log/pow/symlog scale
 # config. Must not be omitted — a missed field silently resolves to None and
@@ -242,7 +245,7 @@ def axis_to_vl(
     if (v := _n(axis, "grid", "dash")) is not None:
         d["gridDash"] = v
 
-    # Domain (Dataface's `line` field — VL's axis.domain* properties)
+    # Domain (dbt charts' `line` field — VL's axis.domain* properties)
     if (v := _n(axis, "line", "visible")) is not None:
         d["domain"] = v
     if (v := _n(axis, "line", "width")) is not None:
@@ -308,7 +311,7 @@ def measure_axis_to_vl(
     Vega-Lite's ``autosize: fit`` estimate doesn't reserve gutter for that
     direction on its own, but the same vl-convert probe that found the bug
     also found ``labelPadding`` widens the reserved gutter 1:1 regardless of
-    align direction — so when Dataface can determine the tick *content*, it
+    align direction — so when dbt charts can determine the tick *content*, it
     computes the real label width and sets ``labelPadding`` from it instead of
     falling back. Two sources of exact content: ``category_labels`` (literal
     per-row values for a nominal/ordinal axis — e.g. heatmap row labels; no
@@ -316,7 +319,7 @@ def measure_axis_to_vl(
     caller supplies it, or ``axis.tick_values``/``data``+``y_fields``'s domain
     plus a concrete ``axis.format`` for a quantitative axis (see
     ``_measured_label_padding.py``'s module docstring for the baked-vs-estimated
-    split). Any own-side align Dataface can't safely measure from (neither
+    split). Any own-side align dbt charts can't safely measure from (neither
     source available, an authored ``label.expr``, or a ``label.font.case`` of
     ``upper``/``lower`` — VL renders ``labelExpr`` in preference to ``format``,
     and `inject_axis_label_case` (run by callers after this function returns)
@@ -383,7 +386,9 @@ def measure_axis_to_vl(
                         values = numeric_values(data, y_fields)
                     labels = estimated_quantitative_tick_labels(values, measure_format)
     if labels:
-        padding = measured_label_padding(labels, axis.labels.font)
+        padding = measured_label_padding(
+            labels, axis.labels.font.family, axis.labels.font.size
+        )
         label_limit = (
             axis.labels.max_width
             if axis.labels.max_width is not None
@@ -397,7 +402,7 @@ def measure_axis_to_vl(
 
 def _fallback_reversed_label_align(ax_vl: dict[str, Any]) -> None:
     """Drop ``labelAlign`` when it grows y-axis labels back across the axis
-    line and Dataface can't safely compute a ``labelPadding`` that keeps it
+    line and dbt charts can't safely compute a ``labelPadding`` that keeps it
     clear of the plot (see ``measure_axis_to_vl``).
 
     An own-side align without baked tick content (ordinal axes, or an
@@ -432,26 +437,53 @@ def _decimal_pad_vega_expr(missing_len_e: str, pad_table: tuple[str, ...]) -> st
     return expr
 
 
-def _apply_decimal_pad(
-    formatted_e: str, spec: str, value_expr: str, pad_table: tuple[str, ...]
-) -> str:
+def _decimal_pad_missing_len_expr(formatted_e: str, precision: int) -> str:
+    """Vega expression for ``decimal_pad_for``'s own index formula
+    (``precision - frac if frac else precision + 1``), computed from the
+    TRIMMED formatted string's own fractional DIGIT count -- the ONE
+    definition of "missing depth" ``decimal_pad_for`` (``core/text/
+    numeral_scale.py``) already uses to build the very ``pad_table`` this
+    selects from, via the shared ``fractional_digit_count``.
+
+    Replaced a length-diff formula (``length(format(v, spec_without_~)) -
+    length(formatted_e)``) that only agreed with ``decimal_pad_for``'s index
+    space for a fixed-point (``"f"``-type) spec, where dropping ``~`` *is*
+    the trimming. Two real divergences broke that shortcut for other specs:
+    a significant-figures (``"s"``-type) spec's integer part alone can
+    already fill the significant-figure budget with no fractional part at
+    all (``format(128, '.3s')`` is ``"128"`` whether or not ``~`` is
+    present, so the length diff is 0 even though the value is a whole
+    number needing the DEEPEST pad -- ``decimal_pad_for`` maps "no
+    fractional digits" to ``precision + 1``, not 0), and a magnitude suffix
+    letter (``"M"``) lands in the untrimmed string's own fractional-part
+    slice, corrupting a plain length count; separately, a pad table capped
+    below its spec's own declared precision (``decimal_pad_table_for``'s
+    ``max_precision``) disagreed with a length-diff computed from the
+    UNCAPPED spec. Reading fractional digits straight off the TRIMMED
+    string sidesteps all three: it needs no untrimmed reference and no
+    knowledge of the table's own cap, so it agrees with
+    ``decimal_pad_for`` by construction for every spec type and cap.
+    """
+    frac_e = f"replace({formatted_e}, /^[^.]*\\.?/, '')"
+    frac_digits_e = f"length(replace({frac_e}, /[^0-9]/g, ''))"
+    return f"({frac_digits_e} === 0 ? {precision + 1} : {precision} - {frac_digits_e})"
+
+
+def _apply_decimal_pad(formatted_e: str, pad_table: tuple[str, ...]) -> str:
     """Append a decimal pad to an already-built Vega format expression, or
     return it unchanged when there's no pad table.
 
     ``formatted_e`` may itself be a ternary combining an anchor-tick spec
-    (currency symbol embedded via ``with_symbol``) with the plain spec — the
-    missing-length math below is computed from ``spec`` alone (never the
-    symbol-carrying variant) because a currency symbol adds the same length
-    to both the trimmed and untrimmed sides of the length-diff, so it never
-    changes which pad_table entry gets selected.
+    (currency symbol embedded via ``with_symbol``) with the plain spec --
+    ``_decimal_pad_missing_len_expr`` reads digits off whichever branch the
+    ternary evaluates to at runtime, so a currency symbol (which never
+    lands after the decimal point) can't change which pad_table entry gets
+    selected.
     """
     if not pad_table:
         return formatted_e
-    full_spec = spec.replace("~", "")
-    missing_len_e = (
-        f"(length(format({value_expr},{json.dumps(full_spec)}))"
-        f" - length({formatted_e}))"
-    )
+    precision = len(pad_table) - 2
+    missing_len_e = _decimal_pad_missing_len_expr(formatted_e, precision)
     pad_e = _decimal_pad_vega_expr(missing_len_e, pad_table)
     return f"({formatted_e} + {pad_e})"
 
@@ -534,9 +566,7 @@ def inject_axis_numeral_expr(
         if tick_label is None:
             return ax_vl
         trimmed_e = f"format(datum.value,{json.dumps(tick_label.format)})"
-        text_e = _apply_decimal_pad(
-            trimmed_e, tick_label.format, "datum.value", tick_label.decimal_pad_table
-        )
+        text_e = _apply_decimal_pad(trimmed_e, tick_label.decimal_pad_table)
         if tick_label.prefix:
             # Anchor tick only. Use with_symbol so d3-format's sign-before-symbol
             # ordering applies: format("$,.0f")(-500) -> "-$500", not "$-500".
@@ -549,8 +579,6 @@ def inject_axis_numeral_expr(
             anchor_spec = with_symbol(tick_label.format, tick_label.prefix)
             anchor_e = _apply_decimal_pad(
                 f"format(datum.value,{json.dumps(anchor_spec)})",
-                tick_label.format,
-                "datum.value",
                 tick_label.decimal_pad_table,
             )
             return {
@@ -608,15 +636,49 @@ def inject_axis_numeral_expr(
         digit_expr_combined = digits_expr
 
     parts: list[str] = []
-    parts.append(
-        _apply_decimal_pad(
-            digit_expr_combined, digit_spec, value_expr, ruler.decimal_pad_table
-        )
-    )
+    parts.append(_apply_decimal_pad(digit_expr_combined, ruler.decimal_pad_table))
     padding_expr = json.dumps(ruler.reservation) if ruler.reserve else "''"
     parts.append(f"({suffix_present} ? {json.dumps(suffix_text)} : {padding_expr})")
 
     return {**ax_vl, "labelExpr": " + ".join(parts)}
+
+
+def _array_literal_elements(expr: str) -> list[str] | None:
+    """Split a JS array-literal expression string into its top-level elements.
+
+    Returns ``None`` when ``expr`` isn't a ``[...]`` array literal, so callers
+    can fall back to treating it as a single scalar expression. Depth-aware
+    over ``()[]{}`` and quoted strings so a comma inside a nested call (e.g.
+    ``utcFormat(datum.value, '%b %-d')``) never splits the array early — the
+    sub-day clock vocabulary's two-row labelExpr is exactly this shape.
+    """
+    if not (expr.startswith("[") and expr.endswith("]")):
+        return None
+    inner = expr[1:-1]
+    elements: list[str] = []
+    depth = 0
+    quote: str | None = None
+    start = 0
+    i = 0
+    while i < len(inner):
+        c = inner[i]
+        if quote:
+            if c == "\\":
+                i += 1
+            elif c == quote:
+                quote = None
+        elif c in "'\"":
+            quote = c
+        elif c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == "," and depth == 0:
+            elements.append(inner[start:i].strip())
+            start = i + 1
+        i += 1
+    elements.append(inner[start:].strip())
+    return elements
 
 
 def inject_axis_label_case(ax_vl: dict[str, Any], axis: Any) -> dict[str, Any]:
@@ -629,6 +691,13 @@ def inject_axis_label_case(ax_vl: dict[str, Any], axis: Any) -> dict[str, Any]:
     axis emits ``upper(datum.label)``; on a temporal axis it wraps the smart
     cadence expression that was already set.
 
+    A two-row array-literal labelExpr (the sub-day clock vocabulary's date
+    context row) is wrapped element-by-element, never as a single
+    ``upper([a, b])`` call around the whole array: Vega's ``upper`` maps to
+    JS's ``String#toUpperCase``, which coerces an array argument via
+    ``Array#toString`` first — silently joining both rows into one
+    comma-separated string before the case function ever runs.
+
     MUST be called AFTER build_cartesian_x_encoding for x-axes so the temporal
     smart-cadence labelExpr is already set before wrapping.
     """
@@ -636,6 +705,10 @@ def inject_axis_label_case(ax_vl: dict[str, Any], axis: Any) -> dict[str, Any]:
     if case not in ("upper", "lower"):
         return ax_vl
     inner = ax_vl.get("labelExpr", "datum.label")
+    elements = _array_literal_elements(inner)
+    if elements is not None:
+        wrapped = ", ".join(f"{case}({element})" for element in elements)
+        return {**ax_vl, "labelExpr": f"[{wrapped}]"}
     return {**ax_vl, "labelExpr": f"{case}({inner})"}
 
 
@@ -695,7 +768,7 @@ def legend_to_vl(legend: Any) -> dict[str, Any] | None:
     Returns None when visible=False (VL legend: null disables the legend entirely).
     Works for LegendStyle and LegendStylePatch.
 
-    Dataface → VL name renames applied here:
+    dbt charts → VL name renames applied here:
       label.max_width  → labelLimit
       label.padding    → labelOffset  (gap between symbol and label text)
     """
@@ -752,36 +825,180 @@ def legend_to_vl(legend: Any) -> dict[str, Any] | None:
 
 # Per-type mark mappers are intentionally separate: each chart type exposes a different
 # subset of mark properties with different VL field names (e.g. bar uses
-# continuousBandSize, line uses interpolate, scatter uses size). A single generic mapper
+# mark.width, line uses interpolate, scatter uses size). A single generic mapper
 # would need to union all fields and conditionally skip inapplicable ones — more complex
 # with no benefit since callers always know the chart type.
 def bar_mark_to_vl(
-    bar: Any, orientation: Literal["vertical", "horizontal"]
-) -> dict[str, Any]:
+    bar: BarMarkStyle, orientation: Literal["vertical", "horizontal"], x_is_banded: bool
+) -> VLDict:
     """Map BarStyle/Patch → VL extended mark dict (non-None only).
 
     Does NOT emit corner-radius properties — those are data-dependent and must
-    be set by the caller via ``bar_corner_props``.
+    be set by the caller via ``bar_corner_props``. Does NOT compute a
+    continuous-scale default width — that's ``continuous_bar_size_prop``'s job
+    (it needs the data to compute a step, which this function never receives);
+    the caller only reaches for it when ``bar.size`` is unset AND the scale
+    isn't banded, since this function already handles the authored case below.
 
+    ``bar.size``, when authored, is a literal fixed pixel width on ANY scale —
+    band or continuous — and wins outright over ``band_width``: "authored
+    beats computed, always". Otherwise, on a banded scale (``x_is_banded``),
     ``orientation`` controls which dimension receives the band fraction:
     - ``"vertical"``: ``mark.width = {"band": band_width}``  — x categorical band.
     - ``"horizontal"``: ``mark.height = {"band": band_width}``  — y categorical band.
+
+    ``x_is_banded`` gates the ``band_width`` fallback entirely: VL's
+    ``{"band": f}`` width shorthand only resolves against a genuine band/bin
+    scale (nominal, ordinal, bucketed-calendar temporal, or a histogram's
+    binned quantitative x). On a continuous scale with no band to measure, the
+    shorthand doesn't error or fall back to ``f`` of anything meaningful —
+    measured empirically, it renders every bar at a fixed ~18px, Vega's own
+    internal default for an unresolvable band width, regardless of the
+    fraction or any other mark property. ``continuousBandSize`` (formerly
+    emitted from ``bar.size`` here) is dead code on every scale: Vega-Lite's
+    own bar mark never reads it, band or continuous. Deleted rather than kept
+    for "compatibility" — nothing consumed it correctly to begin with.
     """
-    if bar is None:
-        return {}
-    d: dict[str, Any] = {}
+    d: VLDict = {}
+    if (v := _n(bar, "opacity")) is not None:
+        # BarMarkStyle.opacity is documented as fill opacity, not overall mark
+        # opacity: VL's top-level `opacity` multiplies fill AND stroke alike
+        # (confirmed empirically -- the rendered path carries a single SVG
+        # `opacity` attribute covering both), which would hide an authored
+        # `border` right along with the fill on an opacity:0 bar. `fillOpacity`
+        # is the native VL property that isolates the two, leaving the stroke
+        # at its own (default 1) opacity -- exactly what an outline-only bar
+        # (opacity:0 fill + a visible border) needs.
+        d["fillOpacity"] = v
     if (v := _n(bar, "border", "color")) is not None:
         d["stroke"] = v
     if (v := _n(bar, "border", "width")) is not None:
         d["strokeWidth"] = v
-    if (v := _n(bar, "size")) is not None:
-        d["continuousBandSize"] = v
-    if (v := _n(bar, "band_width")) is not None:
+    size = _n(bar, "size")
+    if size is not None:
+        if orientation == "horizontal":
+            d["height"] = size
+        else:
+            d["width"] = size
+    elif x_is_banded and (v := _n(bar, "band_width")) is not None:
         if orientation == "horizontal":
             d["height"] = {"band": v}
         else:
             d["width"] = {"band": v}
     return d
+
+
+def continuous_bar_size_prop(
+    bar: BarMarkStyle,
+    field: str | None,
+    data: list[VLDict],
+    orientation: Literal["vertical", "horizontal"],
+) -> VLDict:
+    """Build the VL mark width/height prop for a bar on a continuous, unauthored-size scale.
+
+    Callers reach for this only when ``bar.size`` is None AND the scale isn't
+    banded — ``bar_mark_to_vl`` already emits a literal ``bar.size`` on any
+    scale, so this function never re-checks it. Computes a live Vega
+    expression: the minimum pixel gap between adjacent distinct values of
+    ``field`` (never the mean — an uneven cluster can be tight even when the
+    average spacing looks fine), minus ``bar.gap``, clamped to
+    ``[bar.min_size, bar.max_size]``.
+
+    The gap-in-pixels is read back from the scale itself at render time
+    (``scale('x', a + step) - scale('x', a)``, ``step`` computed here from the
+    raw data in the field's own units) rather than estimated in Python from
+    the chart's pixel width and domain bounds: Vega-Lite's own domain "nice"-
+    rounding and continuous padding are internal to the runtime scale
+    resolution vl-convert performs, not something this function can predict
+    without reimplementing it — asking the live scale for the same two points
+    it will actually plot keeps the two in sync by construction, the same
+    reasoning ``_fix_bar_band_width`` (``emitters/_overlay.py``) already
+    applies to a band scale's ``bandwidth(...)`` expression.
+
+    ``field`` absent, or fewer than 2 distinct numeric values in ``data`` (no
+    adjacent pair to measure a gap from) — falls back to a literal
+    ``bar.max_size``: there's nothing to collide with, so the ceiling is a
+    safe, simple width.
+
+    Numeric coercion goes through ``coerce_numeric_cell`` — the same rule
+    ``bar_hover_band.py`` uses — so a warehouse NUMERIC/DECIMAL x column
+    (BigQuery, DuckDB) counts as numeric here too, and a non-finite cell
+    (NaN, ±Infinity) is excluded rather than sorted alongside real values or
+    interpolated into the emitted expression string.
+
+    A continuous TEMPORAL scale takes the same treatment with the values
+    coerced to epoch milliseconds (``epoch_ms``) — Vega's ``scale('x', …)``
+    reads a number on a time scale as a timestamp, so the min-gap probe works
+    identically. Tried only when numeric coercion finds fewer than 2 values:
+    a column is one type, so whichever coercion matches ≥2 values is the
+    column's.
+    """
+    from dbt_charts.core.render.chart.time_unit_detect import epoch_ms
+
+    prop_key = "height" if orientation == "horizontal" else "width"
+    xs = (
+        sorted(
+            {
+                coerced
+                for row in data
+                if field in row
+                and (coerced := coerce_numeric_cell(row[field])) is not None
+            }
+        )
+        if field is not None
+        else []
+    )
+    if len(xs) < 2 and field is not None:
+        xs = sorted(
+            {
+                ms
+                for row in data
+                if field in row and (ms := epoch_ms(row[field])) is not None
+            }
+        )
+    if len(xs) < 2:
+        assert bar.max_size is not None, (
+            "marks.bar.size and marks.bar.max_size both unset — "
+            "theme cascade must populate at least one"
+        )
+        return {prop_key: bar.max_size}
+    step = min(b - a for a, b in zip(xs, xs[1:], strict=False))
+    scale_name = "y" if orientation == "horizontal" else "x"
+    a = xs[0]
+    # size is unset (the only way callers reach this function), so gap/min_size/
+    # max_size are the fields the theme cascade must have populated — asserted
+    # individually (rather than trusting the caller) since an interpolated
+    # None would otherwise repr() as the literal text "None" in the expression
+    # string below and die with an opaque Vega "Unrecognized signal name" error.
+    assert bar.gap is not None, (
+        "marks.bar.gap unset — theme cascade must populate it when marks.bar.size is unset"
+    )
+    assert bar.min_size is not None, (
+        "marks.bar.min_size unset — theme cascade must populate it when marks.bar.size is unset"
+    )
+    assert bar.max_size is not None, (
+        "marks.bar.max_size unset — theme cascade must populate it when marks.bar.size is unset"
+    )
+    expr = (
+        f"clamp(abs(scale('{scale_name}', {a + step!r}) - scale('{scale_name}', {a!r})) "
+        f"- {bar.gap!r}, {bar.min_size!r}, {bar.max_size!r})"
+    )
+    return {prop_key: {"expr": expr}}
+
+
+def effective_bar_size(bar: BarMarkStyle) -> float | None:
+    """The pixel bar thickness a caller should budget layout space against.
+
+    ``bar.size`` when authored; otherwise ``bar.max_size``, the ceiling a
+    computed continuous-scale width can never exceed — a safe upper-bound
+    estimate for callers (horizontal-bar min-height, quantitative-x scale
+    padding) that need a single number before the real per-bar width is
+    known. Still ``| None`` in the rare case a chart-local override clears
+    both — callers that require a concrete value assert on the result, the
+    same cascade-completeness contract every other theme-populated field here
+    carries.
+    """
+    return bar.size if bar.size is not None else bar.max_size
 
 
 def bar_data_signs(data: list[dict[str, Any]], field: str) -> tuple[bool, bool]:

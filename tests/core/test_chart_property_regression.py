@@ -52,7 +52,7 @@ DATA = [{"month": "Jan", "revenue": 100}, {"month": "Feb", "revenue": 200}]
 class TestTitlePropertyRegression:
     """Title properties reach the final Vega-Lite spec.
 
-    Audit finding: title is style-driven in DFT. The style path controlled
+    Audit finding: title is style-driven in dbt charts. The style path controlled
     17/28 properties; the chart path controlled only 2/28.
     """
 

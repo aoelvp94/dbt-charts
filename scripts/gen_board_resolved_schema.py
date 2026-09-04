@@ -20,8 +20,8 @@ from pathlib import Path
 from typing import Any
 
 # In the monorepo this script lives at dbt-charts/scripts/; in the standalone
-# export it lands at scripts/ (Copybara core.move("dataface", "")). Either way
-# parents[1] is the dataface package root / standalone repo root.
+# export it lands at scripts/ (Copybara core.move("dbt-charts", "")). Either way
+# parents[1] is the dbt-charts package root / standalone repo root.
 _DBT_CHARTS_DIR = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = (
     _DBT_CHARTS_DIR
@@ -65,7 +65,7 @@ def _current_source_version() -> str:
     """Version of the working tree this script is actually running against.
 
     Built fresh via ``uv build`` (the same hatch-vcs machinery a release
-    build uses, configured in ``dataface/pyproject.toml``) rather than read
+    build uses, configured in ``dbt-charts/pyproject.toml``) rather than read
     from installed package metadata: an editable install's
     ``importlib.metadata`` version is frozen at whatever point the dev venv
     was last (re)installed, and drifts from HEAD on every later commit until

@@ -68,6 +68,27 @@ rows:
         assert "revenue" in dash.queries
         assert "revenue_chart" in dash.charts
 
+    def test_list_boards_reports_board_notes(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        """BoardSummary.notes carries the board's authored notes: (published on
+        the MCP dct://boards resource) — not the retired description: key."""
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        (boards / "revenue.yml").write_text(
+            """
+title: Sales Dashboard
+notes: Monthly revenue rollup
+rows: []
+"""
+        )
+
+        result = list_boards(local_project(tmp_path))
+
+        assert result.boards[0].notes == "Monthly revenue rollup"
+
     def test_list_boards_skips_underscore_files(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
@@ -101,6 +122,41 @@ rows:
 
         assert result.count == 1
         assert result.boards[0].title == "Main Dashboard"
+
+    def test_list_boards_finds_boards_that_declare_no_layout(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A prose-only board and an ``extends``-only board are still boards.
+
+        Both render — ``text:`` is content, and composition folds the base's
+        layout into a bare ``extends:`` child — so a listing that misses them
+        hides real dashboards from ``list_boards`` and from ``dct search``.
+        """
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        (boards / "readme.yml").write_text(
+            "title: Team Readme\ntext: |\n  How we work.\n"
+        )
+        (boards / "inherited.yml").write_text("extends: base\n")
+
+        result = list_boards(local_project(tmp_path))
+
+        assert {b.title for b in result.boards} == {"Team Readme", "inherited"}
+
+    def test_list_boards_skips_meta_cascade_files(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """``meta.yaml`` carries a directory's defaults; it is never its own board."""
+        boards = tmp_path / "charts"
+        boards.mkdir()
+        (boards / "meta.yaml").write_text(
+            "extends: paper\nqueries:\n  shared:\n    sql: SELECT 1\n    source: test\n"
+        )
+        (boards / "dashboard.yml").write_text("title: Main\ntext: Hello\n")
+
+        result = list_boards(local_project(tmp_path))
+
+        assert [b.title for b in result.boards] == ["Main"]
 
     def test_list_boards_recursive(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]

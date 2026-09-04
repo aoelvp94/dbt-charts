@@ -527,18 +527,24 @@ class TestTemporalOverlapResolution:
             thinned = resolve_axis_x_overlap(
                 axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=500
             )
+            # Narrow enough that even the looped ladder's terminal (year)
+            # rung doesn't fit flat — still exercises thin-before-tilt.
             tilted = resolve_axis_x_overlap(
-                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=80
+                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=20
             )
 
         assert thinned.visibility_time_unit == "yearquarter"
         assert thinned.angle == 0.0
-        assert tilted.visibility_time_unit == "yearquarter"
+        assert tilted.visibility_time_unit == "year"
         assert tilted.angle != 0.0
 
-    def test_authored_quarter_format_can_thin_to_year_without_becoming_year_text(
+    def test_authored_quarter_format_promotes_to_year_text_when_thinned_to_year(
         self,
     ) -> None:
+        """The looped ladder's Q1 amendment: once thinning reaches ``year``,
+        the label vocabulary promotes to the bare year (``2024``), not the
+        author's original ``yearquarter`` vocabulary (which would otherwise
+        repeat ``Q1`` at every surviving, January-only tick)."""
         from dbt_charts.core.render.chart.emitters._label_overlap import (
             resolve_axis_x_overlap,
         )
@@ -557,12 +563,14 @@ class TestTemporalOverlapResolution:
 
         expr = default_label_expr_for(
             "yearmonth",
-            "yearquarter",
+            layout.format_time_unit,
             layout.visibility_time_unit,
         )
         assert layout.visibility_time_unit == "year"
-        assert "'Q'" in expr
+        assert layout.format_time_unit == "year"
+        assert "'Q'" not in expr
         assert "'%b'" not in expr
+        assert "'%Y'" in expr
 
     def test_year_labels_use_parity_skip_before_tilt(self) -> None:
         from dbt_charts.core.render.chart.emitters._label_overlap import (
@@ -582,6 +590,118 @@ class TestTemporalOverlapResolution:
 
         assert layout.label_overlap == "parity"
         assert layout.visibility_time_unit == "year"
+
+    def test_continuous_temporal_render_local_thinning_keeps_flushed_edge_label(
+        self,
+    ) -> None:
+        """A continuous (line/area) axis whose weekly data gets render-locally
+        thinned to month labels — never authored — must still get an explicit
+        ``values`` list carrying the domain-start opener.
+
+        Regression: ``area-charts_0`` (6 weekly points, Jan 5 - Feb 9 2026) and
+        ``playground/xaxis-cadence-ladder`` axis 6 both lost their leading
+        "Jan" label and, with it, all year context. Vega's own month-interval
+        tick generator only places ticks on true calendar-month boundaries
+        (Feb 1 here) — Jan 1 falls outside the domain (which starts Jan 5), so
+        without an explicit ``values`` override Vega silently drops the tick
+        entirely (it never enters the DOM, it is not merely hidden via
+        ``labelOverlap``). Before this fix, only an AUTHORED coarser
+        ``labels.time_unit`` triggered the explicit ``values`` injection
+        (``label_tick_cadence``) — a render-local ladder promotion did not.
+        """
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+        from dbt_charts.core.render.chart.type_inference import (
+            build_cartesian_x_encoding,
+        )
+
+        axis = _axis_x_temporal()
+        dates = [
+            "2026-01-05",
+            "2026-01-12",
+            "2026-01-19",
+            "2026-01-26",
+            "2026-02-02",
+            "2026-02-09",
+        ]
+        data = [{"x": value} for value in dates]
+        measurer = _make_mock_measurer(width_per_char=5.0)
+        with patch(
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            return_value=measurer,
+        ):
+            # bucket_aligned_temporal=False mirrors the real area/line emitter
+            # call (curve != "step").
+            layout = resolve_axis_x_overlap(
+                axis,
+                "x",
+                data,
+                1.0,
+                bucket_aligned_temporal=False,
+                edge_labels_flushed=True,
+                chart_width=60,
+            )
+
+        assert layout.visibility_time_unit == "yearmonth"
+        assert layout.anchor_index == 0
+
+        _, ax_vl, _ = build_cartesian_x_encoding(
+            data,
+            "x",
+            axis,
+            {},
+            "area",
+            format_time_unit=layout.format_time_unit,
+            visibility_time_unit=layout.visibility_time_unit,
+            label_anchor_index=layout.anchor_index,
+        )
+
+        assert "values" in ax_vl
+        assert ax_vl["values"][0] == dates[0]
+        assert ax_vl["values"] == ["2026-01-05", "2026-02-02"]
+
+    def test_thinned_native_week_labels_do_not_shift_off_the_real_date(self) -> None:
+        """A continuous axis keeping its native ``yearweek`` vocabulary (author
+        set ``labels.time_unit: yearweek``, matching the encoding grain) while
+        render-locally thinned to a coarser visibility must show the REAL
+        bucket date, not one shifted by a day.
+
+        Regression: injecting real opener values (this file's previous test)
+        made ``datum.value`` a genuine per-row bucket key for this axis too —
+        but the shared temporal labelExpr call still unconditionally passed
+        ``ticks_are_buckets=False``, which exists to correct Vega's own
+        Sunday-anchored continuous ``utcyearweek`` ticks to the represented
+        Monday. Applying that correction to an already-exact injected date
+        shifts it a real day forward (``playground/time-unit-label-cadence-
+        matrix``'s ``native_week`` chart read "2Apr'24" for a domain that has
+        no April 2nd row — the real bucket is April 1st).
+        """
+        from dbt_charts.core.render.chart.type_inference import (
+            build_cartesian_x_encoding,
+        )
+
+        axis = _axis_x_temporal(
+            label_time_unit="yearweek", encoding_time_unit="yearweek"
+        )
+        dates = [
+            (datetime.date(2024, 2, 12) + datetime.timedelta(weeks=i)).isoformat()
+            for i in range(52)
+        ]
+        data = [{"x": value} for value in dates]
+
+        _, ax_vl, _ = build_cartesian_x_encoding(
+            data,
+            "x",
+            axis,
+            {},
+            "line",
+            format_time_unit="yearweek",
+            visibility_time_unit="yearquarter",
+        )
+
+        assert "2024-04-01" in ax_vl["values"]
+        assert "utcOffset" not in ax_vl["labelExpr"]
 
 
 class TestCategoricalOverlapResolution:
@@ -625,24 +745,19 @@ class TestCategoricalOverlapResolution:
 
 
 class TestCadenceTokenWidthYearContext:
-    """``_cadence_token_width`` must measure the same two-row shape
-    ``_month_label``/``_quarter_label`` actually paint (a stacked year row
-    under the month/quarter text), not the bare single-row string — see
-    that function's own docstring. A year (4 tabular digits) is routinely
-    wider than a 3-letter month abbreviation, so skipping this
-    under-measures the tick and lets it collide with its neighbor.
-
-    The function itself is now purely mechanical: it trusts the caller's
-    resolved ``carries_year_row`` rather than deriving it, because the
-    real labelExpr condition (``anchor || fiscal_month === 0``) needs to
-    know whether a tick is the domain's literal first (leading-flush) or a
-    genuine fiscal-year boundary (trailing-flush) — a distinction only
-    ``_pair_clears`` has enough context to resolve (see
-    ``TestPairClearsCarriesYearRow`` below for that resolution logic, and
-    ``TestFiscalMonthIsYearStart`` for the boundary-detection half).
+    """``_cadence_token_width`` measures ROW 1 ONLY — the tick's own
+    month/quarter text. A tick that also carries the stacked year-context
+    row (``_month_label``/``_quarter_label`` painting "2024" under "Jan")
+    renders that row as a SEPARATE text line at a different y
+    (``_year_row_width``), never folded into this width via ``max()``: row 1
+    can only ever collide with a neighbour's row 1, the year row only with a
+    neighbour's year row (see ``_pair_clears``, which checks the two rows as
+    two independent clearances — a max()'d block over-reserves ~6px on
+    every flushed edge label that carries the year row, rejecting rungs that
+    render cleanly).
     """
 
-    def test_yearmonth_includes_year_row_width_when_carries_year_row(self) -> None:
+    def test_yearmonth_width_is_row_one_only(self) -> None:
         import datetime
 
         from dbt_charts.core.font_measure import get_font_measurer
@@ -652,36 +767,10 @@ class TestCadenceTokenWidthYearContext:
 
         measurer = get_font_measurer(None)
         january = datetime.date(2025, 1, 6)
-        width = _cadence_token_width(
-            january, "yearmonth", measurer, 11.0, 0, 1, carries_year_row=True
-        )
-        assert width == max(
-            measurer.measure("Jan", 11.0), measurer.measure("2025", 11.0)
-        )
-        assert width == pytest.approx(measurer.measure("2025", 11.0))
-
-    def test_yearmonth_excludes_year_row_width_when_not_carries_year_row(
-        self,
-    ) -> None:
-        import datetime
-
-        from dbt_charts.core.font_measure import get_font_measurer
-        from dbt_charts.core.render.chart.time_unit_detect import (
-            _cadence_token_width,
-        )
-
-        measurer = get_font_measurer(None)
-        # Even a fiscal-year-start date must stay row-1-only when the
-        # caller has resolved carries_year_row=False (a centered tick, or
-        # a trailing-edge tick off the fiscal boundary) -- the function
-        # never re-derives the fiscal check itself.
-        january = datetime.date(2025, 1, 6)
-        width = _cadence_token_width(
-            january, "yearmonth", measurer, 11.0, 0, 1, carries_year_row=False
-        )
+        width = _cadence_token_width(january, "yearmonth", measurer, 11.0, 0, 1)
         assert width == pytest.approx(measurer.measure("Jan", 11.0))
 
-    def test_yearquarter_includes_year_row_width_when_carries_year_row(self) -> None:
+    def test_yearquarter_width_is_row_one_only(self) -> None:
         import datetime
 
         from dbt_charts.core.font_measure import get_font_measurer
@@ -691,27 +780,30 @@ class TestCadenceTokenWidthYearContext:
 
         measurer = get_font_measurer(None)
         q1_opener = datetime.date(2025, 1, 6)
-        width = _cadence_token_width(
-            q1_opener, "yearquarter", measurer, 11.0, 0, 1, carries_year_row=True
-        )
-        assert width == pytest.approx(measurer.measure("2025", 11.0))
-
-    def test_yearquarter_excludes_year_row_width_when_not_carries_year_row(
-        self,
-    ) -> None:
-        import datetime
-
-        from dbt_charts.core.font_measure import get_font_measurer
-        from dbt_charts.core.render.chart.time_unit_detect import (
-            _cadence_token_width,
-        )
-
-        measurer = get_font_measurer(None)
-        q1_opener = datetime.date(2025, 1, 6)
-        width = _cadence_token_width(
-            q1_opener, "yearquarter", measurer, 11.0, 0, 1, carries_year_row=False
-        )
+        width = _cadence_token_width(q1_opener, "yearquarter", measurer, 11.0, 0, 1)
         assert width == pytest.approx(measurer.measure("Q1", 11.0))
+
+
+class TestYearRowWidth:
+    """``_year_row_width`` measures the stacked year-context row on its own
+    — always the bare year number, regardless of the tick's own vocabulary
+    (month, quarter, ...). It is a separate text line from
+    ``_cadence_token_width``'s row 1, checked as its own clearance in
+    ``_pair_clears`` rather than folded in."""
+
+    def test_returns_bare_year_width(self) -> None:
+        import datetime
+
+        from dbt_charts.core.font_measure import get_font_measurer
+        from dbt_charts.core.render.chart.time_unit_detect import (
+            _year_row_width,
+        )
+
+        measurer = get_font_measurer(None)
+        january = datetime.date(2025, 1, 6)
+        assert _year_row_width(january, measurer, 11.0) == pytest.approx(
+            measurer.measure("2025", 11.0)
+        )
 
 
 class TestFiscalMonthIsYearStart:
@@ -788,15 +880,15 @@ class TestPairClearsEdgeFlush:
             datetime.date(2025, 2, 3),
         ]
         size = 11.0
-        w_2025 = measurer.measure("2025", size)
+        w_jan = measurer.measure("Jan", size)
         w_feb = measurer.measure("Feb", size)
         # Real Vega flushes dates[0] (Jan, day=6 — not a calendar boundary)
-        # to the plot edge: it reserves the full two-row width ("2025" is
-        # wider than "Jan"), not half. Pick a band whose clearance sits
-        # strictly between the buggy half-width estimate and the real
-        # full-width one, so the two assertions below discriminate cleanly.
-        buggy_extent = w_2025 / 2 + w_feb / 2
-        real_extent = w_2025 + w_feb / 2
+        # to the plot edge: it reserves the full row-1 width ("Jan"), not
+        # half. Pick a band whose clearance sits strictly between the buggy
+        # half-width estimate and the real full-width one, so the two
+        # assertions below discriminate cleanly.
+        buggy_extent = w_jan / 2 + w_feb / 2
+        real_extent = w_jan + w_feb / 2
         band = (buggy_extent + real_extent) / 2 / 4
         assert not _pair_clears(
             0,
@@ -808,6 +900,7 @@ class TestPairClearsEdgeFlush:
             size,
             band,
             edge_labels_flushed=True,
+            is_anchor=True,
             fiscal_year_start_month=1,
         )
         # A non-flushed axis (e.g. authored labels.flush: false) keeps the
@@ -822,6 +915,7 @@ class TestPairClearsEdgeFlush:
             size,
             band,
             edge_labels_flushed=False,
+            is_anchor=True,
             fiscal_year_start_month=1,
         )
 
@@ -858,34 +952,111 @@ class TestPairClearsEdgeFlush:
             size,
             band,
             edge_labels_flushed=True,
+            is_anchor=False,
             fiscal_year_start_month=1,
         )
 
+    def test_off_cadence_anchor_keeps_half_width(self) -> None:
+        """A domain opening off the label cadence has its first LABELED tick
+        interior, and the real render centers it (``text-anchor: middle``) —
+        only ``dates[0]`` sits at the scale's range edge and gets flushed. So
+        ``left_flush`` stays keyed on ``i == 0``, not on ``is_anchor``.
 
-class TestPairClearsCarriesYearRow:
-    """The leading flush edge is always ``anchor`` in the real labelExpr
-    (``anchor || fiscal_month === 0``) -- the domain's literal first tick
-    carries the stacked year row whatever month it opens on, not only at a
-    fiscal-year boundary. ``_fiscal_month_is_year_start`` alone (the
-    ``fiscal_month === 0`` half) is the *trailing*-edge predicate; using it
-    for the leading edge too under-measures a non-January opener.
-    """
-
-    def test_leading_flush_on_non_fiscal_boundary_month_still_carries_year_row(
-        self,
-    ) -> None:
+        The two halves differ only in where the domain opens: identical label
+        vocabulary (Q4 -> Q1, year rows 2015 -> 2016), identical clearance.
+        The band sits between the half-width and full-width reservations, so
+        keying ``left_flush`` on ``is_anchor`` would flip the first assertion.
+        """
         import datetime
 
         from dbt_charts.core.font_measure import get_font_measurer
         from dbt_charts.core.render.chart.time_unit_detect import _pair_clears
 
         measurer = get_font_measurer(None)
-        # Domain opens in March -- not a fiscal-year-start month under the
-        # default fiscal_year_start_month=1 -- so _fiscal_month_is_year_start
-        # alone would (wrongly) say this tick stays row-1-only. A third date
-        # keeps the Mar/Apr pair off the *trailing* edge (j == len(dates)-1
-        # would trigger its own, unrelated flush reservation on Apr and
-        # confound the numbers below).
+        size = 11.0
+        off_cadence = [  # opens in August: quarterly openers are 2, 5, 8
+            datetime.date(2015, 8, 1),
+            datetime.date(2015, 9, 1),
+            datetime.date(2015, 10, 1),
+            datetime.date(2015, 11, 1),
+            datetime.date(2015, 12, 1),
+            datetime.date(2016, 1, 1),
+            datetime.date(2016, 2, 1),
+            datetime.date(2016, 3, 1),
+            datetime.date(2016, 4, 1),
+        ]
+        on_cadence = off_cadence[2:]  # opens in October: openers are 0, 3, 6
+        w_q4 = measurer.measure("Q4", size)
+        w_q1 = measurer.measure("Q1", size)
+        y_2015 = measurer.measure("2015", size)
+        y_2016 = measurer.measure("2016", size)
+        half = max((w_q4 + w_q1) / 2, (y_2015 + y_2016) / 2)
+        full = max(w_q4 + w_q1 / 2, y_2015 + y_2016 / 2)
+        band = (half + full) / 2 / 3  # three bands separate the two openers
+
+        assert _pair_clears(
+            2,
+            5,
+            off_cadence,
+            "yearmonth",
+            "yearquarter",
+            measurer,
+            size,
+            band,
+            edge_labels_flushed=True,
+            is_anchor=True,
+            fiscal_year_start_month=1,
+        )
+        # Same pair of labels, same clearance, but now genuinely at dates[0] —
+        # Vega flushes it, so it reserves its full width and does not clear.
+        assert not _pair_clears(
+            0,
+            3,
+            on_cadence,
+            "yearmonth",
+            "yearquarter",
+            measurer,
+            size,
+            band,
+            edge_labels_flushed=True,
+            is_anchor=True,
+            fiscal_year_start_month=1,
+        )
+
+
+class TestPairClearsCarriesYearRow:
+    """The anchor tick is always ``anchor`` in the real labelExpr
+    (``anchor || fiscal_month === 0``) -- the first LABELED tick carries the
+    stacked year row whatever month it opens on, not only at a fiscal-year
+    boundary. It is not the domain's literal first tick: the two diverge
+    whenever the domain opens before its first labeled opener. But that row is a SEPARATE text line at a
+    different y than row 1 (the tick's own month/quarter text) — it can
+    only ever collide with a neighbour's own year row, never with a
+    neighbour's row 1. A neighbour that does not itself carry a year row
+    has nothing painted on that line to collide with, so the row is
+    entirely inert for that pair's clearance check.
+    """
+
+    def test_leading_flush_year_row_does_not_widen_clearance_against_plain_neighbor(
+        self,
+    ) -> None:
+        """The over-reservation bug this task fixes: a flushed "Mar" tick's
+        hidden "2025" year row must NOT widen the clearance test against a
+        neighbor ("Apr") that carries no year row of its own — the year
+        row's own width is irrelevant to a pair where only one side has
+        one. Only row 1 ("Mar" vs "Apr") governs."""
+        import datetime
+
+        from dbt_charts.core.font_measure import get_font_measurer
+        from dbt_charts.core.render.chart.time_unit_detect import _pair_clears
+
+        measurer = get_font_measurer(None)
+        # Domain opens in March -- not a fiscal-year-start month -- so the
+        # leading tick still carries the year row (anchor is unconditional),
+        # but the trailing member of this pair (Apr) is neither the domain's
+        # first nor last tick, so it never carries one itself. A third date
+        # keeps this pair off the *trailing* edge (j == len(dates)-1 would
+        # trigger its own, unrelated flush reservation on Apr).
         dates = [
             datetime.date(2025, 3, 1),
             datetime.date(2025, 4, 1),
@@ -895,9 +1066,46 @@ class TestPairClearsCarriesYearRow:
         w_mar = measurer.measure("Mar", size)
         w_2025 = measurer.measure("2025", size)
         w_apr = measurer.measure("Apr", size)
-        buggy_extent = w_mar + w_apr / 2  # under-measures: bare "Mar"
-        real_extent = w_2025 + w_apr / 2  # correct: stacked ["Mar", "2025"]
+        buggy_extent = w_2025 + w_apr / 2  # old bug: maxed in the year row
+        real_extent = w_mar + w_apr / 2  # correct: row 1 only
         band = (buggy_extent + real_extent) / 2
+        assert _pair_clears(
+            0,
+            1,
+            dates,
+            "yearmonth",
+            "yearmonth",
+            measurer,
+            size,
+            band,
+            edge_labels_flushed=True,
+            is_anchor=True,
+            fiscal_year_start_month=1,
+        )
+
+    def test_both_edges_carrying_year_row_check_it_as_its_own_clearance(self) -> None:
+        """When BOTH members of a pair carry the year row — a short domain
+        whose only two labeled ticks are the leading and trailing edge, and
+        the trailing one lands on a fiscal-year boundary — the year row is
+        no longer inert: it is checked as its own independent clearance,
+        alongside (not folded into) the row-1 check."""
+        import datetime
+
+        from dbt_charts.core.font_measure import get_font_measurer
+        from dbt_charts.core.render.chart.time_unit_detect import _pair_clears
+
+        measurer = get_font_measurer(None)
+        dates = [datetime.date(2025, 1, 1), datetime.date(2026, 1, 1)]
+        size = 11.0
+        w_jan = measurer.measure("Jan", size)
+        w_2025 = measurer.measure("2025", size)
+        w_2026 = measurer.measure("2026", size)
+        # Both ticks are flushed edges here, so both reserve full (not
+        # half) width on each row they paint. Pick a band that clears row 1
+        # ("Jan" + "Jan") but not the wider year row ("2025" + "2026").
+        row1_extent = w_jan + w_jan
+        year_extent = w_2025 + w_2026
+        band = (row1_extent + year_extent) / 2
         assert not _pair_clears(
             0,
             1,
@@ -908,5 +1116,413 @@ class TestPairClearsCarriesYearRow:
             size,
             band,
             edge_labels_flushed=True,
+            is_anchor=True,
             fiscal_year_start_month=1,
         )
+        # A band wide enough for both rows clears cleanly.
+        assert _pair_clears(
+            0,
+            1,
+            dates,
+            "yearmonth",
+            "yearmonth",
+            measurer,
+            size,
+            year_extent,
+            edge_labels_flushed=True,
+            is_anchor=True,
+            fiscal_year_start_month=1,
+        )
+
+    def test_interior_fiscal_year_start_tick_carries_year_row_even_unflushed(
+        self,
+    ) -> None:
+        """An interior January (or fiscal-year-start month) paints its year
+        row whether or not it is a flush edge — the real labelExpr condition
+        is ``anchor || fiscal_month === 0``, and the second half fires on ANY
+        tick. The old code modeled ``j_carries_year_row`` as
+        ``right_flush and fiscal_month_is_year_start`` — gated on being the
+        domain's literal LAST tick — so an interior January paired against
+        the anchor (which is never the trailing edge here) was reported as
+        carrying no year row at all, silently skipping the clearance check
+        the real render fails."""
+        import datetime
+
+        from dbt_charts.core.font_measure import get_font_measurer
+        from dbt_charts.core.render.chart.time_unit_detect import _pair_clears
+
+        measurer = get_font_measurer(None)
+        # Anchor opens October (quarter format); the second labeled quarter
+        # opener is an interior January — nowhere near the domain's last
+        # tick. Both carry the year row for real.
+        dates = [
+            datetime.date(2023, 10, 1),
+            datetime.date(2024, 1, 1),
+            datetime.date(2024, 4, 1),
+            datetime.date(2024, 7, 1),
+        ]
+        size = 11.0
+        w_2023 = measurer.measure("2023", size)
+        w_2024 = measurer.measure("2024", size)
+        w_q4 = measurer.measure("Q4", size)
+        w_q1 = measurer.measure("Q1", size)
+        row1_extent = w_q4 + w_q1 / 2
+        year_extent = w_2023 + w_2024 / 2
+        # Wide enough for row 1, too narrow for the year row.
+        band = (row1_extent + year_extent) / 2
+        assert not _pair_clears(
+            0,
+            1,
+            dates,
+            "yearquarter",
+            "yearquarter",
+            measurer,
+            size,
+            band,
+            edge_labels_flushed=True,
+            is_anchor=True,
+            fiscal_year_start_month=1,
+        )
+
+
+class TestResolveTemporalLabelVisibilityYearRowOverprint:
+    """Regression for the same defect at the resolver's own public entry
+    point: an axis whose anchor tick opens off the fiscal-year boundary
+    (October) paired against an interior January must not be reported as
+    fitting ``yearquarter`` flat when the two ticks' year rows actually
+    overprint in the real render."""
+
+    def test_30_monthly_points_opening_october_does_not_fit_yearquarter(
+        self,
+    ) -> None:
+        import datetime
+
+        from dbt_charts.core.font_measure import get_font_measurer
+        from dbt_charts.core.render.chart.time_unit_detect import (
+            resolve_temporal_label_visibility,
+        )
+
+        dates = []
+        year, month = 2023, 10
+        for _ in range(30):
+            dates.append(datetime.date(year, month, 1))
+            month += 1
+            if month > 12:
+                month = 1
+                year += 1
+
+        measurer = get_font_measurer(None)
+        result = resolve_temporal_label_visibility(
+            dates,
+            "yearmonth",
+            "yearmonth",
+            measurer,
+            11.0,
+            10.0,
+            fiscal_year_start_month=1,
+            edge_labels_flushed=True,
+        )
+        assert result != ("yearquarter", True)
+
+
+class TestResolveTemporalLabelVisibilityAnchorIsFirstLabeledOpener:
+    """Regression: the labelExpr's ``anchor`` is the first *visible*
+    (labeled) tick, not the domain's literal index 0 -- ``_pair_clears``
+    used to test ``i == 0`` where the correct predicate is the pair's
+    ordinal position (``k == 0`` in ``temporal_visibility_fits``). A domain
+    that opens before its first labeled opener at a candidate grain (18
+    monthly points starting Feb 2023; the first quarter opener at
+    ``fiscal_year_start_month=7`` is April 2023, domain index 2) must still
+    treat that first labeled tick as the anchor and give it a year row --
+    otherwise its real collision with the next labeled tick's year row goes
+    undetected and the ladder wrongly reports ``yearquarter`` as fitting."""
+
+    def test_18_monthly_points_opening_before_first_quarter_opener_does_not_fit_yearquarter(
+        self,
+    ) -> None:
+        import datetime
+
+        from dbt_charts.core.font_measure import get_font_measurer
+        from dbt_charts.core.render.chart.time_unit_detect import (
+            resolve_temporal_label_visibility,
+        )
+
+        dates = []
+        year, month = 2023, 2
+        for _ in range(18):
+            dates.append(datetime.date(year, month, 1))
+            month += 1
+            if month > 12:
+                month = 1
+                year += 1
+
+        measurer = get_font_measurer(None)
+        result = resolve_temporal_label_visibility(
+            dates,
+            "yearmonth",
+            "yearmonth",
+            measurer,
+            11.0,
+            8.5,
+            fiscal_year_start_month=7,
+            edge_labels_flushed=True,
+        )
+        assert result == ("year", True)
+
+
+def _weekly_dates(
+    n: int, start: datetime.date = datetime.date(2010, 1, 4)
+) -> list[str]:
+    return [
+        (start + datetime.timedelta(weeks=offset)).isoformat() for offset in range(n)
+    ]
+
+
+def _daily_dates(n: int, start: datetime.date = datetime.date(2000, 1, 1)) -> list[str]:
+    return [
+        (start + datetime.timedelta(days=offset)).isoformat() for offset in range(n)
+    ]
+
+
+class TestCadenceLadderReachesYear:
+    """Regression coverage for the looped cadence ladder + sparse ceiling.
+
+    Unlike the mock-measurer tests above, these use the real font measurer
+    (no ``get_font_measurer`` patch) with ``label_usable_ratio=0.8`` — the
+    same combination the task brief's own Q2 measurement table used — so the
+    chart widths below reproduce that table's outcomes directly.
+    """
+
+    def test_137_monthly_points_reaches_year_flat(self) -> None:
+        """This IS the reported chart — matrix cell ``mo137_1050``, a line
+        chart, so ``edge_labels_flushed=True``."""
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+
+        axis = _axis_x_temporal()
+        data = [{"x": value} for value in _monthly_dates(137, start=(2015, 4))]
+
+        layout = resolve_axis_x_overlap(
+            axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=1050
+        )
+
+        assert layout.visibility_time_unit == "year"
+        assert layout.format_time_unit == "year"
+        assert layout.angle == 0.0
+
+    def test_year_reachable_from_monthly_weekly_and_daily(self) -> None:
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+
+        axis = _axis_x_temporal()
+        cases = [
+            _monthly_dates(137, start=(2015, 4)),
+            _weekly_dates(300),
+            _daily_dates(3650),
+        ]
+        for values in cases:
+            data = [{"x": value} for value in values]
+            layout = resolve_axis_x_overlap(
+                axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=500
+            )
+            assert layout.visibility_time_unit == "year", values[0]
+
+    def test_sparse_ceiling_is_a_two_sided_window(self) -> None:
+        """Same 60-month series, two card widths: the ceiling picks a
+        different rung on each — proof a proportional rule cannot do this
+        job (see the task brief's Q2 table). Both are line-chart matrix
+        cells (``mo60_282``, ``mo60_1128``), so ``edge_labels_flushed=True``."""
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+
+        axis = _axis_x_temporal()
+        data = [{"x": value} for value in _monthly_dates(60)]
+
+        narrow = resolve_axis_x_overlap(
+            axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=282
+        )
+        wide = resolve_axis_x_overlap(
+            axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=1128
+        )
+
+        assert narrow.visibility_time_unit == "year"
+        assert wide.visibility_time_unit == "yearquarter"
+
+    def test_60_monthly_at_658_prefers_sparse_year_over_quarter_overlap(self) -> None:
+        """The ceiling is a preference, not a hard stop: at 658px neither
+        month nor quarter fits flat (quarter's flushed first label, carrying
+        its stacked year row, needs 34.3px against 26.3px of clearance) — only
+        year fits, even though its 105.3px spacing exceeds the 90px ceiling.
+        Before this fix the ladder gave up at quarter (which does not fit
+        either) and rotated, printing "JanApr" on top of itself."""
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+
+        axis = _axis_x_temporal()
+        data = [{"x": value} for value in _monthly_dates(60)]
+
+        layout = resolve_axis_x_overlap(
+            axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=658
+        )
+
+        assert layout.visibility_time_unit == "year"
+        assert layout.angle == 0.0
+
+    def test_260_weekly_at_658_prefers_sparse_year_over_quarter_overlap(self) -> None:
+        """Same shape as the monthly case above, weekly-grained: the ceiling
+        yields to a flat, sparse year cadence rather than a colliding
+        quarter."""
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+
+        axis = _axis_x_temporal()
+        data = [{"x": value} for value in _weekly_dates(260)]
+
+        layout = resolve_axis_x_overlap(
+            axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=658
+        )
+
+        assert layout.visibility_time_unit == "year"
+        assert layout.angle == 0.0
+
+    def test_24_months_stays_at_month_not_over_coarsened_at_1128(self) -> None:
+        """24 monthly points at 1128px already clear the collision test at
+        native month cadence — the ladder must not walk past a rung that
+        already fits just because a coarser one would look tidier. Line
+        matrix cell ``mo24_1128``, so ``edge_labels_flushed=True``."""
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+
+        axis = _axis_x_temporal()
+        data = [{"x": value} for value in _monthly_dates(24)]
+
+        layout = resolve_axis_x_overlap(
+            axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=1128
+        )
+
+        assert layout.visibility_time_unit == "yearmonth"
+        assert layout.format_time_unit == "yearmonth"
+
+    def test_137_monthly_at_282_still_tilts(self) -> None:
+        """At 282px even year cadence collides — no rung fits flat at any
+        spacing, so rotation remains the correct fallback. Proves the ceiling
+        fix does not simply delete the collision check. Line matrix cell
+        ``mo137_282``, so ``edge_labels_flushed=True`` (matching the real
+        cell — see the coordinator's Phase 3 trace)."""
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+
+        axis = _axis_x_temporal()
+        data = [{"x": value} for value in _monthly_dates(137, start=(2015, 4))]
+
+        layout = resolve_axis_x_overlap(
+            axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=282
+        )
+
+        assert layout.angle is not None
+        assert layout.angle < 0.0
+
+    def test_24_months_stays_at_quarter_not_year(self) -> None:
+        """Too few labels at year cadence (2 of them) must not win just
+        because 2 labels always trivially 'fit' — the sparse ceiling should
+        reject the near-empty year rung and stay at quarter.
+
+        Covers both flush modes: ``edge_labels_flushed=False`` is bar's
+        setting, ``=True`` is line/area/scatter's (and the reported chart's,
+        matrix cell ``mo24_282``) — the two produce different collision math
+        at the flushed first label, so a test pinning only one mode cannot
+        catch a regression that breaks the other. Before the two-row width
+        fix, the flushed case over-reserved ~6px on the flushed quarter
+        label's stacked year row (18.9px "Q1" vs 24.8px "2024", taken as a
+        single max() block instead of two independently-checked rows) and
+        wrongly rejected quarter, over-coarsening to ``year``."""
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+
+        axis = _axis_x_temporal()
+        data = [{"x": value} for value in _monthly_dates(24)]
+
+        bar = resolve_axis_x_overlap(
+            axis, "x", data, 0.8, edge_labels_flushed=False, chart_width=282
+        )
+        line = resolve_axis_x_overlap(
+            axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=282
+        )
+
+        assert bar.visibility_time_unit == "yearquarter"
+        assert line.visibility_time_unit == "yearquarter"
+
+    def test_bar_chart_keeps_monthly_ticks_under_year_labels(self) -> None:
+        """A bar axis thinned by the ladder — not by an authored
+        labels.time_unit — must keep every monthly bucket in `values` and
+        restore `ticks: True`, even once the label text promotes to year.
+
+        48 months (under ``chart_rendering.type_inference.max_ordinal_buckets``,
+        60) keeps this chart on bar's ordinal band scale rather than the
+        density gate's continuous-temporal fallback — the branch this
+        regression is actually about.
+        """
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+        from dbt_charts.core.render.chart.type_inference import (
+            build_cartesian_x_encoding,
+        )
+
+        axis = _axis_x_temporal()
+        month_values = _monthly_dates(48, start=(2015, 4))
+        data = [{"x": value} for value in month_values]
+
+        layout = resolve_axis_x_overlap(
+            axis, "x", data, 0.8, edge_labels_flushed=False, chart_width=200
+        )
+        assert layout.visibility_time_unit == "year"
+
+        _, ax_vl, _ = build_cartesian_x_encoding(
+            data,
+            "x",
+            axis,
+            {},
+            "bar",
+            format_time_unit=layout.format_time_unit,
+            visibility_time_unit=layout.visibility_time_unit,
+            label_anchor_index=layout.anchor_index,
+        )
+
+        assert ax_vl["values"] == month_values
+        assert ax_vl["ticks"] is True
+
+    def test_no_visible_label_set_repeats_the_same_token(self) -> None:
+        """Once thinning reaches year cadence, the labelExpr must read the
+        bare year (`toDate → '%Y'`), never the month vocabulary (`'%b'`) —
+        the latter would render the identical token ("Jan") at every
+        surviving, January-only tick."""
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+        from dbt_charts.core.render.chart.time_unit_detect import (
+            default_label_expr_for,
+        )
+
+        axis = _axis_x_temporal()
+        data = [{"x": value} for value in _monthly_dates(137, start=(2015, 4))]
+
+        layout = resolve_axis_x_overlap(
+            axis, "x", data, 0.8, edge_labels_flushed=True, chart_width=1050
+        )
+        assert layout.visibility_time_unit == "year"
+
+        expr = default_label_expr_for(
+            "yearmonth", layout.format_time_unit, layout.visibility_time_unit
+        )
+        assert expr is not None
+        assert "'%Y'" in expr
+        assert "'%b'" not in expr

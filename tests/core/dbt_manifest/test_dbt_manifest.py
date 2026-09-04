@@ -1,9 +1,9 @@
 """Tests for core/dbt_manifest.py — the neutral-leaf manifest loader.
 
 Covers: candidate order, file_version-keyed memo (hit / invalidation / FIFO
-eviction), error paths (incompatible schema version, corrupt JSON), manifests
-that are missing dbt-internal top-level keys, and the upgrade_schema_version
-drift canary that pins the installed dbt-core version range.
+eviction), the unreadable-manifest error paths, manifests that are missing
+dbt-internal top-level keys or carry an unrecognised schema version, nodes
+whose shape has drifted, and both real manifest fixtures.
 """
 
 from __future__ import annotations
@@ -22,13 +22,12 @@ from dbt_charts.core.dbt_manifest import (
     ref_index,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.project import Project
 
 from ..._paths import DBT_CHARTS_DIR
 
 _FIXTURES = DBT_CHARTS_DIR / "tests" / "fixtures"
-_DBT_CORE_MANIFEST_PATH = _FIXTURES / "dbt_core_manifest" / "manifest.json"
-_FUSION_MANIFEST_PATH = _FIXTURES / "fusion_manifest" / "manifest.json"
 
 _MINIMAL_MANIFEST = json.dumps(
     {
@@ -288,26 +287,31 @@ class TestMemo:
         assert first_key not in _mod._memo
 
 
-class TestErrorPaths:
-    """Incompatible schema version and corrupt JSON both raise ERR-DBT-MANIFEST-INCOMPATIBLE."""
+class TestSchemaVersion:
+    """The schema version is not gated — the raw-dict read is version-agnostic."""
 
-    def test_future_schema_version_raises_incompatible(
+    def test_unrecognised_schema_version_loads(
         self,
         in_memory_project: Callable[..., Project],
         tmp_path: Path,
     ) -> None:
+        """A manifest whose version the installed dbt-core would reject still
+        loads: nothing on the runtime path deserialises through dbt's typed
+        contract, so the version string is metadata we do not read."""
         project = in_memory_project(
             tmp_path, {"target/manifest.json": _FUTURE_VERSION_MANIFEST}
         )
 
-        with pytest.raises(DbtChartsError) as exc_info:
-            load_manifest(project)
+        loaded = load_manifest(project)
 
-        assert exc_info.value.code is not None
-        assert exc_info.value.code.code == "ERR-DBT-MANIFEST-INCOMPATIBLE"
-        assert "v999" in str(exc_info.value)
+        assert loaded is not None
+        assert ref_index(loaded).refs == {"orders": ("analytics.orders", "analytics")}
 
-    def test_corrupt_json_raises_incompatible(
+
+class TestErrorPaths:
+    """Corrupt or unreadable manifests raise ERR-DBT-MANIFEST-UNREADABLE."""
+
+    def test_corrupt_json_raises_unreadable(
         self,
         in_memory_project: Callable[..., Project],
         tmp_path: Path,
@@ -320,9 +324,55 @@ class TestErrorPaths:
             load_manifest(project)
 
         assert exc_info.value.code is not None
-        assert exc_info.value.code.code == "ERR-DBT-MANIFEST-INCOMPATIBLE"
+        assert exc_info.value.code.code == "ERR-DBT-MANIFEST-UNREADABLE"
 
-    def test_incompatible_error_names_the_relpath(
+    def test_non_object_json_raises_unreadable(
+        self,
+        in_memory_project: Callable[..., Project],
+        tmp_path: Path,
+    ) -> None:
+        """Valid JSON that is not an object never reaches ref_index, where
+        raw.get() would be an AttributeError with no diagnostic attached."""
+        project = in_memory_project(tmp_path, {"target/manifest.json": "[]"})
+
+        with pytest.raises(DbtChartsError) as exc_info:
+            load_manifest(project)
+
+        assert exc_info.value.code is not None
+        assert exc_info.value.code.code == "ERR-DBT-MANIFEST-UNREADABLE"
+        assert "not an object" in str(exc_info.value)
+
+    def test_seam_coded_error_passes_through_unwrapped(
+        self,
+        in_memory_project: Callable[..., Project],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A Project implementation raising its own coded error keeps that code.
+
+        Cloud's git-blob store raises ERR-REPO-FILE-TOO-LARGE from read_text;
+        re-wrapping it would tell the author to rebuild with `dbt parse` for a
+        file-size problem.
+        """
+        from dbt_charts.core.diagnostics.codes_execute import ERR_DBT_MANIFEST_MISSING
+
+        project = in_memory_project(
+            tmp_path, {"target/manifest.json": _MINIMAL_MANIFEST}
+        )
+
+        def raise_coded(relpath: str) -> str:
+            raise ExecutionError.from_code(
+                ERR_DBT_MANIFEST_MISSING, kind="ref()", paths=["target/manifest.json"]
+            )
+
+        monkeypatch.setattr(project, "read_text", raise_coded)
+
+        with pytest.raises(DbtChartsError) as exc_info:
+            load_manifest(project)
+
+        assert exc_info.value.code is ERR_DBT_MANIFEST_MISSING
+
+    def test_unreadable_error_names_the_relpath(
         self,
         in_memory_project: Callable[..., Project],
         tmp_path: Path,
@@ -330,7 +380,7 @@ class TestErrorPaths:
         """load_manifest_at names whatever relpath the caller passed — not
         restricted to MANIFEST_CANDIDATES entries."""
         project = in_memory_project(
-            tmp_path, {"custom/manifest.json": _FUTURE_VERSION_MANIFEST}
+            tmp_path, {"custom/manifest.json": "{ not valid json {{"}
         )
 
         with pytest.raises(DbtChartsError) as exc_info:
@@ -397,36 +447,117 @@ class TestMissingTopLevelKeys:
         assert "orders" in index.available_refs
 
 
-class TestWritableManifestUpgradeSchemaVersionCanary:
-    """Drift canary: both real fixtures must round-trip through
-    WritableManifest.upgrade_schema_version without error.
+class TestDriftedNodeShape:
+    """Nodes and sources missing the keys ref_index reads are skipped.
 
-    If dbt-core drops support for v12 manifests, or the installed version
-    changes the is_compatible_version range, this test fails — a clear signal
-    to update the pin in dbt-charts/pyproject.toml and regenerate the fixtures.
+    Downstream this degrades into ERR-DBT-REF-UNKNOWN-NODE /
+    ERR-DBT-SOURCE-UNKNOWN-TABLE with a did-you-mean — an actionable error
+    naming the ref the author wrote, not an uncaught KeyError.
     """
 
-    def test_dbt_core_manifest_is_compatible_and_upgrades(self) -> None:
-        from dbt.contracts.graph.manifest import WritableManifest
-
-        raw = json.loads(_DBT_CORE_MANIFEST_PATH.read_text())
-        schema_version = raw["metadata"]["dbt_schema_version"]
-
-        assert WritableManifest.is_compatible_version(schema_version), (
-            f"dbt-Core fixture schema version {schema_version!r} is no longer "
-            "compatible with the installed dbt-core — update the pin"
+    def test_drifted_nodes_and_sources_are_skipped(
+        self,
+        in_memory_project: Callable[..., Project],
+        tmp_path: Path,
+    ) -> None:
+        drifted = json.dumps(
+            {
+                "metadata": {
+                    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json"
+                },
+                "nodes": {
+                    "model.analytics.orders": {
+                        "resource_type": "model",
+                        "name": "orders",
+                    },
+                    "model.analytics.customers": {
+                        "resource_type": "model",
+                        "name": "customers",
+                        "schema": "analytics",
+                    },
+                },
+                "sources": {
+                    "source.analytics.raw.events": {
+                        "source_name": "raw",
+                        "name": "events",
+                    },
+                    "source.analytics.raw.users": {
+                        "source_name": "raw",
+                        "name": "users",
+                        "schema": "raw",
+                    },
+                },
+            }
         )
+        project = in_memory_project(tmp_path, {"target/manifest.json": drifted})
+        loaded = load_manifest(project)
+        assert loaded is not None
 
-        upgraded = WritableManifest.upgrade_schema_version(raw)
-        assert isinstance(upgraded, WritableManifest)
+        index = ref_index(loaded)
 
-    def test_fusion_manifest_is_compatible(self) -> None:
-        from dbt.contracts.graph.manifest import WritableManifest
+        assert index.available_refs == ["customers"]
+        assert index.available_sources == ["raw.users"]
 
-        raw = json.loads(_FUSION_MANIFEST_PATH.read_text())
-        schema_version = raw["metadata"]["dbt_schema_version"]
 
-        assert WritableManifest.is_compatible_version(schema_version), (
-            f"fusion fixture schema version {schema_version!r} is no longer "
-            "compatible with the installed dbt-core — update the pin"
-        )
+class TestRealManifestFixtures:
+    """Both committed fixtures index through the loader.
+
+    dbt_core_manifest came from dbt-core, fusion_manifest from dbt v2 —
+    the two producers write different top-level key sets, and this is what
+    pins the loader against real output rather than hand-built stubs.
+    """
+
+    @pytest.mark.parametrize(
+        ("name", "refs", "sources"),
+        [
+            (
+                "dbt_core_manifest",
+                ["fct_orders", "stg_customers", "stg_orders", "stg_products"],
+                ["raw.customers", "raw.orders", "raw.products"],
+            ),
+            (
+                "fusion_manifest",
+                [
+                    "customers",
+                    "locations",
+                    "metricflow_time_spine",
+                    "order_items",
+                    "orders",
+                    "products",
+                    "stg_customers",
+                    "stg_locations",
+                    "stg_order_items",
+                    "stg_orders",
+                    "stg_products",
+                    "stg_supplies",
+                    "supplies",
+                ],
+                [
+                    "ecom.raw_customers",
+                    "ecom.raw_items",
+                    "ecom.raw_orders",
+                    "ecom.raw_products",
+                    "ecom.raw_stores",
+                    "ecom.raw_supplies",
+                ],
+            ),
+        ],
+    )
+    def test_fixture_indexes_to_known_refs_and_sources(
+        self,
+        in_memory_project: Callable[..., Project],
+        tmp_path: Path,
+        name: str,
+        refs: list[str],
+        sources: list[str],
+    ) -> None:
+        content = (_FIXTURES / name / "manifest.json").read_text()
+        project = in_memory_project(tmp_path, {"target/manifest.json": content})
+
+        loaded = load_manifest(project)
+        assert loaded is not None
+
+        index = ref_index(loaded)
+
+        assert index.available_refs == refs
+        assert index.available_sources == sources

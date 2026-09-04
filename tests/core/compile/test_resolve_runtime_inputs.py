@@ -23,7 +23,7 @@ from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_cont
 
 
 def _style() -> ChartStyleContext:
-    return resolve_chart_style_context(get_theme_style("editorial"))
+    return resolve_chart_style_context(get_theme_style("clarity"))
 
 
 def _chart(payload: dict[str, Any]) -> Chart:
@@ -114,7 +114,11 @@ def test_resolve_builds_final_fk_columns_with_precedence_and_identity_protection
             "id": "orders",
             "type": "table",
             "style": {
-                "columns": {"status": {"link": "/authored-status/{{ status }}"}},
+                "columns": {
+                    "status": {
+                        "link": "/authored-status/{{ status }}",
+                    }
+                },
                 "row": {"role": row_role},
             },
         }
@@ -140,9 +144,12 @@ def test_resolve_builds_final_fk_columns_with_precedence_and_identity_protection
     assert isinstance(resolved, ResolvedTableChart)
     assert resolved.columns is not None
     assert resolved.columns["status"].link == "/authored-status/{{ status }}"
-    # Authored columns are the display-column contract; runtime FK facts do not
-    # invent extra visible columns when that contract exists.
-    assert tuple(resolved.columns) == ("status",)
+    # style.columns is styling-only: every query column is materialized, and
+    # runtime FK facts fill the unlisted ones the same as the inferred case
+    # below ("id" is identity-protected, so it gets no FK link).
+    assert set(resolved.columns) == {"id", "customer_id", "status"}
+    assert resolved.columns["id"].link is None
+    assert resolved.columns["customer_id"].link == "/customers/{{ customer_id }}"
 
     inferred = resolve(
         _chart(
@@ -271,3 +278,28 @@ def test_resolve_constructs_final_kpi_and_callout_text() -> None:
     assert resolved_kpi.label == "West revenue"
     assert resolved_callout.title == "Status for West"
     assert resolved_callout.message == "Loaded through today"
+
+
+def test_link_false_suppresses_auto_link_per_chart() -> None:
+    """link: false opts one chart out of a board-level auto_link: true."""
+    rows = [{"category": "A", "amount": 10.0, "region": "west"}]
+
+    assert not should_synthesize_auto_link(_bar(link=False, color="region"), rows, True)
+    # Explicit null is indistinguishable from omission everywhere in the schema —
+    # link: ~ does NOT opt out; the chart still synthesizes.
+    assert should_synthesize_auto_link(_bar(link=None, color="region"), rows, True)
+
+    resolved = resolve(
+        _bar(link=False), rows, _style(), automatic_link_candidate="/auto/{{ x }}"
+    )
+    assert resolved.link is None
+
+
+def test_link_false_keeps_table_fk_links() -> None:
+    """link: false suppresses only the row link — FK column links still fetch,
+    exactly as they do for a chart with an explicit link."""
+    query = SqlQuery(sql="select * from main.orders", source="warehouse")
+    chart = TableChart(id="orders", type="table", query=query, link=False)
+
+    assert not should_synthesize_auto_link(chart, [{"id": 1}], True)
+    assert should_fetch_table_fk_links(chart, True)

@@ -30,7 +30,7 @@ def reset():
 
 
 def _board() -> Any:
-    return resolve_style_and_context(get_theme_style("editorial"))
+    return resolve_style_and_context(get_theme_style("clarity"))
 
 
 def test_stacked_domain_max_is_the_max_per_panel_total_not_cross_panel_sum():

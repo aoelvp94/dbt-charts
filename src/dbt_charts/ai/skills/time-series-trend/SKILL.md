@@ -73,6 +73,51 @@ See `examples/time-series-trend.yml` for the inline-data worked example.
 | Label cadence | `style.axis_x.label.time_unit` | Label a finer data grain at a coarser readable cadence |
 | Date-range variable | `variables: date_range: input: daterange` | User-controlled window |
 | Rolling window | wrap SQL in a window function | Smooth noisy daily data |
+| Trendline | fit in a second query, plot via `layers:` | Show overall direction through noise (see below) |
+
+## Adding a trendline
+
+dbt charts has no built-in trendline toggle — data belongs to queries, so compute
+the fit in SQL and plot it as a line layer on the same chart (or as its own chart).
+Reference the base query with `{{ queries.<name> }}` so the fit always covers
+exactly the series the chart shows:
+
+```yaml
+queries:
+  revenue_fit:
+    sql: |
+      WITH base AS (
+        SELECT month, revenue, epoch(month) AS x
+        FROM {{ queries.monthly_revenue }}
+      ),
+      fit AS (
+        SELECT regr_slope(revenue, x) AS m, regr_intercept(revenue, x) AS b
+        FROM base
+      )
+      SELECT base.month, fit.m * base.x + fit.b AS trend
+      FROM base, fit
+      ORDER BY base.month
+
+charts:
+  revenue_trend:
+    type: line
+    query: monthly_revenue
+    x: month
+    y: revenue
+    layers:
+      - type: line
+        query: revenue_fit
+        y: trend
+        label: Trend
+```
+
+Two warehouse notes: map a temporal x to a number before fitting (`epoch()` is
+DuckDB — use your warehouse's date-to-number equivalent, e.g. Postgres
+`EXTRACT(EPOCH FROM month)`), and `REGR_SLOPE`/`REGR_INTERCEPT` ship on DuckDB,
+Postgres, and Snowflake — on BigQuery and Redshift, which ship neither, derive
+the slope as `(AVG(x*y) - AVG(x)*AVG(y)) / (AVG(x*x) - AVG(x)*AVG(x))` and the
+intercept as `AVG(y) - slope*AVG(x)`. Do not reach for `COVAR_POP` on Redshift:
+it is on the same unsupported list as `REGR_SLOPE`.
 
 ## Common pitfalls
 

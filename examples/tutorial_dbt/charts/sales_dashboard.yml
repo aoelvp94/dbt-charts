@@ -1,5 +1,5 @@
 title: "Sales Dashboard (dbt Example)"
-description: "Example dashboard using dbt models via SQL adapter"
+notes: "Example dashboard using dbt models via SQL adapter"
 source: dbt_charts_examples
 
 variables:

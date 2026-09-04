@@ -11,7 +11,7 @@ from dbt_charts.core.compile.models.markers import (
     InheritSlot,
 )
 from dbt_charts.core.compile.models.primitives import (
-    BorderStyle,
+    CornerStyle,
     FontStyle,
 )
 from dbt_charts.core.compile.models.style.theme.board import (
@@ -87,7 +87,7 @@ class SparkBarChartStyle(BaseModel):
     font: Annotated[FontStyle, InheritSlot(from_path="Style.charts.font")] = Field(
         default_factory=FontStyle, description="Spark_bar font style overrides."
     )
-    border: BorderStyle = Field(description="Spark_bar outer border style.")
+    border: CornerStyle = Field(description="Spark_bar outer corner rounding.")
     subtitle: SubtitleStyle = Field(
         description="Spark_bar subtitle font-sizing constants."
     )

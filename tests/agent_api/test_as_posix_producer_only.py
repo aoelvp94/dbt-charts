@@ -33,28 +33,28 @@ _SCAN_SINGLE_FILES = (DBT_CHARTS_PKG_DIR / "cli" / "_error_format.py",)
 # site means routing it through ``posix_relpath``/``.relpath`` and deleting
 # the entry, not widening this allowlist to paper over a new ad-hoc call.
 ALLOWED: dict[tuple[str, int], str] = {
-    ("agent_api/describe.py", 198): (
+    ("agent_api/describe.py", 203): (
         "describe_board() except ValueError: resolve_board_path failed, path "
         "never became a ProjectPath — no root to relativize against via "
         "posix_relpath. Echoes the raw caller input, POSIX-normalized for "
         "display consistency, not a resolved project identity."
     ),
-    ("agent_api/describe.py", 345): (
+    ("agent_api/describe.py", 349): (
         "_describe_one_path() except ValueError: same shape as "
         "describe_board() above — resolution failed, nothing to relativize."
     ),
-    ("agent_api/validate.py", 139): (
+    ("agent_api/validate.py", 143): (
         "_validate_one_path() except ValueError: resolve_board_path failed, "
         "raw_path never became a ProjectPath — no root to relativize "
         "against. Echoes the raw caller input, POSIX-normalized."
     ),
-    ("agent_api/validate.py", 227): (
+    ("agent_api/validate.py", 224): (
         "validate() except ValueError: same shape — resolution failed, "
         "nothing to relativize against."
     ),
-    ("agent_api/mcp_install.py", 152): (
-        "resolve_dft_command(): venv_bin is a real filesystem executable "
-        "path (.venv/bin/dft) relative to ai_config_root, for an MCP client "
+    ("agent_api/mcp_install.py", 164): (
+        "resolve_dct_executable(): venv_bin is a real filesystem executable "
+        "path (.venv/bin/dct) relative to ai_config_root, for an MCP client "
         "config — not a project file identity. There is no ProjectPath and "
         "no posix_relpath root here by design."
     ),

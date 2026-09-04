@@ -142,7 +142,7 @@ def test_unvendored_font_family_degrades_to_sans_tabular():
 
 
 def test_missing_candidate_is_excluded_not_fatal(monkeypatch):
-    """A font can legitimately ship only some of the ten candidates (DFT
+    """A font can legitimately ship only some of the ten candidates (dbt
     Serif Oldstyle Tabular is missing two) — a missing candidate must not
     by itself raise; the search simply excludes it and composes from
     whatever the board does have.

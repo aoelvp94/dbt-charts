@@ -139,6 +139,12 @@ class ChartRenderingConfig(ConfigNode):
         label_gap_spaces_numeric: int = Field(
             description="Word-space separation required between numeric axis labels."
         )
+        sparse_ceiling_px: float = Field(
+            description="Maximum pixel gap allowed between visible temporal axis "
+            "labels before the label cadence stops coarsening — an absolute pixel "
+            "value, not a fraction of plot width, since the same relative density "
+            "at different card widths can need opposite cadences."
+        )
 
     class PieConfig(ConfigNode):
         wedge_label_min_share: float
@@ -155,13 +161,6 @@ class ChartRenderingConfig(ConfigNode):
     class BarConfig(ConfigNode):
         grouped_bar_padding_inner: float
         grouped_bar_padding_outer: float
-        # Calibrated estimate of one legend entry's row height (label line height
-        # plus row padding) and the fixed title/padding chrome above the rows,
-        # used to decide whether a stacked bar's legend must yield so its
-        # segments keep visible height — see stack_legend_row_height_px's use in
-        # compile/resolve/chart/bar.py.
-        stack_legend_row_height_px: float
-        stack_legend_chrome_height_px: float
         # A bar/stacked-total only gets the baseline-anchored hover band when
         # its own value is under this fraction of the chart's own largest
         # value -- separate from hover_band_extend_fraction (how big the band
@@ -175,6 +174,71 @@ class ChartRenderingConfig(ConfigNode):
         # Drives the fit test in render/chart/features/value_labels.py, which
         # drops a label whose segment provably cannot hold it.
         label_fit_line_height_multiplier: float = Field(gt=0)
+        # Minimum gap between two adjacent horizontal-stacked-bar top-rail
+        # labels, in word-spaces at the rail's own font size — same unit
+        # convention as AxisConfig.label_gap_spaces. Used by
+        # _horizontal_rail_labels_would_collide (compile/resolve/chart/bar.py)
+        # to steer a crowded rail back to a legend before it ever renders.
+        top_rail_label_gap_spaces: int = Field(ge=0)
+        # Height a single-row (`row`) top legend costs, measured as baseline
+        # plot height vs. legend-off plot height. Flat: this legend flows
+        # horizontally in one row, so its height does not track series count
+        # -- measured 31px at 2, 5, 16 and 25 series, on 400px and 640px
+        # cards alike. Bar-only: the multi-column (`compact`) legend's height
+        # is charged via `legend_wrap_marginal_height_px` instead (see
+        # `PlotHeightFloorConfig.compact_legend_row_px` below) -- a marginal
+        # per-row cost, deliberately not the same calculation as this field.
+        plot_height_floor_row_legend_total_px: float = Field(ge=0)
+
+    class PlotHeightFloorConfig(ConfigNode):
+        """Protect-the-plot floor (see resolve/chart/plot_height_floor.py).
+
+        General plot chrome, shared by every cartesian family that estimates
+        a plot-height floor -- not legend-specific (a candidate legend's own
+        height is passed in by the caller as ``legend_height_px``, computed
+        from family- and layout-specific inputs the caller alone knows).
+        """
+
+        # Below this fraction of the card's own height the plot is starved
+        # and the author is told. Calibrated against a grouped-bar render
+        # sweep; 0.30 sits just under the ~32% the compact-legend fold
+        # settles at, and above the ~22% "squashed sliver" confirmed by eye
+        # at a 300px card. Retune by re-running that sweep, not casually.
+        ratio: float = Field(gt=0, lt=1)
+        # Fixed chrome the plot never gets (object title + x-axis band and
+        # ticks). Card padding is NOT folded in here — it is subtracted
+        # separately from style.frame.card_padding, so a theme that changes
+        # card padding does not silently invalidate this number.
+        irreducible_height_px: float = Field(ge=0)
+        # Height the horizontal rail's axis title costs when visible. The
+        # other axis title is rotated and costs width, not height, so only
+        # one of the two is ever charged here.
+        axis_titles_height_px: float = Field(ge=0)
+        # Height the subtitle line costs when present. Flat, single-line —
+        # a wrapped multi-line subtitle under-counts here.
+        subtitle_height_px: float = Field(ge=0)
+        # Marginal height ONE row of a wrapped, multi-column top legend adds
+        # to the floor's own charge -- flat per row, no fixed chrome term of
+        # its own. Deliberately NOT `legend.chrome_height_px` /
+        # `legend.row_height_px` (`legend_wrap_required_height_px`,
+        # `_axes.py`): that pair is the legend's *total* footprint at
+        # collapse, correct only where nothing else is subtracted alongside
+        # it (`_stack_legend_should_yield`'s `required > plot_height`). Here
+        # the legend's height is charged inside `estimate_plot_height`,
+        # which already subtracts its own fixed chrome
+        # (`irreducible_height_px`, `axis_titles_height_px`) -- adding the
+        # legend's *total* on top double-counts that fixed chrome a second
+        # time. This field is the marginal quantity instead, sized to play
+        # correctly alongside those two. See `legend_wrap_marginal_height_px`
+        # (`_axes.py`).
+        #
+        # KNOWN BIAS. Measured across both stack modes, the estimate runs
+        # optimistic by a mean of +11.8px at 1 series down to +1.8px at 10 --
+        # the irreducible term is charged a little too lightly, most visibly
+        # where there are fewest legend rows. It is what leaves the check
+        # short on a handful of marginal cards. Correcting it needs a sweep
+        # across more chart shapes than the one board this was measured on.
+        compact_legend_row_px: float = Field(ge=0)
 
     class TypeInferenceConfig(ConfigNode):
         max_ordinal_buckets: int
@@ -183,13 +247,33 @@ class ChartRenderingConfig(ConfigNode):
         footer_rule_gap_px: int
         footer_timestamp_gap_px: int
 
-    class DataTableConfig(ConfigNode):
+    class SupportTableConfig(ConfigNode):
         divider_gap: float
-        chart_data_table_max_x_ticks: int
+        chart_support_table_max_x_ticks: int
+        # Protect-the-plot floor for the column block, read directly off this
+        # getter in render/layout_sizing.py's width-correction re-render:
+        # below this fraction of the card's own width, the plot has been
+        # squeezed away by the column block's reserved width plus whatever
+        # axis/legend overhead the render measures on top of it. Mirrors
+        # plot_height_floor.ratio's shape; unlike that one, breaching
+        # this floor raises rather than warns -- a width floor breach means
+        # the plot's own width clamps toward zero, which is a missing chart,
+        # not a squeezed one.
+        plot_width_floor_ratio: float = Field(gt=0, lt=1)
+        # Softer, earlier signal than the hard floor above: warns when the
+        # column block's own reserved width already exceeds this fraction of
+        # the pre-axis-chrome footprint it shares with the plot
+        # (block_width / (block_width + plot_width)), even while the plot
+        # still clears plot_width_floor_ratio by a comfortable margin.
+        column_block_share_warn_ratio: float = Field(gt=0, lt=1)
 
     class StrokeConfig(ConfigNode):
         min_width: float
         max_width: float
+
+    class PointConfig(ConfigNode):
+        diameter_ratio: float = Field(gt=0)
+        min_px_per_point: float = Field(gt=0)
 
     class EndpointLabelsConfig(ConfigNode):
         # 0 collapses to the "no explicit pane width" sentinel and ≥1 restores the
@@ -200,15 +284,49 @@ class ChartRenderingConfig(ConfigNode):
     class GradientConfig(ConfigNode):
         nice_tick_count: int
 
+    class LegendConfig(ConfigNode):
+        # A single-row top legend's fixed, non-text chrome per entry: the
+        # swatch box (constant regardless of mark size or count -- see
+        # legend_row_fits' docstring) plus the gap to the next entry. The
+        # entry's OWN label text is never estimated here -- it is measured
+        # with the engine's real font metrics (font_measure.get_font_measurer)
+        # against the resolved legend label font, at the point of use.
+        row_swatch_width_px: float
+        row_entry_gap_px: float
+        # Fixed horizontal chrome a single-row top legend's own left edge
+        # loses before it can begin (legend_row_fits' width bound) --
+        # min_reserve_px is the near-universal floor (generic card/frame
+        # chrome; every family here defaults its measure axis to the right,
+        # so nothing axis-driven normally sits to the legend's left).
+        # dimension_axis_reserve_chrome_px is added on top of a horizontal
+        # bar's own measured dimension-label width -- the one shape that
+        # puts a real, content-driven axis on the left. See
+        # estimate_left_axis_reserve_px and default_config.yml.
+        min_reserve_px: float
+        dimension_axis_reserve_chrome_px: float
+        # Calibrated estimate of one wrapped legend row's height (label line
+        # height plus row padding) and the fixed title/padding chrome above
+        # the rows -- the legend's *total* footprint at collapse
+        # (legend_wrap_required_height_px), used by bar.py's own
+        # stacked-legend-yield classifier. The plot-height floor's own
+        # compact-legend charge and the fallback ladder's rung-2 check
+        # (legend_wrap_fits_height_budget) want the marginal quantity
+        # instead -- see PlotHeightFloorConfig.compact_legend_row_px above.
+        row_height_px: float
+        chrome_height_px: float
+
     pie: PieConfig
     bar: BarConfig
+    plot_height_floor: PlotHeightFloorConfig
     type_inference: TypeInferenceConfig
     frame: FrameConfig
-    data_table: DataTableConfig
+    support_table: SupportTableConfig
     stroke: StrokeConfig
+    point: PointConfig
     axis: AxisConfig
     endpoint_labels: EndpointLabelsConfig
     gradient: GradientConfig
+    legend: LegendConfig
 
 
 class InspectorConfig(ConfigNode):
@@ -254,6 +372,23 @@ class ExecutionConfig(ConfigNode):
     max_glob_file_count: int = Field(
         gt=0, description="Maximum files a single glob may match (must be > 0)."
     )
+    # Hard cap on table entries in a single files: map. A deployment ceiling
+    # (DCT_FILE_SOURCE_MAX_TABLES_CEILING) can only lower it, never raise it.
+    file_source_max_tables: int = Field(
+        gt=0,
+        description="Max tables in a files: map (must be > 0).",
+    )
+    # Safety ceiling on a file-source table's estimated materialized bytes
+    # (source file bytes; Parquet is multiplied by a fixed factor — see
+    # _PARQUET_MATERIALIZATION_MULTIPLIER in file_source_materializer.py).
+    # Checked while reading, before the cache backend is written, so a runaway
+    # relation fails fast. A deployment ceiling (DCT_FILE_SOURCE_MAX_BYTES_CEILING)
+    # can only lower it, never raise it.
+    file_source_max_bytes: int = Field(
+        gt=0,
+        description="Max estimated materialized bytes per file-source table "
+        "(must be > 0).",
+    )
     # Safety ceiling on rows returned by a single query, enforced by bounding the
     # driver's own fetch (fetchmany()/execute(limit=...)) rather than rewriting
     # SQL. Exceeding it truncates the result and emits WARN_QUERY_RESULT_TRUNCATED
@@ -275,8 +410,8 @@ class ExecutionConfig(ConfigNode):
         description="Maximum serialized byte size of a single query result "
         "(must be > 0).",
     )
-    # sqlglot uses different dialect names than Dataface's public-facing dialect strings.
-    # This mapping normalizes Dataface names to sqlglot equivalents before parsing.
+    # sqlglot uses different dialect names than dbt charts' public-facing dialect strings.
+    # This mapping normalizes dbt charts names to sqlglot equivalents before parsing.
     dialect_aliases: dict[str, str]
 
 
@@ -299,7 +434,7 @@ class ProjectCacheConfig(CachePatch):
     Deliberately the **same shape as every other scope** (``ttl`` — inherited
     from CachePatch), so ``cache: 4h`` means the same thing everywhere;
     ``path`` is the one project-only field, reachable via the block form
-    (``cache: {ttl: 4h, path: .dft-cache.duckdb}``). There is no separate
+    (``cache: {ttl: 4h, path: .dct-cache.duckdb}``). There is no separate
     backend on/off switch — the store is provisioned lazily when any resolved
     query policy is enabled. The shipped root lives in
     ``defaults/default_config.yml``.
@@ -374,7 +509,12 @@ class Config(ConfigMappingBase):
     dbt_grays: ConfigNode
     dbt_creams: ConfigNode
     strict: bool | None = None  # None = strict mode not configured; defaults to off
-    sources: ConfigNode | None = None  # None = no explicit sources section in config
+    # Nothing reads this: a project's registry is read per-project by
+    # load_project_sources, never off the global. It must stay declared anyway —
+    # Config is extra="forbid" and validates dbt_charts.yml, so dropping the
+    # field would fail load_config (and `dct serve` startup) for every project
+    # that declares sources:. None = no explicit sources section in config.
+    sources: ConfigNode | None = None
     # Canonical public URL for dct render exports (e.g. "https://dashboards.example.com").
     # When set, rendered links are fully-qualified. Empty string means root-relative (default).
     public_url: str

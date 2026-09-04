@@ -6,7 +6,7 @@ base chart's own y column plus every layer's y column) to the smallest is
 ≥100×, AND no per-layer axis_y override is already set on the extreme-ratio
 columns.
 
-Six canonical cases from the task worksheet, adapted to the current
+The canonical same-query cases, adapted to the current
 ``chart.layers`` overlay model (no separate ``type: layered`` chart — the
 base chart is a real bar/line/area/scatter chart and contributes its own y
 column to the comparison alongside its layers'):
@@ -16,6 +16,9 @@ column to the comparison alongside its layers'):
   4. Chart with no layers → no warning (nothing to compare against).
   5. Base + two layers, columns 1M/10/1M → fires, message names the 10-scale column.
   6. Symmetric signed data → median-of-abs still detects the scale gap.
+
+Per-layer-query cases (a layer carrying its own ``query:``) follow at the end
+of the file.
 """
 
 from __future__ import annotations
@@ -60,13 +63,19 @@ def _make_chart(**kwargs: object) -> BarChart:
     return BarChart(**{**_CHART_DEFAULTS, **kwargs})
 
 
-def _make_ctx(chart: BarChart, rows: list[dict[str, Any]]) -> WarningContext:
+def _make_ctx(
+    chart: BarChart,
+    rows: list[dict[str, Any]],
+    layer_rows: dict[str, list[dict[str, Any]]] | None = None,
+) -> WarningContext:
+    """Build a context; ``layer_rows`` maps a layer's own query name to its rows."""
     resolved = make_test_resolved_chart(chart, rows)
     board = make_test_resolved_board(charts={resolved.id: resolved})
     return WarningContext(
         board_spec=board,
         chart_results={resolved.id: rows},
         vega_specs={resolved.id: {"mark": "layered"}},
+        layer_results={resolved.id: layer_rows} if layer_rows is not None else {},
     )
 
 
@@ -259,3 +268,119 @@ def test_fires_with_decimal_and_float_columns_no_type_error() -> None:
     warnings = detector.detect(ctx)
     assert len(warnings) == 1
     assert warnings[0].code == WARN_LAYERED_CHART_SHARED_Y_AXIS_SCALE_MISMATCH.code
+
+
+# ---------------------------------------------------------------------------
+# Per-layer queries: a layer carrying its own `query:` is the shape the
+# deterministic Looker migrator emits (one query per chart layer). It draws on
+# the same shared y-axis as the base, so it must be compared, not skipped.
+# ---------------------------------------------------------------------------
+
+
+def test_fires_when_layer_carries_its_own_query() -> None:
+    """Base and layer at wildly different scales, split across two queries.
+
+    Base 'revenue' (median 5.0M) and layer 'rate' (median 0.50) come from
+    different named queries and share one y-axis at a 10,000,000x ratio — the
+    rate line is drawn as a flat zero. The detector used to skip the whole
+    chart the moment any layer overrode the base query, which is exactly the
+    migrated multi-metric tile this diagnostic exists to protect.
+    """
+    chart = _make_chart(
+        y="revenue", layers=[LineLayer(type="line", y="rate", query="q2")]
+    )
+    base_rows = [
+        {"month": "Jan", "revenue": 5_000_000.0},
+        {"month": "Feb", "revenue": 4_800_000.0},
+        {"month": "Mar", "revenue": 5_200_000.0},
+    ]
+    layer_rows = [
+        {"month": "Jan", "rate": 0.45},
+        {"month": "Feb", "rate": 0.55},
+        {"month": "Mar", "rate": 0.50},
+    ]
+    warnings = detector.detect(_make_ctx(chart, base_rows, {"q2": layer_rows}))
+
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert w.code == WARN_LAYERED_CHART_SHARED_Y_AXIS_SCALE_MISMATCH.code
+    assert "revenue" in w.message and "rate" in w.message
+    assert w.path == "charts.c1.y"
+    assert [r.path for r in w.related] == ["charts.c1.layers.0.y"]
+
+
+def test_no_fire_when_layer_query_is_at_the_same_scale() -> None:
+    """Per-layer query at the same magnitude as the base: nothing is crushed."""
+    chart = _make_chart(
+        y="revenue", layers=[LineLayer(type="line", y="profit", query="q2")]
+    )
+    base_rows = [
+        {"month": "Jan", "revenue": 5_000_000.0},
+        {"month": "Feb", "revenue": 4_800_000.0},
+    ]
+    layer_rows = [
+        {"month": "Jan", "profit": 4_500_000.0},
+        {"month": "Feb", "profit": 4_900_000.0},
+    ]
+    assert detector.detect(_make_ctx(chart, base_rows, {"q2": layer_rows})) == []
+
+
+def test_fires_when_per_layer_queries_reuse_the_same_column_name() -> None:
+    """Two queries both selecting 'value' are two series, not one shared scale.
+
+    The migrator names every tile's measure column identically, so deduping on
+    column name alone would silently drop the second series and land back on
+    silence. Series identity is (query, column).
+    """
+    chart = _make_chart(
+        y="value", layers=[LineLayer(type="line", y="value", query="q2")]
+    )
+    base_rows = [
+        {"month": "Jan", "value": 5_000_000.0},
+        {"month": "Feb", "value": 5.2e6},
+    ]
+    layer_rows = [{"month": "Jan", "value": 0.45}, {"month": "Feb", "value": 0.55}]
+    warnings = detector.detect(_make_ctx(chart, base_rows, {"q2": layer_rows}))
+
+    assert len(warnings) == 1
+    assert warnings[0].path == "charts.c1.y"
+    assert [r.path for r in warnings[0].related] == ["charts.c1.layers.0.y"]
+
+
+def test_no_fire_when_a_layer_query_result_is_missing() -> None:
+    """A layer whose query failed to execute contributes no series — stay quiet.
+
+    The base rows carry a ``rate`` column of their own at a >100x different
+    scale, so this also pins that the missing result is *skipped* rather than
+    silently read off the base rows: falling back to ``base_rows`` here would
+    find those values and fire.
+    """
+    chart = _make_chart(
+        y="revenue", layers=[LineLayer(type="line", y="rate", query="q2")]
+    )
+    base_rows = [
+        {"month": "Jan", "revenue": 5_000_000.0, "rate": 0.45},
+        {"month": "Feb", "revenue": 4_800_000.0, "rate": 0.55},
+    ]
+    assert detector.detect(_make_ctx(chart, base_rows, {})) == []
+
+
+def test_no_fire_when_layer_with_own_query_has_axis_y_set() -> None:
+    """The axis_y opt-out survives the cross-query comparison."""
+    chart = _make_chart(
+        y="revenue",
+        layers=[
+            LineLayer(
+                type="line",
+                y="rate",
+                query="q2",
+                axis_y=LayerAxisYStyle(position="right"),
+            )
+        ],
+    )
+    base_rows = [
+        {"month": "Jan", "revenue": 5_000_000.0},
+        {"month": "Feb", "revenue": 4_800_000.0},
+    ]
+    layer_rows = [{"month": "Jan", "rate": 0.45}, {"month": "Feb", "rate": 0.55}]
+    assert detector.detect(_make_ctx(chart, base_rows, {"q2": layer_rows})) == []

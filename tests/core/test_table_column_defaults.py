@@ -325,12 +325,12 @@ class TestColumnDefaultsMaterializedAtResolve:
         assert "\x1e" not in svg
         assert "Amount" in svg and "Orders" in svg
 
-    def test_pivot_explicit_leaf_keyed_columns_hide_row_dimension(self) -> None:
+    def test_pivot_explicit_leaf_keyed_columns_do_not_narrow_the_mapping(self) -> None:
         """Explicit `style.columns` keyed by the bare pivoted values (the
-        single-dim single-measure authoring shape) still hides every column
-        not listed — including the `rows:` dimension, which is an ordinary
-        inferred column at resolve and would otherwise leak into the
-        rendered table via render's visible-column-list fallback."""
+        single-dim single-measure authoring shape) styles those columns only:
+        the resolved mapping still covers every query-inferred column plus
+        the authored keys, and the `rows:` dimension renders unless it is
+        explicitly `visible: false`."""
         data = [
             {"row_sort": 1, "cell_column": "c1", "cell_value": "x"},
             {"row_sort": 1, "cell_column": "c2", "cell_value": "y"},
@@ -343,16 +343,39 @@ class TestColumnDefaultsMaterializedAtResolve:
             rows=["row_sort"],
             columns=["cell_column"],
             values=["cell_value"],
-            style={"columns": {"c1": {}, "c2": {}}},
+            style={"columns": {"c1": {"visible": True}, "c2": {}}},
         )
         resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
         assert resolved.columns is not None
-        assert set(resolved.columns) == {"c1", "c2"}
+        assert set(resolved.columns) == {"row_sort", "cell_column", "c1", "c2"}
 
         svg = render_table_svg(
             resolved, data, board_style=resolve_style(get_theme_style())
         )
-        assert "row_sort" not in svg
+        assert "Row Sort" in svg
+
+    def test_pivot_row_dimension_visible_false_hides_it(self) -> None:
+        """`visible: false` is the explicit way to hide a `rows:` dimension
+        that is a sort key rather than display data."""
+        data = [
+            {"row_sort": 1, "cell_column": "c1", "cell_value": "x"},
+            {"row_sort": 1, "cell_column": "c2", "cell_value": "y"},
+            {"row_sort": 2, "cell_column": "c1", "cell_value": "z"},
+            {"row_sort": 2, "cell_column": "c2", "cell_value": "w"},
+        ]
+        chart = TableChart(
+            id="pivoted",
+            type="table",
+            rows=["row_sort"],
+            columns=["cell_column"],
+            values=["cell_value"],
+            style={"columns": {"row_sort": {"visible": False}}},
+        )
+        resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
+        svg = render_table_svg(
+            resolved, data, board_style=resolve_style(get_theme_style())
+        )
+        assert ">x<" in svg
         assert "Row Sort" not in svg
 
     def test_spark_shorthand_normalized_at_resolve(self) -> None:

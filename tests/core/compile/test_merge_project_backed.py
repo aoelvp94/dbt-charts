@@ -93,11 +93,11 @@ extends:
 
 _BASE_YAML = """\
 title: BaseTitle
-description: BaseDescription
+notes: BaseNote
 """
 
 _SHARED_TEMPLATE_YAML = """\
-description: SharedDescription
+notes: SharedNote
 """
 
 _ROOT_META_YAML = """\
@@ -105,7 +105,7 @@ title: RootMetaTitle
 """
 
 _SUB_META_YAML = """\
-description: SubMetaDescription
+notes: SubMetaNote
 """
 
 
@@ -151,7 +151,7 @@ def test_merged_patch_in_memory_equals_filesystem(
 
     Expected resolution:
       - title: "FaceTitle" (board own field wins over meta and extends)
-      - description: "SharedDescription" (shared_template wins over _base; sub meta loses to extends)
+      - notes: "SharedNote" (shared_template wins over _base; sub meta loses to extends)
     """
     from dbt_charts.core.compile.merge import merged_patch
     from dbt_charts.core.compile.models.board.patch import BoardPatch
@@ -200,7 +200,7 @@ def test_merged_patch_in_memory_equals_filesystem(
 
     # Spot-check the priority ordering: board own field > meta > extends
     assert mem_result.title == "FaceTitle"  # type: ignore[union-attr]
-    assert mem_result.description == "SharedDescription"  # type: ignore[union-attr]
+    assert mem_result.notes == "SharedNote"  # type: ignore[union-attr]
 
 
 def test_merged_patch_cycle_detection_via_relpath() -> None:

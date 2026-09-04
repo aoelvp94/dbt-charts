@@ -1,4 +1,4 @@
-"""Bootstrap (or refresh) a Dataface project layout."""
+"""Bootstrap (or refresh) a dbt charts project layout."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def init_project(
     force: bool = False,
     eject_inspect: bool = False,
 ) -> InitResult:
-    """Bootstrap (or refresh) a Dataface project layout.
+    """Bootstrap (or refresh) a dbt charts project layout.
 
     Safe to re-run: scaffold files are skipped unless *force* is set.
     Agent markdown is never written; agent onboarding lives in installed skills.

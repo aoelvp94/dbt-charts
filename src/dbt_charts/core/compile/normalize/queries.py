@@ -2,30 +2,26 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-import sqlglot
 from pydantic import ValidationError as PydanticValidationError
-from sqlglot import exp
 from sqlglot.dialects.dialect import Dialect as SqlglotDialect
-from sqlglot.errors import ParseError as SqlglotParseError
 
 if TYPE_CHECKING:
     from dbt_charts.core.project import ProjectDirectory
 
-from dbt_charts.cli.filesystem_project import (
-    FilesystemProject,  # tach-ignore(core->cli: host-type guard; needs a non-cli signal on Project — deferred)
-)
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.cache import (
     INHERIT_CACHE,
     CachePatch,
     resolve_cache_policy,
     validate_cache_layer,
+)
+from dbt_charts.core.compile.models.primitives import (
+    IncrementalValue,
+    validate_incremental_value,
 )
 from dbt_charts.core.compile.models.query.authored import _BaseQueryFields
 from dbt_charts.core.compile.models.query.normalized import (
@@ -41,11 +37,9 @@ from dbt_charts.core.compile.models.query.normalized import (
 from dbt_charts.core.compile.models.refs import infer_query_type_from_keys
 from dbt_charts.core.compile.models.source import (
     CsvSourceConfig,
-    DbtProfileSourceConfig,
     JsonSourceConfig,
     ParquetSourceConfig,
     SourceConfig,
-    parse_source_config,
     source_cache_layer,
 )
 from dbt_charts.core.compile.normalize.sql_authoring_lint import (
@@ -68,478 +62,7 @@ from dbt_charts.core.diagnostics.execution import MutatingSqlError, UnparseableS
 
 logger = logging.getLogger(__name__)
 
-# dbt adapter `type` -> MetricFlow (SqlEngine, sql_plan_renderer import path). Only the
-# renderer class name is needed at import time (lazy, since metricflow is optional).
-_METRICFLOW_DIALECTS: dict[str, tuple[str, str, str]] = {
-    "duckdb": (
-        "DUCKDB",
-        "metricflow.sql.render.duckdb_renderer",
-        "DuckDbSqlPlanRenderer",
-    ),
-    "postgres": (
-        "POSTGRES",
-        "metricflow.sql.render.postgres",
-        "PostgresSQLSqlPlanRenderer",
-    ),
-    "snowflake": (
-        "SNOWFLAKE",
-        "metricflow.sql.render.snowflake",
-        "SnowflakeSqlPlanRenderer",
-    ),
-    "bigquery": (
-        "BIGQUERY",
-        "metricflow.sql.render.big_query",
-        "BigQuerySqlPlanRenderer",
-    ),
-    "redshift": (
-        "REDSHIFT",
-        "metricflow.sql.render.redshift",
-        "RedshiftSqlPlanRenderer",
-    ),
-    "databricks": (
-        "DATABRICKS",
-        "metricflow.sql.render.databricks",
-        "DatabricksSqlPlanRenderer",
-    ),
-    "trino": ("TRINO", "metricflow.sql.render.trino", "TrinoSqlPlanRenderer"),
-}
-
-
-# Jinja regions inside a metricflow where predicate ({{ ... }} / {% ... %}).
-_JINJA_REGION_RE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.DOTALL)
-
-
-def _predicate_columns(name: str, predicate: str) -> set[str]:
-    """Columns a where predicate references, resolved statically.
-
-    Two sources: first arguments of filter()/filter_date_range() calls inside
-    Jinja regions (must be string literals — a variable column name cannot be
-    classified at compile time), and plain column refs in the SQL once Jinja
-    regions are masked out.
-    """
-    columns: set[str] = set()
-    for region in _JINJA_REGION_RE.findall(predicate):
-        for call in re.finditer(
-            r"\b(filter|filter_date_range)\s*\(\s*([^,)]+)", region
-        ):
-            arg = call.group(2).strip()
-            if len(arg) >= 2 and arg[0] == arg[-1] and arg[0] in "'\"":
-                columns.add(arg[1:-1])
-            else:
-                raise CompilationError(
-                    f"metricflow query '{name}': cannot statically determine the "
-                    f"column of {call.group(1)}() in where predicate {predicate!r}. "
-                    "Pass the column as a string literal."
-                )
-    masked = _JINJA_REGION_RE.sub("NULL", predicate)
-    try:
-        tree = sqlglot.parse_one(f"SELECT 1 WHERE {masked}")
-    except SqlglotParseError as e:
-        raise CompilationError(
-            f"metricflow query '{name}': unparseable where predicate {predicate!r}: {e}"
-        ) from e
-    columns |= {col.name for col in tree.find_all(exp.Column)}
-    return columns
-
-
-def _to_metricflow_constraint(name: str, predicate: str) -> str:
-    """Rewrite a literal predicate's column refs into MetricFlow's where-filter
-    templating ({{ Dimension('order_id__region') }}, {{ TimeDimension(...) }}).
-
-    Only the column names are rewritten — operators and values pass through;
-    MetricFlow validates the result against the semantic graph. A grain-less
-    ``metric_time`` maps to ``Dimension('metric_time')`` (not TimeDimension);
-    MetricFlow rejects that loudly, which is the intended behavior — a bare
-    ``metric_time`` predicate is not a valid group-by-column filter here.
-    """
-    try:
-        tree = sqlglot.parse_one(f"SELECT 1 WHERE {predicate}")
-    except SqlglotParseError as e:
-        raise CompilationError(
-            f"metricflow query '{name}': unparseable where predicate {predicate!r}: {e}"
-        ) from e
-
-    def _template(node: exp.Expression) -> exp.Expression:
-        # Rewrite only Column nodes — string literals and quoted identifiers
-        # that happen to share a column's text are left untouched by construction.
-        if not isinstance(node, exp.Column):
-            return node
-        grain = re.fullmatch(r"metric_time__(\w+)", node.name)
-        target = (
-            f"{{{{ TimeDimension('metric_time', '{grain.group(1)}') }}}}"
-            if grain
-            else f"{{{{ Dimension('{node.name}') }}}}"
-        )
-        return exp.Var(this=target)
-
-    where = tree.transform(_template).find(exp.Where)
-    if where is None:
-        raise CompilationError(
-            f"metricflow query '{name}': where predicate {predicate!r} has no condition"
-        )
-    return where.this.sql()
-
-
-def _reject_non_commuting_metrics(
-    name: str, metrics: list[str], manifest_json: str
-) -> None:
-    """where: is only exact when each group's value depends solely on that
-    group's rows. Cumulative, conversion, and offset-window metrics read rows
-    outside the group; a derived metric inherits that property transitively from
-    any such input. Baking a predicate pre-aggregation and wrapping it
-    post-aggregation would then give different results — refuse all of them. A
-    metric whose type we can't prove commutes is refused too (validate-and-error
-    §4: no silent best-effort).
-    """
-    entries = {m.get("name"): m for m in json.loads(manifest_json).get("metrics", [])}
-    for metric_name in metrics:
-        reason = _non_commuting_reason(metric_name, entries, set())
-        if reason:
-            raise CompilationError(
-                f"metricflow query '{name}': metric '{metric_name}' is {reason}, "
-                "so where: filters cannot be applied exactly. Use a sql: query."
-            )
-
-
-# MetricFlow metric types whose per-group value is a pure aggregation of that
-# group's own rows — safe to post-filter on a selected group-by dimension.
-_COMMUTING_METRIC_TYPES = frozenset({"simple", "ratio"})
-
-# The two period-shift fields on a derived-metric input (dbt-semantic-interfaces
-# MetricInput): a non-null value on either means the input reads rows from a
-# different period, so the derived metric no longer commutes. Keyed off the
-# *value* — a real dbt manifest always serializes both keys, as null when unset.
-_DERIVED_INPUT_SHIFT_FIELDS = ("offset_window", "offset_to_grain")
-
-
-def _non_commuting_reason(
-    metric_name: str, entries: dict[str, Any], seen: set[str]
-) -> str | None:
-    """Why ``metric_name`` can't be exactly filtered, or None if it commutes.
-
-    Recurses through derived-metric inputs; ``seen`` guards against reference
-    cycles in a malformed manifest.
-    """
-    if metric_name in seen:
-        return None
-    seen.add(metric_name)
-    entry = entries.get(metric_name)
-    if entry is None:
-        return None  # unknown metric — MetricFlow raises its own error downstream
-    mtype = entry.get("type")
-    if mtype in ("cumulative", "conversion"):
-        return mtype
-    if mtype == "derived":
-        params = entry.get("type_params") or {}
-        for input_metric in params.get("metrics") or []:
-            if not isinstance(input_metric, dict):
-                continue
-            if any(input_metric.get(f) for f in _DERIVED_INPUT_SHIFT_FIELDS):
-                return "derived with a period offset"
-            inner = _non_commuting_reason(input_metric.get("name", ""), entries, seen)
-            if inner:
-                return f"derived from a {inner} metric"
-        return None
-    if mtype in _COMMUTING_METRIC_TYPES:
-        return None
-    return f"of an unsupported metric type ({mtype!r}) that cannot be proven to commute"
-
-
-def _lower_metricflow_query(
-    name: str,
-    query_dict: dict[str, Any],
-    sources: dict[str, Any],
-    base_dir: ProjectDirectory | None = None,
-) -> SqlQuery:
-    """Lower a metricflow query dict to a SqlQuery at compile time (no MetricFlowAdapter).
-
-    Reuses MetricFlow's own compiler (MetricFlowEngine.explain) against the dbt
-    semantic manifest (target/semantic_manifest.json, from `dbt parse`) rather than
-    reimplementing MetricFlow's SQL generation. The query's `source` must be a
-    `dbt_profile` source (no separate `type: metricflow` source) — the dbt project
-    is detected via `base_dir.project.exists("dbt_project.yml")` (the sibling-of-
-    dbt_charts.yml convention DbtAdapter uses at execute time), a host-agnostic
-    seam call rather than a raw filesystem walk. MetricFlow-over-dbt still needs a
-    real filesystem path downstream (dbt adapter / profiles.yml resolution), so a
-    non-filesystem host (e.g. Cloud's git-blob project) is refused with a clear
-    CompilationError rather than silently reading the wrong directory. Raises
-    CompilationError if `base_dir` is None.
-
-    Dimension naming follows MetricFlow's own group-by naming scheme directly
-    (e.g. `customer__region`, `metric_time`) — `dimensions:` is passed through
-    verbatim; `time_grain:` appends `metric_time__<grain>` to the group-by list.
-    MetricFlow bakes filter literals into SQL at compile time (no variable
-    placeholder pass-through — compile-time lowering means recompile-per-change).
-    """
-    source_name = query_dict.get("source")
-    if not isinstance(source_name, str):
-        raise CompilationError(
-            f"metricflow query '{name}': 'source' must be a string naming a dbt_profile source"
-        )
-    if source_name not in sources:
-        raise CompilationError.from_code(
-            ERR_SOURCE_NOT_FOUND,
-            query_name=name,
-            source=source_name,
-            available=sorted(sources),
-        )
-    source_cfg = parse_source_config(sources[source_name])
-    if not isinstance(source_cfg, DbtProfileSourceConfig):
-        raise CompilationError(
-            f"metricflow query '{name}': source '{source_name}' is not a dbt_profile source"
-        )
-    metrics = query_dict.get("metrics")
-    if not isinstance(metrics, list) or not metrics:
-        raise CompilationError(
-            f"metricflow query '{name}': metrics must be a non-empty list, "
-            f"got {type(metrics).__name__}"
-        )
-    raw_dims = query_dict.get("dimensions")
-    if raw_dims is not None and not isinstance(raw_dims, list):
-        raise CompilationError(
-            f"metricflow query '{name}': dimensions must be a list, "
-            f"got {type(raw_dims).__name__}"
-        )
-    dimensions = list(raw_dims) if isinstance(raw_dims, list) else []
-    time_grain = query_dict.get("time_grain")
-    group_by_names = (
-        [*dimensions, f"metric_time__{time_grain}"] if time_grain else dimensions
-    )
-
-    raw_where = query_dict.get("where")
-    if raw_where is not None and (
-        not isinstance(raw_where, list)
-        or not all(isinstance(p, str) for p in raw_where)
-    ):
-        raise CompilationError(
-            f"metricflow query '{name}': where must be a list of SQL predicate "
-            f"strings, got {type(raw_where).__name__}"
-        )
-    where_predicates = list(raw_where) if raw_where else []
-    literal_predicates = [p for p in where_predicates if "{{" not in p]
-    variable_predicates = [p for p in where_predicates if "{{" in p]
-    for predicate in variable_predicates:
-        for column in _predicate_columns(name, predicate):
-            if column not in group_by_names:
-                raise CompilationError(
-                    f"metricflow query '{name}': variable predicate on "
-                    f"'{column}', which is not a selected dimension. Add "
-                    f"'{column}' to dimensions: (the filter becomes exact), "
-                    "or use a sql: query."
-                )
-
-    # Locate the dbt project via the compile-time base_dir (the board file's
-    # project root), not CWD — this makes MetricFlow lowering host-agnostic
-    # (Cloud, programmatic compile, and CLI all work the same).
-    if base_dir is None:
-        raise CompilationError(
-            f"metricflow query '{name}': no project directory context. "
-            "MetricFlow queries must be compiled with a base_dir (project root)."
-        )
-    # Sibling rule: dbt_project.yml is only valid when it sits next to
-    # dbt_charts.yml, i.e. at the project root — same rule as
-    # adapter_registry.build_adapter_registry. Detection goes through the
-    # Project seam (host-agnostic), never a raw Path built off base_dir.
-    if not base_dir.project.exists("dbt_project.yml"):
-        raise CompilationError(
-            f"metricflow query '{name}': no dbt project found. A metricflow query's "
-            "dbt_profile source requires dbt_project.yml as a sibling of dbt_charts.yml."
-        )
-    # Anchored at the project root via base_dir.project (not base_dir itself —
-    # base_dir may be a nested board directory, but target/ always sits at the
-    # project root alongside dbt_project.yml).
-    semantic_manifest_relpath = "target/semantic_manifest.json"
-    semantic_manifest = base_dir.project.path(semantic_manifest_relpath)
-    if not semantic_manifest.exists():
-        raise CompilationError(
-            f"metricflow query '{name}': no semantic manifest found at "
-            f"{semantic_manifest_relpath}. Run `dbt parse` in the dbt project to "
-            "generate it."
-        )
-    # A real dbt project was detected, but the dbt adapter and profiles.yml
-    # resolution below still need a real filesystem directory — MetricFlow-
-    # over-dbt is filesystem-only today. Refuse a non-filesystem host (e.g.
-    # Cloud's git-blob-store project) rather than reading its base-class
-    # `.root` (the worker CWD, not a real dbt project directory).
-    if not isinstance(base_dir.project, FilesystemProject):
-        raise CompilationError(
-            f"metricflow query '{name}': dbt-project MetricFlow queries require a "
-            f"local filesystem project; got {type(base_dir.project).__name__}."
-        )
-    dbt_project_path = base_dir.project.root
-
-    # tach-ignore(pre-existing compile->execute coupling — accepted debt)
-    from dbt_charts.core.execute.adapters.dbt_adapter import (
-        _read_target_dict,
-    )  # noqa: PLC0415
-
-    profiles_dir = (
-        (dbt_project_path / source_cfg.profiles_dir).resolve()
-        if source_cfg.profiles_dir is not None
-        else None
-    )
-    try:
-        target_dict = _read_target_dict(
-            dbt_project_path,
-            source_cfg.profile,
-            source_cfg.target,
-            profiles_dir=profiles_dir,
-        )
-    except (FileNotFoundError, ValueError) as e:
-        raise CompilationError(f"metricflow query '{name}': {e}") from e
-
-    dialect = target_dict.get("type")
-    if dialect not in _METRICFLOW_DIALECTS:
-        raise CompilationError(
-            f"metricflow query '{name}': unsupported dialect '{dialect}' for MetricFlow. "
-            f"Supported: {sorted(_METRICFLOW_DIALECTS)}"
-        )
-    engine_name, renderer_module, renderer_class = _METRICFLOW_DIALECTS[dialect]
-
-    try:
-        # Lazy import: metricflow is optional (pip install dbt-charts[metricflow]).
-        from metricflow.data_table.mf_table import MetricFlowDataTable  # noqa: PLC0415
-        from metricflow.engine.metricflow_engine import (  # noqa: PLC0415
-            MetricFlowEngine,
-            MetricFlowQueryRequest,
-        )
-        from metricflow.protocols.sql_client import SqlEngine  # noqa: PLC0415
-        from metricflow.sql.render.sql_plan_renderer import (  # noqa: PLC0415
-            SqlPlanRenderer,
-        )
-        from metricflow_semantics.errors.error_classes import (  # noqa: PLC0415
-            MetricFlowException,
-        )
-        from metricflow_semantics.model.dbt_manifest_parser import (  # noqa: PLC0415
-            parse_manifest_from_dbt_generated_manifest,
-        )
-        from metricflow_semantics.model.semantic_manifest_lookup import (  # noqa: PLC0415
-            SemanticManifestLookup,
-        )
-        from metricflow_semantics.sql.sql_bind_parameters import (  # noqa: PLC0415
-            SqlBindParameterSet,
-        )
-    except ImportError as e:
-        raise CompilationError(
-            f"metricflow query '{name}': metricflow is not installed. "
-            "Install with: pip install dbt-charts[metricflow]"
-        ) from e
-
-    # MetricFlow logs query-parsing/dataflow-planning steps at INFO, which floods
-    # `dct compile`/`dct describe` output. Compile-time lowering never needs it.
-    logging.getLogger("metricflow").setLevel(logging.WARNING)
-    logging.getLogger("metricflow_semantics").setLevel(logging.WARNING)
-
-    import importlib  # noqa: PLC0415
-
-    renderer = getattr(importlib.import_module(renderer_module), renderer_class)()
-    sql_engine = getattr(SqlEngine, engine_name)
-
-    class _CompileTimeSqlClient:
-        """Satisfies MetricFlow's SqlClient Protocol for compile-time-only use.
-
-        MetricFlowEngine.explain() never issues a query — it only reads
-        sql_engine_type (dialect) and sql_plan_renderer (pure Python) off the
-        client to render SQL text. The query/execute/dry_run/close/
-        render_bind_parameter_key methods below exist only to satisfy the
-        Protocol's structural type; explain() never calls them, so each
-        raises unconditionally.
-        """
-
-        @property
-        def sql_engine_type(self) -> SqlEngine:
-            return sql_engine
-
-        @property
-        def sql_plan_renderer(self) -> SqlPlanRenderer:
-            return renderer
-
-        def query(
-            self,
-            stmt: str,
-            sql_bind_parameter_set: SqlBindParameterSet = SqlBindParameterSet(),
-        ) -> MetricFlowDataTable:
-            raise NotImplementedError(
-                "compile-time-only SqlClient stub does not execute queries"
-            )
-
-        def execute(
-            self,
-            stmt: str,
-            sql_bind_parameter_set: SqlBindParameterSet = SqlBindParameterSet(),
-        ) -> None:
-            raise NotImplementedError(
-                "compile-time-only SqlClient stub does not execute queries"
-            )
-
-        def dry_run(
-            self,
-            stmt: str,
-            sql_bind_parameter_set: SqlBindParameterSet = SqlBindParameterSet(),
-        ) -> None:
-            raise NotImplementedError(
-                "compile-time-only SqlClient stub does not execute queries"
-            )
-
-        def close(self) -> None:
-            raise NotImplementedError(
-                "compile-time-only SqlClient stub has no connection to close"
-            )
-
-        def render_bind_parameter_key(self, bind_parameter_key: str) -> str:
-            raise NotImplementedError(
-                "compile-time-only SqlClient stub does not bind parameters"
-            )
-
-    try:
-        manifest_json = semantic_manifest.read_text()
-        lookup = SemanticManifestLookup(
-            parse_manifest_from_dbt_generated_manifest(manifest_json)
-        )
-    except Exception as e:  # noqa: BLE001 — filesystem boundary; pydantic/JSON decode errors have no shared base
-        raise CompilationError(
-            f"metricflow query '{name}': invalid semantic manifest at "
-            f"{semantic_manifest_relpath}: {e}"
-        ) from e
-    if where_predicates:
-        _reject_non_commuting_metrics(name, metrics, manifest_json)
-
-    try:
-        engine = MetricFlowEngine(
-            semantic_manifest_lookup=lookup, sql_client=_CompileTimeSqlClient()
-        )
-        result = engine.explain(
-            MetricFlowQueryRequest.create(
-                metric_names=metrics,
-                group_by_names=group_by_names or None,
-                where_constraints=[
-                    _to_metricflow_constraint(name, p) for p in literal_predicates
-                ]
-                or None,
-            )
-        )
-    except MetricFlowException as e:
-        raise CompilationError(f"metricflow query '{name}': {e}") from e
-
-    sql = result.sql_statement.sql
-    if variable_predicates:
-        # Compose around the baked SQL, never inside it. Filtering on a selected
-        # group-by dimension commutes with aggregation, so the post-filter is
-        # exact; the predicates' {{ }} resolve through render_parameterized at
-        # execute (values bound as parameters, filter()/filter_date_range()
-        # helpers available).
-        conditions = " AND ".join(f"({p})" for p in variable_predicates)
-        sql = f"SELECT * FROM (\n{sql}\n) mf_query WHERE {conditions}"
-    return SqlQuery(
-        sql=sql,
-        source=source_name,
-        limit=query_dict.get("limit"),
-        description=query_dict.get("description"),
-        ignore=query_dict.get("ignore"),
-    )
-
-
-_QUERY_TYPES_TAKING_CONNECTION_DEFAULT = frozenset({"sql", "metricflow"})
+_QUERY_TYPES_TAKING_CONNECTION_DEFAULT = frozenset({"sql"})
 
 # A `source:` string containing '/' or ending in a data-file extension is
 # an inline file reference, not a registry name. Type is inferred from the
@@ -660,6 +183,7 @@ def normalize_query(
     base_dir: ProjectDirectory | None = None,
     cache_root: CachePatch | None = None,
     board_cache: CachePatch = INHERIT_CACHE,
+    board_incremental: IncrementalValue = None,
 ) -> AnyQuery:
     """Normalize a query definition to AnyQuery.
 
@@ -675,11 +199,9 @@ def normalize_query(
             layer, and the two cross-file import lanes each shipped without it
             once already — an optional registry that quietly resolves to `{}`
             turns "this caller has no source configs" and "this caller forgot to
-            pass them" into the same, silent, day-old-data outcome. Also consulted
-            by metricflow queries, which lower to SqlQuery at normalize
-            time (no adapter; compile-time lowering).
-        base_dir: ProjectDirectory anchor (board file's parent). Required for
-            metricflow queries (locate dbt_project.yml without CWD).
+            pass them" into the same, silent, day-old-data outcome.
+        base_dir: ProjectDirectory anchor (board file's parent). Used to resolve
+            inline file-path sources.
         cache_root: The project's `cache:` block — the root of the cascade,
             threaded from the compile entry (`Project.cache`) rather than read
             off the process-global config: `load_config` runs only under `dct
@@ -690,6 +212,8 @@ def normalize_query(
         board_cache: The declaring dashboard's `cache:` layer, folded in between
             the source and the query itself. Empty (the default) authors
             nothing, so the query inherits the source/project layers unchanged.
+        board_incremental: Board-level incremental setting (watermark column,
+            False, or None) to inherit when the query does not specify its own.
 
     Returns:
         Query object (SqlQuery, HttpQuery, etc.)
@@ -709,8 +233,14 @@ def normalize_query(
     # below. It is already normalized, so it keeps the cache policy it carries.
     prebuilt = isinstance(query_def, SqlQuery)
     authored_cache: CachePatch | None = None
+    # Incremental setting extracted from the authored input; used in the
+    # cascade after the query is constructed. None means "inherit from board".
+    # Prebuilt queries already carry their normalized value — preserve it.
+    query_incremental: IncrementalValue = None
     if isinstance(query_def, SqlQuery):
         query: AnyQuery = query_def
+        # Prebuilt: treat existing value as already-resolved (no cascade needed).
+        query_incremental = query_def.incremental
     else:
         # Convert to dict
         query_dict: dict[
@@ -723,9 +253,19 @@ def normalize_query(
             # through the reconstruction on the other side.
             query_dict.pop("cache", None)
             authored_cache = query_def.cache
+            # Pull the incremental setting before SqlQuery construction rejects
+            # it as an extra field. Already validated by _BaseQueryFields'
+            # own field_validator when this instance was constructed.
+            query_incremental = query_dict.pop("incremental", None)
         elif isinstance(query_def, dict):
             query_dict = dict(query_def)
             authored_cache = validate_cache_layer(name, query_dict.pop("cache", None))
+            try:
+                query_incremental = validate_incremental_value(
+                    query_dict.pop("incremental", None)
+                )
+            except ValueError as e:
+                raise CompilationError(f"Query '{name}': {e}") from e
         elif isinstance(query_def, str):
             query_dict = {"sql": query_def}
         else:
@@ -801,10 +341,6 @@ def normalize_query(
             if query_dict.get("source") is None:
                 raise CompilationError.from_code(ERR_SOURCE_REQUIRED, query_name=name)
             query = SqlQuery(**query_dict)
-        elif query_type == "metricflow":
-            query = _lower_metricflow_query(
-                name, query_dict, resolved_sources, base_dir
-            )
         elif query_type == "http":
             if "url" not in query_dict:
                 raise CompilationError(
@@ -826,7 +362,7 @@ def normalize_query(
         else:
             raise CompilationError(
                 f"Query '{name}': unknown type '{query_type}'. "
-                "Valid types: http, metricflow, schema, sql, values."
+                "Valid types: http, schema, sql, values."
             )
 
     # Validate setup_sql doesn't contain query references (non-nestable by design)
@@ -899,6 +435,29 @@ def normalize_query(
         if query.setup_sql:
             deps |= extract_variable_dependencies(query.setup_sql)
     query.variable_dependencies = frozenset(deps)
+
+    # An explicit `incremental: <column>` on a non-SQL query is a compile
+    # error. Board-level incremental is silently ignored for non-SQL queries
+    # (they never receive tail queries); only an explicit query-level column
+    # is rejected.
+    if not is_sql_query(query) and isinstance(query_incremental, str):
+        raise CompilationError(
+            f"Query '{name}': incremental refresh is only supported for SQL queries."
+        )
+
+    # Cascade the incremental setting: query-level overrides board-level.
+    # Only SqlQuery can be incremental — other types never receive tail queries.
+    # Pre-built queries keep their already-normalized value (no re-cascade).
+    if is_sql_query(query) and not prebuilt:
+        effective_incremental: IncrementalValue = (
+            query_incremental if query_incremental is not None else board_incremental
+        )
+        # False (explicit opt-out) and None (never set) both collapse to None
+        # on the normalized model — only a watermark column name means
+        # "incremental". A bare `true` cannot reach here: rejected at parse.
+        query.incremental = (
+            effective_incremental if isinstance(effective_incremental, str) else None
+        )
 
     # Resolve the cache cascade (project root → source → board → query)
     # into one policy the executor consumes without cascade logic.

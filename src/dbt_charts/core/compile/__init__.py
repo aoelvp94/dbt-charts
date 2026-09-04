@@ -73,7 +73,6 @@ from dbt_charts.core.compile.models.chart.normalized import ChartDependencies
 from dbt_charts.core.compile.models.query.authored import (
     AuthoredCompactValuesQuery,
     AuthoredHttpQuery,
-    AuthoredMetricflowQuery,
     AuthoredQuery,
     AuthoredSchemaQuery,
     AuthoredSqlQuery,
@@ -158,7 +157,6 @@ __all__ = [
     "SparkBarChart",
     "AuthoredCompactValuesQuery",
     "AuthoredHttpQuery",
-    "AuthoredMetricflowQuery",
     "AuthoredQuery",
     "AuthoredSchemaQuery",
     "AuthoredSqlQuery",

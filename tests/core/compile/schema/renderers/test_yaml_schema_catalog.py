@@ -1,4 +1,4 @@
-"""Dataface YAML schemas are strict, frozen package contracts."""
+"""dbt charts YAML schemas are strict, frozen package contracts."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def test_yaml_schema_matches_the_authored_board_boundary() -> None:
     jsonschema.Draft7Validator(schema).validate(valid)
     AuthoredBoard.model_validate(valid)
 
-    invalid = {**valid, "not_a_dataface_key": True}
+    invalid = {**valid, "not_a_dbt_charts_key": True}
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.Draft7Validator(schema).validate(invalid)
     with pytest.raises(ValidationError):

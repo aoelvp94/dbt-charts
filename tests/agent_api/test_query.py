@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
@@ -106,8 +107,8 @@ class TestExecuteQuerySourcelessHardError:
 
         result = execute_query(sql="SELECT 1 as x", adapter_registry=registry)
         assert result.success is False
-        assert result.error is not None
-        assert "Name a source for the query" in result.error
+        assert result.errors
+        assert "Name a source for the query" in result.errors[0]
 
     def test_named_source_still_works(self, registry: AdapterRegistry) -> None:
         from dbt_charts.agent_api.query import execute_query
@@ -142,19 +143,47 @@ class TestExecuteQueryTypedReturn:
     ) -> None:
         from dbt_charts.agent_api.query import execute_query
 
-        wire = execute_query(
-            sql="SELECT 1", adapter_registry=empty_registry
-        ).model_dump()
-        for key in (
-            "success",
-            "columns",
-            "data",
-            "error",
-            "errors",
-            "row_count",
-            "truncated",
-        ):
+        # A fanout query so diagnostics is non-empty — this is the JSON wire
+        # boundary (print_json_result's model_dump_json(exclude_none=True)),
+        # so a query with zero diagnostics would never exercise the recursive
+        # null-dropping into the typed diagnostics list this test pins.
+        result = execute_query(
+            sql="SELECT COUNT(*) FROM a JOIN b ON a.id = b.id",
+            source="db",
+            adapter_registry=empty_registry,
+        )
+        assert result.diagnostics
+
+        wire = json.loads(result.model_dump_json(exclude_none=True))
+        for key in ("success", "columns", "data", "errors", "row_count", "truncated"):
             assert key in wire
+        assert "error" not in wire
+
+        # confidence is unset on a fanout finding with no relationship hints —
+        # exclude_none drops the key entirely rather than serializing null;
+        # detail/recommendation, which the validator does populate, still show.
+        for diag in wire["diagnostics"]:
+            assert None not in diag.values()
+            assert "confidence" not in diag
+            assert diag["detail"]
+
+    def test_diagnostics_are_typed_query_diagnostic_not_dict(
+        self, empty_registry: AdapterRegistry
+    ) -> None:
+        """ExecuteQueryResult.diagnostics carries QueryDiagnostic objects, not
+        pre-flattened dicts — agent_api return types are never dict[str, Any]."""
+        from dbt_charts.agent_api.query import execute_query
+        from dbt_charts.agent_api.validate_query import QueryDiagnostic
+
+        result = execute_query(
+            sql="SELECT COUNT(*) FROM a JOIN b ON a.id = b.id",
+            source="db",
+            adapter_registry=empty_registry,
+        )
+        assert result.diagnostics
+        for d in result.diagnostics:
+            assert isinstance(d, QueryDiagnostic)
+            assert d.code
 
 
 # ---------------------------------------------------------------------------
@@ -476,15 +505,15 @@ rows:
         assert len(result.data) == 2
 
 
-class TestQueryBoardDescription:
-    """A named board query's authored `description:` reaches the tool result.
+class TestQueryBoardNote:
+    """A named board query's authored `notes:` reaches the tool result.
 
-    The description is already authored in YAML and already survives compile
-    (`normalized.SqlQuery.description`); returning it is what lets a caller
+    The note is already authored in YAML and already survives compile
+    (`normalized.SqlQuery.notes`); returning it is what lets a caller
     label the call with what it is for instead of its identifier.
     """
 
-    def test_authored_description_is_returned(
+    def test_authored_notes_is_returned(
         self,
         tmp_path: Path,
         registry: AdapterRegistry,
@@ -496,7 +525,7 @@ class TestQueryBoardDescription:
 source: db
 queries:
   leads_by_industry:
-    description: Leads grouped by industry
+    notes: Leads grouped by industry
     sql: "select 1 as a"
 charts:
   c:
@@ -513,9 +542,9 @@ rows:
             adapter_registry=registry,
         )
         assert result.success is True
-        assert result.description == "Leads grouped by industry"
+        assert result.notes == "Leads grouped by industry"
 
-    def test_undescribed_query_returns_none(
+    def test_unnoted_query_returns_none(
         self,
         tmp_path: Path,
         registry: AdapterRegistry,
@@ -528,7 +557,7 @@ rows:
             "revenue", path, local_project(tmp_path), adapter_registry=registry
         )
         assert result.success is True
-        assert result.description is None
+        assert result.notes is None
 
 
 class TestQueryBoardFailureCarriesSql:

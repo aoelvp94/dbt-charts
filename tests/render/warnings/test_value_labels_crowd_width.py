@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.models.chart.authored import MultiplesConfig
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
     BarChart,
@@ -40,7 +41,7 @@ def _board(family: str, label_updates: dict[str, Any]) -> ChartStyleContext:
 
     Area value labels ride the overlaid line mark, so enable them there.
     """
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     label_mark = "line" if family == "area" else family
     mark = getattr(compiled.charts.marks, label_mark)
     labels = mark.labels.model_copy(update={"visible": True, **label_updates})
@@ -134,6 +135,30 @@ def test_no_fire_on_non_categorical_x() -> None:
     assert detector.detect(ctx) == []
 
 
+def test_no_fire_when_faceted_by_the_x_field_itself() -> None:
+    """Small multiples partitioned on the same field bound to x — the shape
+    ``facet_bound_position_channels`` narrows. Whole-dataset ``distinct``
+    (24) would read a razor-thin slot that isn't there; a genuinely
+    independent per-panel x scale holds exactly one value, so the real
+    per-panel slot is the full panel width, not ``width / 24``."""
+    board = _board("bar", {"position": "middle", "format": ",.5f"})
+    chart = _bar(multiples=MultiplesConfig(columns="cat"))
+    resolved = resolve(chart, _rows(24), chart_style_context=board)
+    resolved_board = make_test_resolved_board(charts={resolved.id: resolved})
+    ctx = WarningContext(
+        board_spec=resolved_board,
+        chart_results={resolved.id: _rows(24)},
+        vega_specs={
+            resolved.id: {
+                "facet": {"column": {"field": "cat"}},
+                "spec": {"width": 42, "encoding": {"x": {"type": "nominal"}}},
+                "resolve": {"scale": {"x": "independent"}},
+            }
+        },
+    )
+    assert detector.detect(ctx) == []
+
+
 class TestDetectorReadsThePreEmitPanelWidth:
     """Same claim as bar_band_width_too_narrow's sibling test: the panel
     width the bar emitter's label-thinning decision measures against
@@ -153,7 +178,7 @@ class TestDetectorReadsThePreEmitPanelWidth:
         )
         from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         mark = compiled.charts.marks.bar
         labels = mark.labels.model_copy(update={"visible": True, "format": ",.5f"})
         new_mark = mark.model_copy(update={"labels": labels})
@@ -180,8 +205,12 @@ class TestDetectorReadsThePreEmitPanelWidth:
         # No mirror auto-set for a columns-only shared-scale facet unless the
         # cascade opts in; read the emitted spec's own width rather than
         # re-deriving has_mirror, keeping this a pin on the stamped value.
-        expected_no_mirror = facet_panel_width(600.0, n_columns, has_mirror=False)
-        expected_mirror = facet_panel_width(600.0, n_columns, has_mirror=True)
+        expected_no_mirror = facet_panel_width(
+            600.0, n_columns, has_mirror=False, extra_axis_px=0.0
+        )
+        expected_mirror = facet_panel_width(
+            600.0, n_columns, has_mirror=True, extra_axis_px=0.0
+        )
         assert vl["spec"]["width"] in (expected_no_mirror, expected_mirror)
 
         resolved = resolve(chart, rows, chart_style_context=board)
@@ -196,3 +225,39 @@ class TestDetectorReadsThePreEmitPanelWidth:
         detector.detect(ctx)
         unit = vl["spec"]
         assert unit["width"] == vl["spec"]["width"]
+
+
+def test_widest_panel_count_not_a_flat_one_when_domain_subset_narrows() -> None:
+    """Small multiples over a DIFFERENT field (`grp`, not x's own field
+    `cat`) where each panel still holds a proper subset of the x domain —
+    the general domain-subset case, not just the old name-matched
+    degenerate shape where every panel held exactly one value by
+    construction. Panel "A" holds 3 of 5 categories, panel "B" holds 2.
+
+    A flat 1 would compute a 42px slot (comfortably fits the ~38px label,
+    silent); the whole-dataset union (5) would compute an 8.4px slot
+    (narrower than what "A" actually paints). The real, widest-panel slot
+    is 42/3=14px — still narrower than the ~38px label, so this must fire.
+    """
+    board = _board("bar", {"position": "middle", "format": ",.5f"})
+    chart = _bar(multiples=MultiplesConfig(columns="grp"))
+    rows = [{"cat": c, "grp": "A", "val": _VALUE} for c in ("c0", "c1", "c2")] + [
+        {"cat": c, "grp": "B", "val": _VALUE} for c in ("c3", "c4")
+    ]
+    resolved = resolve(chart, rows, chart_style_context=board)
+    resolved_board = make_test_resolved_board(charts={resolved.id: resolved})
+    ctx = WarningContext(
+        board_spec=resolved_board,
+        chart_results={resolved.id: rows},
+        vega_specs={
+            resolved.id: {
+                "facet": {"column": {"field": "grp"}},
+                "spec": {"width": 42, "encoding": {"x": {"type": "nominal"}}},
+                "resolve": {"scale": {"x": "independent"}},
+            }
+        },
+    )
+    warnings = detector.detect(ctx)
+    assert len(warnings) == 1
+    assert warnings[0].code == WARN_VALUE_LABELS_CROWD_WIDTH.code
+    assert "14px" in warnings[0].message

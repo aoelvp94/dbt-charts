@@ -28,6 +28,7 @@ from dbt_charts.core.execute.adapters.base import (
 from dbt_charts.core.execute.adapters.sql_adapter import PreparedSql
 from dbt_charts.core.execute.warehouse_check import (
     WarehouseCheckColumn,
+    check_ad_hoc_query,
     warehouse_check,
 )
 
@@ -274,7 +275,7 @@ class TestWarehouseCheckDuckDB:
         Carrying the limit into the wrap makes a 3-column query report 2 columns,
         and the sweep then reports the third as missing from the result. The
         limit is set on the compiled query because that is where it lands: a
-        `limit:` on an authored metricflow or http query normalizes onto the
+        `limit:` on an authored http query normalizes onto the
         compiled ``SqlQuery``, which is what the check receives.
         """
         compiled, registry = _duckdb_project(
@@ -800,24 +801,104 @@ class TestWarehouseCheckUnchecked:
         _check_sql("SELECT 1", registry)
         registry.execute.assert_not_called()
 
-    def test_postgres_reports_unchecked_not_explain(self):
-        """After removing the EXPLAIN tier, postgres falls through to
-        no-validity-primitive — nothing is sent, nothing is checked."""
-        from dbt_charts.core.compile.models.source import parse_source_config
-
+    def test_databricks_is_unchecked_with_the_embedded_error_reason(self):
+        """Spark's EXPLAIN returns planner errors as plan *text* instead of
+        failing the statement, so an EXPLAIN branch would report a broken query
+        valid — the one outcome this module forbids. Held out deliberately."""
         registry = MagicMock()
-        registry.resolve_query_source.return_value = parse_source_config(
-            {
-                "type": "postgres",
-                "host": "h",
-                "dbname": "d",
-                "user": "u",
-                "password": "p",
-            }
+        registry.resolve_query_source.return_value = SimpleNamespace(type="databricks")
+        result = _check_sql("SELECT 1", registry)
+        assert result.status == "unchecked"
+        assert result.columns_checked is False
+        assert "plan text" in result.reason
+        registry.execute.assert_not_called()
+
+
+class TestWarehouseCheckExplain:
+    """EXPLAIN tier: postgres/redshift/snowflake get a validity-only check.
+
+    A first EXPLAIN tier was cut from PR #7266 because its wrap guard inferred
+    fault from warehouse errors and kept producing false-invalids. The shipped
+    guard now rules on the author's own parsed statement before anything is
+    sent — these tests pin the tier to that gate, not a new one.
+    """
+
+    def _registry(self, adapter_type: str, result: QueryResult) -> MagicMock:
+        registry = MagicMock()
+        registry.resolve_query_source.return_value = SimpleNamespace(type=adapter_type)
+        registry.execute.return_value = result
+        return registry
+
+    @pytest.mark.parametrize("adapter_type", ["postgres", "redshift", "snowflake"])
+    def test_valid_query_is_validity_only(self, adapter_type):
+        """A clean EXPLAIN proves the query binds but yields a plan, not a
+        result schema — columns stay unchecked and unread."""
+        registry = self._registry(
+            adapter_type, QueryResult(data=[{"QUERY PLAN": "Seq Scan on t"}])
+        )
+        result = _check_sql("SELECT a FROM t", registry)
+        assert result.status == "valid"
+        assert result.mechanism == "EXPLAIN"
+        assert result.adapter_type == adapter_type
+        assert result.columns_checked is False
+        assert result.columns == []
+        # The reason is the whole detail describe_query's refusal can show —
+        # an empty one renders "Cannot list columns without running the query: ."
+        assert "no result schema" in result.reason
+
+    def test_sends_the_explain_prefixed_sql_with_no_limit(self):
+        registry = self._registry("postgres", QueryResult(data=[]))
+        _check_sql("SELECT a FROM t", registry)
+        sent = registry.execute.call_args.args[0]
+        assert sent.sql.startswith("EXPLAIN ")
+        assert sent.sql.endswith("SELECT a FROM t")
+        assert sent.limit is None
+
+    def test_warehouse_rejection_is_invalid(self):
+        registry = self._registry(
+            "postgres",
+            QueryResult(
+                data=[],
+                error='column "customer_id" does not exist',
+                error_code=ERR_WAREHOUSE_RUNTIME,
+            ),
+        )
+        result = _check_sql("SELECT customer_id FROM t", registry)
+        assert result.status == "invalid"
+        assert "customer_id" in result.error
+
+    def test_connection_fault_is_unchecked_not_invalid(self):
+        from dbt_charts.core.diagnostics.codes_execute import (
+            ERR_WAREHOUSE_CONNECTION,
+        )
+
+        registry = self._registry(
+            "snowflake",
+            QueryResult(
+                data=[],
+                error="could not connect",
+                error_code=ERR_WAREHOUSE_CONNECTION,
+            ),
         )
         result = _check_sql("SELECT 1", registry)
         assert result.status == "unchecked"
-        assert result.mechanism == "no-validity-primitive"
+        assert result.reason
+
+    def test_unwrappable_statement_names_explain(self):
+        """The gate's refusal must name the keyword actually in play."""
+        registry = self._registry("postgres", QueryResult(data=[]))
+        result = _check_sql("SELECT 1; SELECT 2", registry)
+        assert result.status == "unchecked"
+        assert "EXPLAIN" in result.reason
+        registry.execute.assert_not_called()
+
+    def test_leading_parenthesized_arm_is_refused(self):
+        """Postgres parses `EXPLAIN (SELECT …)` as EXPLAIN's *options list*,
+        rejecting SQL the author wrote correctly — the gate refuses the shape
+        before anything is sent."""
+        registry = self._registry("postgres", QueryResult(data=[]))
+        result = _check_sql("(SELECT 1) UNION ALL (SELECT 2)", registry)
+        assert result.status == "unchecked"
         registry.execute.assert_not_called()
 
 
@@ -932,3 +1013,78 @@ class TestPrepareSqlThroughARealRegistry:
         ) == ("my-proj", "my-ds")
         assert job_config.dry_run is True
         assert job_config.use_query_cache is False
+
+
+class TestCheckAdHocQuery:
+    """check_ad_hoc_query — the no-board entry point ``describe_query`` uses.
+
+    Same dispatch as ``warehouse_check``, driven off a synthesized empty board
+    instead of a compiled one — there is no board behind a hand-typed SQL
+    string. Each case pins one adapter's row of the dispatch table so a
+    regression that quietly widens back to full execution fails here first.
+    """
+
+    def test_bigquery_dry_run_never_executes(self, fake_bigquery_client):
+        field = MagicMock()
+        field.name = "revenue"
+        field.field_type = "FLOAT"
+        fake_bigquery_client.query.return_value = SimpleNamespace(schema=[field])
+
+        result = check_ad_hoc_query(
+            "SELECT revenue FROM orders",
+            source="s",
+            adapter_registry=_bigquery_registry(),
+        )
+
+        assert result.status == "valid"
+        assert result.mechanism == "bigquery-dry-run"
+        assert result.columns_checked is True
+        assert result.columns == [WarehouseCheckColumn(name="revenue", type="FLOAT")]
+        assert fake_bigquery_client.query.call_args.kwargs["job_config"].dry_run is True
+
+    def test_bigquery_rejection_is_invalid(self, fake_bigquery_client):
+        fake_bigquery_client.query.side_effect = BadRequest("Syntax error near FORM")
+
+        result = check_ad_hoc_query(
+            "SELECT 1 FORM orders",
+            source="s",
+            adapter_registry=_bigquery_registry(),
+        )
+
+        assert result.status == "invalid"
+        assert "Syntax error" in result.error
+
+    def test_postgres_explain_checks_validity_only(self):
+        from dbt_charts.core.compile.models.source import parse_source_config
+
+        registry = MagicMock()
+        registry.resolve_query_source.return_value = parse_source_config(
+            {
+                "type": "postgres",
+                "host": "h",
+                "dbname": "d",
+                "user": "u",
+                "password": "p",
+            }
+        )
+        registry.execute.return_value = QueryResult(data=[{"QUERY PLAN": "Result"}])
+
+        result = check_ad_hoc_query("SELECT 1", source="s", adapter_registry=registry)
+
+        assert result.status == "valid"
+        assert result.mechanism == "EXPLAIN"
+        assert result.columns_checked is False
+        assert registry.execute.call_args.args[0].sql == "EXPLAIN SELECT 1"
+
+    def test_duckdb_describe_via_synthesized_board(self, tmp_path):
+        """DuckDB DESCRIBE still works with no real board behind the query."""
+        compiled, registry = _duckdb_project(tmp_path)
+
+        result = check_ad_hoc_query(
+            "SELECT a, b FROM t", source="testdb", adapter_registry=registry
+        )
+
+        assert result.status == "valid"
+        assert result.mechanism == "DESCRIBE"
+        assert result.columns_checked is True
+        assert {c.name for c in result.columns} == {"a", "b"}

@@ -2,7 +2,7 @@
 continuous quantitative scale (numeric x, not the binned ``histogram``
 path) must not let its min/max bars overhang the plot's left/right edges.
 
-Vega-Lite centers each fixed-width ``continuousBandSize`` bar mark on its
+Vega-Lite centers each fixed-width (``mark.width``) bar mark on its
 data value; on a continuous scale, ``encoding.x.scale.padding`` dispatches to
 VL's own ``continuousPadding`` (pixels on each side of the domain), which is
 the native fix — no explicit domain, no data inspection. The theme's
@@ -113,7 +113,7 @@ def test_quantitative_x_bar_gets_half_bar_width_padding(bar_style) -> None:
     """With no author-set padding, the theme's categorical-gutter default (0)
     is raised to half the bar's own pixel width so it fully fits on-plot.
 
-    The emitter returns a flat spec with ``continuousBandSize`` in ``mark_props``;
+    The emitter returns a flat spec with the literal ``width`` in ``mark_props``;
     BarHoverBandFeature promotes it to layered and moves mark_props to sub-layer 0.
     """
     band_px = 20.0
@@ -127,22 +127,32 @@ def test_quantitative_x_bar_gets_half_bar_width_padding(bar_style) -> None:
     x_enc = spec.encoding["x"]
     assert x_enc["type"] == "quantitative"
     # Emitter returns a flat spec; BarHoverBandFeature promotes to layered later.
-    assert spec.mark_props["continuousBandSize"] == band_px
+    assert spec.mark_props["width"] == band_px
     assert x_enc["scale"]["padding"] == band_px / 2
     assert "domain" not in x_enc["scale"]
 
 
-def test_quantitative_x_bar_no_extra_padding_when_no_bar_size(bar_style) -> None:
-    """No continuousBandSize (mark.size unset) means nothing to overhang —
-    padding stays at whatever the theme cascade already resolved (0),
-    matching prior behavior."""
+def test_quantitative_x_bar_reserves_padding_against_max_size_when_no_bar_size(
+    bar_style,
+) -> None:
+    """No authored bar.size — the padding floor reserves against max_size,
+    the ceiling the computed-default width can never exceed, so a bar
+    computed right up to that ceiling still can't overhang the plot."""
+    max_px = 20.0
+    bar_style = bar_style.model_copy(
+        update={
+            "mark": BarMarkStyle(
+                gap=3.0, min_size=4.0, max_size=max_px, band_width=0.8, padding=0.0
+            )
+        }
+    )
     chart = _build_chart(bar_style)
 
     spec = BarEmitter().emit(chart, _DEFAULT_BOX, regroup((), _hires_data()))
 
     x_enc = spec.encoding["x"]
     assert "continuousBandSize" not in spec.mark_props
-    assert x_enc["scale"]["padding"] == 0.0
+    assert x_enc["scale"]["padding"] == max_px / 2
 
 
 def test_quantitative_x_bar_larger_authored_padding_wins(bar_style) -> None:

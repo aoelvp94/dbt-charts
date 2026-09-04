@@ -3,6 +3,7 @@
 import re
 from collections import Counter
 
+from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.schema.introspection import (
     AuthorableSchema,
     SchemaField,
@@ -34,8 +35,13 @@ class TestRenderPromptStructure:
 
 class TestRenderPromptDescriptions:
     def test_field_descriptions_present(self) -> None:
+        # Read the expected text off the model rather than pinning a copy of it:
+        # the description is contract prose that gets reworded, and a literal here
+        # only ever fails for the rewording, never for the rendering.
+        expected = AuthoredBoard.model_fields["title"].description
+        assert expected
         result = render_prompt(introspect())
-        assert "Dashboard title" in result
+        assert expected in result
 
     def test_nested_model_content_present(self) -> None:
         result = render_prompt(introspect())
@@ -86,41 +92,85 @@ class TestRenderPromptDisplayNames:
 
 
 class TestRenderPromptFieldAnnotations:
-    def test_optional_column_present(self) -> None:
-        result = render_prompt(introspect())
-        assert "| Optional |" in result
+    @staticmethod
+    def _model_block(result: str, heading: str) -> str:
+        start = result.index(heading)
+        end = result.find("\n## ", start + 1)
+        return result[start:end] if end != -1 else result[start:]
 
-    def test_optional_fields_marked_with_checkmark(self) -> None:
+    def test_no_required_column_or_checkmarks(self) -> None:
         result = render_prompt(introspect())
-        # GridLayout.columns is optional — must carry the ✓ marker
-        assert "✓" in result
+        assert "| Required |" not in result
+        assert "| Optional |" not in result
+        assert "✓" not in result
 
-    def test_required_fields_have_blank_optional_cell(self) -> None:
+    def test_mixed_model_splits_into_labeled_tables(self) -> None:
         result = render_prompt(introspect())
-        # GridLayout.items is required — its Optional cell must be blank
-        grid_start = result.index("## GridLayout")
-        grid_block = result[grid_start : result.index("\n## ", grid_start + 1)]
-        items_rows = [r for r in grid_block.splitlines() if r.startswith("| `items`")]
-        assert items_rows, "items field not found in GridLayout"
-        assert not any("✓" in r for r in items_rows), (
-            "required field items should have blank Optional cell"
-        )
+        # GridLayout has required (items) and optional (columns) fields
+        block = self._model_block(result, "## GridLayout")
+        assert "**Required**" in block
+        assert "**Optional**" in block
+        assert block.index("**Required**") < block.index("| `items`")
+        assert block.index("| `items`") < block.index("**Optional**")
+        assert block.index("**Optional**") < block.index("| `columns`")
+
+    def test_all_optional_model_gets_single_unlabeled_table(self) -> None:
+        result = render_prompt(introspect())
+        # SchemaQuery has no required fields — one plain table, no labels
+        block = self._model_block(result, "## SchemaQuery")
+        assert "**Required**" not in block
+        assert "**Optional**" not in block
+        assert "| Field | Type | Description |" in block
 
     def test_no_pipe_none_in_types(self) -> None:
         result = render_prompt(introspect())
         assert "| None" not in result, "| None should not appear in type cells"
 
-    def test_required_fields_before_optional(self) -> None:
+    def test_reference_carries_requiredness_legend(self) -> None:
+        """All-optional models render one unlabeled table; the legend is the
+        only place their requiredness is stated."""
         result = render_prompt(introspect())
-        grid_start = result.index("## GridLayout")
-        grid_block = result[grid_start:]
-        next_section = grid_block.find("\n## ", 1)
-        grid_block = grid_block[:next_section] if next_section != -1 else grid_block
-        rows = [row for row in grid_block.splitlines() if row.startswith("| `")]
-        required_indices = [i for i, r in enumerate(rows) if "| ✓ |" not in r]
-        optional_indices = [i for i, r in enumerate(rows) if "| ✓ |" in r]
-        assert required_indices and optional_indices
-        assert max(required_indices) < min(optional_indices)
+        header, _, _ = result.partition("\n## ")
+        assert "optional unless" in header, (
+            "the reference header must carry the requiredness legend"
+        )
+
+    def test_all_required_model_gets_labeled_required_table(self) -> None:
+        """The legend says unlabeled = all optional, so an all-required model
+        must carry the **Required** label."""
+        result = render_prompt(introspect())
+        block = self._model_block(result, "## VariableRef")
+        assert "**Required**" in block
+        assert "**Optional**" not in block
+        assert "| Field | Type | Description |" in block
+
+    def test_single_value_literal_rendered_as_const(self) -> None:
+        result = render_prompt(introspect())
+        assert 'const: "http"' in result
+        assert 'enum: "http"' not in result
+
+    def test_single_value_type_tag_has_no_description(self) -> None:
+        """Inferable tags render bare; an ExplicitTag-marked tag keeps its
+        description — keyed on the facet, never on the description's prose."""
+        result = render_prompt(introspect())
+        rows = [
+            r
+            for r in result.splitlines()
+            if r.startswith("| `type` |") and "const:" in r
+        ]
+        assert rows, "no single-value type tag rows found"
+        explicit_rows = [r for r in rows if 'const: "schema"' in r]
+        assert explicit_rows, "SchemaQuery's type row must be present"
+        for r in explicit_rows:
+            assert r.split("|")[-2].strip(), (
+                f"ExplicitTag-marked tag must keep its description: {r}"
+            )
+        for r in rows:
+            if r in explicit_rows:
+                continue
+            assert r.split("|")[-2].strip() == "", (
+                f"single-value type tag row should have an empty description: {r}"
+            )
 
 
 class TestRenderPromptOrdering:
@@ -419,6 +469,22 @@ class TestEnumCellTruncation:
         from dbt_charts.core.compile.schema.renderers.prompt import _enum_str
 
         assert _enum_str(["a", "b", "c"]) == 'enum: "a", "b", "c"'
+
+    def test_bool_members_render_as_yaml_literals(self) -> None:
+        from dbt_charts.core.compile.schema.renderers.prompt import _enum_str
+
+        assert _enum_str([False, "x"]) == 'enum: false, "x"'
+
+    def test_single_value_is_const(self) -> None:
+        from dbt_charts.core.compile.schema.renderers.prompt import _enum_str
+
+        assert _enum_str(["a"]) == 'const: "a"'
+
+    def test_single_value_bool_is_yaml_literal_const(self) -> None:
+        """`link: false` must document as YAML `false`, never Python "False"."""
+        from dbt_charts.core.compile.schema.renderers.prompt import _enum_str
+
+        assert _enum_str([False]) == "const: false"
 
     def test_long_enum_is_truncated_with_count(self) -> None:
         from dbt_charts.core.compile.schema.renderers.prompt import (

@@ -426,14 +426,14 @@ def test_get_project_warnings_ignore_reads_fresh_per_call(
 
     get_project_warnings_ignore no longer caches; each call re-reads disk.
     """
-    dataface_yml = tmp_path / "dbt_charts.yml"
-    dataface_yml.write_text("warnings:\n  ignore:\n    - WARN-FANOUT-RISK\n")
+    dbt_charts_yml = tmp_path / "dbt_charts.yml"
+    dbt_charts_yml.write_text("warnings:\n  ignore:\n    - WARN-FANOUT-RISK\n")
 
     first = get_project_warnings_ignore(local_project(tmp_path))
     assert "WARN-FANOUT-RISK" in first
 
     # Edit the file in place — no invalidation call.
-    dataface_yml.write_text("warnings:\n  ignore:\n    - WARN-REAGGREGATION\n")
+    dbt_charts_yml.write_text("warnings:\n  ignore:\n    - WARN-REAGGREGATION\n")
 
     second = get_project_warnings_ignore(local_project(tmp_path))
     assert "WARN-REAGGREGATION" in second
@@ -456,8 +456,8 @@ def test_get_project_warnings_ignore_rejects_non_string_entries(
     Without this, a `dbt_charts.yml` typo like `- True` (unquoted) silently becomes
     the string "True" and the user's ignore list quietly no-ops.
     """
-    dataface_yml = tmp_path / "dbt_charts.yml"
-    dataface_yml.write_text("warnings:\n  ignore:\n    - 42\n    - good_code\n")
+    dbt_charts_yml = tmp_path / "dbt_charts.yml"
+    dbt_charts_yml.write_text("warnings:\n  ignore:\n    - 42\n    - good_code\n")
 
     with pytest.raises(TypeError, match="warnings.ignore entries must be strings"):
         get_project_warnings_ignore(local_project(tmp_path))

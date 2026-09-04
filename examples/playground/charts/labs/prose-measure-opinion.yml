@@ -1,5 +1,5 @@
 title: "Prose measure — one opinion, applied at every width"
-description: >
+notes: >
   The renderer now decides column count and column width together, from the measure.
   Every specimen states what it should deliver, so the render can be judged without
   reading chat. The target is 66 characters in multiple columns and up to 80 in one;

@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from dbt_charts.core.compile.models.markers import Channel, Format
+from dbt_charts.core.compile.models.markers import Channel, DisplayText, Format
 from dbt_charts.core.compile.models.primitives import FormatConfig, ToneLiteral
 from dbt_charts.core.compile.models.schema_names import FormatAlias
 from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
@@ -23,17 +23,17 @@ class KpiSupportConfig(BaseModel):
         default=None,
         description="Column reference (string column name) for the support number/text.",
     )
-    label: str | None = Field(
+    label: Annotated[str | None, DisplayText()] = Field(
         default=None,
         description="Trailing explainer text rendered beside the support value.",
     )
     format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
         default=None,
-        description="Number format (D3 spec, preset, or FormatConfig).",
+        description="How the number is written: a D3 spec, a preset name, or a format block.",
     )
     glyph: str | None = Field(
         default=None,
-        description="Optional prefix glyph (e.g. '▲', '▼', '●').",
+        description="Text shown before the value (e.g. '▲', '▼', '●').",
     )
     tone: ToneLiteral | None = Field(
         default=None,
@@ -92,7 +92,7 @@ class KpiChart(_BaseChartFields, _ConditionalFormattingField):
 
     model_config = ConfigDict(extra="forbid")
 
-    type: Annotated[Literal["kpi"], Field(description="KPI chart type.")]
+    type: Annotated[Literal["kpi"], Field(description="Selects the chart family.")]
     value: Annotated[
         str,
         Channel(),
@@ -100,10 +100,14 @@ class KpiChart(_BaseChartFields, _ConditionalFormattingField):
             description="Column reference (string column name) for the headline number/text."
         ),
     ]
-    # None = no label above the headline value.
+    # None = no label alongside the headline value.
     label: Annotated[
         str | None,
-        Field(default=None, description="KPI label rendered above the headline value."),
+        DisplayText(),
+        Field(
+            default=None,
+            description="Caption naming what the headline value measures; `variant` decides where it sits.",
+        ),
     ]
     variant: Annotated[
         Literal["stacked", "inline", "compact"],
@@ -112,7 +116,7 @@ class KpiChart(_BaseChartFields, _ConditionalFormattingField):
             description=(
                 "Layout variant. 'stacked' (default) shows value, label, and support "
                 "on three vertical lines. 'inline' lays value, label, and support "
-                "out on a single baseline-aligned row. 'compact' is 2-column — big "
+                "out on a single baseline-aligned row. 'compact' is 2-column: big "
                 "value on the left, up to two stacked lines on the right with the "
                 "bottom line sharing baseline with the value; a lone `support` "
                 "block splits across the two right-column lines."
@@ -121,18 +125,21 @@ class KpiChart(_BaseChartFields, _ConditionalFormattingField):
     ]
     support: Annotated[
         KpiSupportConfig | None,
-        Field(default=None, description="Optional support line beneath the KPI value."),
+        Field(
+            default=None,
+            description="Secondary block, a delta, comparison, or note; `variant` decides where it sits.",
+        ),
     ]
     style: Annotated[
         KpiChartStylePatch | None,
-        Field(default=None, description="Chart-local style overrides."),
+        Field(default=None, description="Appearance overrides for this chart alone."),
     ]
     background: Annotated[
         str | dict[str, Any] | None,
         Field(
             default=None,
             description=(
-                "Gradient background channel — {column, scale} shape. "
+                "Gradient background channel, {column, scale} shape. "
                 "Paints the card background by the value's position in the scale."
             ),
         ),

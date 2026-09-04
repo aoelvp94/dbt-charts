@@ -2,7 +2,7 @@
 
 This document lists all dependencies for markdown-svg, their licenses, and their usage within the project. This information is provided for diligence purposes.
 
-This library has no `pyproject.toml` `[project]` table of its own — it ships as a peer package inside the `dbt-charts` wheel, and its dependencies (`fonttools`, `nh3`, `pygments`) are declared directly in `dataface/pyproject.toml`.
+This library has no `pyproject.toml` `[project]` table of its own — it ships as a peer package inside the `dbt-charts` wheel, and its dependencies (`fonttools`, `nh3`, `pygments`) are declared directly in `dbt-charts/pyproject.toml`.
 
 ## Required Dependencies
 
@@ -18,7 +18,7 @@ This library has no `pyproject.toml` `[project]` table of its own — it ships a
 
 ## Build System Dependencies
 
-This library has no `[build-system]`/`pyproject.toml` `[project]` table of its own — it is built as part of `dbt-charts`'s wheel by `dataface/pyproject.toml`'s hatchling configuration.
+This library has no `[build-system]`/`pyproject.toml` `[project]` table of its own — it is built as part of `dbt-charts`'s wheel by `dbt-charts/pyproject.toml`'s hatchling configuration.
 
 ## Development Dependencies
 

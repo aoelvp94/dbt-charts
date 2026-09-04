@@ -37,6 +37,7 @@ variables:
 queries:
   column_schema:
     type: schema
+    fields: [name, actual_type, role, semantic_type, description]
     source: "{{ source_name }}"
     schema: "{{ schema_name }}"
     table: "{{ model }}"

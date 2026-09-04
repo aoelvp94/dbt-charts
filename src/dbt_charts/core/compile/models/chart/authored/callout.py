@@ -6,25 +6,32 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from dbt_charts.core.compile.models.markers import DisplayText
 from dbt_charts.core.compile.models.style.authored import CalloutChartStylePatch
 
 
 class CalloutChart(BaseModel):
-    """Static callout/message chart. Minimal — no chrome, no styling, no query."""
+    """Static callout/message chart. Minimal: no chrome, no styling, no query."""
 
     model_config = ConfigDict(extra="forbid")
 
-    type: Annotated[Literal["callout"], Field(description="Callout chart type.")]
-    message: Annotated[str, Field(description="Static message content.")]
+    type: Annotated[Literal["callout"], Field(description="Selects the chart family.")]
+    message: Annotated[
+        str, DisplayText(), Field(description="Body text the callout displays.")
+    ]
     title: Annotated[
         str | None,
+        DisplayText(),
         Field(
             default=None, description="Optional chart title shown above the message."
         ),
     ] = None
     style: Annotated[
         CalloutChartStylePatch | None,
-        Field(default=None, description="Chart-local style overrides (tone)."),
+        Field(
+            default=None,
+            description="Appearance overrides for this chart alone (tone).",
+        ),
     ] = None
     warnings_ignore: Annotated[
         list[str] | None,

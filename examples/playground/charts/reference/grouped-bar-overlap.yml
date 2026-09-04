@@ -1,5 +1,5 @@
 title: Grouped Bar Overlap
-description: |
+notes: |
   Demonstrates `style.bar.overlap` — the within-group spacing dial for grouped
   bars. Positive overlaps, 0 touches, negative gaps. Keywords: `none` (small
   gap), `flush` (touching), `partial` (25% overlap), `full` (bars coincide),

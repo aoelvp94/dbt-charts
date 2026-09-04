@@ -27,6 +27,9 @@ queries:
     schema: [[ path.schema | tojson ]]
     table: [[ path.table | tojson ]]
     column: [[ path.column | tojson ]]
+    # Project to the panel's own columns — a profiled source returns the
+    # full contract-1.2 key set.
+    fields: [name, actual_type, role, semantic_type, distribution, completeness, key_role]
 
   basics:
     type: sql

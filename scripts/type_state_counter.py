@@ -1,6 +1,6 @@
 """AST counter for type-state rot in ``dbt_charts/core``, marker-aware.
 
-The 2026-06 retro named the rot that makes AI-assisted work on dft-core fragile:
+The 2026-06 retro named the rot that makes AI-assisted work on dbt_charts.core fragile:
 ``| Any`` typed up to the render entrypoint, ``Optional`` / ``| None`` sprawl, and
 silent fallbacks (``x or DEFAULT``, ``d.get(k, default)``, ``getattr(o, a, d)``)
 where the merged config should be the single source of truth and a missing value
@@ -193,7 +193,7 @@ def _parse_markers(source: str) -> dict[int, str]:
     Scans ``COMMENT`` tokens only, not raw text — a marker-shaped string
     inside a string literal or docstring must not parse as an approval, and a
     typo'd category inside a docstring (now a realistic thing to write, since
-    ``dataface/AGENTS.md`` documents the marker) must not hard-error the gate.
+    ``dbt-charts/AGENTS.md`` documents the marker) must not hard-error the gate.
     An unrecognized category name, a separator that isn't the em-dash, or a
     missing/blank reason, in a real comment, is a hard error, not a silent
     miss — a typo must not look like an approval, neither must the wrong

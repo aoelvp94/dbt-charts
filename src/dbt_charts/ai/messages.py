@@ -1,11 +1,11 @@
 """Provider-neutral typed agent conversation messages.
 
 One shape, shared by every producer (``run_agent``) and every consumer
-(``OpenAIClient``): a discriminated union on ``role`` instead of the
+(``OpenAIAdapter``): a discriminated union on ``role`` instead of the
 informal ``list[dict[str, Any]]`` convention the agent conversation used to
 be. An unhandled variant is now a construction error, not a silent drop —
 the class of bug that let a raw tool-call envelope leak into chat as prose
-(2026-07-23 incident; see ``OpenAIClient``'s class docstring in
+(2026-07-23 incident; see ``OpenAIAdapter``'s class docstring in
 ``dbt_charts/ai/llm.py``).
 """
 

@@ -4,7 +4,7 @@ Covers:
   Change #2  — module docstring updated (smoke: import succeeds, docstring tested)
   Change #3  — non-None fields on _Base / _Cartesian / callout must be required
   Change #4a — style slices live at compile/models/style/resolved (per-family package)
-  Change #4b — ResolvedTableChart.data_table removed
+  Change #4b — ResolvedTableChart.support_table removed
   Change #7a/b — ResolvedAreaMarkStyle / ResolvedLineMarkStyle exist and used
   Change #7d — emitters/area and emitters/line no longer raise on None guards
   Change #8  — cartesian style base class hierarchy
@@ -212,12 +212,12 @@ def test_old_style_path_gone():
 
 
 # ---------------------------------------------------------------------------
-# Change #4b — data_table removed from ResolvedTableChart
+# Change #4b — support_table removed from ResolvedTableChart
 # ---------------------------------------------------------------------------
 
 
-def test_table_chart_no_data_table_field():
-    """Passing data_table= to ResolvedTableChart must be rejected (field was removed)."""
+def test_table_chart_no_support_table_field():
+    """Passing support_table= to ResolvedTableChart must be rejected (field was removed)."""
     import pytest
     from pydantic import ValidationError
 
@@ -231,7 +231,7 @@ def test_table_chart_no_data_table_field():
             resolved_channels={},
             chart_type="table",
             style=None,  # type: ignore[arg-type]
-            data_table="some_table",  # must be rejected
+            support_table="some_table",  # must be rejected
         )
 
 
@@ -311,6 +311,7 @@ def test_resolved_area_style_uses_resolved_mark_types():
             font_family="Inter",
             font_size=11.0,
             font_weight="400",
+            font_style="normal",
             dark_companion_palette=(),
             gap_px=18.2,
         ),
@@ -357,6 +358,7 @@ def test_resolved_line_style_uses_resolved_mark_type():
             font_family="Inter",
             font_size=11.0,
             font_weight="400",
+            font_style="normal",
             dark_companion_palette=(),
             gap_px=18.2,
         ),

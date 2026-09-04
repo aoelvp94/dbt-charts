@@ -15,7 +15,7 @@ runner = CliRunner()
 
 _SEARCH_BOARD = """\
 title: Revenue Dashboard
-description: Monthly revenue trends
+notes: Monthly revenue trends
 queries:
   revenue:
     sql: "select month, sum(revenue) from orders group by 1"

@@ -27,6 +27,9 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedStyleChannel,
 )
 from dbt_charts.core.compile.models.style.theme import PaddingStyle
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    CategoryColorScale,
+)
 from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
 from dbt_charts.core.compile.resolve.chart.label_data import (
     pie_presentation_fingerprint,
@@ -142,6 +145,29 @@ def _line(
     )
 
 
+def _line_with_binding(
+    line_style: ResolvedLineStyle,
+    palette: tuple[str, ...],
+    category_colors: tuple[CategoryColorScale, ...],
+) -> ResolvedLineChart:
+    return ResolvedLineChart(
+        panel_axes=(),
+        id="line1",
+        chart_type="line",
+        x="date",
+        y="value",
+        resolved_channels={"color": _series_channel()},
+        variable_dependencies=frozenset(),
+        palette=palette,
+        category_colors=category_colors,
+        style=line_style,
+        legend=_default_legend(),
+        background=_DEFAULT_CHARTS.background,
+        title_style=_DEFAULT_CHARTS.title,
+        layout_padding=_ZERO_PADDING,
+    )
+
+
 def _area(
     area_style: ResolvedAreaStyle,
     format: str | None = None,
@@ -195,6 +221,8 @@ def _scatter(scatter_style: ResolvedScatterStyle) -> ResolvedScatterChart:
         chart_id="test",
         format_authored=True,
         format_is_alias=False,
+        is_quantitative=True,
+        zero_anchored=True,
     )
     return ResolvedScatterChart(
         panel_axes=(),
@@ -241,10 +269,10 @@ def test_zero_baseline_applies_to_area(area_style: ResolvedAreaStyle) -> None:
     assert BaselineFeature().applies_to(_area(area_style)) is True
 
 
-def test_zero_baseline_does_not_apply_to_scatter(
+def test_zero_baseline_applies_to_scatter(
     scatter_style: ResolvedScatterStyle,
 ) -> None:
-    assert BaselineFeature().applies_to(_scatter(scatter_style)) is False
+    assert BaselineFeature().applies_to(_scatter(scatter_style)) is True
 
 
 def test_zero_baseline_does_not_apply_to_pie(pie_style: ResolvedPieStyle) -> None:
@@ -422,9 +450,7 @@ def test_cumulative_midpoints_orders_by_global_sum() -> None:
     Mirrors the stacked-bar z-order; otherwise the rail labels anchor to the wrong
     segments on a stacked horizontal bar.
     """
-    from dbt_charts.core.render.chart.features.endpoint_labels import (
-        _cumulative_midpoints,
-    )
+    from dbt_charts.core.utils import cumulative_stack_midpoints
 
     # Global sums: B=80, A=200, C=260 → order C, A, B (descending). Top row = "m1".
     data = [
@@ -435,7 +461,7 @@ def test_cumulative_midpoints_orders_by_global_sum() -> None:
         {"x": "m2", "s": "B", "y": 50},
         {"x": "m2", "s": "C", "y": 140},
     ]
-    result = _cumulative_midpoints(
+    result = cumulative_stack_midpoints(
         data,
         x_field="x",
         y_field="y",
@@ -615,7 +641,7 @@ def test_unity_baseline_applies_to_format_alias_line(
 ) -> None:
     """BaselineFeature must emit a unity rule when axis_y.labels.format resolves to a D3 percent spec.
 
-    chart.format may be a Dataface alias ('percent_whole') that contains no literal '%'.
+    chart.format may be a dbt charts alias ('percent_whole') that contains no literal '%'.
     The baked axis_y.labels.format ('.0%') is the resolved D3 spec and is the canonical
     signal so the 100% rule fires for NRR-style percent line charts.
     """
@@ -651,7 +677,7 @@ def test_unity_baseline_applies_to_format_alias_line(
     ]
     assert unity_layers, (
         "BaselineFeature must emit a unity rule for a line chart with "
-        "axis_y.format='.0%' even when chart.format is a Dataface alias."
+        "axis_y.format='.0%' even when chart.format is a dbt charts alias."
     )
 
 
@@ -847,6 +873,76 @@ def test_endpoint_label_apply_sets_right_pane_layout(
     assert result.endpoint_label_data.value_alias == "__y"
     # Both series have positions
     assert len(result.endpoint_label_data.positions) == 2
+
+
+def test_endpoint_label_right_pane_font_style_reaches_mark(
+    line_style: ResolvedLineStyle,
+) -> None:
+    """font_style authored on series_label reaches the right-pane label
+    mark's fontStyle, mirroring font_family/font_size/font_weight — the
+    first (multi-series) endpoint_labels.py call site."""
+    style = line_style.model_copy(
+        update={
+            "series_label": line_style.series_label.model_copy(
+                update={"font_style": "italic"}
+            )
+        }
+    )
+    chart = _line(style, resolved_channels={"color": _series_channel()})
+    data = [
+        {"date": "2024-01", "value": 10, "category": "A"},
+        {"date": "2024-02", "value": 20, "category": "A"},
+        {"date": "2024-01", "value": 5, "category": "B"},
+        {"date": "2024-02", "value": 15, "category": "B"},
+    ]
+    result = EndpointLabelFeature().apply(
+        _spec("line"), chart, _DEFAULT_BOX, {chart.query_name: data}
+    )
+    assert result.endpoint_label_data is not None
+    assert result.endpoint_label_data.label_mark_font_props.get("fontStyle") == "italic"
+
+
+def test_endpoint_label_rail_colours_by_board_slot_not_local_sort_position(
+    line_style: ResolvedLineStyle,
+) -> None:
+    """Each series' rail fill/ink must key off ITS OWN board slot.
+
+    ``all_series = sorted(...)`` inside the feature puts "Alpha" before
+    "Zeta" — but the board assigned the OPPOSITE slots (Zeta=0, Alpha=1,
+    e.g. because some other chart on the board first-saw Zeta). A fix that
+    colours by enumeration position over the locally-sorted list would hand
+    "Alpha" the swatch that actually belongs to Zeta.
+    """
+    palette = ("#111111", "#222222")
+    dark_palette = ("#aaaaaa", "#bbbbbb")
+    style = line_style.model_copy(
+        update={
+            "series_label": line_style.series_label.model_copy(
+                update={"dark_companion_palette": dark_palette}
+            )
+        }
+    )
+    scale = CategoryColorScale(
+        field="category", slots={"Zeta": 0, "Alpha": 1}, overrides={}
+    )
+    chart = _line_with_binding(style, palette, (scale,))
+    data = [
+        {"date": "2024-01", "value": 10, "category": "Alpha"},
+        {"date": "2024-02", "value": 20, "category": "Alpha"},
+        {"date": "2024-01", "value": 5, "category": "Zeta"},
+        {"date": "2024-02", "value": 15, "category": "Zeta"},
+    ]
+    result = EndpointLabelFeature().apply(
+        _spec("line"), chart, _DEFAULT_BOX, {chart.query_name: data}
+    )
+    assert result.endpoint_label_data is not None
+    d = result.endpoint_label_data
+    color_of = dict(zip(d.color_domain, d.color_range, strict=True))
+    ink_of = dict(zip(d.color_domain, d.dark_companion_range, strict=True))
+    assert color_of["Zeta"] == palette[0]
+    assert color_of["Alpha"] == palette[1]
+    assert ink_of["Zeta"] == dark_palette[0]
+    assert ink_of["Alpha"] == dark_palette[1]
 
 
 def test_endpoint_label_apply_sets_top_rail_layout(bar_style: ResolvedBarStyle) -> None:
@@ -1222,7 +1318,7 @@ def test_endpoint_label_line_always_uses_raw_positions_no_stack_concept(
     line_style: ResolvedLineStyle,
 ) -> None:
     """ResolvedLineChart declares no ``stack`` field — lines have no stacking
-    concept in Dataface. The area/bar stack-aware branch in
+    concept in dbt charts. The area/bar stack-aware branch in
     EndpointLabelFeature.apply() must never reach line; it always anchors on
     raw per-series values at the trailing x. Regression guard for
     stacked-area-endpoint-labels-place-at-raw-y-not-band-midpoints: pins line

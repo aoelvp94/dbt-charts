@@ -191,6 +191,50 @@ class QueryResultCache(Protocol):
         The write timestamp travels with the hit (see ``CacheHit``) so a caller
         that also wants "data as of <time>" (the executor, for board-chrome)
         never needs a second round trip.
+
+        **Type fidelity is part of the contract, scoped to uniformly-typed
+        columns.** ``int``/``bool``/``str``/``float`` always stay themselves.
+        A column whose every non-None value across the whole rowset shares
+        one of ``date``, ``datetime`` (naive stays naive, aware stays aware),
+        or ``Decimal`` must round-trip exactly — not a stringified or
+        float-coerced stand-in — even through a backend whose storage is
+        lossy on its own (e.g. JSON, which has no date/datetime/Decimal
+        type, or DuckDB's fixed-precision DECIMAL): such a backend must carry
+        enough metadata alongside the rows to restore the original type on
+        read. See ``PostgresResultCache`` for the reference implementation
+        (a per-column type tag stored beside the rows) and
+        ``TrivialDuckDBCache`` (a sidecar VARCHAR column for uniformly-
+        Decimal columns, since DuckDB's DECIMAL is too narrow for some
+        warehouse NUMERIC precisions). A column that mixes types — including
+        mixing ``date`` and ``datetime`` in the same column — is NOT
+        promised exact fidelity: its values pass through in whatever form
+        the backend's own storage naturally holds (e.g. an ISO string),
+        never guessed back into a type from their shape. Restoration
+        failure on a value a backend's own tag claims to be able to restore
+        (a corrupted entry, or code-version skew) must be treated as a
+        miss — ``get()`` never raises and never returns partially-restored
+        rows.
+
+        **Column order is part of the contract too.** Each row mapping must
+        come back with its keys in the order ``put()`` stored them: a query
+        result's column order is part of its shape, and a table's rendered
+        columns are read straight off ``rows[0].keys()``. A backend whose
+        storage does not preserve mapping key order — Postgres ``jsonb`` sorts
+        object keys, and most key-value stores promise nothing — must either
+        store in a form that does, or record the column list alongside the rows
+        and rebuild each row from it on read, the same way the type map above is
+        carried. ``TrivialDuckDBCache`` gets column order from its result
+        table's own declared columns, but derives those columns from the first
+        row alone — so it honours this only when every row in one ``put()``
+        shares a key set, and a heterogeneous batch loses keys the first row
+        lacked.
+
+        Callers of ``get()`` (the executor's incremental-tail watermark
+        computation, in particular) trust this and do not guess a value's
+        real type from its shape; a backend that violates it — including a
+        mixed-typed key column, whose values are not promised to be
+        comparable — produces a type disagreement the executor's merge step
+        raises on, rather than a silently wrong result.
         """
         ...
 

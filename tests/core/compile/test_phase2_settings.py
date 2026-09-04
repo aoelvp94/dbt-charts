@@ -26,7 +26,7 @@ def _reset():
 # ---------------------------------------------------------------------------
 
 
-def test_settings_rejects_style_key_in_dataface_yml(
+def test_settings_rejects_style_key_in_dbt_charts_yml(
     tmp_path, local_project: Callable[..., FilesystemProject]
 ):
     """dbt_charts.yml: style: {...} must raise ValidationError pointing to charts/meta.yaml."""
@@ -46,14 +46,14 @@ def test_settings_rejects_style_key_in_dataface_yml(
 # ---------------------------------------------------------------------------
 
 
-def test_dataface_yml_theme_key_raises_validation_error(
+def test_dbt_charts_yml_theme_key_raises_validation_error(
     tmp_path, local_project: Callable[..., FilesystemProject]
 ):
     """dbt_charts.yml: theme: was removed — project theme lives in charts/meta.yaml: extends:.
     load_config raises pydantic ValidationError (extra inputs are not permitted)."""
     from pydantic import ValidationError
 
-    (tmp_path / "dbt_charts.yml").write_text("theme: cream\n")
+    (tmp_path / "dbt_charts.yml").write_text("theme: paper\n")
 
     project = local_project(tmp_path)
 

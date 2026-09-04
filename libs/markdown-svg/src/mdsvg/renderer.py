@@ -860,11 +860,16 @@ class SVGRenderer:
         for block in blocks:
             if prev_block is not None:
                 current_y += self._inter_block_gap(prev_block, block)
+            # The block that opens the box draws no leading margin: that
+            # whitespace separates a heading from the text above it, and here
+            # there is none. Same rule the column packer applies to a block
+            # opening a column, via BlockMetrics.leading_margin.
+            lift = self._heading_margins(block)[0] if prev_block is None else 0.0
             elements, height = self._render_block(
-                block, ctx.with_offset(dy=current_y - ctx.y)
+                block, ctx.with_offset(dy=current_y - ctx.y - lift)
             )
             svg_elements.extend(elements)
-            current_y += height
+            current_y += height - lift
             prev_block = block
 
         total_height = current_y + padding
@@ -1045,26 +1050,10 @@ class SVGRenderer:
         Returns:
             Size with width and height.
         """
-        content_width = width - (padding * 2)
-
-        ctx = RenderContext(
-            x=padding,
-            y=padding,
-            width=content_width,
-            style=self.style,
-        )
-
-        current_y = padding
-        prev_block: Block | None = None
-
-        for block in blocks:
-            if prev_block is not None:
-                current_y += self._inter_block_gap(prev_block, block)
-            _, height = self._render_block(block, ctx.with_offset(dy=current_y - ctx.y))
-            current_y += height
-            prev_block = block
-
-        return Size(width=width, height=current_y + padding)
+        # Measured by rendering: a second loop over the same blocks is a second
+        # copy of the placement rules, free to disagree with the one that draws.
+        _, height = self._render_blocks_to_elements(blocks, width, padding)
+        return Size(width=width, height=height)
 
     def _get_style_block(self) -> str:
         """Generate the CSS style block for SVG rendering.
@@ -1216,7 +1205,14 @@ class SVGRenderer:
         """
         if not isinstance(block, Heading):
             return 0.0, 0.0
-        font_size = self.style.get_heading_size(block.level)
+        return self._heading_margins_at(self.style.get_heading_size(block.level))
+
+    def _heading_margins_at(self, font_size: float) -> Tuple[float, float]:
+        """``(margin_top, margin_bottom)`` for a heading set at ``font_size``.
+
+        Px overrides (set by callers wanting consistent pixel margins across
+        heading levels) take precedence over the em scaling.
+        """
         margin_top = (
             self.style.heading_margin_top_px
             if self.style.heading_margin_top_px is not None
@@ -1228,6 +1224,41 @@ class SVGRenderer:
             else font_size * self.style.heading_margin_bottom
         )
         return margin_top, margin_bottom
+
+    def heading_baseline(self, level: int) -> float:
+        """How far below a heading block's top edge its first baseline sits.
+
+        For a heading that *opens* its document — a board title is one — which
+        is where the baseline falls inside its line box, and nothing else: the
+        top margin collapses against the top of the box. Callers aligning
+        something else to a heading — a row of controls beside a board title —
+        need this exact number; approximating it as a fraction of the block
+        height holds only for the one font size it was measured at.
+        """
+        font_size = self.style.get_heading_size(level)
+        # `is not None`, matching _render_text_block — with `or`, a configured
+        # heading_line_height of 0.0 would report a baseline the heading was not
+        # drawn on, which is the one thing this method must never do.
+        multiplier = (
+            self.style.heading_line_height
+            if self.style.heading_line_height is not None
+            else self.style.line_height
+        )
+        return self._baseline_offset(font_size, multiplier)
+
+    def heading_line_box(self, level: int, block_height: float) -> Tuple[float, float]:
+        """The ``(top, height)`` of the text's line box inside a heading block.
+
+        A heading opening its document is line boxes + ``margin_bottom``: the top
+        margin collapsed against the top of the box, the bottom one did not, so
+        the block is not centred on the text it holds and anything drawn on the
+        block sits low by that difference. This is the part of it that is text.
+
+        ``block_height`` is the height this renderer reported for the block, so a
+        heading that wrapped needs no line count: every line is above the margin.
+        """
+        _, margin_bottom = self._heading_margins_at(self.style.get_heading_size(level))
+        return 0.0, block_height - margin_bottom
 
     def _inter_block_gap(self, prev: Block, curr: Block) -> float:
         """Compute the inter-block gap between ``prev`` and ``curr``.
@@ -1342,19 +1373,7 @@ class SVGRenderer:
     ) -> Tuple[List[str], float]:
         """Render a heading."""
         font_size = self.style.get_heading_size(heading.level)
-
-        # Px overrides (set by callers that want consistent pixel margins
-        # across heading levels) take precedence over the em scaling.
-        margin_top = (
-            self.style.heading_margin_top_px
-            if self.style.heading_margin_top_px is not None
-            else font_size * self.style.heading_margin_top
-        )
-        margin_bottom = (
-            self.style.heading_margin_bottom_px
-            if self.style.heading_margin_bottom_px is not None
-            else font_size * self.style.heading_margin_bottom
-        )
+        margin_top, margin_bottom = self._heading_margins_at(font_size)
 
         elements, text_height = self._render_text_block(
             heading.spans,
@@ -1583,18 +1602,22 @@ class SVGRenderer:
         for block in bq.blocks:
             if prev_block is not None:
                 current_y += self._inter_block_gap(prev_block, block)
+            # A blockquote is a box like any other, so the block that opens it
+            # collapses its leading margin the same way — see
+            # _render_blocks_to_elements, which states the rule.
+            lift = self._heading_margins(block)[0] if prev_block is None else 0.0
             if isinstance(block, Paragraph):
                 block_elements, height = self._render_blockquote_paragraph(
                     block,
-                    inner_ctx.with_offset(dy=current_y),
+                    inner_ctx.with_offset(dy=current_y - lift),
                 )
             else:
                 block_elements, height = self._render_block(
                     block,
-                    inner_ctx.with_offset(dy=current_y),
+                    inner_ctx.with_offset(dy=current_y - lift),
                 )
             inner_elements.extend(block_elements)
-            current_y += height
+            current_y += height - lift
             prev_block = block
 
         total_height = current_y
@@ -1663,6 +1686,10 @@ class SVGRenderer:
             bullet_radius = 1.5
             bullet_gap = 6.5
             bullet_x = ctx.x + bullet_indent - bullet_gap - bullet_radius
+            # Half a line box down is also the centre of the line's text: the
+            # half-leading above the ascent and below the descent are equal, so
+            # the two midpoints coincide. Pinned by
+            # test_a_bullet_is_centred_on_its_item_s_text.
             bullet_y = (
                 ctx.y
                 + current_y
@@ -1712,7 +1739,16 @@ class SVGRenderer:
 
             number_text = f"{number}."
             number_x = ctx.x + bullet_indent - 8
-            number_y = ctx.y + current_y + self.style.base_font_size
+            # The same expression `_render_text_block` uses for the item's own
+            # first baseline, so a marker and the words it labels sit on one line
+            # by construction rather than by two formulas agreeing.
+            number_y = (
+                ctx.y
+                + current_y
+                + self._baseline_offset(
+                    self.style.base_font_size, self.style.line_height
+                )
+            )
 
             elements.append(
                 f'  <text x="{format_number(number_x)}" '
@@ -2128,6 +2164,27 @@ class SVGRenderer:
 
         return elements, img_height
 
+    def _baseline_offset(
+        self, font_size: float, line_height_multiplier: float
+    ) -> float:
+        """How far below a line box's top edge that line's baseline sits.
+
+        The CSS model: the face's content box is ``ascent + descent``, the line
+        box is ``font_size * multiplier``, and the difference is leading, split
+        evenly above and below. The baseline then falls one half-leading plus one
+        ascent down.
+
+        Assuming an ascent of exactly one em and putting the whole leading under
+        the baseline — which is what this used to do — sets text low in its own
+        line box by ``ascent - font_size + half_leading``, growing with the font
+        size and worst on headings, whose tighter line heights make the leading
+        negative.
+        """
+        ascent = self._measurer.ascent_em * font_size
+        descent = self._measurer.descent_em * font_size
+        half_leading = (font_size * line_height_multiplier - ascent - descent) / 2
+        return half_leading + ascent
+
     def _render_text_block(
         self,
         spans: Sequence[Span],
@@ -2166,7 +2223,7 @@ class SVGRenderer:
             start, count = line_window
             lines = lines[start:] if count is None else lines[start : start + count]
 
-        current_y = ctx.y + font_size  # Baseline
+        current_y = ctx.y + self._baseline_offset(font_size, multiplier)
 
         # Calculate x position based on text alignment
         text_anchor = self.style.get_text_anchor()

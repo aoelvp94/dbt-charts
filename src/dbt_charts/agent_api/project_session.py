@@ -1,4 +1,4 @@
-"""Session that owns project-scoped resources for Dataface composition roots."""
+"""Session that owns project-scoped resources for dbt charts composition roots."""
 
 from __future__ import annotations
 
@@ -77,6 +77,7 @@ class ProjectSession:
     project: Project
     cache: QueryResultCache | None
     _owns_registry: bool
+    _lazy_built: bool
     _read_only: bool
     _dialect: str
     _duckdb_config: dict[str, Any] | None
@@ -89,14 +90,14 @@ class ProjectSession:
         project: Project,
         cache: QueryResultCache | None = None,
         adapter_registry: AdapterRegistry | None = None,
+        owns_registry: bool = False,
         read_only: bool = True,
         file_materializer: FileSourceMaterializer | None = None,
     ) -> None:
         self.project = project
         self.cache = cache
-        # We own the registry only when we'll lazy-build it ourselves. An injected
-        # registry belongs to the caller; we use it but don't close it on their behalf.
-        self._owns_registry = adapter_registry is None
+        self._owns_registry = adapter_registry is None or owns_registry
+        self._lazy_built = adapter_registry is None
         if adapter_registry is not None:
             # cached_property stores in __dict__; pre-populating makes the descriptor
             # short-circuit the build on first access.
@@ -153,6 +154,7 @@ class ProjectSession:
         *,
         cache: QueryResultCache | None = None,
         adapter_registry: AdapterRegistry | None = None,
+        owns_registry: bool = False,
         read_only: bool = True,
         duckdb_config: dict[str, Any] | None = None,
         allow_external_access_in_readonly: bool = False,
@@ -167,12 +169,18 @@ class ProjectSession:
         Pass ``adapter_registry`` to inject a pre-built registry (e.g. from a
         host-specific factory like ``build_cloud_adapter_registry``). When
         provided, the session uses it directly and does not call
-        ``build_adapter_registry`` on first access.
+        ``build_adapter_registry`` on first access. By default the caller
+        retains ownership (``close()``/``__exit__`` leave it open) — pass
+        ``owns_registry=True`` when handing off a throwaway registry built just
+        for this session, so ``close()`` releases its connections. Never set
+        this for a registry the caller (or another session) reuses afterward —
+        e.g. a warm registry shared across requests must stay caller-owned.
         """
         session = cls(
             project=project,
             cache=cache,
             adapter_registry=adapter_registry,
+            owns_registry=owns_registry,
             read_only=read_only,
             file_materializer=file_materializer,
         )
@@ -202,9 +210,10 @@ class ProjectSession:
     def adapter_registry(self) -> AdapterRegistry:
         """Lazily build the registry on first access; cached thereafter.
 
-        Cleared by refresh(); rebuilt on next access. Closed by close() iff we
-        own it (i.e. it was not injected at construction time).
-        When constructed with an injected registry, returns it directly.
+        Cleared and rebuilt by refresh() only when lazily built (no registry
+        was injected at construction). Closed by close() iff we own it
+        (owns_registry — see from_project()). When constructed with an
+        injected registry, returns it directly.
         """
         # This lazy-build path only runs when no adapter_registry was injected
         # at construction: ProjectSession.open() (always a FilesystemProject)
@@ -229,15 +238,19 @@ class ProjectSession:
     def refresh(self) -> None:
         """Policy-free rebuild primitive.
 
-        For projects opened via ``open()``: closes the current registry (if built)
-        and clears it so the next access rebuilds from disk. Also invalidates
-        the sources and warnings_ignore caches so the next access re-reads disk.
+        For projects opened via ``open()`` (no injected registry): closes the
+        current registry (if built) and clears it so the next access rebuilds
+        from disk. Also invalidates the sources and warnings_ignore caches so
+        the next access re-reads disk.
 
-        For projects constructed with an injected ``adapter_registry``: skips the
-        registry rebuild (build arguments are not available), but still invalidates
-        the config caches.
+        For projects constructed with an injected ``adapter_registry`` — whether
+        or not the session owns it via ``owns_registry`` — skips the registry
+        rebuild (build arguments are not available and a caller-injected
+        registry may carry policy, like Cloud's SSRF-guarded resolver, that a
+        generic rebuild cannot reconstruct); still invalidates the config
+        caches.
         """
-        if self._owns_registry and "adapter_registry" in self.__dict__:
+        if self._lazy_built and "adapter_registry" in self.__dict__:
             self.adapter_registry.close()
             del self.__dict__["adapter_registry"]
         self.__dict__.pop("_relationship_context", None)
@@ -310,7 +323,10 @@ class ProjectSession:
     def migrate_paths(
         self, paths: list[PurePosixPath] | None, *, dry_run: bool
     ) -> MigrateSummary:
-        """Rewrite supported retired YAML syntax without touching current files."""
+        """Rewrite supported retired YAML syntax, capped at the latest released
+        version, stamping an informational _schema_version alongside any real
+        change. A file already at that version is left untouched, stamp
+        included, regardless of its existing stamp's state."""
         return _migrate.migrate_paths(
             paths,
             project=self.project,
@@ -475,11 +491,11 @@ class ProjectSession:
             public_url = get_export_config(self.project).public_url
             if public_url:
                 link_context = LinkContext(origin=public_url)
-        # Per board render, not per session: a host preloads one of these for the
-        # board it is about to draw and drains it afterwards. Bound around the
-        # call rather than threaded through it — the memo lives at the vl-convert
-        # boundary a dozen frames below, and every signature in between is about
-        # layout, not caching.
+        # Per board render, not per session: a host wires one to its store for
+        # the board it is about to draw and drains it afterwards. Bound around
+        # the call rather than threaded through it — the memo lives at the
+        # vl-convert boundary a dozen frames below, and every signature in
+        # between is about layout, not caching.
         with svg_cache_scope(svg_cache):
             return _core_board.render_dashboard(
                 board=board,

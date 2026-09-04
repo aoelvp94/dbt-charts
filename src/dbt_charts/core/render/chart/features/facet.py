@@ -12,7 +12,7 @@ into the resolved ``axis_y.mirror`` flag at resolve time, so ``MirrorAxisFeature
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from dbt_charts.core.compile.models.chart.resolved import (
     LayeredResolvedChart,
@@ -24,11 +24,56 @@ from dbt_charts.core.compile.models.chart.resolved._base import (
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
-    ERR_MULTIPLES_DATA_TABLE,
     ERR_MULTIPLES_ENDPOINT_LABELS,
     ERR_MULTIPLES_LAYER_PARTITION,
+    ERR_MULTIPLES_SUPPORT_TABLE,
 )
+from dbt_charts.core.render.chart.emitters._cartesian import (
+    facet_bound_position_channels,
+)
+from dbt_charts.core.render.chart.feature import chart_rows
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
+
+# VL types that back a discrete (band/point-per-value) scale. Narrowing a
+# channel's scale to one panel's single value is only correct for these —
+# for "quantitative"/"temporal" the domain IS the information the chart
+# carries (a point's position within the shared range), so narrowing it to a
+# degenerate single-value domain would silently strip that meaning rather
+# than trim unused axis slots. See `_discrete_facet_channels`.
+_DISCRETE_VL_TYPES = frozenset({"nominal", "ordinal"})
+
+
+def _discrete_facet_channels(
+    spec: ChartSpec, candidates: frozenset[Literal["x", "y"]]
+) -> frozenset[Literal["x", "y"]]:
+    """Filter `candidates` down to channels the emitter already baked as a
+    discrete VL type on `spec.encoding`.
+
+    Reads the type the emitter already decided (`build_x_enc` et al.), rather
+    than re-deriving it from data — `FacetFeature` runs last in the pipeline
+    (`DEFAULT_FEATURES`), after every emitter has finished, so `spec.encoding`
+    already carries the real, data-classified type. Not
+    `channel != spec.measure_channel`: a heatmap's `measure_channel` is "y"
+    (the vocabulary's stand-in for "the family's one quantitative axis", which
+    for heatmap doesn't exist positionally), and "y" is precisely the nominal
+    band this fix exists to narrow — measure_channel answers a different
+    question than "is this scale discrete".
+
+    A channel absent from `spec.encoding` (e.g. `y` on a layered chart, where
+    the shared y encoding moves onto each layer) has no type to confirm — not
+    included, the same conservative default as every other guard here.
+    """
+    channels: set[Literal["x", "y"]] = set()
+    for channel in candidates:
+        # A channel absent from spec.encoding (e.g. y on a layered chart) has
+        # no baked type to confirm; empty-dict read is the documented
+        # conservative default (excluded below), not a masked bug.
+        encoding = spec.encoding.get(
+            channel, {}
+        )  # type-state: silent_fallback — see above
+        if encoding.get("type") in _DISCRETE_VL_TYPES:
+            channels.add(channel)
+    return frozenset(channels)
 
 
 class FacetFeature:
@@ -58,8 +103,10 @@ class FacetFeature:
             raise ChartDataError.from_code(
                 ERR_MULTIPLES_ENDPOINT_LABELS, chart_id=chart.id
             )
-        if chart.data_table is not None:
-            raise ChartDataError.from_code(ERR_MULTIPLES_DATA_TABLE, chart_id=chart.id)
+        if chart.support_table is not None:
+            raise ChartDataError.from_code(
+                ERR_MULTIPLES_SUPPORT_TABLE, chart_id=chart.id
+            )
         multiples = chart.multiples
         assert multiples is not None  # applies_to guarantees this
         # The "resolved without data, rendered with real rows" check lives in
@@ -121,5 +168,25 @@ class FacetFeature:
             "x"
             if isinstance(chart, ResolvedBarChart) and chart.orientation == "horizontal"
             else "y"
+        )
+        # box.facet_unnarrowed_panel_width is the same baseline
+        # `_render_vl_artifact` (vega_lite.py) already checked the extra
+        # axis's cost against, so this reaches the identical narrow/don't-
+        # narrow verdict. This method only ever runs on a faceted chart
+        # (applies_to's own guard), so real facet geometry always exists in
+        # production — box is always _render_vl_artifact's own, carrying a
+        # real value here, never None. A test caller that builds its own
+        # box must supply a real one too (or accept that None deliberately
+        # skips the affordability check, per facet_bound_position_channels's
+        # own documented None semantics) — not lean on a stand-in value
+        # this method invents on its behalf.
+        spec.facet_independent_channels = _discrete_facet_channels(
+            spec,
+            facet_bound_position_channels(
+                chart,
+                multiples,
+                chart_rows(chart, datasets).all_rows(),
+                box.facet_unnarrowed_panel_width,
+            ),
         )
         return spec

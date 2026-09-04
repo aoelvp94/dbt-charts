@@ -1,0 +1,238 @@
+# Composed chart shapes — the probe
+# =================================
+# Deliberately NOT in `playground-experimental/charts/matrix/`. The case matrix is
+# defaults-only by its own rubric; every chart here is an intentional multi-field
+# composition, which would contaminate that corpus. It lives beside
+# `all-chart-types.yml` instead: that board shows the shapes you can name with a
+# `type:`, this one shows the shapes you compose. The recipes here are the ones
+# `_CHART_SHAPE_RECIPES` hands an author who asks for one of these by name.
+#
+# The question each cell answers is not "can this be made to look acceptable" but
+# "does an author following the recipe get the right chart". A cell that draws the
+# wrong shape stays wrong — it is the evidence.
+#
+# One chart per shape, each authored the way we would tell an author to author it.
+
+title: Composed chart shapes
+notes: shapes an author asks for by name that dbt charts has no `type:` for. Each cell is the
+  natural recipe for one of them, rendered so the verdict is a picture and not an opinion.
+style:
+  frame:
+    width: 1872
+queries:
+  entities:
+    source: examples_db
+    sql: |
+      SELECT
+        'Region ' || chr((64 + e)::INTEGER)                        AS category,
+        round(30 + 55 * abs(sin(e * 1.7)), 1)                      AS value,
+        round(50 + 30 * abs(cos(e * 1.1)), 1)                      AS target,
+        round(20 + 40 * abs(sin(e * 0.9)), 1)                      AS value_2019,
+        round(35 + 50 * abs(sin(e * 1.4)), 1)                      AS value_2024,
+        round(28 + 45 * abs(cos(e * 0.6)), 1)                      AS value_2029,
+        round(30 + 55 * abs(sin(e * 1.7)) - 12, 1)                 AS low,
+        round(30 + 55 * abs(sin(e * 1.7)) + 12, 1)                 AS high
+      FROM generate_series(1, 8) t(e)
+      ORDER BY e
+  # Bullet's qualitative ranges: three cumulative bands per category, stacked to
+  # build the background the value bar is read against.
+  bullet_bands:
+    source: examples_db
+    sql: |
+      SELECT 'Unit ' || chr((64 + e)::INTEGER) AS category, band, size, ord
+      FROM generate_series(1, 5) t(e)
+      CROSS JOIN (VALUES ('Poor', 45.0, 1), ('Satisfactory', 25.0, 2), ('Good', 30.0, 3))
+        AS b(band, size, ord)
+      ORDER BY e, ord
+  bullet_measures:
+    source: examples_db
+    sql: |
+      SELECT
+        'Unit ' || chr((64 + e)::INTEGER)          AS category,
+        round(45 + 40 * abs(sin(e * 1.3)), 1)      AS actual,
+        round(70 + 15 * abs(cos(e * 0.8)), 1)      AS goal
+      FROM generate_series(1, 5) t(e)
+      ORDER BY e
+  dots:
+    source: examples_db
+    sql: |
+      WITH base AS (
+        SELECT
+          'Region ' || chr((64 + e)::INTEGER)          AS category,
+          round(20 + 40 * abs(sin(e * 0.9)), 1)        AS v2019,
+          round(35 + 50 * abs(sin(e * 1.4)), 1)        AS v2024,
+          round(28 + 45 * abs(cos(e * 0.6)), 1)        AS v2029
+        FROM generate_series(1, 8) t(e)
+      )
+      SELECT category, '2019' AS series, v2019 AS value, v2019 AS rank_by FROM base
+      UNION ALL
+      SELECT category, '2024', v2024, v2019 FROM base
+      UNION ALL
+      SELECT category, '2029', v2029, v2019 FROM base
+      ORDER BY rank_by DESC, series
+  pairs:
+    source: examples_db
+    sql: |
+      SELECT 'Region ' || chr((64 + e)::INTEGER) AS entity, 'Before' AS period, 1 AS ord,
+             round(20 + 40 * abs(sin(e * 0.9)), 1) AS value
+      FROM generate_series(1, 6) t(e)
+      UNION ALL
+      SELECT 'Region ' || chr((64 + e)::INTEGER), 'After', 2,
+             round(35 + 50 * abs(sin(e * 1.4)), 1)
+      FROM generate_series(1, 6) t(e)
+      ORDER BY ord, entity
+  ranks:
+    source: examples_db
+    sql: |
+      WITH scored AS (
+        SELECT
+          'Region ' || chr((64 + e)::INTEGER)            AS entity,
+          2019 + y                                       AS year,
+          round(50 + 30 * sin(e * 1.3 + y * 0.9), 2)     AS score
+        FROM generate_series(1, 6) t(e)
+        CROSS JOIN generate_series(0, 4) u(y)
+      )
+      SELECT entity, year,
+             rank() OVER (PARTITION BY year ORDER BY score DESC) AS rank
+      FROM scored
+      ORDER BY year, rank
+charts:
+  lollipop:
+    query: entities
+    type: bar
+    title: Lollipop
+    subtitle: "type: bar thinned to a stem with a scatter layer on the same measure."
+    x: category
+    y: value
+    style:
+      orientation: vertical
+      legend:
+        visible: false
+      color:
+        categorical:
+          palette:
+          - category_ink[2]
+          - category_ink[2]
+      marks:
+        bar:
+          band_width: 0.04
+    layers:
+    - type: scatter
+      y: value
+      style:
+        marks:
+          point:
+            size: 190
+            filled: true
+  bullet:
+    query: bullet_bands
+    type: bar
+    title: Bullet
+    subtitle: "stacked qualitative bands, a narrow value bar layer, and a step-band goal marker. Vertical only: the canonical horizontal bullet cannot draw the goal marker, because the step band is measured along the horizontal axis."
+    x: category
+    y: size
+    color: band
+    style:
+      orientation: vertical
+      stack: zero
+      # The bands are a semantic ramp, so they stack in the query's own order
+      # (poor, satisfactory, good) rather than the default ascending-by-value.
+      stack_order: data
+      color:
+        categorical:
+          palette:
+          - "#D5D8DC"
+          - "#6E7378"
+          - "#A8ADB3"
+          - "#16181B"
+          - "#16181B"
+    layers:
+    - type: bar
+      query: bullet_measures
+      y: actual
+      label: Actual
+      style:
+        marks:
+          bar:
+            band_width: 0.35
+    - type: line
+      query: bullet_measures
+      y: goal
+      label: Goal
+      style:
+        marks:
+          line:
+            curve: step
+            connect: false
+  slope:
+    query: pairs
+    type: line
+    title: Slope
+    subtitle: "type: line with a two-category x and color: on the entity."
+    x: period
+    y: value
+    color: entity
+    style:
+      axis_x:
+        title:
+          visible: false
+        grid:
+          visible: true
+          color: "#B8BCC4"
+          width: 1.5
+      axis_y:
+        title:
+          visible: false
+        grid:
+          visible: true
+  bump:
+    query: ranks
+    type: line
+    title: Bump
+    subtitle: "type: line on a rank measure with a descending axis_y.scale.continuous.domain."
+    x: year
+    y: rank
+    color: entity
+    style:
+      axis_x:
+        title:
+          visible: false
+      axis_y:
+        scale:
+          continuous:
+            domain: [6, 1]
+  dot_plot:
+    query: dots
+    type: scatter
+    title: Dot plot
+    subtitle: "type: scatter over long-format rows with color: on the series — no layers, so the measure axis stays the measure axis when the chart is rotated."
+    x: value
+    y: category
+    color: series
+    sort:
+      by: rank_by
+      order: desc
+    style:
+      axis_x:
+        title:
+          visible: false
+      axis_y:
+        title:
+          visible: false
+rows:
+- text: |
+    **5 charts.** Each is the natural recipe for a shape an author asks for by
+    name and dbt charts has no `type:` for. Read each one against the shape it
+    claims to be, not against whether it is a legible chart: the question is
+    whether the recipe would give an author the chart they asked for.
+
+    Dumbbell, connected dot plot and ranged dot are absent because they cannot
+    be drawn at all: each needs one mark spanning two values, and no layerable
+    mark takes a second positional channel.
+- cols:
+  - lollipop
+  - bullet
+  - slope
+- cols:
+  - bump
+  - dot_plot

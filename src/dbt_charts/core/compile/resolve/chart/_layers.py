@@ -30,6 +30,7 @@ from dbt_charts.core.compile.resolve.chart._marks import (
 from dbt_charts.core.compile.resolve.chart._palette import _with_color_tokens
 from dbt_charts.core.compile.resolve.chart.adaptive_stroke import (
     bake_line_stroke,
+    bake_point_companions,
 )
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_LAYERS_AMBIGUOUS_Y_DOMAIN,
@@ -49,6 +50,7 @@ def _resolve_one_layer(
     base_family_style: Any,
     base_query_name: str | None,
     line_adaptive_stroke: float,
+    line_px_per_point: float,
 ) -> ResolvedLayer:
     """Resolve a single typed authored layer into its resolved counterpart.
 
@@ -81,21 +83,28 @@ def _resolve_one_layer(
     that have no explicit authored stroke — same x-axis, same density, same
     stroke width.  Layers with an authored stroke.width carry their own pin.
 
+    ``line_px_per_point``: the base chart's density signal (same x-axis, so
+    the same value applies here), or ``0.0`` wherever none was measured — on a
+    non-line base, and on a line base with no x channel, no rows, or no
+    width.  A line-type layer's own point companions are baked from it
+    exactly like the base series — otherwise a layered line chart would show
+    dots on the base series and never on its overlays.
+
     Register is decided by alias-membership only: a layer's own authored format
     string that is a theme alias → house narrative; a literal d3 spec → native Vega.
     Unformatted overlay labels stay unformatted — no axis fallback for layers.
     """
     axis_y = layer.axis_y if layer.axis_y is not None else LayerAxisYStyle()
-    # axis_y.label.format is an authored spec that _overlay.py hands to Vega
+    # axis_y.labels.format is an authored spec that _overlay.py hands to Vega
     # verbatim for axis ticks — it needs alias lookup + round-aware trim so the
     # overlay axis agrees on digits with the base chart's axis for the same spec.
-    if axis_y.label is not None and axis_y.label.format is not None:
+    if axis_y.labels is not None and axis_y.labels.format is not None:
         axis_y = axis_y.model_copy(
             update={
-                "label": axis_y.label.model_copy(
+                "labels": axis_y.labels.model_copy(
                     update={
                         "format": resolve_format(
-                            axis_y.label.format, chart_style_context.formats
+                            axis_y.labels.format, chart_style_context.formats
                         )
                     }
                 )
@@ -139,12 +148,27 @@ def _resolve_one_layer(
             line_label_is_house if line_labels.visible is True else point_label_is_house
         )
         line_merged_final = line_merged.model_copy(update={"labels": line_labels})
+        resolved_line_layer_mark = _build_resolved_line_mark(line_merged_final)
+        line_layer_point_mark = pre_fallback_point_mark.model_copy(
+            update={"labels": point_labels}
+        )
+        # Same density signal, same gate, same companion derivation as the
+        # base series (bake_point_companions) — otherwise a layered line
+        # chart shows dots on the base series and none on its overlays. On a
+        # non-line base, line_px_per_point is 0.0: the size half is skipped
+        # and the ring still tracks this layer's own stroke.
+        if resolved_line_layer_mark.stroke.width > 0:
+            line_layer_point_mark = bake_point_companions(
+                line_layer_point_mark,
+                resolved_line_layer_mark.stroke.width,
+                line_px_per_point,
+                size_authored=line_layer_point_mark.size is not None,
+                ring_authored=line_layer_point_mark.stroke_width is not None,
+            )
         return ResolvedLineLayer(
             type="line",
-            line_mark=_build_resolved_line_mark(line_merged_final),
-            point_mark=pre_fallback_point_mark.model_copy(
-                update={"labels": point_labels}
-            ),
+            line_mark=resolved_line_layer_mark,
+            point_mark=line_layer_point_mark,
             axis_y=axis_y,
             x=layer.x,
             y=layer.y,
@@ -285,6 +309,7 @@ def _resolve_layer_list(
     base_family_style: Any,
     base_query_name: str | None,
     line_adaptive_stroke: float,
+    line_px_per_point: float,
 ) -> tuple[ResolvedLayer, ...]:
     """Resolve a list of authored typed layers to their resolved counterparts.
 
@@ -297,6 +322,12 @@ def _resolve_layer_list(
     when applicable, 0.0 when not).  Threaded to each layer so line/area
     layers without an authored stroke width inherit the same density-computed
     value as the base chart (same x-axis → same density).
+
+    ``line_px_per_point``: the base chart's density signal where one was
+    measured, and ``0.0`` where none was — bar, scatter and area all pass the
+    literal, so on those bases it means only "skip the size half". A
+    line-type layer still gets its ring there, baked off its own stroke (see
+    ``_resolve_one_layer``); only the density-driven dot size is withheld.
     """
     if not layers:
         return ()
@@ -308,6 +339,7 @@ def _resolve_layer_list(
             base_family_style,
             base_query_name,
             line_adaptive_stroke,
+            line_px_per_point,
         )
         for layer in layers
     )

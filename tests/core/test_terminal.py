@@ -129,7 +129,7 @@ def test_terminal_y_field_warns_when_dropping_extra_series(make_chart, caplog):
     assert "dropping 2 additional series" in caplog.text
 
 
-def test_render_chart_item_terminal_isolates_a_bare_dataface_error(make_chart):
+def test_render_chart_item_terminal_isolates_a_bare_dbt_charts_error(make_chart):
     """A DbtChartsError from the terminal chart pipeline degrades to an inline line.
 
     Pre-existing and unrelated to resolve-time isolation: the terminal branch

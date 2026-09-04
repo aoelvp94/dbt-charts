@@ -2,11 +2,10 @@
 
 **Declarative, dbt-native boards in YAML**
 
-dbt charts (installed as `dbt-charts`, CLI `dct`) is a Python-based board framework that
+dbt charts (package `dbt-charts`, CLI `dct`) is a Python-based board framework that
 compiles YAML board definitions into interactive visualizations. Queries run as plain
-SQL against your warehouse by default — no dbt project required — with an optional,
-deeper integration into dbt's Semantic Layer (MetricFlow) when you have metrics and
-dimensions already defined there.
+SQL against your warehouse — no dbt project required, though dbt models are queried
+the same way (via `ref()`) when you have one.
 
 ---
 
@@ -24,8 +23,7 @@ If you're a data analyst, you've probably experienced this:
 
 dbt charts lets you:
 - **Write boards in YAML** — simple, human-readable format
-- **Query with plain SQL** — or reference existing dbt Semantic Layer metrics, if you
-  have them
+- **Query with plain SQL** — against your warehouse directly, or dbt models via `ref()`
 - **Create interactive visualizations** — filters, drill-downs, and click actions
 - **Share and collaborate** — boards are version-controlled YAML files
 - **Stay in sync with dbt** — when you do use dbt, boards and models deploy together
@@ -35,8 +33,7 @@ dbt charts lets you:
 
 1. **You write a YAML file** describing what data to show and how to visualize it
 2. **dbt charts compiles it** into an interactive board
-3. **The board queries your warehouse** — plain SQL by default, or your dbt Semantic
-   Layer (MetricFlow) if you reference metrics/dimensions instead
+3. **The board queries your warehouse** via plain SQL
 4. **Users interact** with filters, click charts, and explore the data
 
 ---
@@ -97,7 +94,7 @@ dct serve
 
 ### Environment variables
 
-`dct` reads `DCT_PROJECT_DIR` when no `--project-dir` is passed — handy in CI or when working in multiple project trees from one shell. The flag wins if both are set. See the [CLI environment variables reference](https://docs.dataface.com/cli/#environment-variables) for the full list (themes, ports, dbt overrides, etc.).
+`dct` reads `DCT_PROJECT_DIR` when no `--project-dir` is passed — handy in CI or when working in multiple project trees from one shell. The flag wins if both are set. See the [CLI environment variables reference](https://docs.dbtcharts.com/cli/#environment-variables) for the full list (themes, ports, dbt overrides, etc.).
 
 ### Place boards in your dbt project (optional)
 
@@ -115,8 +112,8 @@ my-dbt-project/
 ```
 
 A dbt project isn't required — `charts/` can live on its own, querying your warehouse
-directly with plain SQL. Nesting it under a dbt project is what unlocks Semantic Layer
-queries and Git-branch deploys in lockstep with your models.
+directly with plain SQL. Nesting it under a dbt project is what unlocks Git-branch
+deploys in lockstep with your models.
 
 ---
 
@@ -124,7 +121,7 @@ queries and Git-branch deploys in lockstep with your models.
 
 ### dbt-Native
 - Queries run as plain SQL against your warehouse by default
-- Optionally query dbt's Semantic Layer (MetricFlow) directly — no need to redefine metrics
+- Query dbt models directly via `ref()` — no need to redefine anything
 - Reads your `profiles.yml` automatically
 - Works with all dbt adapters (Snowflake, BigQuery, Postgres, etc.)
 - Boards sync with dbt models through Git branches — no broken dashboards after data migrations
@@ -155,7 +152,7 @@ queries and Git-branch deploys in lockstep with your models.
 
 Try dbt charts online without installing anything:
 
-**[play.dataface.com](https://play.dataface.com)**
+**[play.dbtcharts.com](https://play.dbtcharts.com)**
 
 A split-pane YAML editor with live preview. No dbt project needed (uses sample data).
 
@@ -163,7 +160,7 @@ A split-pane YAML editor with live preview. No dbt project needed (uses sample d
 
 ## CLI Commands
 
-The CLI is called `dct`, intentionally mirroring `dbt` (Data Build Tool). Just as dbt transforms your data, dct transforms your boards.
+The dbt charts CLI is called `dct` (**d**bt **c**har**t**s), intentionally mirroring `dbt` (Data Build Tool). Just as dbt transforms your data, dct transforms your boards.
 
 ### Validate
 
@@ -217,7 +214,8 @@ title: "Executive KPIs"
 
 queries:
   q_totals:
-    metrics: [total_revenue, order_count, customer_count]
+    sql: SELECT SUM(revenue) AS total_revenue, COUNT(*) AS order_count, COUNT(DISTINCT customer_id) AS customer_count FROM orders
+    source: warehouse
 
 charts:
   revenue:
@@ -304,7 +302,7 @@ YAML Board → Python Compiler → Vega-Lite Specs → Renderer
                   ↓
               (Validation)
                   ↓
-    Warehouse (SQL or dbt MetricFlow) → Query Data → Charts
+    Warehouse (SQL) → Query Data → Charts
                   ↓
            Live HTML or Static PDF
 ```
@@ -316,7 +314,7 @@ YAML Board → Python Compiler → Vega-Lite Specs → Renderer
 | Feature | dbt charts | Lightdash | Looker | Superset |
 |---------|----------|-----------|--------|----------|
 | **Format** | YAML | UI + YAML | LookML | UI |
-| **dbt Integration** | SQL, or native (MetricFlow) | dbt metrics | Separate | Limited |
+| **dbt Integration** | SQL against dbt models | dbt metrics | Separate | Limited |
 | **Installation** | `pip install dbt-charts` | Self-host + PostgreSQL | Enterprise license | Self-host + database |
 | **Version Control** | Native (Git) | Export/Import | Native (Git) | Limited |
 | **AI-Friendly** | YAML | UI-first | LookML | No |
@@ -326,11 +324,11 @@ YAML Board → Python Compiler → Vega-Lite Specs → Renderer
 
 ## Documentation
 
-- [Getting Started Guide](https://docs.dataface.com/guides/getting-started/) — Step-by-step onboarding
-- [YAML Style Guide](https://docs.dataface.com/guides/yaml-style-guide/) — Board YAML conventions
-- [CLI Reference](https://docs.dataface.com/cli/) — All `dct` commands
-- [Chart Types](https://docs.dataface.com/charts/types/) — Available chart types and configuration
-- [Variables & Filters](https://docs.dataface.com/variables/) — Interactive variables and UI elements
+- [Getting Started Guide](https://docs.dbtcharts.com/guides/getting-started/) — Step-by-step onboarding
+- [YAML Style Guide](https://docs.dbtcharts.com/guides/yaml-style-guide/) — Board YAML conventions
+- [CLI Reference](https://docs.dbtcharts.com/cli/) — All `dct` commands
+- [Chart Types](https://docs.dbtcharts.com/charts/types/) — Available chart types and configuration
+- [Variables & Filters](https://docs.dbtcharts.com/variables/) — Interactive variables and UI elements
 
 ---
 

@@ -185,7 +185,7 @@ def build_chart_style_context(
     Per-family merge + re-inherit
     ------------------------------
     Every chart-patched family (bar, line, …, kpi, table, plus the nested
-    ``data_table``) is merged onto the pre-inherit ``Style.charts`` subtree
+    ``support_table``) is merged onto the pre-inherit ``Style.charts`` subtree
     (``board_context.pre_style``); ``apply_inherit`` then re-runs the full
     inherit graph so a patch that sets a family-root ``font`` propagates to its
     descendant leaves, and the emoji font family is appended. One uniform
@@ -291,9 +291,11 @@ def build_chart_style_context(
                     getattr(base_charts, _key), _fam_patch
                 )
         if primary is not None:
-            _dt_patch = getattr(primary, "data_table", None)
+            _dt_patch = getattr(
+                primary, "support_table", None
+            )  # type-state: silent_fallback — primary is a per-family patch union; families with no support_table slot legitimately lack the attribute
             if _dt_patch is not None:
-                charts_family_patch["data_table"] = _dt_patch
+                charts_family_patch["support_table"] = _dt_patch
 
     if charts_family_patch:
         pre = base_charts.pre_style
@@ -359,11 +361,11 @@ def build_chart_style_context(
     #   .categorical.palette → ChartStyleContext.palette (categorical stops list)
     #   .categorical.single_series_palette → ChartStyleContext.single_series_palette
     #   .gradient → consumed by normalize_chart_channels; not stored in cascade
-    # KPI's color is a bare str (no series axis, no categorical/gradient arm).
+    # kpi/spark_bar/callout have no `color` field at all, hence getattr's None
+    # default. Every family that does carry one types it as a model, never a
+    # bare str — so there is no string arm here.
     _color = getattr(primary, "color", None)
-    if isinstance(_color, str):
-        overrides["color"] = _color
-    elif _color is not None:
+    if _color is not None:
         if _color.static is not None:
             overrides["color"] = _color.static
         _categorical = getattr(_color, "categorical", None)

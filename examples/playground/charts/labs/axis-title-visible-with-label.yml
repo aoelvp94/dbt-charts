@@ -1,10 +1,10 @@
 title: "Axis title.visible:false honored alongside an authored label"
-description: >
+notes: >
   Regression proof: style.axis_y.title.visible:false (and axis_x) used to be
   silently discarded whenever the chart also authored y_label/x_label. Fixed
   by giving an explicit title.visible precedence over the label-forcing
   default at resolve time.
-extends: editorial
+extends: clarity
 queries:
   monthly:
     sql: >

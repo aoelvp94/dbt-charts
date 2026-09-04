@@ -1,9 +1,0 @@
-name: "metricflow_example"
-version: "1.0.0"
-config-version: 2
-
-profile: "metricflow_example"
-
-target-path: "target"
-clean-targets:
-  - "target"

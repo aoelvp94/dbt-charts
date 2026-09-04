@@ -1,0 +1,55 @@
+title: "Board-level y-axis zero pin — proof board"
+notes: >
+  This board authors style.charts.axis_y.scale.continuous.zero: true at board
+  root. Before the fix that pin parsed cleanly and was silently discarded for
+  line, area and scatter; only a chart-level pin worked.
+
+style:
+  charts:
+    axis_y:
+      scale:
+        continuous:
+          zero: true
+
+queries:
+  orders:
+    columns: [month, orders]
+    values:
+      - ["2026-01-01", 148]
+      - ["2026-02-01", 156]
+      - ["2026-03-01", 163]
+      - ["2026-04-01", 171]
+      - ["2026-05-01", 184]
+      - ["2026-06-01", 197]
+
+rows:
+  - text: |
+      ## Board-level zero pin
+
+      Board root authors `style.charts.axis_y.scale.continuous.zero: true`.
+      Data runs 148–197, so the smart-zero heuristic on its own would keep a
+      data-fitted domain. The pin is the only thing that can put the floor at 0.
+
+  - cols: [board_pinned_line, chart_level_override]
+
+charts:
+  board_pinned_line:
+    query: orders
+    type: line
+    title: "Board-level pin, no chart-level style"
+    subtitle: "EXPECTED: y-axis starts at 0, honoring the board-root pin. BEFORE this change it started near 143 — the authored pin was read off the per-chart patch only and thrown away."
+    x: month
+    y: orders
+
+  chart_level_override:
+    query: orders
+    type: line
+    title: "Board-level pin, overridden at chart level with zero: false"
+    subtitle: "EXPECTED: y-axis zoomed to the data (starts near 143). A nearer scope still wins over the board-root pin — the fix widens where the pin is read, it does not change precedence."
+    x: month
+    y: orders
+    style:
+      axis_y:
+        scale:
+          continuous:
+            zero: false

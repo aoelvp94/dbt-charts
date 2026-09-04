@@ -84,7 +84,7 @@ charts:
     value: total_revenue
     style:
       value:
-        format: currency
+        format: currency_full
 
   total_orders:
     label: "Orders"
@@ -93,7 +93,7 @@ charts:
     value: total_orders
     style:
       value:
-        format: number
+        format: number_full
 
   avg_order:
     label: "Avg Order Value"
@@ -102,7 +102,7 @@ charts:
     value: avg_order_value
     style:
       value:
-        format: currency
+        format: currency_full
 
 rows:
   - cols:

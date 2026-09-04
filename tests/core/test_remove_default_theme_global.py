@@ -17,7 +17,7 @@ def test_set_default_theme_name_not_exported() -> None:
     assert not hasattr(config, "set_default_theme_name")
 
 
-def test_get_default_theme_name_reads_dft_default_theme_env(
+def test_get_default_theme_name_reads_dct_default_theme_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """get_default_theme_name() reads DCT_DEFAULT_THEME from env at call time."""
@@ -40,7 +40,7 @@ def test_get_default_theme_name_returns_constant_when_env_unset(
     assert get_default_theme_name() == SHIPPED_DEFAULT_THEME_NAME
 
 
-def test_dataface_yml_theme_key_raises_validation_error(
+def test_dbt_charts_yml_theme_key_raises_validation_error(
     tmp_path, local_project
 ) -> None:  # type: ignore[no-untyped-def]
     """dbt_charts.yml: theme: is no longer accepted — raises pydantic ValidationError."""

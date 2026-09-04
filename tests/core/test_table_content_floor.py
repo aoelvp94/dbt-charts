@@ -134,6 +134,10 @@ class TestElasticColumnsTruncateWhenSqueezed:
                     "account": {},
                     "amount": {},
                     "close_date": {},
+                    # width math pins the four columns above; keep the rest
+                    # out of the layout explicitly (styling-only style.columns)
+                    "stage": {"visible": False},
+                    "probability": {"visible": False},
                 },
             },
         )
@@ -181,7 +185,7 @@ class TestSVGFitsTileBoundary:
             make_chart,
             style={
                 "columns": {
-                    "d1": {},
+                    "d1": {"visible": True},
                     "d2": {},
                     "d3": {},
                     "d4": {},
@@ -231,6 +235,7 @@ class TestNoTextOverflowAcrossWidths:
                     "amount": {"format": "$,.0f"},
                     "close_date": {},
                     "probability": {"format": ".0%"},
+                    "stage": {"visible": False},
                 }
             },
         )

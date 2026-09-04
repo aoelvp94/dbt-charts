@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable, Hashable
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
@@ -10,26 +11,76 @@ from dbt_charts.core.compile.models.chart.resolved._base import _BaseResolvedCha
 from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
+from dbt_charts.core.compile.models.style.resolved import ResolvedSeriesLabelStyle
 from dbt_charts.core.compile.models.style.resolved._base import ResolvedAxisStyle
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    category_scale_for,
+    color_at,
+    ink_at,
+)
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
-    WIDE_LABEL_FIELD,
-    WIDE_VALUE_FIELD,
+    unfold_wide_rows,
+    wide_series_names,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.emitters._cartesian import (
-    NATIVE_STACK_ORDER,
+    companion_color_for_fill,
+    emitted_categorical_color_scale,
     last_nonnull_value_per_series,
-    sorted_series_by_stack_order,
+    last_nonnull_xy_per_series,
 )
-from dbt_charts.core.text.case import format_display_text
+from dbt_charts.core.render.chart.emitters._endpoint_rail import (
+    endpoint_rail_layout,
+    measure_label_pane_width,
+)
+from dbt_charts.core.text.case import default_axis_title
 from dbt_charts.core.utils import (
-    layered_endpoint_rail_fires,
-    layered_endpoint_rail_shape,
+    cumulative_stack_midpoints,
     numeric_column_values,
+    sorted_series_by_stack_order,
     stacked_x_domain_order,
 )
+
+
+def _pack_against_bound(
+    items: list[tuple[str, float]],
+    push: Callable[[float, float], float],
+    overflows: Callable[[float], bool],
+) -> tuple[list[tuple[str, float]], list[str]]:
+    """Greedy-pack pre-sorted, extremity-first ``items`` against a bound.
+
+    The bound and direction are supplied entirely by the closures: ``push
+    (anchor, prev_y)`` returns this item's forced position given the
+    previously-placed item's position (its own anchor, unless that is too
+    close — see the two call sites for the concrete direction and gap).
+    ``overflows(y)`` reports whether a computed position has crossed the
+    bound.
+
+    Need-based, not positional: when placing an item would overflow, this
+    evicts placed items off the top of the stack — but only ones that were
+    themselves pushed away from their own anchor (a label with genuine room
+    needs no push and is never evicted) — retrying the new item after each
+    eviction, so an item is dropped only once no evictable neighbour remains
+    and it still does not fit. Cascade order alone (which item happens to be
+    processed last) never decides who gets dropped; an isolated anchor with
+    real room keeps its place regardless of what a distant, unrelated
+    cluster ahead of it ran out of room for.
+    """
+    stack: list[tuple[str, float, float]] = []  # (name, forced_y, own_anchor)
+    dropped: list[str] = []
+    for series, anchor in items:
+        y = anchor if not stack else push(anchor, stack[-1][1])
+        while overflows(y) and stack and stack[-1][1] != stack[-1][2]:
+            evicted, _, _ = stack.pop()
+            dropped.append(evicted)
+            y = anchor if not stack else push(anchor, stack[-1][1])
+        if overflows(y):
+            dropped.append(series)
+            continue
+        stack.append((series, y, anchor))
+    return [(s, y) for s, y, _own in stack], dropped
 
 
 def _apply_label_cascade(
@@ -37,47 +88,58 @@ def _apply_label_cascade(
     min_data_gap: float,
     y_domain_min: float,
     y_domain_max: float,
-) -> list[tuple[str, float]]:
+) -> tuple[list[tuple[str, float]], list[str]]:
     """Bidirectional greedy collision-avoidance over an anchor map.
 
-    Output is ordered top-to-bottom (descending y).
+    Returns ``(positions, dropped)``. ``positions`` is ordered top-to-bottom
+    (descending y). Every raw anchor is clamped into ``[y_domain_min,
+    y_domain_max]`` first — an authored ``style.axis_y.scale.domain`` can sit
+    narrower than the raw data extent, so an anchor outside it is not a
+    collision, it is off-domain, and Vega-Lite clips the mark at the same
+    bound rather than dropping it. Only genuine crowding (see
+    ``_pack_against_bound``) reaches the drop branch.
+
+    A ``(n - 1) * min_data_gap <= y_domain_max - y_domain_min`` check by the
+    caller only proves the block fits in the *best* case (anchored at the
+    domain edge). Real anchors sit wherever the data puts them, so the walk
+    below can still run out of room locally even when that check passes.
     """
     if not anchors:
-        return []
+        return [], []
+
+    clamped = {
+        series: min(y_domain_max, max(y_domain_min, y)) for series, y in anchors.items()
+    }
 
     domain_mid = (y_domain_min + y_domain_max) / 2.0
-    anchor_mean = sum(anchors.values()) / len(anchors)
+    anchor_mean = sum(clamped.values()) / len(clamped)
 
     if anchor_mean >= domain_mid:
-        items = sorted(anchors.items(), key=lambda kv: kv[1], reverse=True)
-        adjusted: list[tuple[str, float]] = []
-        for series, y in items:
-            if adjusted and adjusted[-1][1] - y < min_data_gap:
-                y = adjusted[-1][1] - min_data_gap
-            y = max(y_domain_min, y)
-            adjusted.append((series, y))
-        return adjusted
+        items = sorted(clamped.items(), key=lambda kv: kv[1], reverse=True)
+        positions, dropped = _pack_against_bound(
+            items,
+            push=lambda anchor, prev_y: min(anchor, prev_y - min_data_gap),
+            overflows=lambda y: y < y_domain_min,
+        )
+        return positions, dropped
 
-    items = sorted(anchors.items(), key=lambda kv: kv[1])
-    upward: list[tuple[str, float]] = []
-    for series, y in items:
-        if upward and y - upward[-1][1] < min_data_gap:
-            y = upward[-1][1] + min_data_gap
-        y = min(y_domain_max, y)
-        upward.append((series, y))
-    return list(reversed(upward))
+    items = sorted(clamped.items(), key=lambda kv: kv[1])
+    positions, dropped = _pack_against_bound(
+        items,
+        push=lambda anchor, prev_y: max(anchor, prev_y + min_data_gap),
+        overflows=lambda y: y > y_domain_max,
+    )
+    return list(reversed(positions)), dropped
 
 
-from dbt_charts.core.compile.config import get_chart_rendering
-from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.render.chart.feature import chart_rows
 from dbt_charts.core.render.chart.series_label_truncation import (
     SeriesLabelSource,
     record_series_label_truncations,
 )
 from dbt_charts.core.render.chart.spec import ChartSpec, EndpointLabelData, RenderBox
-
-_LABEL_GAP_PX = 4.0  # horizontal gap between last measured char and pane edge
+from dbt_charts.core.render.chart.x_domain import rendered_x_domain
+from dbt_charts.core.render.utils import normalize_scalar_for_json
 
 # Alias for the position column in the pre-computed inline data.
 _Y_ALIAS = "__y"
@@ -165,20 +227,27 @@ def _stacked_y_domain(
 class RecascadeResult:
     """Final label positions plus the outcome that produced them.
 
-    Three distinct outcomes, deliberately not one boolean: they have different
+    Four distinct outcomes, deliberately not one boolean: they have different
     causes and different remedies, and collapsing them made the rail report a
     height problem for a case height cannot cause or cure.
 
-    - ``fit`` — the intended gap was honoured.
+    - ``fit`` — the intended gap was honoured, every label placed.
     - ``gap_did_not_fit`` — the gap is known but ``(n-1) * gap`` exceeds the
-      domain span. More height (or fewer series) resolves it.
+      domain span in the best case. More height (or fewer series) resolves it.
+      Every label is kept, spaced evenly below the intended gap.
     - ``no_slope`` — no pixels-per-data-unit could be measured, because every
       label ties on one value or the scale collapsed them onto one pixel. The
-      plot's height is irrelevant here; the data is.
+      plot's height is irrelevant here; the data is. Every label is kept.
+    - ``rail_overflow`` — the global check above passed, but the real anchors
+      are clustered such that the greedy cascade (``_apply_label_cascade``)
+      still ran out of room. ``dropped`` names the series that could not be
+      placed at the intended gap; they are omitted from ``positions`` rather
+      than piled onto the domain edge.
     """
 
     positions: list[tuple[str, float]]
-    outcome: Literal["fit", "gap_did_not_fit", "no_slope"]
+    outcome: Literal["fit", "gap_did_not_fit", "no_slope", "rail_overflow"]
+    dropped: list[str] = field(default_factory=list)
 
 
 def _measure_label_pane_slope(
@@ -325,6 +394,14 @@ def recascade_endpoint_labels(
     Even distribution needs no slope, so it serves both. Reporting it is what
     keeps this a defined degradation rather than a silent fallback, and the
     result stays inside ``[y_domain_min, y_domain_max]`` either way.
+
+    A third, narrower failure survives past that global check: real anchors
+    clustered away from the domain's own edge can still exhaust the room the
+    greedy cascade has to work with, even though ``(n - 1) * data_gap`` fits
+    in the best case. ``_apply_label_cascade`` reports this by returning the
+    series it could not place; those are dropped from ``positions`` and the
+    outcome is ``rail_overflow``, rather than clamping every excess label
+    onto the same pixel.
     """
     if len(anchors) <= 1:
         return RecascadeResult(positions=list(anchors.items()), outcome="fit")
@@ -352,12 +429,16 @@ def recascade_endpoint_labels(
         return _distribute_evenly(
             anchors, y_domain_min, y_domain_max, "gap_did_not_fit"
         )
-    positions = _apply_label_cascade(
+    positions, dropped = _apply_label_cascade(
         anchors,
         min_data_gap=data_gap,
         y_domain_min=y_domain_min,
         y_domain_max=y_domain_max,
     )
+    if dropped:
+        return RecascadeResult(
+            positions=positions, outcome="rail_overflow", dropped=dropped
+        )
     return RecascadeResult(positions=positions, outcome="fit")
 
 
@@ -385,6 +466,10 @@ def _refuse_unorderable_sort(
     )
 
 
+# _stacked_midpoints's row values are query-result-shaped, genuinely dynamic.
+_RankedRow = dict[str, Any]  # type-state: explicit_any — see comment above
+
+
 def _stacked_midpoints(
     data: list[dict[str, Any]],
     x_field: str,
@@ -399,70 +484,181 @@ def _stacked_midpoints(
 ) -> list[tuple[str, float]]:
     """Compute cumulative segment midpoints for vertical stacked bars or areas.
 
-    Finds the last (lexicographically greatest) x value and computes the
-    y-midpoint of each series' stacked segment at that position. Returns raw,
-    un-cascaded midpoints — the greedy-nudge pass runs later, once the real
-    plot geometry is known (see ``recascade_endpoint_labels``). Series/x/y-field
-    generic — used by both the bar and area families.
+    Anchors each series at its own most-recent non-null x — not one shared
+    trailing column — so a series with a trailing null, or one that stops
+    early, is labelled at the midpoint of its own last real segment rather
+    than dragged to the baseline of a column it has no value in (reuses
+    ``last_nonnull_xy_per_series``, the same per-series walk-back the
+    line/area rail already uses via ``last_nonnull_value_per_series``).
+    Returns raw, un-cascaded midpoints — the greedy-nudge pass runs later,
+    once the real plot geometry is known (see ``recascade_endpoint_labels``).
+    Series/x/y-field generic — used by both the bar and area families.
+
+    The stack order is one global order shared by every column (Vega-Lite
+    renders one consistent series order across the whole x domain), but the
+    *cumulative offset* within that order is column-local: a series stacks on
+    top of whichever OTHER series precede it in that same column, whether or
+    not those series' own labels anchor there. So each anchor column is
+    snapshotted independently (0.0-seeded per series, filled from real rows)
+    and a series' midpoint is computed against its own anchor column's
+    snapshot, never a single shared one.
 
     Every name in *series_names* gets an anchor, including a series with no
-    row in the anchor column: it is zero-height there, so its anchor is the
-    seam between its neighbours — the place its band would begin. The rail
-    replaces the colour legend, so a dropped anchor would leave that series
-    painting segments in other columns under no name anywhere on the chart.
+    non-null value anywhere: it falls back to the domain's last x, zero-height
+    there, so its anchor is the seam between its neighbours — the place its
+    band would begin. The rail replaces the colour legend, so a dropped
+    anchor would leave that series painting segments in other columns under
+    no name anywhere on the chart. This is the one case the 0.0 seeding still
+    covers; a series with real rows just not at the last column no longer
+    falls into it.
 
     Sort order (baseline = cumulative zero):
     - None / "value": largest global sum at baseline (VL's joinaggregate default).
     - "alphabetical": alphabetically first series at baseline.
     - "data": globally first-encountered series at baseline.
-    - ``NATIVE_STACK_ORDER``: Vega-Lite's own default sort (used by area, which
-      wires no explicit order-channel override) — see
-      ``sorted_series_by_stack_order``.
-
-    For ``stack_mode == "normalize"``, midpoints are divided by the column
-    total so they land on the 0..1 scale that VL renders for normalize stacks.
-    For ``stack_mode == "center"`` (streamgraph), each column is offset by
-    ``(max_column_total - this_column_total) / 2`` — Vega-Lite's own
-    center-offset formula (verified against its compiled scenegraph output,
-    not the d3-style per-column ``-total/2`` silhouette one might assume) —
-    so midpoints land on the [0, max_column_total] domain the area mark
-    actually renders on. Callers must pass the same ``max_column_total`` that
-    ``_stacked_y_domain`` computes for this data when ``stack_mode ==
-    "center"``.
+    For ``stack_mode == "normalize"``, a series' midpoint is divided by its
+    OWN anchor column's total, so it lands on the 0..1 share VL actually
+    renders for that column — not the trailing column's share, which a
+    differently-timed series never occupies. For ``stack_mode == "center"``
+    (streamgraph), each series' midpoint is offset by ``(max_column_total -
+    this_series'_own_column_total) / 2`` — Vega-Lite's own center-offset
+    formula (verified against its compiled scenegraph output, not the
+    d3-style per-column ``-total/2`` silhouette one might assume) — applied
+    per anchor column so it lands on the shared [0, max_column_total] domain
+    the area mark actually renders on. Callers must pass the same
+    ``max_column_total`` that ``_stacked_y_domain`` computes for this data
+    when ``stack_mode == "center"``.
     """
-    domain = stacked_x_domain_order(data, x_field, sort_by, descending)
-    last_x = domain[-1] if domain else None
-
-    values_at_last: dict[str, float] = dict.fromkeys(series_names, 0.0)
-    for row in data:
-        if row.get(x_field) != last_x:
-            continue
-        s = row.get(series_field)
-        y = row.get(y_field)
-        if s is None or y is None:
-            continue
-        values_at_last[str(s)] = float(y)
-
-    if not values_at_last:
+    if not series_names:
         return []
 
-    series_order = sorted_series_by_stack_order(
-        list(values_at_last), data, series_field, stack_order, y_field=y_field
+    domain = stacked_x_domain_order(data, x_field, sort_by, descending)
+    last_rank = len(domain) - 1 if domain else 0
+
+    # "Own last non-null x" means last in the *rendered* domain order, not
+    # last by raw x comparison — an authored `sort:` can render a
+    # lexicographically earlier x last
+    # (test_vertical_stacked_labels_follow_an_authored_sort). Every column
+    # below is keyed by this rank rather than the raw x value: a rank is a
+    # plain int, so it also sidesteps typing every column dict against x's
+    # genuinely dynamic type (str/date/int, whatever the query returned).
+    x_rank: dict[Hashable, int] = {x: i for i, x in enumerate(domain)}
+    ranked_rows = [
+        {x_field: x_rank[x], y_field: row[y_field], series_field: row[series_field]}
+        for row in data
+        if (x := row.get(x_field)) in x_rank
+    ]
+    # Reuses last_nonnull_value_per_series's walk-back (via the xy variant)
+    # rather than a second one — a rank is still comparable with `>=`,
+    # exactly what that walk-back needs.
+    anchor_rank = last_nonnull_xy_per_series(
+        ranked_rows, x_field, y_field, series_field
     )
 
-    total = sum(values_at_last[s] for s in series_order)
+    # Group the same ranked_rows by rank for the column snapshots below,
+    # rather than re-scanning raw `data` a second time — ranked_rows already
+    # carries every field _column needs (series_field, y_field).
+    rows_by_rank: dict[int, list[_RankedRow]] = {}
+    for row in ranked_rows:
+        rows_by_rank.setdefault(row[x_field], []).append(row)
+
+    series_order = sorted_series_by_stack_order(
+        series_names, data, series_field, stack_order, y_field=y_field
+    )
+
+    # Prefix sums of each anchor column's stack, in series_order — cached per
+    # column so series sharing an anchor (the common, non-degenerate case)
+    # reuse one computation, and so the summation order matches the old
+    # single-column code exactly when every series does share one.
+    column_cache: dict[int, tuple[dict[str, float], list[float]]] = {}
+
+    def _column(rank: int) -> tuple[dict[str, float], list[float]]:
+        if rank not in column_cache:
+            values = dict.fromkeys(series_names, 0.0)
+            # A rank with no rows (e.g. the fallback seam column when no
+            # domain exists at all) is a legitimate empty stack, not a
+            # missing-key bug — every series is already 0.0-seeded above.
+            for row in rows_by_rank.get(
+                rank, []
+            ):  # type-state: silent_fallback — see comment above
+                s, y = row.get(series_field), row.get(y_field)
+                if s is not None and y is not None:
+                    values[str(s)] = float(y)
+            prefix = [0.0]
+            for s in series_order:
+                prefix.append(prefix[-1] + values[s])
+            column_cache[rank] = (values, prefix)
+        return column_cache[rank]
+
     result: list[tuple[str, float]] = []
-    cum_lower = 0.0
-    for s in series_order:
-        v = values_at_last[s]
+    for i, s in enumerate(series_order):
+        anchor_x_rank = anchor_rank[s][0] if s in anchor_rank else last_rank
+        values, prefix = _column(anchor_x_rank)
+        v = values[s]
+        cum_lower = prefix[i]
+        col_total = prefix[-1]
         mid = cum_lower + v / 2.0
-        if stack_mode == "normalize" and total > 0:
-            mid = mid / total
+        if stack_mode == "normalize" and col_total > 0:
+            mid = mid / col_total
         elif stack_mode == "center":
-            mid += (max_column_total - total) / 2.0
+            mid += (max_column_total - col_total) / 2.0
         result.append((s, mid))
-        cum_lower += v
     return result
+
+
+def _anchor_rows(
+    spec: ChartSpec, rows: ChartRenderData, domain_rows: ChartRenderData, x_field: str
+) -> ChartRenderData:
+    """``rows`` with x rewritten to its position on the axis, where that is safe.
+
+    The walk-back that picks a series' endpoint compares raw x values with
+    ``>=``. On a categorical x that compares the category strings, so a slope
+    chart over "Before"/"After" anchors every label on the *first* column —
+    the one the labels do not name. Ranking the rows first lets the same
+    walk-back read the axis's own order instead. The ranking shape is the
+    stacked rail's (``_stacked_midpoints``), but not its domain source:
+    ``rendered_x_domain`` also accounts for layer-contributed categories and
+    reads the encoding's own field ``sort`` — which the bar emitter sets from
+    an authored ``sort:``, and which no row order reflects.
+
+    ``domain_rows`` is the row set Vega-Lite orders the axis from, which is
+    not always the row set being ranked: a wide ``y: [a, b]`` chart is folded
+    to long form here first, and that fold drops a null measure cell, so a
+    sort field summed over the folded rows understates any category holding
+    one. VL folds too, but uniformly — a row per measure, nulls included — so
+    only the unfolded sums keep its order. The folded x values are a subset of
+    the unfolded ones and the fold copies the x cell verbatim, so every row
+    still finds a rank.
+
+    Returns ``rows`` untouched — keep comparing raw values — the moment
+    ``spec.data`` is set. ``BoardRenderSession.emit_chart`` stamps that field
+    only after this feature has run, so its being unset is what guarantees
+    Vega-Lite receives exactly the rows evaluated here; an emitter that
+    populated it has rewritten what it drew, x cells included (a labeled
+    "Q1 2024" bucket is drawn as an ISO date), and a rank taken against those
+    would name a column this row set never held. Continuous x is left alone
+    too: its raw values already compare in axis order, and so is an empty
+    domain — ``rendered_x_domain`` returns one for a non-``str`` encoding
+    field, and for empty ``domain_rows``, where leaving the rows be is right.
+    """
+    if spec.data is not None:
+        return rows
+    x_enc = spec.encoding.get("x")
+    if not isinstance(x_enc, dict) or x_enc.get("type") not in ("nominal", "ordinal"):
+        return rows
+    domain = rendered_x_domain(x_enc, domain_rows, [], None)
+    if not domain:
+        return rows
+    ranks = {value: index for index, value in enumerate(domain)}
+    # A rank is an int, so the walk-back's own `>=` now reads axis order.
+    # Values are normalized on the way in because rendered_x_domain keys its
+    # domain that way (a datetime.date cell becomes an ISO string). Rows with
+    # no x carry no endpoint and are dropped, as the walk-back already does.
+    return [
+        {**row, x_field: ranks[normalize_scalar_for_json(row[x_field])]}
+        for row in rows
+        if row.get(x_field) is not None
+    ]
 
 
 def _wide_endpoint_positions(
@@ -499,43 +695,15 @@ def _layer_color_scale(spec: ChartSpec, chart_id: str) -> dict[str, str]:
     ``BaselineFeature``) may have inserted a rule layer ahead of it.
     """
     for layer_spec in spec.layers:
-        color_enc = layer_spec.encoding.get("color")
-        if not isinstance(color_enc, dict):
-            continue
-        scale = color_enc.get("scale")
-        if not isinstance(scale, dict):
-            continue
-        domain, fill_range = scale.get("domain"), scale.get("range")
-        if isinstance(domain, list) and isinstance(fill_range, list):
-            return dict(zip(domain, fill_range, strict=True))
+        fill_by_series = emitted_categorical_color_scale(
+            layer_spec.encoding.get("color")
+        )
+        if fill_by_series is not None:
+            return fill_by_series
     raise ChartDataError(
         "layered chart has no shared colour scale for its endpoint-label rail",
         chart_id=chart_id,
     )
-
-
-def _companion_for_fill(
-    fill: str, palette: list[str], dark_companion_palette: tuple[str, ...]
-) -> str:
-    """This fill's dark-companion text ink, without reaching back into compile.palette.
-
-    ``chart.palette`` and ``chart.style.series_label.dark_companion_palette``
-    are parallel sequences baked at resolve time — index *i* of one is the
-    dark companion of index *i* of the other (``_resolved_series_label``).
-    Render is barred from compile.palette's catalog scan, so this looks the
-    fill up positionally in that already-baked pair instead of assuming
-    ``color_range`` is ``palette[:n]`` in slot order — true on the
-    non-layered paths, not on this one (a layer's own mark colour, or the
-    base's ``single_series_fill``, may not be a palette member at all). A
-    fill with no match has no companion to find — falls back to the bright
-    fill itself, the same graceful degrade ``resolve_dark_companion_stops``
-    uses for a custom colour outside any registered palette.
-    """
-    try:
-        idx = palette.index(fill)
-    except ValueError:
-        return fill
-    return dark_companion_palette[idx] if idx < len(dark_companion_palette) else fill
 
 
 def _layered_y_domain(
@@ -599,69 +767,6 @@ def _layered_y_domain(
     return (min(values), max(values)) if values else (0.0, 1.0)
 
 
-def _cumulative_midpoints(
-    data: list[dict[str, Any]],
-    x_field: str,
-    y_field: str,
-    series_field: str,
-    series_names: list[str],
-    sort_by: str,
-    descending: bool,
-    stack_mode: str = "zero",
-) -> list[tuple[str, float]]:
-    """Return (series, x_midpoint) for the top categorical row (un-nudged).
-
-    The "top row" is the first value of the rendered x domain — alphabetically
-    first, or first under an authored ``sort:``.  Midpoint is the
-    cumulative x at the series segment's center, ordered largest-global-sum
-    first — matching Vega-Lite's own default stack ordering, which it
-    enforces via encoding.order + joinaggregate.  Sufficient for correct
-    structure; full dodge resolution is deferred.
-
-    A series absent from the top row is zero-width there and anchors on the
-    seam between its neighbours — see ``_stacked_midpoints``.
-
-    For ``stack_mode == "normalize"``, midpoints are divided by the top-row total
-    so they land on the 0..1 scale that VL renders for normalize stacks.
-    """
-    x_values = stacked_x_domain_order(data, x_field, sort_by, descending)
-    if not x_values:
-        return []
-    top_row_x = x_values[0]
-
-    # Gather y-values per series for the top row and global sums across all rows.
-    series_y: dict[str, float] = dict.fromkeys(series_names, 0.0)
-    global_sums: dict[str, float] = dict.fromkeys(series_names, 0.0)
-    for row in data:
-        s = row.get(series_field)
-        y = row.get(y_field)
-        if s is None or y is None:
-            continue
-        key = str(s)
-        global_sums[key] += float(y)
-        if row.get(x_field) == top_row_x:
-            series_y[key] = float(y)
-
-    if not series_y:
-        return []
-
-    # Order: largest global sum first (baseline), ties broken alphabetically —
-    # mirrors the segment stacking order so labels anchor to the right segments.
-    series_order = sorted(series_y, key=lambda s: (-global_sums[s], s))
-
-    total = sum(series_y[s] for s in series_order)
-    result: list[tuple[str, float]] = []
-    cumulative = 0.0
-    for s in series_order:
-        y = series_y[s]
-        mid = cumulative + y / 2.0
-        if stack_mode == "normalize" and total > 0:
-            mid = mid / total
-        result.append((s, mid))
-        cumulative += y
-    return result
-
-
 def _has_negative_measure(data: list[dict[str, Any]], measure_field: str) -> bool:
     """True if any row carries a negative value in the stacked measure field.
 
@@ -675,30 +780,16 @@ def _has_negative_measure(data: list[dict[str, Any]], measure_field: str) -> boo
     )
 
 
-def _measure_label_pane_width(
-    series_names: list[str], font_family: str, font_size: float, chart_width: float
-) -> tuple[float, list[str]]:
-    """Return the label pane width and the names the cap will cut.
-
-    Natural width is the widest series name plus the edge gap.  A name wider
-    than ``max_width_fraction`` of the chart's own width would make the rail
-    wider than the canvas it hangs off — the concat overshoot correction then
-    has no width left to give and refuses the render — so the pane is capped
-    and Vega ellipsizes at the pane's mark limit, which is the cap itself.
-
-    The cut names come back rather than being recorded here: only the caller
-    knows whether the rail it is building actually honours this width (the
-    vconcat top rail does not), so the caller owns the warning.
-    """
-    if not series_names:
-        return _LABEL_GAP_PX, []
-    measurer = get_font_measurer(font_family)
-    widths = {name: measurer.measure(name, font_size) for name in series_names}
-    cap = chart_width * get_chart_rendering().endpoint_labels.max_width_fraction
-    # Vega cuts at the mark limit, which is the cap — not the cap less the gap.
-    return min(max(widths.values()) + _LABEL_GAP_PX, cap), [
-        name for name, w in widths.items() if w > cap
-    ]
+def _series_label_font_props(sl: ResolvedSeriesLabelStyle) -> dict[str, str | float]:
+    """VL text-mark font props for a series label — shared by the multi-series
+    right-pane rail and the layered single-series rail (the two places this
+    chart-family-agnostic, compile-baked style reaches a mark)."""
+    return {
+        "fontSize": sl.font_size,
+        "font": sl.font_family,
+        "fontWeight": sl.font_weight,
+        "fontStyle": sl.font_style,
+    }
 
 
 @dataclass
@@ -713,44 +804,10 @@ class EndpointLabelFeature:
     """
 
     def applies_to(self, chart: ResolvedChart) -> bool:
-        # ResolvedLineChart/AreaChart/BarChart all extend _BaseResolvedChartFields,
-        # so resolved_channels is always accessible after this guard.
-        if not isinstance(
-            chart, (ResolvedLineChart, ResolvedAreaChart, ResolvedBarChart)
-        ):
-            return False
-        # Every family gates on the author opting in via endpoint_labels.visible.
-        # Without it the series names stay in the side legend.
-        if not chart.style.endpoint_labels.visible:
-            return False
-        color_channel = chart.resolved_channels.get("color")
-        has_series_color = color_channel is not None and color_channel.mode == "series"
-        if isinstance(chart, ResolvedBarChart) and chart.orientation == "horizontal":
-            # Top-row series rail only applies to stacked horizontals with a
-            # colour-encoded series; layered horizontals have no rail path.
-            return has_series_color and chart.stack not in (None, "none")
-        if has_series_color:
-            return True
-        if color_channel is not None:
-            # A gradient/literal/conditional colour channel puts a non-series
-            # `color` encoding on the base spec, so emitters/_overlay.py's
-            # use_shared_scale (which requires no colour encoding at all, or
-            # a nominal/ordinal one) never builds the shared colour scale the
-            # layered rail reads — _layer_color_scale would find nothing and
-            # raise. Must agree with compile's _endpoint_label_rail_fires,
-            # which gates its own has_layers term on the same condition.
-            return False
-        # No base colour channel at all: a layered single-series chart still
-        # has one endpoint per layer (base + overlays) worth naming — see
-        # _apply_layered_single_series. layered_endpoint_rail_fires is the
-        # single answer to whether that rail can fire (shape + every layer
-        # colourless) shared with compile's _bake_ay_orient and
-        # _suppress_legend_for_endpoint_labels, which gate the same shape via
-        # the same leaf.
-        return layered_endpoint_rail_fires(
-            layered_endpoint_rail_shape(chart.x, chart.y),
-            [layer.color is None for layer in chart.layers],
-        )
+        # Single source of truth shared with the pre-crowding rail-width
+        # estimate (emitters/_endpoint_rail.py) — see that module's
+        # endpoint_rail_layout docstring for the full gate.
+        return endpoint_rail_layout(chart) is not None
 
     def apply(
         self,
@@ -786,20 +843,15 @@ class EndpointLabelFeature:
         # For wide charts (y: [a, b, ...]), pre-fold wide rows into long form so
         # the ordinary domain/position helpers operate on (x, WIDE_LABEL_FIELD,
         # WIDE_VALUE_FIELD) triples, same as any authored-color series chart.
-        # Color domain comes from wide_measures (not observed data): a measure
-        # absent from every row would be missing from the observed set, desync-ing
-        # the palette slot assignment from the chart's own scale domain.
+        # The rows VL orders the axis from — the fold below is ours, not its,
+        # and the two disagree on a null measure cell (see _anchor_rows).
+        domain_rows = data
         if (
             isinstance(chart, (ResolvedBarChart, ResolvedAreaChart, ResolvedLineChart))
             and chart.wide_measures
         ):
-            data = [
-                {**row, WIDE_LABEL_FIELD: measure, WIDE_VALUE_FIELD: row[measure]}
-                for row in data
-                for measure in chart.wide_measures
-                if row.get(measure) is not None
-            ]
-            all_series = sorted(chart.wide_measures)
+            all_series = wide_series_names(chart.wide_measures, chart.color, data)
+            data = unfold_wide_rows(data, chart.wide_measures, chart.color)
         else:
             # Build color domain from observed data.
             all_series = sorted(
@@ -811,11 +863,30 @@ class EndpointLabelFeature:
             )
         palette = list(chart.palette)
         color_domain = all_series
-        color_range = (
-            [palette[i % len(palette)] for i in range(len(all_series))]
-            if palette
-            else []
+        # Board-slot lookup for THIS series field, when it is board-bound — a
+        # value's color and companion ink must key off the same slot the
+        # value's own fill uses everywhere else on the board, never off its
+        # position in this chart's locally-sorted series list (that position
+        # can differ chart to chart, which is what mislabeled the rail).
+        color_scale = category_scale_for(chart.category_colors, series_field)
+        fill_by_series = emitted_categorical_color_scale(
+            spec.encoding.get("color"),
+            *(layer.encoding.get("color") for layer in spec.layers),
         )
+        if color_scale is not None and palette:
+            color_range = [color_at(color_scale, s, palette) for s in color_domain]
+        elif (
+            isinstance(chart, (ResolvedBarChart, ResolvedAreaChart))
+            and chart.stack not in (None, "none")
+            and fill_by_series is not None
+        ):
+            color_range = [fill_by_series[series] for series in color_domain]
+        else:
+            color_range = (
+                [palette[index % len(palette)] for index in range(len(color_domain))]
+                if palette
+                else []
+            )
         # Series-label typography + dark-companion ink, baked at compile time
         # (the v2 render layer cannot reach compile.palette). applies_to() has
         # already restricted this to the three cartesian families.
@@ -823,15 +894,22 @@ class EndpointLabelFeature:
             chart, (ResolvedLineChart, ResolvedAreaChart, ResolvedBarChart)
         )
         sl = chart.style.series_label
-        dark_companion_range = list(sl.dark_companion_palette[: len(all_series)])
-        label_pane_width, truncated_labels = _measure_label_pane_width(
+        # A bound value's ink is its SLOT's companion, never its fill's — an
+        # authored literal fill sits outside the palette, so the fill-to-index
+        # lookup below cannot find its companion and would hand the label the
+        # fill itself.
+        dark_companion_range = (
+            [ink_at(color_scale, s, sl.dark_companion_palette) for s in color_domain]
+            if color_scale is not None and palette
+            else [
+                companion_color_for_fill(fill, palette, sl.dark_companion_palette)
+                for fill in color_range
+            ]
+        )
+        label_pane_width, truncated_labels = measure_label_pane_width(
             all_series, sl.font_family, sl.font_size, box.width
         )
-        label_mark_font_props: dict[str, Any] = {
-            "fontSize": sl.font_size,
-            "font": sl.font_family,
-            "fontWeight": sl.font_weight,
-        }
+        label_mark_font_props: dict[str, str | float] = _series_label_font_props(sl)
 
         if isinstance(chart, ResolvedBarChart) and chart.orientation == "horizontal":
             x_field = chart.x
@@ -854,7 +932,7 @@ class EndpointLabelFeature:
                     "endpoint labels — they break the cumulative-midpoint computation.",
                     chart.id,
                 )
-            positions = _cumulative_midpoints(
+            positions = cumulative_stack_midpoints(
                 data,
                 x_field,
                 y_field,
@@ -863,6 +941,7 @@ class EndpointLabelFeature:
                 chart.sort.by if chart.sort else "",
                 bool(chart.sort and chart.sort.order == "desc"),
                 stack_mode=chart.stack or "zero",
+                stack_order=chart.style.stack_order,
             )
             # For normalize stacks the chart pane's x encoding must explicitly
             # pin [0, 1] so the shared vconcat x-scale propagates to the rail
@@ -920,13 +999,10 @@ class EndpointLabelFeature:
                         chart.id,
                     )
                 stack_mode = chart.stack or "zero"
-                # Bar exposes an authored stack_order override; area wires no
-                # explicit order-channel, so its rendered stack always follows
-                # Vega-Lite's own default sort (NATIVE_STACK_ORDER).
                 stack_order = (
                     chart.style.stack_order
                     if isinstance(chart, ResolvedBarChart)
-                    else NATIVE_STACK_ORDER
+                    else None
                 )
                 # Area has no authored sort; only bar carries one.
                 _sort = chart.sort if isinstance(chart, ResolvedBarChart) else None
@@ -973,15 +1049,22 @@ class EndpointLabelFeature:
                 # branch above and EndpointLabelData's class docstring.
                 positions = list(
                     last_nonnull_value_per_series(
-                        data, x_field, y_field, series_field
+                        _anchor_rows(spec, data, domain_rows, x_field),
+                        x_field,
+                        y_field,
+                        series_field,
                     ).items()
                 )
 
             spec.endpoint_label_layout = "right_pane"
             # Only this layout honours label_pane_width, so only here does the
             # cap actually cut anything (the top_rail branch above ignores it).
-            # Wide charts have series names from y: [...], not from color:.
-            authored_field: SeriesLabelSource = "y" if chart.wide_measures else "color"
+            # A wide chart's series names come from y: [...] — unless it
+            # also authors color:, whose values then lead every composite
+            # label and are the part worth shortening.
+            authored_field: SeriesLabelSource = (
+                "y" if chart.wide_measures and chart.color is None else "color"
+            )
             record_series_label_truncations(chart.id, authored_field, truncated_labels)
             spec.endpoint_label_data = EndpointLabelData(
                 series_field=series_field,
@@ -1032,10 +1115,12 @@ class EndpointLabelFeature:
         y_field = chart.y
         assert isinstance(x_field, str) and isinstance(y_field, str)
 
-        ay_font = chart.style.axis_y.title.font
-        base_label = chart.y_label or format_display_text(
-            y_field, from_slug=True, font=ay_font
-        )
+        # Must match the base color-scale domain name the emitters build
+        # from titles.y_plain (bar.py/line.py/area.py) exactly — the
+        # `fill_by_label` lookup below reads that already-built scale, not a
+        # re-derivation, so any divergence is a KeyError, not a cosmetic
+        # mismatch.
+        base_label = chart.y_label or default_axis_title(y_field)
         entries: list[tuple[str, ChartRenderData, str, str]] = [
             (base_label, data, x_field, y_field)
         ]
@@ -1050,11 +1135,15 @@ class EndpointLabelFeature:
                 datasets.get(layer.query_name) if layer.query_name is not None else None
             )
             rows = own_data if own_data is not None else data
-            label = layer.label or format_display_text(
-                layer_y, from_slug=True, font=ay_font
-            )
+            label = layer.label or default_axis_title(layer_y)
             entries.append((label, rows, layer_x, layer_y))
 
+        # The categorical-x endpoint (_anchor_rows) is deliberately not applied
+        # here: the overlay emitter publishes rewritten rows on spec.data for
+        # every layered chart, and each entry may read a different dataset, so
+        # there is no single row set the rendered domain can be keyed to
+        # without reconciling them first, so this keeps the raw comparison
+        # rather than a half-applied rank.
         anchors: dict[str, float] = {}
         for label, rows, x_f, y_f in entries:
             value = _wide_endpoint_positions(rows, x_f, [y_f]).get(y_f)
@@ -1076,10 +1165,10 @@ class EndpointLabelFeature:
         sl = chart.style.series_label
         palette = list(chart.palette)
         dark_companion_range = [
-            _companion_for_fill(fill, palette, sl.dark_companion_palette)
+            companion_color_for_fill(fill, palette, sl.dark_companion_palette)
             for fill in color_range
         ]
-        label_pane_width, truncated_labels = _measure_label_pane_width(
+        label_pane_width, truncated_labels = measure_label_pane_width(
             color_domain, sl.font_family, sl.font_size, box.width
         )
         record_series_label_truncations(chart.id, "y", truncated_labels)
@@ -1092,11 +1181,7 @@ class EndpointLabelFeature:
             color_range=color_range,
             dark_companion_range=dark_companion_range,
             label_pane_width=label_pane_width,
-            label_mark_font_props={
-                "fontSize": sl.font_size,
-                "font": sl.font_family,
-                "fontWeight": sl.font_weight,
-            },
+            label_mark_font_props=_series_label_font_props(sl),
             label_offset=chart.style.endpoint_labels.label_offset,
             height=chart.style.endpoint_labels.height,
             label_gap_px=sl.gap_px,

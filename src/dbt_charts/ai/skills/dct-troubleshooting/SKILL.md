@@ -2,7 +2,7 @@
 name: dct-troubleshooting
 kind: workflow
 description: >
-  Diagnose and fix Dataface dashboard errors. Use when validation, query
+  Diagnose and fix dbt charts dashboard errors. Use when validation, query
   execution, query inspection, or dashboard rendering returns an error, when a
   dashboard renders but looks wrong, when SQL fails, when YAML won't validate,
   or when the user says 'fix this error', 'debug this dashboard', 'why is this
@@ -14,9 +14,9 @@ metadata:
   author: fivetran
 ---
 
-# Troubleshooting Dataface
+# Troubleshooting dbt charts
 
-Systematically diagnose and fix errors when building Dataface dashboards. Never guess — use the tools to confirm.
+Systematically diagnose and fix errors when building dbt charts dashboards. Never guess — use the tools to confirm.
 
 ## The Iron Rule
 
@@ -40,7 +40,7 @@ These come from `{{ s_validate_board }}`. The error message tells you exactly wh
 
 Every board needs visible content. Add a chart under `charts:`, an explicit
 layout (`rows:`, `cols:`, `grid:`, or `tabs:`), or text/title content. If
-`charts:` is present and no layout key is present, Dataface renders those
+`charts:` is present and no layout key is present, dbt charts renders those
 charts as implicit rows.
 
 ### "references unknown chart 'X'"
@@ -185,8 +185,11 @@ These show up when `{{ s_render_board }}` produces unexpected visual results.
 
 ### Layout doesn't look right
 
-- Check column spans: `cols: [chart_a, 2]` means chart_a spans 2 columns
-- Charts in a `cols:` array share the row equally unless spans are specified
+- Charts in a `cols:` array share the row equally by default, and a bare number
+  in the list (`cols: [chart_a, 2]`) is not a span — it does not validate. For
+  an uneven split, wrap each side and put `width:` on the wrapper (`"70%"` or
+  `"300px"`) — a bare number is pixels, so `width: 2` silently renders a
+  2-pixel column rather than a 2:1 share
 - Too many items in one `cols:` array = each gets too narrow
 
 ## Full Error Reference
@@ -204,7 +207,7 @@ When stuck, work through this in order:
 4. **Check column names** — INFORMATION_SCHEMA via `{{ s_execute_query }}`, or `{{ s_describe_query }}` to verify.
 5. **Simplify** — Remove charts until you find the one that's broken.
 6. **Re-render** — Confirm the fix visually.
-7. **Restore metadata** — Ensure `description` fields remain populated for queries/charts/variables/layout sections.
+7. **Restore metadata** — Ensure `notes` fields remain populated for queries/charts/layout sections and variables.
 
 ## Common Mistakes
 

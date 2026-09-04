@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from dbt_charts.core.compile.models.chart.authored._base import MultiplesConfig
 from dbt_charts.core.compile.models.chart.normalized import BarChart, LineChart
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
@@ -24,6 +25,7 @@ from dbt_charts.core.diagnostics import WARN_LAYOUT_MIN_EXCEEDS_HEIGHT, Diagnost
 from dbt_charts.core.render.chart.emitters._cartesian import (
     min_height_for_horizontal_bar_categories,
 )
+from dbt_charts.core.render.chart.vl_field_maps import effective_bar_size
 from dbt_charts.core.render.warnings import (
     WarningContext,
     layout_min_exceeds_height as detector,
@@ -77,7 +79,7 @@ def test_fires_when_authored_height_below_category_floor() -> None:
     resolved = ctx.board_spec.charts["c1"]
     assert isinstance(resolved, ResolvedBarChart)
     expected_min_h = min_height_for_horizontal_bar_categories(
-        17, resolved.style.axis_x, resolved.style.mark.size
+        17, resolved.style.axis_x, effective_bar_size(resolved.style.mark)
     )
     warnings = detector.detect(ctx)
     assert len(warnings) == 1
@@ -103,6 +105,184 @@ def test_silent_when_nothing_was_authored() -> None:
     chart = _horizontal_bar()
     rows = _rows(17)
     assert detector.detect(_ctx(chart, rows, authored_height=None)) == []
+
+
+def test_silent_when_rows_facet_narrows_the_category_axis_to_one_per_panel() -> None:
+    """A horizontal bar faceted rows-only on its own category field holds
+    exactly one category per panel, by construction of the row split — the
+    floor must be computed from that per-panel count, not the whole-dataset
+    union, or this warning misinstructs the author to grow an already-
+    sufficient height."""
+    chart = BarChart(
+        id="c1",
+        type="bar",
+        query_name="q",
+        x="cat",
+        y="val",
+        multiples=MultiplesConfig(rows="cat"),
+        style=BarChartStylePatch.model_construct(orientation="horizontal"),
+    )
+    rows = _rows(6)
+    resolved = make_test_resolved_chart(chart, rows)
+    board = make_test_resolved_board(charts={resolved.id: resolved})
+    assert isinstance(resolved, ResolvedBarChart)
+    per_panel_floor = min_height_for_horizontal_bar_categories(
+        1, resolved.style.axis_x, effective_bar_size(resolved.style.mark)
+    )
+    # Comfortably above the correct (narrowed) per-panel floor, but far
+    # below what the whole-dataset-union floor (6 categories x 6 row
+    # panels) would have demanded before this fix.
+    authored_height = per_panel_floor * 6 * 1.5
+    ctx = WarningContext(
+        board_spec=board,
+        chart_results={resolved.id: rows},
+        vega_specs={},
+        authored_chart_heights={resolved.id: authored_height},
+    )
+    assert detector.detect(ctx) == []
+
+
+def test_grid_facet_falls_back_to_the_full_domain_when_narrowing_is_unaffordable() -> (
+    None
+):
+    """A columns/grid facet's category narrowing is width-gated
+    (`facet_bound_position_channels`'s affordability check) — this detector
+    has no render-time card width, so it recovers the pre-narrowing
+    baseline from the emitted spec itself (`unit["width"]` plus, only when
+    the spec shows narrowing actually applied, the measured reservation
+    added back). Here the spec shows narrowing did NOT apply (no
+    `resolve.scale.y`, a tiny 50px panel width) — every panel's own `cat`
+    subset (2-3 of 5) WOULD be a real domain-subset candidate, but the real
+    renderer declined it as unaffordable. The floor must use the
+    whole-domain count (5), not the narrower per-panel one (3) — passing
+    `None` (the pre-fix behaviour) skips the affordability check entirely
+    and would wrongly narrow anyway, under-computing the floor and
+    under-warning the author."""
+    # Explicit mirror: False — a columns/grid facet auto-defaults mirror on
+    # for bar's quantitative measure axis, and the mirror guard in
+    # `facet_bound_position_channels` would exclude "y" regardless of
+    # affordability, masking the exact gap this test targets. model_validate
+    # (not model_construct) so the nested axis_y patch actually validates.
+    chart = BarChart.model_validate(
+        {
+            "id": "c1",
+            "type": "bar",
+            "query_name": "q",
+            "x": "cat",
+            "y": "val",
+            "multiples": {"rows": "grp", "columns": "seg"},
+            "style": {"orientation": "horizontal", "axis_y": {"mirror": False}},
+        }
+    )
+    cells = {
+        ("G1", "S1"): ("c0", "c1"),
+        ("G1", "S2"): ("c0", "c1", "c2"),
+        ("G2", "S1"): ("c2", "c3"),
+        ("G2", "S2"): ("c3", "c4"),
+    }
+    rows = [
+        {"cat": c, "grp": grp, "seg": seg, "val": 1}
+        for (grp, seg), cats in cells.items()
+        for c in cats
+    ]
+    resolved = make_test_resolved_chart(chart, rows)
+    board = make_test_resolved_board(charts={resolved.id: resolved})
+    assert isinstance(resolved, ResolvedBarChart)
+    full_domain_floor = min_height_for_horizontal_bar_categories(
+        5, resolved.style.axis_x, effective_bar_size(resolved.style.mark)
+    )
+    narrowed_floor = min_height_for_horizontal_bar_categories(
+        3, resolved.style.axis_x, effective_bar_size(resolved.style.mark)
+    )
+    row_cardinality = 2  # multiples.rows="grp" -> {G1, G2}
+    # Below the correct (full-domain) floor, but above the wrongly-narrowed
+    # one — isolates exactly the case a `None`-fallback bug would miss.
+    authored_height = narrowed_floor * row_cardinality * 1.1
+    assert authored_height < full_domain_floor * row_cardinality
+    ctx = WarningContext(
+        board_spec=board,
+        chart_results={resolved.id: rows},
+        vega_specs={
+            resolved.id: {
+                "facet": {"row": {"field": "grp"}, "column": {"field": "seg"}},
+                "spec": {"width": 50.0},
+            }
+        },
+        authored_chart_heights={resolved.id: authored_height},
+    )
+    warnings = detector.detect(ctx)
+    assert len(warnings) == 1
+    assert warnings[0].code == WARN_LAYOUT_MIN_EXCEEDS_HEIGHT.code
+    assert "5" in warnings[0].message
+
+
+def test_grid_facet_uses_the_narrowed_domain_when_the_spec_shows_narrowing_applied() -> (
+    None
+):
+    """Mirror image of the unaffordable case above: here the emitted spec DOES
+    show narrowing (`resolve.scale.y == "independent"`), so the floor must use
+    the widest panel's own count, not the whole domain.
+
+    The detector cannot read `render_width` as the baseline for its own
+    affordability re-check, because by then the width has already had the
+    reservation subtracted — re-checking against the post-narrowing width
+    double-charges it, the check fails, and the floor inflates back to the
+    full domain. The warning then fires on a board whose panels genuinely
+    fit. That is the spurious-fire defect this file exists to prevent, and
+    only a spec carrying `resolve` can reach the branch that avoids it.
+    """
+    chart = BarChart.model_validate(
+        {
+            "id": "c1",
+            "type": "bar",
+            "query_name": "q",
+            "x": "cat",
+            "y": "val",
+            "multiples": {"rows": "grp", "columns": "seg"},
+            "style": {"orientation": "horizontal", "axis_y": {"mirror": False}},
+        }
+    )
+    cells = {
+        ("G1", "S1"): ("c0", "c1"),
+        ("G1", "S2"): ("c0", "c1", "c2"),
+        ("G2", "S1"): ("c2", "c3"),
+        ("G2", "S2"): ("c3", "c4"),
+    }
+    rows = [
+        {"cat": c, "grp": grp, "seg": seg, "val": 1}
+        for (grp, seg), cats in cells.items()
+        for c in cats
+    ]
+    resolved = make_test_resolved_chart(chart, rows)
+    board = make_test_resolved_board(charts={resolved.id: resolved})
+    assert isinstance(resolved, ResolvedBarChart)
+    full_domain_floor = min_height_for_horizontal_bar_categories(
+        5, resolved.style.axis_x, effective_bar_size(resolved.style.mark)
+    )
+    narrowed_floor = min_height_for_horizontal_bar_categories(
+        3, resolved.style.axis_x, effective_bar_size(resolved.style.mark)
+    )
+    row_cardinality = 2
+    # Between the two floors again — but this time the narrowed one is the
+    # correct answer, so the same height that must warn above must stay
+    # silent here. The two tests differ only by the spec's `resolve` key.
+    authored_height = narrowed_floor * row_cardinality * 1.1
+    assert authored_height < full_domain_floor * row_cardinality
+    ctx = WarningContext(
+        board_spec=board,
+        chart_results={resolved.id: rows},
+        vega_specs={
+            resolved.id: {
+                "facet": {"row": {"field": "grp"}, "column": {"field": "seg"}},
+                # `resolve` sits at the facet ROOT, beside `facet`/`spec` —
+                # that is where `facet_channel_is_independent` reads it.
+                "spec": {"width": 150.0},
+                "resolve": {"scale": {"y": "independent"}},
+            }
+        },
+        authored_chart_heights={resolved.id: authored_height},
+    )
+    assert detector.detect(ctx) == []
 
 
 def test_silent_on_vertical_bar() -> None:

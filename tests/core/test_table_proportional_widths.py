@@ -207,7 +207,7 @@ class TestMeasureColumnDemands:
             font_size=13.0,
             header_font_size=12.0,
             cell_pad=8,
-            formats={"number_default": ".3~s"},
+            formats={"number": ".3~s"},
             column_when_rules={},
         )
 
@@ -1133,7 +1133,7 @@ class TestCellFirstColumnSizing:
             font_size=13.0,
             header_font_size=12.0,
             cell_pad=8,
-            formats={"number_default": ".3~s"},
+            formats={"number": ".3~s"},
             column_when_rules={},
         )
 

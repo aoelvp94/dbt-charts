@@ -214,10 +214,10 @@ def render_layout_item(
                 error_collector=error_collector,
             )
 
-    if rendered and item.description:
-        escaped_description = html.escape(item.description)
+    if rendered and item.notes:
+        escaped_notes = html.escape(item.notes)
         return (
-            f'<g class="dbt-layout-item" data-layout-description="{escaped_description}">'
+            f'<g class="dbt-layout-item" data-layout-notes="{escaped_notes}">'
             f"{rendered}</g>",
             actual_height,
         )
@@ -474,10 +474,10 @@ def _render_chart_item_inner(
     if not is_svg_family and cache_key in render_cache:
         chart_svg, _ = render_cache[cache_key]
         # The no-marks guard below needs the row count even on a cache hit.
-        # Re-fetching here is a no-op when the executor's per-query-name memo
-        # is enabled (the common case — see Executor.execute_query); under
-        # `dct render --no-cache` the memo is off and this is a real
-        # re-execution, so it's scoped to only the families the guard checks.
+        # Re-fetching here is a memo hit, never a re-execution: the executor's
+        # per-render memo is unconditional (`--no-cache` disables only the
+        # persistent store — see Executor.execute_query), so these are the
+        # same rows the chart was resolved against.
         v2_data = (
             build_chart_datasets(chart, executor, variables)[chart.query_name]
             if paints_marks
@@ -505,12 +505,12 @@ def _render_chart_item_inner(
             is_placeholder=False,
             chart_id=chart.id,
         )
-        # Calibrate title.offset for titled top data_table charts so both the
+        # Calibrate title.offset for titled top support_table charts so both the
         # sizing pass (dct render) and artifact replay (dct artifact render) apply
         # the same correction. The sizing pass caches the calibrated SVG and this
         # path is only reached on a cache miss (empty render_cache in artifact replay).
         from dbt_charts.core.render.layout_sizing import (
-            _data_table_title_corrected_offset,
+            _support_table_title_corrected_offset,
         )
 
         if artifact.kind == "vega_spec" and isinstance(artifact.payload, dict):
@@ -521,7 +521,7 @@ def _render_chart_item_inner(
                 if isinstance(title_block, dict):
                     raw_offset = title_block.get("offset")
                     if isinstance(raw_offset, (int, float)):
-                        corrected_offset = _data_table_title_corrected_offset(
+                        corrected_offset = _support_table_title_corrected_offset(
                             chart_svg, float(raw_offset)
                         )
                         if corrected_offset is not None:
@@ -657,7 +657,7 @@ def _wrap_rendered_chart_svg(
         actual_height = dims.height
 
     var_deps = identity.variable_dependencies
-    description = identity.description
+    notes = identity.notes
 
     var_attrs = (
         " ".join(f'data-var-{html.escape(v)}="true"' for v in sorted(var_deps))
@@ -668,7 +668,7 @@ def _wrap_rendered_chart_svg(
     chart_title = (resolved_title or identity.id) or identity.id
     escaped_title = html.escape(chart_title)
     escaped_id = html.escape(identity.id)
-    escaped_description = html.escape(description) if description else ""
+    escaped_notes = html.escape(notes) if notes else ""
     escaped_accessible_label = html.escape(chart_title)
     authored_path = identity.source_path
 
@@ -692,8 +692,8 @@ def _wrap_rendered_chart_svg(
     # carries no handle for it.
     if authored_path and not identity.defined_in_other_file:
         attrs_parts.append(authored_attrs(authored_path, "chart").strip())
-    if escaped_description:
-        attrs_parts.append(f'data-chart-description="{escaped_description}"')
+    if escaped_notes:
+        attrs_parts.append(f'data-chart-notes="{escaped_notes}"')
     if var_attrs:
         attrs_parts.append(var_attrs)
 

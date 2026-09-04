@@ -321,43 +321,50 @@ class TestExpandQueryRefs:
         assert helper_call in result
 
 
-class TestResolveJinjaTemplateFilterBinding:
-    """resolve_jinja_template's bind_filters hook — the masking that keeps
-    filter() spans away from the raising compile-time stub so each can be bound
-    from its own author-written text, while other callers keep that stub.
+class TestResolveJinjaTemplateFilterHelpers:
+    """resolve_jinja_template's filter_helpers hook.
 
-    Identity binding is used throughout: it isolates the masking half, which is
-    what these cases are about."""
+    Jinja calls whatever the caller puts in the context, so these cases are
+    about which spans get called and with what — not about any span-rewriting
+    step, of which there is none.
+    """
+
+    @staticmethod
+    def _helpers() -> dict[str, object]:
+        """Helpers that echo their arguments, isolating invocation from binding."""
+        return {
+            "filter": lambda column, value, *a, **kw: f"{column}~{value}",
+            "filter_date_range": lambda column, rng: f"{column}~{rng[0]}..{rng[1]}",
+        }
 
     def test_filter_call_raises_by_default(self) -> None:
-        """Without bind_filters, {{ filter(...) }} still hits the raising stub —
-        the safety behavior for callers that do not bind is unchanged."""
+        """Without filter_helpers, {{ filter(...) }} still hits the raising stub —
+        the safety behavior for callers that cannot bind is unchanged."""
         from dbt_charts.core.compile.errors import CompilationError
 
         template = "SELECT * FROM t WHERE {{ filter('status', status) }}"
         with pytest.raises(CompilationError, match="no longer supported"):
             resolve_jinja_template(template, variables={"status": "active"})
 
-    def test_masked_call_is_handed_to_the_binder_verbatim(self) -> None:
-        """The binder receives the span as authored, while plain variables
-        elsewhere in the template are resolved normally."""
-        template = "SELECT * FROM t WHERE region = '{{ region }}' AND {{ filter('status', status) }}"
+    def test_the_helper_is_called_while_plain_variables_still_resolve(self) -> None:
+        template = (
+            "SELECT * FROM t WHERE region = '{{ region }}' "
+            "AND {{ filter('status', status) }}"
+        )
         result = resolve_jinja_template(
             template,
             variables={"region": "North", "status": "active"},
-            bind_filters=lambda call: call,
+            filter_helpers=self._helpers(),
         )
         assert "region = 'North'" in result
-        assert "{{ filter('status', status) }}" in result
+        assert "status~active" in result
 
     @pytest.mark.parametrize("units", [[1], [1, 2]])
-    def test_a_loop_may_emit_a_deferred_span_many_times(self, units: list[int]) -> None:
-        """A masked span is body text; a {% for %} emits it once per iteration.
-
-        This is the composed-query path, which every host reaches — Cloud
-        included — so rejecting the repeat here broke boards that had nothing to
-        do with the dbt adapter.
-        """
+    def test_a_loop_calls_the_helper_once_per_iteration(self, units: list[int]) -> None:
+        """A {% for %} emits its body per iteration, so the helper runs per
+        iteration. This is the composed-query path every host reaches — Cloud
+        included — so rejecting the repeat broke boards that had nothing to do
+        with the dbt adapter."""
         template = (
             "SELECT 1 FROM t WHERE "
             "{% for u in units %}{{ filter('region', region) }} OR {% endfor %} 1=0"
@@ -366,10 +373,21 @@ class TestResolveJinjaTemplateFilterBinding:
         result = resolve_jinja_template(
             template,
             variables={"units": units, "region": "North"},
-            bind_filters=lambda call: call,
+            filter_helpers=self._helpers(),
         )
 
-        assert result.count("{{ filter('region', region) }}") == len(units)
+        assert result.count("region~North") == len(units)
+
+    def test_a_span_in_a_false_branch_is_never_called(self) -> None:
+        """Jinja does not evaluate a dropped branch, so its filter() — and the
+        variables it names — never come up at all."""
+        result = resolve_jinja_template(
+            "SELECT 1 FROM t{% if show %} WHERE {{ filter('r', missing) }}{% endif %}",
+            variables={"show": False},
+            filter_helpers=self._helpers(),
+        )
+
+        assert result == "SELECT 1 FROM t"
 
     @pytest.mark.parametrize(
         "spelling",
@@ -379,23 +397,20 @@ class TestResolveJinjaTemplateFilterBinding:
             "{{- filter('status', status) -}}",
         ],
     )
-    def test_whitespace_control_spellings_are_deferred(self, spelling: str) -> None:
-        """`{{-` / `-}}` is standard Jinja, not whitespace — it must still mask."""
+    def test_whitespace_control_spellings_call_the_helper(self, spelling: str) -> None:
+        """`{{-` / `-}}` is Jinja's own whitespace control, applied natively."""
         result = resolve_jinja_template(
             f"SELECT * FROM t WHERE {spelling}",
             variables={"status": "active"},
-            bind_filters=lambda call: call,
+            filter_helpers=self._helpers(),
         )
 
-        assert spelling in result
+        assert "status~active" in result
 
-    def test_filter_date_range_is_masked_too(self) -> None:
-        template = (
-            "SELECT * FROM t WHERE {{ filter_date_range('created_at', date_range) }}"
-        )
+    def test_filter_date_range_is_bound_too(self) -> None:
         result = resolve_jinja_template(
-            template,
+            "SELECT * FROM t WHERE {{ filter_date_range('created_at', date_range) }}",
             variables={"date_range": ["2025-01-01", "2025-03-31"]},
-            bind_filters=lambda call: call,
+            filter_helpers=self._helpers(),
         )
-        assert "{{ filter_date_range('created_at', date_range) }}" in result
+        assert "created_at~2025-01-01..2025-03-31" in result

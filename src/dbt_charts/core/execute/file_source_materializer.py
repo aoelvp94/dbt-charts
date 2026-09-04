@@ -33,7 +33,11 @@ import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeAlias
 
-from dbt_charts.core.compile.config import get_execution_config
+from dbt_charts.core.compile.config import (
+    get_execution_config,
+    resolve_file_source_max_bytes,
+    resolve_file_source_max_tables,
+)
 from dbt_charts.core.compile.models.source import (
     CsvSourceConfig,
     JsonSourceConfig,
@@ -42,6 +46,8 @@ from dbt_charts.core.compile.models.source import (
 from dbt_charts.core.compile.template.parameterized import render_parameterized
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_FILE_SOURCE_TOO_LARGE,
+    ERR_FILE_SOURCE_TOO_MANY_TABLES,
     ERR_GLOB_EMPTY,
     ERR_GLOB_SCHEMA_MISMATCH,
     ERR_GLOB_TOO_MANY,
@@ -56,6 +62,18 @@ if TYPE_CHECKING:
 
 # JSON files carry runtime-dynamic column schemas; Any is the correct boundary type.
 _JsonRow: TypeAlias = dict[str, Any]
+
+# Decimal MB, matching how execution.file_source_max_bytes is documented
+# ("5 GB" == 5_000_000_000) — a MiB divisor would render that default as a
+# confusing "4768.4 MB".
+_BYTES_PER_MB = 1_000_000
+
+# Parquet's columnar compression can expand roughly 8-20x once parsed into row
+# objects; 20 is the conservative upper bound used when checking
+# execution.file_source_max_bytes. Not authored surface — see the config
+# review note in ExecutionConfig.file_source_max_bytes for why a project
+# setting here would defeat the byte ceiling it feeds.
+_PARQUET_MATERIALIZATION_MULTIPLIER = 20
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +131,7 @@ class FileSourceMaterializer:
     or network (``read_csv('http://...')``, etc.).
 
     Args:
-        project: The Dataface project (for resolving file paths and reading bytes).
+        project: The dbt charts project (for resolving file paths and reading bytes).
         cache: Any QueryResultCache implementation to materialize into.
     """
 
@@ -143,6 +161,15 @@ class FileSourceMaterializer:
         not exceed ``execution.max_glob_file_count``.  All matched files are loaded
         and their rows concatenated into one table.
 
+        Two more guardrails bound a single relation's growth: ``source.files``
+        may not declare more tables than ``execution.file_source_max_tables``
+        (checked up front, before any file read), and each relation's
+        estimated materialized byte size — file bytes summed across its
+        matched files, multiplied by ``_PARQUET_MATERIALIZATION_MULTIPLIER``
+        for Parquet — may not exceed ``execution.file_source_max_bytes``
+        (checked as each file is read, before it is parsed or written to the
+        cache).
+
         Args:
             source: A CsvSourceConfig, JsonSourceConfig, or ParquetSourceConfig.
             sql: SQL template (may contain {{ variable }} Jinja expressions).
@@ -153,12 +180,28 @@ class FileSourceMaterializer:
             Rows returned by *sql*.
 
         Raises:
-            DbtChartsError: Empty glob match or fan-out cap exceeded.
+            DbtChartsError: Empty glob match, glob fan-out cap exceeded,
+                table-count cap exceeded, or materialized-byte cap exceeded.
             RuntimeError: If SQL execution fails (propagated from execute_file_source_sql,
                 includes external-access violations in author SQL).
         """
         source_hash = compute_source_hash(source)
         cap = get_execution_config().max_glob_file_count
+        byte_cap = resolve_file_source_max_bytes()
+        byte_multiplier = (
+            _PARQUET_MATERIALIZATION_MULTIPLIER
+            if isinstance(source, ParquetSourceConfig)
+            else 1
+        )
+
+        table_cap = resolve_file_source_max_tables()
+        if len(source.files) > table_cap:
+            raise DbtChartsError.from_code(
+                ERR_FILE_SOURCE_TOO_MANY_TABLES,
+                source_name=source_name,
+                count=len(source.files),
+                cap=table_cap,
+            )
 
         # Each entry: (table_name, vkey, sorted_relpaths).
         # For literal paths: one relpath, vkey from that file alone.
@@ -211,10 +254,22 @@ class FileSourceMaterializer:
                     rows: list[_JsonRow] = []
                     first_relpath = ""
                     first_keys: frozenset[str] = frozenset()
+                    materialized_bytes = 0
                     for relpath in relpaths:
-                        file_rows = _parse(
-                            source, self._project.read_bytes(relpath), relpath
-                        )
+                        file_bytes = self._project.read_bytes(relpath)
+                        materialized_bytes += len(file_bytes) * byte_multiplier
+                        if materialized_bytes > byte_cap:
+                            raise DbtChartsError.from_code(
+                                ERR_FILE_SOURCE_TOO_LARGE,
+                                source_name=source_name,
+                                table_name=table_name,
+                                relpath=relpath,
+                                raw_mb=len(file_bytes) / _BYTES_PER_MB,
+                                multiplier=byte_multiplier,
+                                size_mb=materialized_bytes / _BYTES_PER_MB,
+                                cap_mb=byte_cap / _BYTES_PER_MB,
+                            )
+                        file_rows = _parse(source, file_bytes, relpath)
                         if file_rows:
                             # Schema check uses only the first row's keys.  This catches
                             # header-level mismatches (the common authoring mistake) but

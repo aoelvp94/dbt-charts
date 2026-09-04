@@ -1,4 +1,4 @@
-"""Base error type shared by every Dataface error hierarchy.
+"""Base error type shared by every dbt charts error hierarchy.
 
 Lives in core (below compile/execute/render) so all three stages can raise
 a common ``DbtChartsError`` without any of them depending on another.
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 
 class DbtChartsError(Exception):
-    """Base error for all Dataface errors."""
+    """Base error for all dbt charts errors."""
 
     code: ErrorCode | None = None
     fields: dict[str, Any]

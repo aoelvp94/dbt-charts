@@ -18,6 +18,7 @@ from typing import get_args
 import pytest
 from pydantic import BaseModel
 
+from dbt_charts.core.colors import wcag_contrast as _wcag_contrast
 from dbt_charts.core.compile.config import (
     get_theme_style,
 )
@@ -30,7 +31,6 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.compile.resolve.style.palette import (
     UnknownColorError,
-    _wcag_contrast,
     color as resolve_palette_color,
     palette as resolve_palette,
 )
@@ -83,15 +83,15 @@ class TestCategoryRoleBracketTokens:
 
     # One representative bracket token per categorical role per shipped
     # theme, pinned to the slot of the family that theme's roles must bind.
-    # A theme edit that drops or misroutes a rebinding (e.g. cream losing
-    # editorial's `palettes:` block via an extends change) fails here
+    # A theme edit that drops or misroutes a rebinding (e.g. paper losing
+    # clarity's `palettes:` block via an extends change) fails here
     # rather than silently repainting boards authored with role tokens.
     @pytest.mark.parametrize(
         ("theme", "family"),
         [
             ("stark", "vivid-10"),
-            ("editorial", "editorial-10"),
-            ("cream", "editorial-10"),
+            ("clarity", "editorial-10"),
+            ("paper", "editorial-10"),
         ],
     )
     @pytest.mark.parametrize(
@@ -128,12 +128,8 @@ class TestCategoryRoleBracketTokens:
         ``category_light[N]`` for a deliberately recessive mark must stay
         recessive after a theme switch, which is exactly what this pins.
 
-        Non-strict on purpose. Some slots have no darker (or lighter) twin to
-        move to and the companion legitimately equals ``category`` there —
-        ``editorial-10-dark`` documents its slot 10 as exactly that case. A
-        strict ``>`` would red on unchanged palettes for a maintainer who
-        widened the slot range, which is the obvious next edit to this test.
-        Direction is the invariant; distance is palette design.
+        This cross-theme contract checks direction; the editorial family's
+        stronger strict per-slot separation is pinned in its focused tests.
         """
         canvas = resolve_style(get_theme_style(theme)).page.background
 
@@ -298,7 +294,7 @@ class TestPaletteByName:
 
 
 class TestBuiltInThemesResolveCleanly:
-    @pytest.mark.parametrize("theme_name", ["stark", "neon", "cream"])
+    @pytest.mark.parametrize("theme_name", ["stark", "neon", "paper"])
     def test_theme_resolves_with_no_dotted_token_residue(self, theme_name: str):
         base = get_theme_style(theme_name)
         ctx = resolve_chart_style_context(base)
@@ -328,7 +324,7 @@ class TestThemeBackgroundSelfToken:
 
     @pytest.mark.parametrize(
         "theme_name",
-        ["stark", "cream", "neon"],
+        ["stark", "paper", "neon"],
     )
     def test_arc_stroke_tracks_theme_background(self, theme_name: str):
         compiled = get_theme_style(theme_name)
@@ -344,7 +340,7 @@ class TestThemeBackgroundSelfToken:
         never appear as a literal string in a Style field — if it
         did, downstream consumers (VL emit, etc.) would render the literal
         token text and fail."""
-        for theme_name in ("stark", "cream", "neon"):
+        for theme_name in ("stark", "paper", "neon"):
             compiled = get_theme_style(theme_name)
             assert compiled.charts.marks.slice.stroke is not None
             assert compiled.charts.marks.slice.stroke.color != "theme.background"
@@ -353,9 +349,8 @@ class TestThemeBackgroundSelfToken:
         "theme_name",
         [
             "stark",
-            "editorial",
-            "cream",
-            "plain",
+            "clarity",
+            "paper",
             "vivid",
             "neon",
         ],
@@ -445,24 +440,14 @@ class TestNeonChromeFromScaffold:
 
 
 class TestChromeAccentTokens:
-    def test_stark_accent_tracks_dbt_grays_accent(self) -> None:
+    def test_structural_root_accent_tracks_dbt_grays_accent(self) -> None:
         assert get_theme_style("stark").accent == resolve_palette_color(
             "dbt-grays.accent"
         )
 
-    @pytest.mark.parametrize("theme_name", ["editorial", "plain"])
-    def test_editorial_and_plain_accent_track_dbt_creams_accent(
-        self, theme_name: str
-    ) -> None:
-        assert get_theme_style(theme_name).accent == resolve_palette_color(
+    def test_clarity_accent_tracks_dbt_creams_accent(self) -> None:
+        assert get_theme_style("clarity").accent == resolve_palette_color(
             "dbt-creams.accent"
-        )
-
-    def test_editorial_input_border_tracks_dbt_grays_separator(self) -> None:
-        compiled = get_theme_style("editorial")
-        assert compiled.variables.input.border is not None
-        assert compiled.variables.input.border.color == resolve_palette_color(
-            "dbt-grays.separator"
         )
 
 
@@ -493,7 +478,6 @@ class TestSingleSeriesPaletteTracksCategoricalSlot:
     @pytest.mark.parametrize(
         ("theme_name", "family"),
         [
-            ("plain", "editorial-10"),
             ("vivid", "vivid-10"),
             ("neon", "vivid-10"),
         ],
@@ -504,3 +488,11 @@ class TestSingleSeriesPaletteTracksCategoricalSlot:
         compiled = get_theme_style(theme_name)
         single_series = compiled.charts.color.categorical.single_series_palette
         assert single_series == [resolve_palette(family)[0]]
+
+    def test_clarity_single_series_palette_tracks_dark_family_slot_one(self) -> None:
+        """clarity's single ink is `category_dark.blue` — editorial-10-dark
+        slot 1, not editorial-10 itself (the fixed direct-label ink, not the
+        base categorical family)."""
+        compiled = get_theme_style("clarity")
+        single_series = compiled.charts.color.categorical.single_series_palette
+        assert single_series == [resolve_palette("editorial-10-dark")[0]]

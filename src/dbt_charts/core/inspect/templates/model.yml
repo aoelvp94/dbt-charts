@@ -28,11 +28,26 @@ variables:
     default: ""
 
 queries:
-  column_profile:
+  column_overview:
     type: schema
     source: "{{ source_name }}"
     schema: "{{ schema_name }}"
     table: "{{ model }}"
+    fields: [name, actual_type, role, semantic_type, null_percentage, uniqueness_ratio]
+
+  column_classification_profile:
+    type: schema
+    source: "{{ source_name }}"
+    schema: "{{ schema_name }}"
+    table: "{{ model }}"
+    fields: [name, role, distribution, completeness, key_role, semantic_type]
+
+  column_stats_profile:
+    type: schema
+    source: "{{ source_name }}"
+    schema: "{{ schema_name }}"
+    table: "{{ model }}"
+    fields: [name, actual_type, distinct_count, min_value, max_value, mean_value, median_value, stddev_value]
 
   sample_data:
     source: "{{ source_name }}"
@@ -43,7 +58,7 @@ charts:
   column_inventory:
     title: Inspector Overview
     type: table
-    query: column_profile
+    query: column_overview
     style:
       columns:
         name:
@@ -64,7 +79,7 @@ charts:
   column_classification:
     title: Classification
     type: table
-    query: column_profile
+    query: column_classification_profile
     style:
       columns:
         name:
@@ -83,7 +98,7 @@ charts:
   column_stats:
     title: Profile
     type: table
-    query: column_profile
+    query: column_stats_profile
     style:
       columns:
         name:

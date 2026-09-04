@@ -1,0 +1,143 @@
+title: "Y-axis zero anchor — proof board"
+notes: >
+  After-state for the y-axis zero-anchor fixes. Every chart states in its own
+  subtitle what it is expected to show. Board-level zero-pin proof lives on the
+  sibling board `y-axis-board-level-zero-pin`, because that pin is board-scoped
+  by definition and would contaminate every chart here.
+
+queries:
+  segment_mix:
+    columns: [month, segment, orders]
+    values:
+      - ["2026-01-01", "Core", 148]
+      - ["2026-01-01", "Growth", 132]
+      - ["2026-01-01", "Enterprise", 121]
+      - ["2026-02-01", "Core", 156]
+      - ["2026-02-01", "Growth", 138]
+      - ["2026-02-01", "Enterprise", 127]
+      - ["2026-03-01", "Core", 163]
+      - ["2026-03-01", "Growth", 141]
+      - ["2026-03-01", "Enterprise", 134]
+      - ["2026-04-01", "Core", 171]
+      - ["2026-04-01", "Growth", 149]
+      - ["2026-04-01", "Enterprise", 139]
+      - ["2026-05-01", "Core", 184]
+      - ["2026-05-01", "Growth", 152]
+      - ["2026-05-01", "Enterprise", 146]
+      - ["2026-06-01", "Core", 197]
+      - ["2026-06-01", "Growth", 158]
+      - ["2026-06-01", "Enterprise", 153]
+
+  variance_by_week:
+    columns: [week, variance]
+    values:
+      - [1, 42]
+      - [2, 18]
+      - [3, -25]
+      - [4, -11]
+      - [5, 33]
+      - [6, -38]
+      - [7, 21]
+      - [8, -6]
+      - [9, 47]
+      - [10, -19]
+
+  spend_vs_signups:
+    columns: [spend, signups]
+    values:
+      - [12, 2400]
+      - [19, 3600]
+      - [24, 4900]
+      - [31, 6300]
+      - [38, 7800]
+      - [44, 9400]
+      - [51, 10500]
+      - [58, 11600]
+      - [66, 12800]
+      - [73, 13900]
+
+rows:
+  - text: |
+      ## Y-axis zero anchor — after state
+
+      Series values run 121–197, so `min/max = 0.61` — well above the smart-zero
+      heuristic's 0.25 threshold. Area used to take that heuristic and keep a
+      data-fitted domain, drawing a fill whose height was not the quantity it
+      encoded. It now anchors at zero for all-positive data, the same rule bar
+      has always followed. Line and scatter deliberately still do not.
+
+      Charts 2, 3, 4 and 6 are must-not-regress pins — each states what it
+      should look like and should be identical to the before-render.
+
+  - cols: [unstacked_area, stacked_area]
+  - cols: [streamgraph, normalized_area]
+  - cols: [zero_anchored_scatter, zoomed_line_control]
+  - cols: [straddling_scatter]
+
+charts:
+  unstacked_area:
+    query: segment_mix
+    type: area
+    title: "1. Unstacked area (no style.stack)"
+    subtitle: "EXPECTED: y-axis starts at 0, so each fill's height is the value it encodes. THIS IS THE CHART THAT CHANGED — before, the axis floor sat just under the data minimum, so Enterprise (121) drew as a sliver next to Core (197) instead of about two thirds its height."
+    x: month
+    y: orders
+    color: segment
+
+  stacked_area:
+    query: segment_mix
+    type: area
+    title: "2. Stacked area (style.stack: zero)"
+    subtitle: "EXPECTED: y-axis starts at 0, bands stack from the baseline to the column total. This already zero-anchored before the change — it is here as a must-not-regress pin, not a fix."
+    x: month
+    y: orders
+    color: segment
+    style:
+      stack: "zero"
+
+  streamgraph:
+    query: segment_mix
+    type: area
+    title: "3. Streamgraph (style.stack: center) — MUST BE UNCHANGED"
+    subtitle: "EXPECTED: identical to before. y=0 here is the silhouette's visual centerline, not a baseline — so there is NO heavy zero rule and no zero anchor. If this looks different from the before-render, the fix leaked."
+    x: month
+    y: orders
+    color: segment
+    style:
+      stack: "center"
+
+  normalized_area:
+    query: segment_mix
+    type: area
+    title: "4. Normalized area (style.stack: normalize) — MUST BE UNCHANGED"
+    subtitle: "EXPECTED: identical to before. Domain is 0–100% with its own top rules at 0 and 1, not the zero-anchor path."
+    x: month
+    y: orders
+    color: segment
+    style:
+      stack: "normalize"
+
+  zero_anchored_scatter:
+    query: spend_vs_signups
+    type: scatter
+    title: "5. Zero-anchored scatter"
+    subtitle: "EXPECTED: a heavy zero rule drawn at y=0, matching the weight bar/line/area already get. BEFORE this change y=0 carried only an ordinary hairline gridline."
+    x: spend
+    y: signups
+
+  zoomed_line_control:
+    query: segment_mix
+    type: line
+    title: "6. Line — CONTROL, MUST BE UNCHANGED"
+    subtitle: "EXPECTED: still zoomed to the data (axis starts near 113, not 0). Line and scatter stay optional-zero — a stroke encodes position, not filled magnitude, so truncating it is legitimate. If this now starts at 0, the change went too far."
+    x: month
+    y: orders
+    color: segment
+
+  straddling_scatter:
+    query: variance_by_week
+    type: scatter
+    title: "7. Scatter straddling zero — the clearest view of the new rule"
+    subtitle: "EXPECTED: the heavy zero rule sits mid-plot, unmistakably heavier than the hairline gridlines above and below it. Chart 5's rule is real too, but lands on the plot's bottom edge where it reads as part of the axis. BEFORE this change there was no rule here at all."
+    x: week
+    y: variance

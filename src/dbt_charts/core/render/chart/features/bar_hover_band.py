@@ -56,7 +56,7 @@ this repo's ``config.mark.invalid: "break-paths-show-domains"`` fix (see
 contribute or diverge on.
 
 ``tooltip: True`` in ``band_mark_props`` is load-bearing, not decorative: without
-it, a chart with a legend (``LegendToggleFeature``'s ``dft_legend`` param) marks
+it, a chart with a legend (``LegendToggleFeature``'s ``dct_legend`` param) marks
 the band's layer non-interactive (``translate.py`` skips opacity-0 layers when
 stamping that param), which Vega compiles straight to ``pointer-events: none`` --
 the band would then never receive a mouse event at all on any legend-bearing bar
@@ -108,12 +108,13 @@ from dbt_charts.core.utils import coerce_numeric_cell
 
 # VL named style applied to the hover band mark.  Used by tests to identify
 # band sub-layers in the VL spec dict (``la["mark"].get("style") == _HOVER_BAND_STYLE``).
-# Also useful for VL config hooks (e.g. you can set ``dft-hover-band`` in the
-# VL config to apply mark defaults to the band).
-# Note: VL style names do NOT appear as CSS classes in rendered SVG; the band
-# is instead recognised at the SVG level by ``opacity="0"`` on its rect paths
-# (mark_extents.py).
-_HOVER_BAND_STYLE = "dft-hover-band"
+# Also useful for VL config hooks (e.g. you can set ``dct-hover-band`` in the
+# VL config to apply mark defaults to the band). Not ``dbt-`` — that prefix is
+# reserved for the CSS/SVG-facing surface (``dbt-box-outer`` etc.); VL style
+# names do NOT appear as CSS classes in rendered SVG, so this isn't that
+# surface — the band is instead recognised at the SVG level by
+# ``opacity="0"`` on its rect paths (mark_extents.py).
+_HOVER_BAND_STYLE = "dct-hover-band"
 
 # Matches ChartFeature.apply's datasets param.
 _Datasets = dict[str | None, list[VLDict]]
@@ -135,13 +136,15 @@ def _signed_extent_expr(
 def _band_mark_props(spec: ChartSpec) -> VLDict:
     """Mark props for a new hover band layer, mirroring the visible bar's thickness.
 
-    Mirrors ``continuousBandSize``/``width``/``height``/``size`` from the visible
-    bar layer so the band matches the real bar's own category-band footprint.
-    Without these the band can span the gutter (no "width"/"height" -> full slot)
-    or be narrower than the bar (no "size" on grouped bars), both causing a
-    wrong-neighbour hit. ``tooltip: True`` is load-bearing, not decorative: without
-    it, a legend-bearing chart's ``dft_legend`` param stamping skips opacity-0
-    layers, which Vega then compiles to ``pointer-events: none`` on the band.
+    Mirrors ``width``/``height``/``size`` from the visible bar layer (a
+    literal pixel value, a band-fraction dict, or a continuous-scale
+    ``{"expr": ...}``) so the band matches the real bar's own footprint.
+    Without these the band can span the gutter (no "width"/"height" -> full
+    slot) or be narrower than the bar (no "size" on grouped bars), both
+    causing a wrong-neighbour hit. ``tooltip: True`` is load-bearing, not
+    decorative: without it, a legend-bearing chart's ``dct_legend`` param
+    stamping skips opacity-0 layers, which Vega then compiles to
+    ``pointer-events: none`` on the band.
     """
     band_mark_props: VLDict = {
         "opacity": 0,
@@ -153,7 +156,7 @@ def _band_mark_props(spec: ChartSpec) -> VLDict:
         if (spec.mark == "layered" and spec.layers)
         else spec.mark_props
     )
-    for key in ("continuousBandSize", "width", "height", "size"):
+    for key in ("width", "height", "size"):
         val = visible_mark_props.get(key)
         if val is not None:
             band_mark_props[key] = val

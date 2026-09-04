@@ -505,7 +505,7 @@ class TestListDashboardsSubstitution:
         """search_boards finds in-memory board; on-disk decoy is invisible."""
         board_yaml = (
             "title: Xyzzy Sales\n"
-            "description: Xyzzy revenue metrics\n"
+            "notes: Xyzzy revenue metrics\n"
             "queries:\n  q:\n    sql: SELECT 1\n    source: test\n"
             "charts:\n  c:\n    query: q\n    type: kpi\n    value: q\n"
             "rows:\n  - c\n"
@@ -513,7 +513,7 @@ class TestListDashboardsSubstitution:
         files = {"charts/xyzzy.yml": board_yaml}
         (tmp_path / "charts").mkdir()
         (tmp_path / "charts" / "decoy.yml").write_text(
-            "title: Decoy Xyzzy\ndescription: should not appear\nrows: []\n"
+            "title: Decoy Xyzzy\nnotes: should not appear\nrows: []\n"
         )
 
         project = in_memory_project(tmp_path, files)

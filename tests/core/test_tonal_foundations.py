@@ -1,6 +1,5 @@
 """Tests for tonal foundation defaults."""
 
-import re
 from collections.abc import Callable
 from pathlib import Path
 from unittest import mock
@@ -11,39 +10,14 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import get_config, reset_config
 from dbt_charts.core.execute.adapters import build_adapter_registry
 
+from .._svg_normalize import normalize_same_run_svg
+
 
 @pytest.fixture(autouse=True)
 def _reset():
     reset_config()
     yield
     reset_config()
-
-
-def _normalize_same_run_svg(svg: str) -> str:
-    """Strip content that varies between two renders of the same board in one
-    process, but not visually: the random SVG root id, the render timestamp,
-    and Vega-Lite's auto-incrementing gradient/clip counters.
-
-    A narrower sibling of tests/visual/discovery.py's normalize_svg, which
-    also strips cross-tree-only noise (hitbox rects, editor/authored
-    renames) that two same-run renders never disagree on.
-    """
-    svg = re.sub(r'\s*id="dataface-svg-[^"]*"', "", svg)
-    svg = re.sub(r'\s*data-rendered-at="[^"]*"', "", svg)
-    svg = re.sub(
-        r'<text\s+data-role="render-timestamp"[^>]*>.*?</text>',
-        "",
-        svg,
-        flags=re.DOTALL,
-    )
-    for pattern in (r"gradient_(\d+)", r"clip_(\d+)", r"clip(\d+)"):
-        prefix = pattern.split("(")[0]
-        ids = list(dict.fromkeys(re.findall(pattern, svg)))
-        id_map = {old: str(new) for new, old in enumerate(ids)}
-        svg = re.sub(
-            pattern, lambda m, _m=id_map, _p=prefix: f"{_p}{_m[m.group(1)]}", svg
-        )
-    return svg
 
 
 class TestTonalFoundationDefaults:
@@ -79,7 +53,7 @@ class TestTonalFoundationDefaults:
         svg = render(result.board, executor, format="svg").output
         assert "#cc1122" in svg
 
-    def test_dft_gray_scale_has_expected_slots(self):
+    def test_dbt_gray_scale_has_expected_slots(self):
         grays = get_config().dbt_grays
         assert "canvas" in grays
         assert "ink" in grays
@@ -92,7 +66,7 @@ class TestTonalFoundationDefaults:
 
         config = get_config()
         creams = config.dbt_creams
-        theme = get_theme_style("cream")
+        theme = get_theme_style("paper")
         assert theme.background == creams["canvas"]
         assert theme.font.color == creams["ink"]
         assert theme.variables.font.color == creams["muted"]
@@ -247,7 +221,7 @@ rows:
         renderer_module.render(result.board, executor, format="png")
         converted_svg = fake_to_png.call_args.args[0]
 
-        assert _normalize_same_run_svg(converted_svg) == _normalize_same_run_svg(
+        assert normalize_same_run_svg(converted_svg) == normalize_same_run_svg(
             viewer_svg
         )
 

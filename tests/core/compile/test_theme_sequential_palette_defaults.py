@@ -8,10 +8,10 @@ effectively invisible on cream. `neon` overrode to raw `viridis` (a rainbow
 scheme unrelated to its blue brand identity) with the low-end problem
 inverted.
 
-Structural, not literal: assert the resolved palette is a Dataface named
+Structural, not literal: assert the resolved palette is a dbt charts named
 `dbt-seq-*` palette (not a raw Vega scheme like `blues`/`viridis`), not the
 exact palette name — a retune of which named palette a theme picks is a
-design call, not a regression (`dataface/AGENTS.md`: "Don't pin theme/default
+design call, not a regression (`dbt-charts/AGENTS.md`: "Don't pin theme/default
 values in tests"). Iterates `list_built_in_themes()` directly rather than a
 hand-written theme list so a future `themes/foo.yaml` that forgets to
 override the palette is actually caught.

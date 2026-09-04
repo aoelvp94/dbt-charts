@@ -32,7 +32,7 @@ def _reset():
 class TestTooltipFormatFromTheme:
     def test_default_theme_provides_tooltip_format(self):
         """Default theme must expose a non-empty tooltip.format string."""
-        style = get_theme_style("editorial")
+        style = get_theme_style("clarity")
         assert style.charts.tooltip is not None
         assert style.charts.tooltip.format
         assert isinstance(style.charts.tooltip.format, str)
@@ -70,14 +70,14 @@ class TestAxisYDefaultsFromTheme:
         """axis.labels.overlap comes from theme as an AxisLabelOverlapConfig struct."""
         from dbt_charts.core.compile.models.style.theme import AxisLabelOverlapConfig
 
-        style = get_theme_style("editorial")
+        style = get_theme_style("clarity")
         overlap = style.charts.axis.labels.overlap
         # overlap is AxisLabelOverlapConfig | None; None means "inherit from cascade"
         assert overlap is None or isinstance(overlap, AxisLabelOverlapConfig)
 
     def test_axis_label_min_gap_from_theme(self):
         """axis.labels.min_gap comes from theme."""
-        style = get_theme_style("editorial")
+        style = get_theme_style("clarity")
         assert style.charts.axis.labels.min_gap is not None
 
     def test_custom_axis_y_position_overrides_in_cascade(self):

@@ -1,9 +1,9 @@
 title: Top Products
-description: Top-N with detail pattern — bar chart and table from the same query
+notes: Top-N with detail pattern — bar chart and table from the same query
 
 queries:
   top_products:
-    description: Top 5 products by revenue, pre-ranked
+    notes: Top 5 products by revenue, pre-ranked
     columns: [product, revenue, orders, avg_order]
     values:
       - ["Widget B", 85680, 320, 268]
@@ -14,7 +14,7 @@ queries:
 
 charts:
   ranking_bar:
-    description: Top products ranked by revenue
+    notes: Top products ranked by revenue
     type: bar
     query: top_products
     x: product
@@ -22,7 +22,7 @@ charts:
     title: Top Products by Revenue
 
   detail_table:
-    description: Row-level detail for the same top-5 ranking
+    notes: Row-level detail for the same top-5 ranking
     type: table
     query: top_products
     title: Product Detail

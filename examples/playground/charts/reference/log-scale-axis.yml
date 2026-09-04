@@ -1,10 +1,10 @@
 title: Log Scale Axis
-description: |
+notes: |
   Genuinely log-shaped data (world population, a Falcon 9 payload-mass
   comparison) side by side on a linear vs. a log measure axis. Linear
   compresses the small values into an unreadable sliver near zero; log
   spaces every order of magnitude evenly.
-theme: cream
+theme: paper
 source: examples_db
 
 text: |

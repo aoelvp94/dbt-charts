@@ -15,10 +15,13 @@ from dbt_charts.core.compile.models.primitives import (
     FontStyle,
 )
 
-# Vega-Lite legend orient values (encoding.color.legend.orient).
+# Vega-Lite legend orient values (encoding.color.legend.orient), minus VL's
+# own "none" — that value means "no automatic placement, position me with
+# legendX/legendY", which with no coordinates floats the legend inside the
+# plot. Nothing here sets those coordinates, and an author spelling "none"
+# means "no legend": that is `legend.visible: false`.
 # Ref: https://vega.github.io/vega-lite/docs/legend.html
 LegendPosition = Literal[
-    "none",
     "left",
     "right",
     "top",

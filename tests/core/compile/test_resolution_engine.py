@@ -611,7 +611,7 @@ def test_unknown_extends_name_raises_compilation_error(
     project = local_project(tmp_path)
     board_file = project.path("board.yaml")
 
-    node = BoardPatch.model_validate({"extends": "creem"})  # typo of "cream"
+    node = BoardPatch.model_validate({"extends": "creem"})  # typo of "cream"/"paper"
 
     with pytest.raises(CompilationError, match="creem"):
         merge_extends(node, board_file, project.directory("."))
@@ -628,9 +628,9 @@ def test_known_theme_name_does_not_raise_via_merge_extends(
     project = local_project(tmp_path)
     board_file = project.path("board.yaml")
 
-    node = BoardPatch.model_validate({"extends": "cream"})
+    node = BoardPatch.model_validate({"extends": "paper"})
 
-    # Must not raise — cream is a valid built-in theme.
+    # Must not raise — paper is a valid built-in theme.
     result = merge_extends(node, board_file, project.directory("."))
     assert result is not None
 
@@ -681,7 +681,7 @@ def test_compile_file_theme_and_extends_conflict_is_structured_error(
     (tmp_path / "charts").mkdir()
     board_path = tmp_path / "charts" / "conflict.yaml"
     board_path.write_text(
-        "theme: cream\nextends: neon\nrows:\n  - cols:\n    - text: hi\n"
+        "theme: paper\nextends: neon\nrows:\n  - cols:\n    - text: hi\n"
     )
 
     result = compile_file(project.path("charts/conflict.yaml").read_board())

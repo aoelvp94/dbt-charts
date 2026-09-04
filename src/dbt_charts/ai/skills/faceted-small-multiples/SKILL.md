@@ -20,7 +20,7 @@ metadata:
 Two approaches for showing the same metric broken down by a category:
 
 **Option A — Color encoding (one chart):** Add `color: segment_col` to any
-chart. Dataface renders one series per segment value, with a legend. Best for
+chart. dbt charts renders one series per segment value, with a legend. Best for
 ≤5 segments, same y-scale.
 
 **Option B — Manual multiples (side-by-side charts):** Author N separate

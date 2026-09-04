@@ -1,4 +1,4 @@
-"""Typed dashboard verbs for the Dataface agent API.
+"""Typed dashboard verbs for the dbt charts agent API.
 
 All public functions have concrete typed arguments and typed Pydantic return
 values. No bare dict[str, Any] in any return position. Tool/CLI callers use
@@ -8,6 +8,7 @@ values. No bare dict[str, Any] in any return position. Tool/CLI callers use
 from __future__ import annotations
 
 import sys
+from functools import cache
 from pathlib import Path
 from typing import Literal
 
@@ -26,6 +27,8 @@ from dbt_charts.agent_api.query import (
 )
 from dbt_charts.core.board import BoardRenderResult as BoardRenderResult
 from dbt_charts.core.compile import Board, compile_file
+from dbt_charts.core.compile.models.markers import Content, Extends
+from dbt_charts.core.compile.schema import board_keys_with
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.project import (
     CHARTS_SUBDIR,
@@ -34,8 +37,19 @@ from dbt_charts.core.project import (
     ProjectPath,
 )
 
-# Top-level keys whose presence classifies a YAML mapping as a dashboard.
-DASHBOARD_KEYS = frozenset({"queries", "charts", "rows", "cols", "grid", "tabs"})
+
+@cache
+def board_declaring_keys() -> frozenset[str]:
+    """Top-level keys whose presence classifies a YAML mapping as a board.
+
+    Read off ``AuthoredBoard``'s facets rather than listed here: content the
+    board declares itself, plus ``extends``, which declares none but inherits
+    the base's whole layout. Both listing and search read raw, possibly-invalid
+    YAML — they must show a file that does not compile — so they classify by
+    key rather than by validating the model.
+    """
+    return board_keys_with(Content) | board_keys_with(Extends)
+
 
 # ---------------------------------------------------------------------------
 # Return-type models
@@ -49,7 +63,7 @@ class BoardSummary(BaseModel):
 
     file: ProjectPath = Field(serialization_alias="path")
     title: str
-    description: str = ""
+    notes: str = ""
     queries: list[str] = []
     charts: list[str] = []
     variables: list[str] = []
@@ -98,7 +112,7 @@ class CompiledBoard(BaseModel):
 
 
 class RenderBoardArgs(BaseModel):
-    """Validate, compile, and render a Dataface dashboard, returning resolved chart semantics + executed data for reasoning. Use this to verify YAML is valid, inspect query results, and iterate on a dashboard. When 'path' is provided, the response also includes a localhost URL the user can open in a browser to view the live dashboard (from the embedded HTTP server used by agent sessions). Pass `as_link=true` with a path to skip execution and return only the preview URL."""
+    """Validate, compile, and render a dbt charts dashboard, returning resolved chart semantics + executed data for reasoning. Use this to verify YAML is valid, inspect query results, and iterate on a dashboard. When 'path' is provided, the response also includes a localhost URL the user can open in a browser to view the live dashboard (from the embedded HTTP server used by agent sessions). Pass `as_link=true` with a path to skip execution and return only the preview URL."""
 
     path: Path | None = Field(
         None,
@@ -136,7 +150,7 @@ class RenderBoardArgs(BaseModel):
             "semantics and executed data as structured JSON, nested by "
             "layout. 'data' returns a flatter, narrower view: 'queries' "
             "keyed by query name (sql, plus one copy of the rows) and "
-            "'charts' keyed by slug carrying title/description/type and "
+            "'charts' keyed by slug carrying title/notes/type and "
             "encoding, each referencing its query by name. It drops the "
             "layout nesting, repeats no rows across charts that share a "
             "query, and reports the variable values the rows were produced "
@@ -144,7 +158,7 @@ class RenderBoardArgs(BaseModel):
             "resolved one, so prefer 'json' when you need the full chart. "
             "'text' "
             "returns a compact markdown summary of charts and data "
-            "(most token-efficient). 'yaml' returns resolved Dataface "
+            "(most token-efficient). 'yaml' returns resolved dbt charts "
             "YAML with inline data — valid input for re-compilation, "
             "ideal for round-trip editing. 'svg' returns the rendered "
             "dashboard as inline SVG (under result['data']) for hosts "
@@ -185,21 +199,21 @@ def list_boards(
     skipped: list[SkippedFile] = []
 
     for pf in project.iter_boards(under=under, recursive=recursive):
-        if not pf.is_yaml:
+        if not pf.is_yaml or pf.is_meta:
             continue
         try:
             content = yaml.safe_load(pf.read_text())
             if not isinstance(content, dict):
                 skipped.append(SkippedFile(file=pf, reason="Not a YAML mapping"))
                 continue
-            if not any(key in content for key in DASHBOARD_KEYS):
+            if not any(key in content for key in board_declaring_keys()):
                 continue
             stem = pf.stem
             dashboards.append(
                 BoardSummary(
                     file=pf,
                     title=content.get("title", stem),
-                    description=content.get("description", ""),
+                    notes=content.get("notes", ""),
                     queries=list(content.get("queries", {}).keys()),
                     charts=list(content.get("charts", {}).keys()),
                     variables=list(content.get("variables", {}).keys()),

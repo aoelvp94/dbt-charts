@@ -23,6 +23,27 @@ bands) and insets the xOffset range so adjacent plateaus at a similar y don't
 optically weld into one bar. This grouping assumes a single series (the
 target-overlay idiom); a data-driven multi-series color encoding is rejected
 with a clear error.
+
+Band i's right edge pixel (``x[i] + bandwidth``) and band i+1's left edge
+pixel (``x[i+1]``) are meant to be the same point but come from two different
+float expressions that occasionally land one ULP apart. Vega-Lite sorts
+line/area vertices by x, so at that tie the pair transposes and
+``step-after`` draws a zero-width spike into the next band instead of the
+plateau. Every emitter driving band-doubled rows through this transform sets
+the mark's own ``order: False`` alongside ``BAND_STEP_INTERPOLATE`` — VL's
+native switch to draw vertices in dataset order instead of re-sorting them —
+so the two always travel together (see ``emitters/_layers.py``'s
+``emit_line_layer``/``emit_area_layer``). A synthetic per-row ``order``
+*encoding* was tried and rejected for this single-series, non-stacked
+band-step case (an ``order`` field inherited from the shared top-level
+encoding alongside the ``xOffset`` band scale): Vega-Lite folds the
+per-row-distinct field into the area's implicit groupby, so instead of one
+continuous filled path it emits one group per doubled row. Each group holds a
+single vertex, and an area interpolates *between* vertices — the failure
+``sparse_band_transforms`` below exists to prevent — so every group collapses
+to a zero-width segment and the filled silhouette is not painted at all. The
+chart renders as a bare stroke outline whose plateaus look correct, which is
+why a plateau count that scans all paths together cannot detect it.
 """
 
 from __future__ import annotations

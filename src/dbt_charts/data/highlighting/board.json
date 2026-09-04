@@ -1,5 +1,6 @@
 {
   "top_level_keys": [
+    "_schema_version",
     "aliases",
     "auto_link",
     "cache",
@@ -7,13 +8,14 @@
     "chart_focus",
     "charts",
     "cols",
-    "description",
     "details",
     "extends",
     "grid",
     "height",
     "html_policy",
     "id",
+    "incremental",
+    "notes",
     "queries",
     "rows",
     "source",

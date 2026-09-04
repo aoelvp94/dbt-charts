@@ -118,9 +118,9 @@ def gradient_scale_to_vl(
     """Build a VL continuous-scale dict from a resolved gradient ScaleTargetConfig.
 
     ``palette`` is either a Vega scheme name (forwarded as VL ``scheme``) or a
-    Dataface named palette / explicit color list, resolved to hex ``range``
+    dbt charts named palette / explicit color list, resolved to hex ``range``
     stops via ``resolve_palette_stops`` — the same resolution table/KPI
-    conditional formatting already use for this field. Forwarding a Dataface
+    conditional formatting already use for this field. Forwarding a dbt charts
     name straight through as a VL scheme string (the pre-fix behavior) is a
     silent no-op: Vega logs an unrecognized-scheme warning and paints with its
     default coloring instead of erroring, so the chart looks fine while
@@ -357,6 +357,11 @@ def gap_fill_ordinal_time(
     grains, and runs ``detect_time_unit``'s ≥10% unparseable-value check
     against a much smaller per-panel denominator, so a chart that resolves
     fine pooled can newly raise for one sparse panel alone.
+
+    Raises:
+        ChartDataError: (ERR-GAP-FILL-BUCKET-COLLISION) via
+            ``complete_ordinal_time_series`` when two rows collapse to the
+            same (bucket, series) key.
     """
     x_authored_temporal = resolve_authored_x_type(ax) == "temporal"
 
@@ -437,9 +442,9 @@ def gap_fill_ordinal_time_per_panel(
     unchanged and becomes correct: within a panel the grain genuinely is
     ``(x, color)``. A non-faceted chart is the N=1 case — one panel holding
     every row, so its single ``gap_fill_ordinal_time`` call is already the
-    only source of order — the final pooled re-sort below is gated off
-    there (``len(dataset.panels) > 1``, the cross-panel-concatenation
-    condition it exists for) instead of running unconditionally: it is not
+    only source of order — the final pooled re-sort below is gated on
+    ``bucketed_any`` (whether any panel actually bucketed, NOT on panel
+    count) instead of running unconditionally: it is not
     idempotent on ``complete_ordinal_time_series``'s identity-return path
     (unfired: rows returned unmodified, in the query's own order), so an
     unconditional call would silently replace a preaggregated N=1 chart's
@@ -476,12 +481,18 @@ def gap_fill_ordinal_time_per_panel(
     panels don't happen to already be date-ordered — fixed below by a final
     chronological re-sort of the pooled flat result, which costs nothing
     per panel's own bucket count.
+
+    Raises:
+        ChartDataError: (ERR-GAP-FILL-BUCKET-COLLISION) via
+            ``gap_fill_ordinal_time`` when two rows in one panel collapse
+            to the same (bucket, series) key.
     """
     data = dataset.all_rows()
+    panel_fields = tuple(axis.field for axis in dataset.axes)
     is_temporal = None
     if resolves_cartesian_x and x_field and data:
         vl_type, _, _ = resolve_cartesian_x_type(
-            data, x_field, ax, mark_type, is_band_step_curve
+            data, x_field, ax, mark_type, is_band_step_curve, panel_fields
         )
         is_temporal = vl_type == "temporal"
     # A pure function of `ax` (the resolved axis style), not of any panel's
@@ -542,7 +553,7 @@ def gap_fill_ordinal_time_per_panel(
     if not fired:
         return None, x_authored_temporal
     filled_rows = result.all_rows()
-    if x_field and is_temporal is not True and bucketed_any:
+    if x_field and bucketed_any:
         # complete_ordinal_time_series ran per panel above (never pooled —
         # see the density-gate paragraph in this function's docstring), so
         # ChartDataset.all_rows()'s panel-order concatenation is not
@@ -550,12 +561,22 @@ def gap_fill_ordinal_time_per_panel(
         # canonicalize_and_sort_ordinal_x re-sorts the FLAT pooled result by
         # bucket key, independent of any panel's own enumerated range, so
         # the ordinal x scale's encounter-order domain reads chronologically
-        # regardless of how the panels' dates interleave. Skipped when the
-        # whole chart resolved to a continuous temporal scale (is_temporal
-        # is True): a continuous scale positions marks by literal date
-        # value, not `data.values` encounter order, so this sort would only
-        # cost cycles for no visible effect there. Also skipped when no panel
-        # actually bucketed (``bucketed_any``): this sort is not idempotent on
+        # regardless of how the panels' dates interleave. NOT gated on
+        # ``is_temporal``: that verdict is decided on the RAW rows, and only
+        # ``fill: null`` lets it short-circuit gap-fill — under any other
+        # authored fill the buckets get enumerated anyway and the emitter,
+        # re-resolving against those filled rows, lands back on ordinal, where
+        # encounter order IS the domain. Gating on the pre-fill verdict left
+        # that axis reading 2020→2021 then 2000→2001. Running the sort on a
+        # genuinely continuous scale is near-free (marks position by literal
+        # date value), which is the cheaper side to be wrong on. Not entirely
+        # free: one order-dependent consumer survives there — a faceted line
+        # chart with ``style.dashes`` and a non-partition ``color`` reaches
+        # ``_distinct_in_order`` (line.py), so the sort can shift that scale's
+        # domain order and its palette slots. Cosmetic, and arguably the more
+        # correct order.
+        # Skipped when no panel actually bucketed (``bucketed_any``): this
+        # sort is not idempotent on
         # ``complete_ordinal_time_series``'s identity-return path, where the
         # rows are unmodified and still in the query's own order, so running it
         # there would silently replace query-ordered wire data with

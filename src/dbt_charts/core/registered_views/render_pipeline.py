@@ -179,7 +179,7 @@ def render_registered_view(
         if sqlglot_dialect(source_type) not in SqlglotDialect.classes:
             raise ExpansionError(
                 f"Source {source_param!r} has type {source_type!r}, which has "
-                "no SQL dialect Dataface can use to quote identifiers (file "
+                "no SQL dialect dbt charts can use to quote identifiers (file "
                 "sources and dbt_profile sources have no fixed SQL dialect)."
             )
         return source_type

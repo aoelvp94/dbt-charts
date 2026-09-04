@@ -3,8 +3,8 @@ name: board-replicate
 kind: workflow
 description: >
   Reproduce a dashboard the user supplies as a screenshot, image, or export — its
-  structure and data, in Dataface's own styling. Use for 'replicate', 'recreate',
-  'rebuild this in Dataface', 'migrate from Looker', or when an image of a
+  structure and data, in dbt charts' own styling. Use for 'replicate', 'recreate',
+  'rebuild this in dbt charts', 'migrate from Looker', or when an image of a
   dashboard is attached. Do NOT use for building from scratch, or for copying a
   board already in this project (board-build).
 metadata:
@@ -14,7 +14,7 @@ metadata:
 # Dashboard Replicate
 
 The user handed you an existing dashboard — a screenshot, an export, a page
-from another tool — and wants *that* in Dataface. This is a copy/migration,
+from another tool — and wants *that* in dbt charts. This is a copy/migration,
 not a redesign. **Set your design opinions aside for the whole job**: the
 one-screen/≤8-visualization guidance in `{{ s_skill_design_board }}` does
 not apply, chart-choice preferences do not apply, "this would be cleaner
@@ -59,7 +59,7 @@ Both paths are bound by two rules:
 - Chart options that change what the reader sees (the checklist below)
 - Data semantics — metrics, dimensions, grain, filters, sort order
 
-**Keep Dataface's own (do not try to match):**
+**Keep dbt charts' own (do not try to match):**
 
 - Colors and palettes
 - Fonts and typography
@@ -101,7 +101,7 @@ chart that matches the source tile:
 ```yaml
 queries:
   weekly_active_orgs:
-    description: "Phase-1 placeholder — rough values read off the source image"
+    notes: "Phase-1 placeholder — rough values read off the source image"
     columns: [week, active_orgs]
     values:
       - [2026-06-01, 210]
@@ -122,7 +122,7 @@ real queries against, so rough is fine but invented-from-nowhere is not.
 - Value labels on marks — present or not
 - Legend — present or not
 - Axis titles and which values sit on which axis
-- Number format family — currency, percent, compact (use format aliases)
+- Number format family — currency, percent, number (use format aliases)
 - Sort order — by value, by category, by time
 - Date grain and range
 - KPI extras — comparison/delta line, trend sparkline
@@ -140,7 +140,7 @@ board to PNG and compare side by side with the source:
 {{ s_render_png_example }}
 
 Judge structure parity — sections, tile count, chart types, options from the
-checklist — not colors or fonts; those are intentionally Dataface's own.
+checklist — not colors or fonts; those are intentionally dbt charts' own.
 
 Close phase 1 with a tally against the source: "8 sections, 41 tiles — 41
 replicated." On the checkpoint path that tally is the message you send with
@@ -188,7 +188,7 @@ X, Y. Source image shows data through June; live data runs through July."
 | Reporting phase 1 as the recreated dashboard | Placeholder numbers are not a recreation — label it "phase 1 of 2", and name what's still unwired |
 | Summarizing instead of replicating | The source tile count is the spec — rebuild every tile or flag it |
 | Redesigning while copying | Design skills are suspended — copy the source's choices from the options checklist |
-| Copying the source's colors and fonts | Structure, options, and data are copied; styling stays Dataface's |
+| Copying the source's colors and fonts | Structure, options, and data are copied; styling stays dbt charts' |
 | Skipping the warning banner | Fake numbers with no banner look like a finished dashboard — that's a lie in YAML form |
 | Wiring real queries before the replica looks right | Phase 1 first: the recorded values are what phase 2 verifies against |
 | Chasing stale numbers | Check the image's axis dates first — phase offset is expected |
@@ -206,4 +206,4 @@ X, Y. Source image shows data through June; live data runs through July."
 | "The banner is ugly, I'll leave it off" | The banner is the contract that phase 1 is a mock. Ugly and honest beats polished and misleading. |
 | "Close enough — most tiles are there" | "Most" is not a tally. Account for every source tile: wired, blocked, or flagged. |
 | "My numbers don't match the image, the query must be wrong" | Check the image's date range first — a stale snapshot off by one period is expected. Magnitude mismatch is what signals a wrong query. |
-| "Matching their brand colors would be more faithful" | Fidelity is structure, options, and data. Styling is deliberately Dataface's own. |
+| "Matching their brand colors would be more faithful" | Fidelity is structure, options, and data. Styling is deliberately dbt charts' own. |

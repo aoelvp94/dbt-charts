@@ -32,7 +32,6 @@ import yaml
 
 from dbt_charts.core.compile.errors import ParseError
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
-from dbt_charts.core.compile.models.refs import normalize_query_value
 from dbt_charts.core.utils import UniqueKeyLoader
 
 
@@ -61,7 +60,7 @@ def parse_yaml(content: str) -> AuthoredBoard:
 
     Example:
         >>> yaml_content = '''
-        ... title: My Dataface
+        ... title: My dbt charts
         ... queries:
         ...   sales: SELECT * FROM sales
         ... charts:
@@ -73,7 +72,7 @@ def parse_yaml(content: str) -> AuthoredBoard:
         ... '''
         >>> board = parse_yaml(yaml_content)
         >>> board.title
-        'My Dataface'
+        'My dbt charts'
     """
     # Step 1a–1b: YAML string → mapping
     parsed_data = load_yaml_mapping(content)
@@ -133,9 +132,6 @@ def parse_mapping(parsed_data: dict[str, Any], content: str = "") -> AuthoredBoa
     from dbt_charts.core.compile.migrations import prepare_board_mapping
 
     parsed_data = prepare_board_mapping(parsed_data)
-    # Normalize queries (infer types)
-    if "queries" in parsed_data and isinstance(parsed_data["queries"], dict):
-        parsed_data["queries"] = _normalize_query_definitions(parsed_data["queries"])
 
     from pydantic import ValidationError as PydanticValidationError
 
@@ -196,27 +192,6 @@ def _get_yaml_parse_suggestion(error_msg: str) -> str | None:
         )
 
     return None
-
-
-def _normalize_query_definitions(queries: dict[str, Any]) -> dict[str, Any]:
-    """Normalize query definitions to consistent format.
-
-    Converts shorthand query formats to full format:
-    - String: "SELECT ..." -> {"type": "sql", "sql": "SELECT ..."}
-    - Dict without type: Infers type from keys
-
-    Delegates to normalize_query_value (models/refs.py) — the shared helper
-    used by both this function and AuthoredBoard._normalize_queries.
-
-    Args:
-        queries: Raw query definitions from YAML
-
-    Returns:
-        Normalized query definitions with type field
-    """
-    return {
-        name: normalize_query_value(query_def) for name, query_def in queries.items()
-    }
 
 
 _SQL_PREFIX_RE = re.compile(

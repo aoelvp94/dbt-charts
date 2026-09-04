@@ -16,6 +16,7 @@ else:
 from dbt_charts.agent_api.mcp_install import (
     InstallResult,
     McpClient,
+    McpConfigReadError,
     ResolvedDct,
     install_for_client,
     list_clients,
@@ -148,6 +149,106 @@ def test_install_force_updates_existing(tmp_path: Path) -> None:
     config = json.loads((tmp_path / ".cursor/mcp.json").read_text())
     assert config["mcpServers"]["dbt-charts"]["command"] == "dct"
     assert config["mcpServers"]["dbt-charts"]["args"] == ["mcp", "serve"]
+
+
+def test_install_fresh_add_sets_updated_false(tmp_path: Path) -> None:
+    client = McpClient(
+        name="cursor",
+        config_path=tmp_path / ".cursor/mcp.json",
+        servers_key="mcpServers",
+        detect_paths=(Path(".cursor"),),
+        config_format="json",
+        command_workspace_var="${workspaceFolder}",
+    )
+    result = install_for_client(
+        client,
+        dct_executable=ResolvedDct(command="dct"),
+        server_args=["mcp", "serve"],
+        ai_config_root=tmp_path,
+    )
+    assert not result.already_configured
+    assert not result.updated
+
+
+def test_install_corrupt_json_config_errors_without_overwriting(tmp_path: Path) -> None:
+    client = McpClient(
+        name="cursor",
+        config_path=tmp_path / ".cursor/mcp.json",
+        servers_key="mcpServers",
+        detect_paths=(Path(".cursor"),),
+        config_format="json",
+        command_workspace_var="${workspaceFolder}",
+    )
+    config_path = tmp_path / ".cursor/mcp.json"
+    config_path.parent.mkdir()
+    corrupt = "{not valid json"
+    config_path.write_text(corrupt)
+
+    with pytest.raises(McpConfigReadError, match=str(config_path)):
+        install_for_client(
+            client,
+            dct_executable=ResolvedDct(command="dct"),
+            server_args=["mcp", "serve"],
+            ai_config_root=tmp_path,
+        )
+
+    assert config_path.read_text() == corrupt
+
+
+def test_install_non_dict_json_config_errors_without_overwriting(
+    tmp_path: Path,
+) -> None:
+    client = McpClient(
+        name="cursor",
+        config_path=tmp_path / ".cursor/mcp.json",
+        servers_key="mcpServers",
+        detect_paths=(Path(".cursor"),),
+        config_format="json",
+        command_workspace_var="${workspaceFolder}",
+    )
+    config_path = tmp_path / ".cursor/mcp.json"
+    config_path.parent.mkdir()
+    corrupt = json.dumps(["not", "an", "object"])
+    config_path.write_text(corrupt)
+
+    with pytest.raises(McpConfigReadError, match=str(config_path)):
+        install_for_client(
+            client,
+            dct_executable=ResolvedDct(command="dct"),
+            server_args=["mcp", "serve"],
+            ai_config_root=tmp_path,
+        )
+
+    assert config_path.read_text() == corrupt
+
+
+def test_install_preserves_other_servers_in_existing_json_config(
+    tmp_path: Path,
+) -> None:
+    client = McpClient(
+        name="cursor",
+        config_path=tmp_path / ".cursor/mcp.json",
+        servers_key="mcpServers",
+        detect_paths=(Path(".cursor"),),
+        config_format="json",
+        command_workspace_var="${workspaceFolder}",
+    )
+    config_path = tmp_path / ".cursor/mcp.json"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        json.dumps({"mcpServers": {"other-server": {"command": "other"}}})
+    )
+
+    install_for_client(
+        client,
+        dct_executable=ResolvedDct(command="dct"),
+        server_args=["mcp", "serve"],
+        ai_config_root=tmp_path,
+    )
+
+    config = json.loads(config_path.read_text())
+    assert config["mcpServers"]["other-server"] == {"command": "other"}
+    assert config["mcpServers"]["dbt-charts"]["command"] == "dct"
 
 
 def test_install_resolves_relative_path_against_ai_config_root(tmp_path: Path) -> None:
@@ -336,3 +437,30 @@ def test_resolve_dct_executable_prefers_project_venv_when_present(
 
     assert result.command == str(venv_dct)
     assert result.project_relative == ".venv/bin/dct"
+
+
+def test_install_corrupt_toml_config_errors_without_overwriting(
+    tmp_path: Path,
+) -> None:
+    client = McpClient(
+        name="codex",
+        config_path=tmp_path / ".codex/config.toml",
+        servers_key="mcp_servers",
+        detect_paths=(Path(".codex"),),
+        config_format="toml",
+        command_workspace_var=None,
+    )
+    config_path = tmp_path / ".codex/config.toml"
+    config_path.parent.mkdir()
+    corrupt = "[not valid toml"
+    config_path.write_text(corrupt)
+
+    with pytest.raises(McpConfigReadError, match="config.toml"):
+        install_for_client(
+            client,
+            dct_executable=ResolvedDct(command="dct"),
+            server_args=["mcp", "serve"],
+            ai_config_root=tmp_path,
+        )
+
+    assert config_path.read_text() == corrupt

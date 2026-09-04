@@ -334,7 +334,16 @@ def test_long_weekly_axis_promotes_labels_and_ticks_to_months(make_chart):
     )
     axis = _x_axis(spec)
 
-    assert axis["values"][0] == "2024-01-01"
+    # Render-local (non-authored) promotion on a continuous temporal axis:
+    # explicit `values` carries the promoted cadence, built from the real
+    # calendar-bucket openers (so the domain-start tick is never silently
+    # dropped when it isn't itself a calendar boundary — see
+    # type_inference.py's temporal branch).
+    # Thinned to one opener per represented month (16), not the full
+    # 70-week list — a regression back to the un-thinned week list would
+    # still pass a values[0]-only check.
+    assert len(axis["values"]) == 16
+    assert axis["values"][0] == data[0]["week"]
     assert axis["values"][1] == "2024-02-05"
     assert "tickCount" not in axis
     assert "'%b'" in axis["labelExpr"]

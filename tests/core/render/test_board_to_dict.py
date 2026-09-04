@@ -196,6 +196,10 @@ _OMITTED_FROM_PROJECTION = {
     "legend": "resolved legend",
     "max_height": "derived sizing",
     "min_height": "derived sizing",
+    # Authored at the BOARD level (`style.charts.category_colors`), then
+    # narrowed per chart at resolve. Emitting it on a chart would produce a
+    # key no authored chart accepts.
+    "category_colors": "board-level binding, narrowed per chart at resolve",
     "palette": "resolved palette",
     "requested_alias_palette": "resolved palette input",
     "requested_alias_substitute": "resolved palette input",
@@ -250,9 +254,9 @@ _OMITTED_FROM_PROJECTION = {
     # (background/title-overflow); no authored counterpart.
     "background": "resolved chart-local or board background",
     "title_style": "resolved chart-local title style (overflow, case)",
-    # Data-table strip geometry baked at resolve time so render never re-runs axis cascade.
-    "data_table_axis_offset": "pixel offset baked at resolve time for data_table strip placement",
-    "effective_data_table_style": "final per-chart data_table style (board theme merged with family override)",
+    # Support-table strip geometry baked at resolve time so render never re-runs axis cascade.
+    "support_table_axis_offset": "pixel offset baked at resolve time for support_table strip placement",
+    "effective_support_table_style": "final per-chart support_table style (board theme merged with family override)",
     # Fold-resolved multi-y list; authors write `y: [a, b]` which the resolver
     # normalizes into `y=WIDE_VALUE_FIELD, wide_measures=(a, b)`.
     "wide_measures": "resolved from multi-y authoring; no direct authored counterpart",

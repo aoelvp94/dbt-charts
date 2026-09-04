@@ -1,15 +1,23 @@
 """Pin: an authored ``axis_x.labels.expr`` calling ``timeFormat()`` on a
-bucketed axis remains TZ-dependent by design.
+bucketed axis reads *raw vl-convert's* zone, not the author's -- the intrinsic
+Vega-Lite/vl-convert mechanism the ``WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS``
+detector warns about.
 
 This is the flip side of ``test_local_time_label_expr_on_bucketed_axis_warning_e2e.py``
-and the ``WARN-LOCAL-TIME-LABEL-EXPR-ON-BUCKETED-AXIS`` detector: Dataface
-chose to warn, not to rewrite the author's raw Vega expression (see
-`render/chart/AGENTS.md`'s "no magic" / no chart-layer data transformation
-policy -- rewriting arbitrary authored code is exactly the kind of hidden
-mutation that policy forbids). So the render itself is NOT
-fixed by this change; the warning is the whole remedy. This test proves that
-directly, subprocess-isolated like ``test_tz_independence.py`` (vl_convert
-caches the observed local TZ for the process lifetime).
+and that detector: dbt charts chose to warn, not to rewrite the author's raw
+Vega expression (see `render/chart/AGENTS.md`'s "no magic" / no chart-layer
+data transformation policy -- rewriting arbitrary authored code is exactly the
+kind of hidden mutation that policy forbids). This test renders through raw
+``vl_convert.vegalite_to_svg`` directly, subprocess-isolated like
+``test_tz_independence.py`` (vl_convert caches the observed local TZ for the
+process lifetime) and bypassing ``dbt_charts._render_tz.pin_vl_convert_tz_utc``
+-- every real composition root (the ``dct`` CLI, the test suite) calls that
+pin before rendering, so in the shipped product this drift cannot actually
+happen: static rendering is always UTC, regardless of the render host. What
+this test pins is the underlying mechanism the warning is about -- an author's
+raw ``timeFormat()`` expression, if it ever escaped the pin, is not a no-op;
+it reads a real (if currently unreachable) local zone -- and the asymmetric
+finding below, which is a property of Vega-Lite's bucketing, not of the pin.
 
 It also pins a finding from investigating the bug: Vega-Lite's bucketed
 ``timeUnit`` transform anchors each tick at the *start* of its bucket (UTC

@@ -14,7 +14,7 @@ from ._base import _SharedChartFields
 class TableChart(_SharedChartFields):
     """Normalized table chart.
 
-    filters, conditional_formatting, link, and description are inherited
+    filters, conditional_formatting, link, and notes are inherited
     from _BaseChartFields and not re-declared here.
     """
 

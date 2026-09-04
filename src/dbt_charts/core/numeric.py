@@ -18,10 +18,12 @@ def aspect_ratio_height(
 
     The one canonical form of the ``width / aspect_ratio`` clamp shared by
     ``render/sizing.py``'s ``get_chart_content_height`` (the render-time static
-    height estimate) and ``compile/resolve/chart/bar.py``'s plot-height estimate (the
-    resolve-time stacked-bar legend-yield classifier). Callers supply their own
-    min/max — the two sit at different points in the style cascade (global vs
-    per-family) — this only owns the shared arithmetic.
+    height estimate) and ``compile/resolve/chart/_axes.py``'s
+    ``estimate_cartesian_plot_height`` (the resolve-time plot-height estimate
+    every cartesian family, not just bar, builds its own legend-placement and
+    legend-yield decisions on). Callers supply their own min/max — the two
+    sit at different points in the style cascade (global vs per-family) —
+    this only owns the shared arithmetic.
     """
     return max(min_height, min(max_height, width / aspect_ratio))
 

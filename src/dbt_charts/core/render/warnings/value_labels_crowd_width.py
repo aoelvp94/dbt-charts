@@ -25,8 +25,13 @@ from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
 from dbt_charts.core.compile.models.style.theme import MarkLabelsStyle
 from dbt_charts.core.diagnostics import WARN_VALUE_LABELS_CROWD_WIDTH, Diagnostic
 from dbt_charts.core.font_measure import get_font_measurer
+from dbt_charts.core.render.chart.emitters._cartesian import widest_panel_distinct_count
 from dbt_charts.core.render.format_utils import format_value
-from dbt_charts.core.render.warnings.base import WarningContext, encoding_channel_type
+from dbt_charts.core.render.warnings.base import (
+    WarningContext,
+    encoding_channel_type,
+    facet_channel_is_independent,
+)
 
 _CATEGORICAL_TYPES = frozenset({"nominal", "ordinal"})
 
@@ -79,7 +84,20 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
         rows = ctx.chart_results[chart_id]
         x_field = chart.x
         label_field = labels.field if labels.field is not None else chart.y
-        distinct = len({row[x_field] for row in rows if x_field in row})
+        whole_dataset_distinct = len({row[x_field] for row in rows if x_field in row})
+        # facet_bound_position_channels (emitters/_cartesian.py) can resolve
+        # x independently for a panel holding any proper subset of the x
+        # domain, not only the single-value case a name-matched facet field
+        # used to guarantee by construction — read the WIDEST panel's own
+        # count, not the whole-dataset union `rows` would give (and not a
+        # flat 1, which only ever held for that one degenerate shape).
+        if facet_channel_is_independent(spec, "x"):
+            distinct = (
+                widest_panel_distinct_count(x_field, chart.panel_axes, rows)
+                or whole_dataset_distinct
+            )
+        else:
+            distinct = whole_dataset_distinct
         if distinct == 0:
             continue
 

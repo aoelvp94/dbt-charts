@@ -5,7 +5,7 @@
 name: tableau
 description: |
   Tableau-style 10-color categorical palette. Retained for users who want the
-  familiar Tableau hues instead of the DFT vivid-10 default.
+  familiar Tableau hues instead of the dbt charts vivid-10 default.
 
 colors:
   - "#4e79a7"

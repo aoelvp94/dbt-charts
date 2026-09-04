@@ -1,9 +1,9 @@
 title: Business Overview
-description: Two-by-two grid overview pattern — four equal-weight summary charts
+notes: Two-by-two grid overview pattern — four equal-weight summary charts
 
 queries:
   monthly:
-    description: Monthly revenue and cost trend
+    notes: Monthly revenue and cost trend
     columns: [month, revenue, cost]
     values:
       - ["2025-09-01", 208000, 134000]
@@ -12,7 +12,7 @@ queries:
       - ["2025-12-01", 248500, 155000]
 
   by_region:
-    description: Revenue totals by region
+    notes: Revenue totals by region
     columns: [region, revenue]
     values:
       - [North, 85000]
@@ -22,7 +22,7 @@ queries:
 
 charts:
   revenue_trend:
-    description: Revenue trajectory — is it growing?
+    notes: Revenue trajectory — is it growing?
     type: line
     query: monthly
     x: month
@@ -30,7 +30,7 @@ charts:
     title: Revenue Trend
 
   cost_trend:
-    description: Cost trajectory — are costs tracking revenue?
+    notes: Cost trajectory — are costs tracking revenue?
     type: line
     query: monthly
     x: month
@@ -38,7 +38,7 @@ charts:
     title: Cost Trend
 
   revenue_by_region:
-    description: Which regions drive the most revenue?
+    notes: Which regions drive the most revenue?
     type: bar
     query: by_region
     x: region
@@ -46,7 +46,7 @@ charts:
     title: Revenue by Region
 
   cost_by_month:
-    description: Monthly cost as a bar for easy comparison
+    notes: Monthly cost as a bar for easy comparison
     type: bar
     query: monthly
     x: month

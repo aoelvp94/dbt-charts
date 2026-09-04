@@ -3,7 +3,7 @@
 Scans the boards tree for references to a dashboard slug -- ``link:`` chart
 fields and markdown link targets -- so a move can rewrite what it can prove
 is a reference and report the rest. A first-class internal-link graph is out
-of scope here (a likely-separate dft-core initiative); this is a narrow,
+of scope here (a likely-separate dbt_charts.core initiative); this is a narrow,
 best-effort heuristic: exact syntactic matches are rewritten, everything else
 (the slug's basename appearing in prose, without recognized link syntax) is
 reported as a fuzzy hit and never touched.

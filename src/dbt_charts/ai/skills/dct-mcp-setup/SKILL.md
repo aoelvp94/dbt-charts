@@ -3,8 +3,8 @@ name: dct-mcp-setup
 kind: workflow
 surfaces: [cli]
 description: >
-  Set up the Dataface MCP server for AI assistant integration. Use when
-  running 'dct init mcp', installing Dataface, configuring MCP for Cursor,
+  Set up the dbt charts MCP server for AI assistant integration. Use when
+  running 'dct init mcp', installing dbt charts, configuring MCP for Cursor,
   Claude Desktop, VS Code, Codex, Copilot, or any MCP-compatible client,
   or troubleshooting MCP connection issues like 'server not starting',
   'tools not appearing', 'MCP requires additional dependencies'. Do NOT
@@ -14,9 +14,9 @@ metadata:
   author: fivetran
 ---
 
-# Configuring Dataface MCP Server
+# Configuring dbt charts MCP Server
 
-Set up the Dataface MCP server to give AI assistants access to dashboard tools and resources.
+Set up the dbt charts MCP server to give AI assistants access to dashboard tools and resources.
 
 > This skill is **CLI-only** (`surfaces: [cli]`) — it walks a human operator
 > through installing the MCP server from a shell. An already-connected MCP
@@ -79,7 +79,7 @@ command = "/path/to/dct"
 args = ["mcp", "serve"]
 ```
 
-If your Dataface or dbt project lives in a subdirectory of the workspace your
+If your dbt charts or dbt project lives in a subdirectory of the workspace your
 AI client opens (or the server otherwise won't be launched with cwd at the
 project root), append `"--project-dir", "/abs/path/to/your/project"` to `args`.
 `dct init mcp` will add this for you when its `--project-dir` flag is used or
@@ -107,7 +107,7 @@ After setup, your AI assistant has access to these tools:
 | `execute_query` | Run ad-hoc SQL queries while exploring data or testing SQL |
 | `describe_query` | Return column schema for a SQL string without fetching rows |
 | `docs` | Browse the packaged YAML reference corpus offline |
-| `list_skills` / `get_skill` | Discover and read packaged Dataface authoring skills — `get_skill` returns the full body including example YAML |
+| `list_skills` / `get_skill` | Discover and read packaged dbt charts authoring skills — `get_skill` returns the full body including example YAML |
 
 ## Available Resources
 
@@ -165,11 +165,13 @@ If the assistant doesn't recognize these tools, the MCP server isn't connected �
 
 ## Authoring Metadata Convention
 
-When the assistant edits Dataface YAML through MCP tools, require `description` metadata on:
+When the assistant edits dbt charts YAML through MCP tools, require `notes` metadata on:
 
-- `queries.*.description`
-- `charts.*.description`
-- `variables.*.description`
+- `queries.*.notes`
+- `charts.*.notes`
+- `variables.*.notes`
 - Layout objects (`rows`/`cols`/`grid.items`/`tabs.items`) where meaningful
 
-This improves downstream AI search/context quality and enables optional UI tooltips.
+`notes` never renders on any of these five surfaces — it improves downstream AI
+search, tooling, and context quality only (on a variable, it also reaches the
+missing-required-variables prompt).

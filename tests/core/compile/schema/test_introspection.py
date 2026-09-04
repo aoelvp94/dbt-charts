@@ -19,6 +19,11 @@ class TestIntrospectReturnsSchema:
         assert "AuthoredBoard" in schema.models
 
 
+class TestIntrospectIsMemoized:
+    def test_returns_same_object_across_calls(self) -> None:
+        assert introspect() is introspect()
+
+
 class TestAuthordBoardFields:
     def test_title_field_present_with_description(self) -> None:
         schema = introspect()
@@ -123,7 +128,7 @@ class TestPatchModelsCollected:
             "LegendStylePatch",
             "TitleStylePatch",
             "TableChartStylePatch",
-            "DataTableStylePatch",
+            "SupportTableStylePatch",
             "GlobalMarksStylePatch",
             "PieChartStylePatch",
             "PointMarkStylePatch",
@@ -282,14 +287,14 @@ class TestSchemaFieldTypes:
     def test_annotated_tag_discriminator_unwrapped(self) -> None:
         ir = introspect()
         entries = next(
-            f for f in ir.models["ChartDataTable"].fields if f.name == "entries"
+            f for f in ir.models["ChartSupportTable"].fields if f.name == "entries"
         )
         assert "Tag(" not in entries.type_repr
         assert "Discriminator(" not in entries.type_repr
         for branch in (
-            "ChartDataTableSource",
-            "ChartDataTableAggregate",
-            "ChartDataTablePerSeries",
+            "ChartSupportTableSource",
+            "ChartSupportTableAggregate",
+            "ChartSupportTablePerSeries",
         ):
             assert branch in entries.type_repr
 
@@ -353,7 +358,7 @@ class TestSchemaFieldTypes:
 class TestPromptRendererTypeCellMixedUnion:
     """_type_cell must include extra_union_types alongside enum values.
 
-    Regression for bool | Literal["auto"] | None rendering as only 'enum: "auto"',
+    Regression for bool | Literal["auto"] | None rendering as only 'const: "auto"',
     dropping the bool alternative.
     """
 
@@ -378,8 +383,8 @@ class TestPromptRendererTypeCellMixedUnion:
 
         result = render_prompt(introspect())
         # ScaleContinuousStylePatch.zero: bool | Literal["auto"] | None must render
-        # as "bool | enum: "auto"" — not just 'enum: "auto"'.
-        assert '`zero` | bool \\| enum: "auto"' in result, (
+        # as "bool | const: "auto"" — not just 'const: "auto"'.
+        assert '`zero` | bool \\| const: "auto"' in result, (
             "scale.zero must show bool alongside the auto enum in the rendered reference"
         )
 
@@ -416,3 +421,66 @@ def test_a_color_facet_survives_every_route_to_the_authored_model() -> None:
         assert any(isinstance(facet, Color) for facet in field.facets), (
             f"{model_name}.{field_name} lost its Color facet"
         )
+
+
+class TestChartsFieldReachesTheChartFamilyThroughTheAuthoredChartAlias:
+    """Regression: AuthoredChart's alias opacity must not disconnect the
+    collection walk from the chart family it names (see _without_tag's and
+    _union_alias_variant_classes' docstrings in introspection.py for the
+    mechanism). A name every chart family shares (`TableChartStylePatch`,
+    most concretely) must still resolve through this edge, or it gets
+    collected via whichever OTHER path reaches it first instead — silently
+    picking up whatever that path's own resolution happens to produce.
+    """
+
+    def test_charts_nested_models_is_the_opaque_alias_not_a_flattened_list(
+        self,
+    ) -> None:
+        board = introspect().models["AuthoredBoard"]
+        charts = next(f for f in board.fields if f.name == "charts")
+        assert charts.nested_models == ["AuthoredChart", "ChartRef"], (
+            "charts: must resolve through the AuthoredChart alias (one opaque "
+            "name), the same way queries: resolves through AuthoredQuery — "
+            "not flatten into every chart family's own class name."
+        )
+
+    def test_table_chart_style_patch_pagination_refs_the_compiled_config(
+        self,
+    ) -> None:
+        """The collection edge this whole class exists to pin.
+
+        TableChartStylePatch.pagination is ambiguous across two collection
+        routes: the correct one resolves it to `PaginationConfig | None`. If
+        the walk from `charts:` fails to reach the chart family early (the
+        alias name has no single class `_find_nested_class` can locate), a
+        different route collects `TableChartStylePatch` first and its
+        `pagination` field resolves to `PaginationConfigPatch | None` instead
+        — a real board the compiler rejects (`style.pagination: {enabled:
+        null}` on a table chart) validates against the derived schema.
+        """
+        patch = introspect().models["TableChartStylePatch"]
+        pagination = next(f for f in patch.fields if f.name == "pagination")
+        assert pagination.nested_models == ["PaginationConfig"], (
+            "TableChartStylePatch.pagination resolved to the wrong shared "
+            f"name slot: {pagination.nested_models}"
+        )
+
+
+class TestExtraUnionTypesDoesNotLeakTuplePositions:
+    """A fixed-length tuple's positions are covered by SchemaField.tuple_item_reprs,
+    a wholly separate mechanism — _extra_union_types must not also treat a
+    tuple arm's positions as union members to flatten through.
+    """
+
+    def test_scale_continuous_style_domain_has_no_extra_union_types(self) -> None:
+        for model_name in ("ScaleContinuousStyle", "ScaleContinuousStylePatch"):
+            model = introspect().models[model_name]
+            domain = next(f for f in model.fields if f.name == "domain")
+            assert domain.extra_union_types == [], (
+                f"{model_name}.domain leaked tuple-position primitives into "
+                f"extra_union_types: {domain.extra_union_types}"
+            )
+            assert domain.tuple_item_reprs is not None, (
+                "fixture precondition: domain must actually be a fixed-length "
+                "tuple field, or this test exercises nothing"
+            )

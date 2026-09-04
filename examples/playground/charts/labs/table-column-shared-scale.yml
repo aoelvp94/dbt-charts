@@ -1,5 +1,5 @@
 title: "Table columns on the shared-scale ruler machinery"
-description: >
+notes: >
   An SI/compact-formatted table column (number_default, or any inline `~s`
   spec) whose rows share one majority SI tier declares that magnitude once —
   like an axis ruler's tick ladder — instead of each row independently
@@ -11,7 +11,7 @@ description: >
   shared-scale bake under `symbol_mode: all` (every row still shows its own
   magnitude suffix, since symbol_mode only governs currency-prefix /
   unit-suffix anchoring, not the shared magnitude itself).
-extends: editorial
+extends: clarity
 rows:
   - cols: [revenue_anchors]
   - cols: [revenue_all]

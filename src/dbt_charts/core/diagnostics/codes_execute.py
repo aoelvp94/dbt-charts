@@ -6,6 +6,7 @@ Covers source-resolution and runtime failures in AdapterRegistry.
 from __future__ import annotations
 
 from dbt_charts.core.diagnostics.hints import (
+    suggest_close_column,
     suggest_close_ref,
     suggest_close_source_table,
 )
@@ -23,10 +24,45 @@ ERR_GLOB_EMPTY = REGISTRY.register(
         ),
         doc=(
             "Fired when a glob pattern in a file source's `files:` mapping expands "
-            "to zero files. Every glob must match at least one file — an empty match "
+            "to zero files. Every glob must match at least one file; an empty match "
             "is always a configuration error. Check the pattern for typos, verify the "
             "files exist at the expected paths, and confirm the path is relative to "
             "the project root."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_FILE_SOURCE_NOT_FOUND = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FILE-SOURCE-NOT-FOUND",
+        domain="execute",
+        title="File source path could not be read from disk",
+        message_template=(
+            "File source {source_name!r}: {relpath!r} could not be read "
+            "({detail}). Check the path in `files:` for this source, "
+            "restore the missing file, or fix its permissions."
+        ),
+        summary=(
+            "Fired when a file source's `files:` entry names a path that "
+            "cannot be opened on disk at query-execution time — missing, "
+            "a path component that isn't a directory, or unreadable."
+        ),
+        doc=(
+            "Fired when a `type: csv`/`json`/`parquet` source's `files:` "
+            "mapping names a literal (non-glob) path that cannot be opened "
+            "on disk: the leaf is missing, a path component traverses "
+            "through an existing file instead of a directory, or the OS "
+            "denies read access. `{detail}` carries the OS error string "
+            '(e.g. "No such file or directory", "Not a directory", '
+            '"Permission denied") so the message doesn\'t call a '
+            "permissions problem a missing file. Unlike an empty glob "
+            "match (`ERR-GLOB-EMPTY`), a literal path is never expanded, "
+            "so this is the only place these failures surface. Neither "
+            "`dct validate` nor `dct validate --warehouse` checks file "
+            "existence, so this fires only at query-execution time "
+            "(`dct render`/`dct serve`). Fix the path, add the missing "
+            "file, or fix its permissions."
         ),
         docs_topic="queries",
     )
@@ -81,6 +117,65 @@ ERR_GLOB_SCHEMA_MISMATCH = REGISTRY.register(
     )
 )
 
+ERR_FILE_SOURCE_TOO_MANY_TABLES = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FILE-SOURCE-TOO-MANY-TABLES",
+        domain="execute",
+        title="File source exceeded the table-count cap",
+        message_template=(
+            "File source {source_name!r}: `files:` has {count} tables, "
+            "exceeding the {cap}-table cap. "
+            "Split the source, raise execution.file_source_max_tables in "
+            "dbt_charts.yml, or use a database connection for large-scale data."
+        ),
+        summary=(
+            "Fired when a file source's `files:` mapping declares more tables "
+            "than the configured cap."
+        ),
+        doc=(
+            "Fired when a file source's `files:` mapping declares more table "
+            "entries than the configured `execution.file_source_max_tables` "
+            "limit. A wide `files:` map can quietly fill the shared cache disk, "
+            "split the source into multiple sources, raise the cap in "
+            "`dbt_charts.yml` under `execution: file_source_max_tables: <N>`, "
+            "or use a database connection for large-scale data."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_FILE_SOURCE_TOO_LARGE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FILE-SOURCE-TOO-LARGE",
+        domain="execute",
+        title="File source relation exceeded the materialized-size cap",
+        message_template=(
+            "File source {source_name!r}, table {table_name!r}: reading "
+            "{relpath!r} ({raw_mb:.1f} MB raw × {multiplier} materialization "
+            "multiplier) pushed the estimated materialized size to "
+            "{size_mb:.1f} MB, exceeding the {cap_mb:.1f} MB cap. "
+            "Increase execution.file_source_max_bytes in dbt_charts.yml if "
+            "needed, or use a database connection for data this size."
+        ),
+        summary=(
+            "Fired when a file source's estimated materialized size exceeds "
+            "the configured byte cap."
+        ),
+        doc=(
+            "Fired when the estimated materialized size of a file-source "
+            "relation (the file(s) backing one `files:` table entry) exceeds "
+            "the configured `execution.file_source_max_bytes` limit. Parquet "
+            "file sizes are multiplied by a fixed materialization multiplier "
+            "(20x) before comparing, since compressed columnar data can "
+            "expand many times over once parsed into rows; CSV/JSON files "
+            "are not multiplied. Raise the cap in `dbt_charts.yml` "
+            "under `execution: file_source_max_bytes: <N>`, or use a database "
+            "connection for data this size."
+        ),
+        docs_topic="queries",
+    )
+)
+
 ERR_REPO_FILE_TOO_LARGE = REGISTRY.register(
     ErrorCode(
         code="ERR-REPO-FILE-TOO-LARGE",
@@ -92,7 +187,7 @@ ERR_REPO_FILE_TOO_LARGE = REGISTRY.register(
             "Use a database connection for data this size."
         ),
         doc=(
-            "Fired when a file in a connected repository exceeds 100 MB. Dataface "
+            "Fired when a file in a connected repository exceeds 100 MB. dbt charts "
             "imposes this limit because large files are better served by a direct "
             "database connection rather than loading the entire file into memory."
         ),
@@ -198,7 +293,7 @@ ERR_DBT_MANIFEST_MISSING = REGISTRY.register(
         doc=(
             "Fired when a query's SQL calls `ref()` or `source()` but the project "
             "has no dbt manifest to resolve the call against. The manifest is what "
-            "maps a model name to its warehouse relation, so without it Dataface "
+            "maps a model name to its warehouse relation, so without it dbt charts "
             "cannot know which table the query means. Run `dbt parse` (or any "
             "command that writes `target/manifest.json`) in the dbt project."
         ),
@@ -206,25 +301,24 @@ ERR_DBT_MANIFEST_MISSING = REGISTRY.register(
     )
 )
 
-ERR_DBT_MANIFEST_INCOMPATIBLE = REGISTRY.register(
+ERR_DBT_MANIFEST_UNREADABLE = REGISTRY.register(
     ErrorCode(
-        code="ERR-DBT-MANIFEST-INCOMPATIBLE",
+        code="ERR-DBT-MANIFEST-UNREADABLE",
         domain="execute",
-        title="dbt manifest cannot be parsed by this version of dbt-core",
+        title="dbt manifest could not be read",
         message_template=(
-            "The dbt manifest at {relpath!r} could not be parsed: {detail}. "
-            "Rebuild the manifest with the installed dbt-core version."
+            "The dbt manifest at {relpath!r} could not be read: {detail}. "
+            "Rebuild it with `dbt parse`."
         ),
-        summary=(
-            "Fired when the manifest is corrupt, unreadable, or its schema "
-            "version is outside the range the installed dbt-core can parse."
-        ),
+        summary="Fired when the manifest file is unreadable or its JSON is corrupt.",
         doc=(
-            "Fired when the manifest cannot be read or parsed: the file is "
-            "missing or unreadable (OSError), the JSON is malformed, the schema "
-            "version is newer than the installed dbt-core supports, or dbt's "
-            "upgrade_schema_version raises on a structurally invalid dict. "
-            "Rebuild with `dbt parse`."
+            "Fired when the manifest exists but cannot be read: the file is "
+            "unreadable (OSError) or the JSON is malformed: usually a "
+            "truncated write from an interrupted dbt run. Rebuild with "
+            "`dbt parse`. The manifest's schema version is not checked: "
+            "dbt charts reads the manifest as plain JSON rather than through "
+            "dbt's typed contract, so a manifest written by a different "
+            "dbt version still resolves refs normally."
         ),
         docs_topic="queries",
     )
@@ -244,7 +338,7 @@ ERR_ADAPTER_RELATIVE_PATH_NO_DATA_DIR = REGISTRY.register(
             "Fired when a file-backed source (DuckDB, SQLite) declares a relative "
             "`path:` but the adapter has no data directory to resolve it against. "
             "Resolving against the process working directory would make the source "
-            "depend on where `dct` was invoked from, so Dataface refuses. Use an "
+            "depend on where `dct` was invoked from, so dbt charts refuses. Use an "
             "absolute path or configure a data directory for the project."
         ),
         docs_topic="queries",
@@ -261,11 +355,11 @@ ERR_MUTATING_SQL = REGISTRY.register(
             "Statement: {rejected_node_kind}. Preview: {fragment_preview}."
         ),
         doc=(
-            "Fired when Dataface detects a non-SELECT statement (INSERT, UPDATE, "
-            "DELETE, DROP, etc.) in a query. Dataface only executes read-only SQL "
+            "Fired when dbt charts detects a non-SELECT statement (INSERT, UPDATE, "
+            "DELETE, DROP, etc.) in a query. dbt charts only executes read-only SQL "
             "to prevent accidental data modification."
         ),
-        summary="Fired when Dataface detects a non-SELECT statement in a query.",
+        summary="Fired when dbt charts detects a non-SELECT statement in a query.",
         docs_topic="queries",
     )
 )
@@ -277,17 +371,17 @@ ERR_UNPARSEABLE_SQL = REGISTRY.register(
         title="SQL could not be parsed for static checks",
         message_template="Could not parse this SQL: {cause}",
         fix_template=(
-            "If the warehouse accepts this query, the SQL is fine — the parser "
-            "just does not model that dialect or macro yet, and only Dataface's "
+            "If the warehouse accepts this query, the SQL is fine; the parser "
+            "just does not model that dialect or macro yet, and only dbt charts' "
             "static checks (read-only enforcement, fanout and reaggregation "
             "lint) are skipped for it. If the warehouse rejects it too, fix the "
             "syntax at the reported position."
         ),
         doc=(
-            "Fired when Dataface's static SQL parser cannot parse a query. The "
+            "Fired when dbt charts' static SQL parser cannot parse a query. The "
             "query is still sent to the warehouse; what is lost is the static "
             "read-only check and the semantic lint that run on parseable SQL. "
-            "It is not necessarily an error in the SQL itself — unmodelled "
+            "It is not necessarily an error in the SQL itself; unmodelled "
             "dialect syntax and dbt macros land here too."
         ),
         docs_topic="queries",
@@ -350,11 +444,16 @@ ERR_WAREHOUSE_CONNECTION = REGISTRY.register(
         title="Could not open the warehouse",
         message_template="Could not open the warehouse: {detail}.",
         doc=(
-            "Fired when opening the connection fails — a database file that is "
-            "missing, unreadable, or lock-held by another process. Distinct from "
-            "ERR-WAREHOUSE-RUNTIME because nothing ever read the SQL: the query "
-            "may be perfectly good, so callers that judge queries (`dct validate "
-            "--warehouse`) must not report it as a query defect."
+            "Fired when opening the connection fails, before any SQL is sent: "
+            "a database file that is missing, unreadable, or lock-held by "
+            "another process (DuckDB, SQLite), or bad credentials, an "
+            "unreachable host, or a missing database/role on a network "
+            "warehouse (Postgres, Snowflake, BigQuery, Databricks, …). "
+            "Distinct from ERR-WAREHOUSE-RUNTIME because nothing ever read "
+            "the SQL: the query may be perfectly good, so callers that judge "
+            "queries (`dct validate --warehouse`) must not report it as a "
+            "query defect. Check the source's credentials, host, and network "
+            "reachability in `dbt_charts.yml` or `profiles.yml`."
         ),
         docs_topic="queries",
     )
@@ -390,12 +489,73 @@ ERR_DBT_REF_UNKNOWN_NODE = REGISTRY.register(
         doc=(
             "Fired when a query's SQL calls the dbt `ref()` Jinja function with a "
             "name that is not present in the loaded manifest. `ref()` addresses "
-            "models, seeds, and snapshots — not data tests or sources (use "
+            "models, seeds, and snapshots, not data tests or sources (use "
             "`source()` for those). Check for a typo, or refresh the manifest "
             "(`dbt parse`) if the node was added recently."
         ),
         docs_topic="queries",
         hint_generator=suggest_close_ref,
+    )
+)
+
+ERR_DBT_MODEL_COLUMN_MISSING = REGISTRY.register(
+    ErrorCode(
+        code="ERR-DBT-MODEL-COLUMN-MISSING",
+        domain="execute",
+        title="Query references a column the dbt model no longer produces",
+        summary=(
+            "A board query reads a column the dbt model's own SQL no longer "
+            "produces, caught before dbt run rebuilds the warehouse."
+        ),
+        message_template=(
+            "Query {query_name!r} references column {column_name!r} of dbt model "
+            "{model!r}, but the model's SQL does not produce it. "
+            "Model columns: {available}."
+        ),
+        doc=(
+            "Fired when a board query references a column of a dbt model whose "
+            "output columns, derived statically from the model's SQL in "
+            "`target/manifest.json`, do not include it. This catches a column "
+            "renamed or dropped in the model *before* `dbt run` rebuilds the "
+            "warehouse, when `--warehouse` validation still passes against the "
+            "old table. If the model was just changed on purpose, update the "
+            "board; if the manifest is stale, re-run `dbt parse`."
+        ),
+        docs_topic="queries",
+        hint_generator=suggest_close_column,
+    )
+)
+
+WARN_DBT_MODEL_COLUMNS_UNRESOLVED = REGISTRY.register(
+    WarningCode(
+        code="WARN-DBT-MODEL-COLUMNS-UNRESOLVED",
+        domain="execute",
+        title="A dbt model's output columns could not be derived statically",
+        message_template=(
+            "Query {query_name!r} reads dbt model {model!r}, whose output columns "
+            "could not be derived from its SQL ({reason}); column references "
+            "against it were not checked."
+        ),
+        fix_template=(
+            "The reason names what blocks static derivation (a `SELECT *` "
+            "wants explicit projections; an unaliased cast or expression "
+            "wants an alias; seeds and snapshots are never derivable); the "
+            "columns can always be verified with `dct validate --warehouse` "
+            "after `dbt run`."
+        ),
+        summary=(
+            "Static model-column derivation gave no answer for this model, so "
+            "nothing vouches for the columns read from it."
+        ),
+        doc=(
+            "Fired when a board query reads a dbt model whose output columns "
+            "cannot be derived statically from its manifest SQL: a `SELECT *`, "
+            "a macro in projection position, a snapshot (dbt injects meta "
+            "columns at build time), or SQL that does not parse. Reported "
+            "rather than silently skipped: an unchecked column reference is "
+            "not a verified one."
+        ),
+        docs_topic="queries",
     )
 )
 
@@ -420,6 +580,39 @@ ERR_DBT_SOURCE_UNKNOWN_TABLE = REGISTRY.register(
     )
 )
 
+WARN_DBT_QUERY_COLUMNS_INDETERMINATE = REGISTRY.register(
+    WarningCode(
+        code="WARN-DBT-QUERY-COLUMNS-INDETERMINATE",
+        domain="execute",
+        title="A query's dbt column references could not be determined",
+        message_template=(
+            "Query {query_name!r} uses dbt ref()/source() but the columns it "
+            "reads could not be determined ({reason}); they were not checked "
+            "against the dbt models."
+        ),
+        fix_template=(
+            "The reason names what blocks the analysis (a `SELECT *` wants "
+            "explicit columns; a templated identifier is decided at render "
+            "time); the query can always be verified with "
+            "`dct validate --warehouse` after `dbt run`."
+        ),
+        summary=(
+            "Static analysis gave no answer for which columns this dbt-backed "
+            "query reads, so nothing vouches for them against the models."
+        ),
+        doc=(
+            "Fired when a board query that calls ref()/source() cannot be "
+            "statically analyzed for the (table, column) pairs it consumes: "
+            "a `SELECT *`, a templated identifier, an ambiguous unqualified "
+            "column, or SQL that does not parse. The model-column drift check "
+            "makes no claim either way for such a query; this warning keeps "
+            "that gap visible instead of passing it in silence. Queries with "
+            "no dbt calls are out of scope; the SQL lint tiers own those."
+        ),
+        docs_topic="queries",
+    )
+)
+
 WARN_DBT_MANIFEST_MISSING = REGISTRY.register(
     WarningCode(
         code="WARN-DBT-MANIFEST-MISSING",
@@ -427,11 +620,11 @@ WARN_DBT_MANIFEST_MISSING = REGISTRY.register(
         title="Queries use dbt macros but no manifest was found",
         message_template=(
             "Queries use {kind} but no dbt manifest was found "
-            "(looked for {paths}) — refs were not validated."
+            "(looked for {paths}); refs were not validated."
         ),
         fix_template="Run 'dbt parse' in the dbt project.",
         summary=(
-            "Fired when queries use ref()/source() but no manifest is present — "
+            "Fired when queries use ref()/source() but no manifest is present; "
             "refs were not validated."
         ),
         doc=(
@@ -451,7 +644,7 @@ ERR_DBT_CALL_UNSUPPORTED = REGISTRY.register(
         domain="execute",
         title="dbt call form this engine cannot resolve",
         message_template=(
-            "Could not resolve {call!r} against the dbt manifest — Dataface reads "
+            "Could not resolve {call!r} against the dbt manifest: dbt charts reads "
             "the relation name from the call itself, so each argument must be a "
             "plain quoted string: {{{{ ref('model') }}}} or "
             "{{{{ source('source', 'table') }}}}."
@@ -465,12 +658,12 @@ ERR_DBT_CALL_UNSUPPORTED = REGISTRY.register(
         ),
         doc=(
             "Fired when a query's SQL calls dbt's `ref()` or `source()` in a form "
-            "Dataface cannot resolve to a single relation. Dataface rewrites these "
+            "dbt charts cannot resolve to a single relation. dbt charts rewrites these "
             "calls textually against the manifest rather than executing dbt's "
             "Jinja, so it reads the names straight out of the call and every "
             "argument must be a plain quoted string. Rather than let an "
-            "unrecognized call through to the warehouse — where it fails as a SQL "
-            "syntax error naming `{{`, far from the cause — Dataface reports it "
+            "unrecognized call through to the warehouse (where it fails as a SQL "
+            "syntax error naming `{{`, far from the cause), dbt charts reports it "
             "here."
         ),
         docs_topic="queries",
@@ -532,7 +725,7 @@ WARN_COLUMN_CHECK_UNAVAILABLE = REGISTRY.register(
         doc=(
             "Fired during `dct validate --warehouse` when the adapter can validate "
             "that the query is accepted by the warehouse but cannot return a result "
-            "schema — so chart channel column checks are skipped. "
+            "schema, so chart channel column checks are skipped. "
             "Use a DuckDB or BigQuery source for full column verification."
         ),
         docs_topic="queries",
@@ -544,16 +737,17 @@ WARN_WAREHOUSE_CHECK_UNAVAILABLE = REGISTRY.register(
         code="WARN-WAREHOUSE-CHECK-UNAVAILABLE",
         domain="execute",
         title="Warehouse check unavailable on this adapter",
-        message_template="Query '{name}' was not checked — {reason}.",
+        message_template="Query '{name}' was not checked: {reason}.",
         fix_template=(
-            "The query is unverified, not verified. Check it against a DuckDB or "
-            "BigQuery source, or run it directly, e.g. dct query <board> <name>."
+            "The query is unverified, not verified. Check it against a source "
+            "with a check mechanism (DuckDB, BigQuery, Postgres, Redshift, "
+            "Snowflake), or run it directly, e.g. dct query <board> <name>."
         ),
         summary="Nothing inspected this query, so nothing can vouch for it.",
         doc=(
             "Fired during `dct validate --warehouse` when a query could not be "
-            "checked without running it at full cost — the adapter offers no "
-            "mechanism (DESCRIBE or a dry run), the query composes "
+            "checked without running it at full cost: the adapter offers no "
+            "mechanism (DESCRIBE, EXPLAIN, or a dry run), the query composes "
             "another query's cached result, or the warehouse was never reached. "
             "The query is reported as unchecked rather than valid: nothing "
             "inspected the SQL. `--warehouse` will never run the query itself "

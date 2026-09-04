@@ -1,8 +1,8 @@
-"""Tests for the `default`/`cream` themes' editorial-voice overrides on `stark`.
+"""Tests for the `clarity`/`paper` themes' editorial-voice overrides on `stark`.
 
-The `default` theme extends `stark` and adds an editorial voice: a serif KPI
-value font, legend disabled, axis-domain lines hidden, axis-y title hidden.
-`cream` extends `default` and inherits the same overrides on a warm canvas.
+The `clarity` theme extends `stark` and adds an editorial voice: a serif KPI
+value font, legend disabled, axis-domain lines hidden. `paper` extends
+`clarity` and inherits the same overrides on a warm canvas.
 These tests assert the overrides exist (and propagate), without pinning the
 specific aesthetic values they resolve to — those values are tunable and
 shouldn't break the test when re-tuned (per dbt-charts/AGENTS.md: *"Don't pin
@@ -29,7 +29,7 @@ from .conftest import chart_pane
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
-EDITORIAL_THEMES = ["editorial", "cream"]
+EDITORIAL_THEMES = ["clarity", "paper"]
 
 
 @pytest.fixture(autouse=True)
@@ -86,7 +86,7 @@ def test_legend_disabled_by_default(theme_name: str) -> None:
         f"{theme_name}.charts.legend.visible is "
         f"{theme.charts.legend.visible!r}; the editorial-voiced themes suppress "
         f"the legend by default (direct labels and editorial titles carry "
-        f"the framing). Add `legend.visible: false` to editorial.yaml."
+        f"the framing). Add `legend.visible: false` to clarity.yaml."
     )
 
 
@@ -113,46 +113,19 @@ def test_axis_domain_not_visible_by_default(theme_name, axis):
     )
 
 
-@pytest.mark.parametrize("theme_name", EDITORIAL_THEMES)
-def test_axis_y_title_hidden_by_visibility(theme_name: str) -> None:
-    """Axis Y title is hidden via visible:false (not font.size:0) on resolved themes.
-
-    The UX-default identity is that the y-axis title is hidden.  The
-    correct VL mechanism is ``axis.title: null`` (emitted by ``axis_to_vl``
-    when ``title.visible is False``), NOT ``titleFontSize: 0`` which only
-    visually suppresses the text while still occupying layout space.
-
-    Same AGENTS.md carve-out as ``legend.visible is False``: this is a
-    boolean-identity assertion, not an aesthetic-value pin.
-    """
-    ctx = resolve_chart_style_context(get_theme_style(theme_name))
-    title = resolved_axis_style(
-        ctx, "axis_y", "quantitative", chart_type="", label_authored=False
-    ).title
-    assert title.visible is False, (
-        f"resolved {theme_name}.charts.axis_y.title.visible is "
-        f"{title.visible!r}; expected False (hidden via visibility, not font-size)."
-    )
-    assert title.font.size > 0, (
-        f"resolved {theme_name}.charts.axis_y.title.font.size is "
-        f"{title.font.size!r}; must be a real positive size — hiding is "
-        f"done via title.visible:false, not font.size:0."
-    )
-
-
 # --------------------------------------------------------------------------
-# Inheritance — `cream` picks up `default`'s overrides via `extends:`.
+# Inheritance — `paper` picks up `clarity`'s overrides via `extends:`.
 # Spot-check via the KPI override since it's the most distinctive.
 # --------------------------------------------------------------------------
 
 
-def test_cream_inherits_editorial_kpi_value_font():
-    """`cream` inherits its parent `editorial`'s KPI value font."""
-    parent = get_theme_style("editorial").charts.kpi.value.font.family
-    child = get_theme_style("cream").charts.kpi.value.font.family
+def test_paper_inherits_clarity_kpi_value_font():
+    """`paper` inherits its parent `clarity`'s KPI value font."""
+    parent = get_theme_style("clarity").charts.kpi.value.font.family
+    child = get_theme_style("paper").charts.kpi.value.font.family
     assert child == parent, (
-        f"cream.charts.kpi.value.font.family is {child!r}, "
-        f"editorial parent is {parent!r}; the `extends: editorial` "
+        f"paper.charts.kpi.value.font.family is {child!r}, "
+        f"clarity parent is {parent!r}; the `extends: clarity` "
         f"inheritance chain didn't propagate the override."
     )
 
@@ -315,18 +288,23 @@ def test_stacked_bar_tick_values_use_stacked_totals(
     )
 
 
-@pytest.mark.parametrize("chart_type", ["area", "scatter", "line"])
+@pytest.mark.parametrize("chart_type", ["scatter", "line"])
 @pytest.mark.parametrize("theme_name", EDITORIAL_THEMES)
 def test_tick_values_pin_scale_domain(
     monkeypatch: pytest.MonkeyPatch, theme_name: str, chart_type: str
 ) -> None:
     """Domain-pinning rules for charts with clustered data well above zero.
 
-    area/line/scatter with ratio > 0.25 — smart-auto sets scale.zero=false
+    line/scatter with ratio > 0.25 — smart-auto sets scale.zero=false
     (zoomed axis). Headroom is span-relative and symmetric: both domain_max
     and domain_min are pinned so the marks sit ~headroom% from each edge.
     The exact values are read from the theme rather than hardcoded, per the
     "don't pin tunable theme defaults" test convention.
+
+    Area is excluded: unlike line/scatter, area always zero-anchors positive
+    data regardless of ratio (see test_area_domain_zero_anchors_even_above_ratio_threshold
+    below) — its fill is the magnitude encoding, so it never takes the
+    zoomed/span-relative headroom path this test exercises.
     """
     from pydantic import TypeAdapter as _TA
 
@@ -377,6 +355,51 @@ def test_tick_values_pin_scale_domain(
     assert domain_min == pytest.approx(expected_domain_min), (
         f"{theme_name}/{chart_type}: scale.domainMin={domain_min!r} should equal "
         f"data_min - headroom*span = {expected_domain_min!r}."
+    )
+
+
+@pytest.mark.parametrize("theme_name", EDITORIAL_THEMES)
+def test_area_domain_zero_anchors_even_above_ratio_threshold(
+    monkeypatch: pytest.MonkeyPatch, theme_name: str
+) -> None:
+    """Area with the same clustered, ratio > 0.25 data as
+    test_tick_values_pin_scale_domain still zero-anchors: unlike line/scatter,
+    area's fill is the magnitude encoding, so it always extends to zero for
+    all-positive data (top-only multiplicative headroom, not span-relative)."""
+    from pydantic import TypeAdapter as _TA
+
+    from dbt_charts.core.compile.config import reset_config
+    from dbt_charts.core.compile.models.chart.normalized import Chart
+    from dbt_charts.core.compile.models.query.normalized import SqlQuery
+    from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
+
+    reset_config()
+    monkeypatch.setenv("DCT_DEFAULT_THEME", theme_name)
+    revenues = [97000 + i * 2500 for i in range(1, 29)]
+    data = [
+        {"week": f"2024-01-{i:02d}", "revenue": r}
+        for i, r in enumerate(revenues, start=1)
+    ]
+    chart = _TA(Chart).validate_python(
+        {
+            "id": "t",
+            "type": "area",
+            "x": "week",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="src"),
+            "query_name": "q",
+        }
+    )
+    spec = generate_vega_lite_spec(chart, data, width=400)
+    y_scale = spec.get("encoding", {}).get("y", {}).get("scale") or {}
+    assert y_scale.get("zero") is True
+    assert y_scale.get("domainMin") == 0.0
+
+    theme_headroom = _BOARD_STYLE.axis_y.scale.headroom or 0
+    expected_domain_max = max(revenues) * (1 + theme_headroom)
+    assert y_scale.get("domainMax") == pytest.approx(expected_domain_max), (
+        f"{theme_name}/area: scale.domainMax={y_scale.get('domainMax')!r} should "
+        f"equal data_max * (1 + headroom) = {expected_domain_max!r}."
     )
 
 
@@ -440,16 +463,21 @@ def test_stacked_area_no_domain_pin(
     theme_name: str,
     stack_mode: str,
 ) -> None:
-    """Stacked area charts must NOT have domainMin/domainMax pinned.
+    """Stacked area charts must NOT have domainMax pinned.
 
     nice_tick_values computes domain_max from individual row values, which is
     far below the stacked total. Pinning domainMax to that value clips the
     stacked marks above it, making the chart disappear entirely.
-    VL must own the domain computation for stacked and streamgraph area charts.
+    VL must own the domain-MAX computation for stacked and streamgraph area
+    charts. domainMin is stack-mode dependent: stack="zero" zero-anchors
+    all-positive data and pins domainMin=0.0 (the stack's own true baseline
+    genuinely is 0, so pinning that bottom edge doesn't clip anything);
+    stack="center" (streamgraph) is carved out of the zero-anchor bake
+    entirely, so domainMin stays unset.
 
     Endpoint labels are forced off here: stack='center' has no cumulative-midpoint
     anchor (same restriction bar already has — ChartDataError, see
-    EndpointLabelFeature.apply), and editorial/cream default area endpoint_labels
+    EndpointLabelFeature.apply), and clarity/paper default area endpoint_labels
     to visible. This test targets domain-pin behavior, not endpoint labels.
     """
     from dbt_charts.core.compile.config import reset_config
@@ -487,9 +515,14 @@ def test_stacked_area_no_domain_pin(
     )
     y_enc = spec.get("encoding", {}).get("y", {})
     y_scale = y_enc.get("scale") or {}
-    assert "domainMin" not in y_scale, (
+    # stack="zero" always zero-anchors positive data (bar-like magnitude), so
+    # domainMin is genuinely pinned at 0.0. stack="center" (streamgraph) is
+    # carved out of the zero-anchor bake entirely -- its y=0 is the
+    # silhouette's centerline, not a baseline -- so domainMin stays unset.
+    expected_domain_min = 0.0 if stack_mode == "zero" else None
+    assert y_scale.get("domainMin") == expected_domain_min, (
         f"{theme_name}/area stack={stack_mode!r}: domainMin={y_scale.get('domainMin')} "
-        f"must not be set — stacked domain is owned by VL, not the tick algorithm."
+        f"must equal {expected_domain_min!r}."
     )
     assert "domainMax" not in y_scale, (
         f"{theme_name}/area stack={stack_mode!r}: domainMax={y_scale.get('domainMax')} "

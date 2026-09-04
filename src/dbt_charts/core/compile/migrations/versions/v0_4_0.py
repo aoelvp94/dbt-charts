@@ -11,7 +11,7 @@ the old container. See dbt-charts/AGENTS.md's "Two validation boundaries" —
 these are structural moves; categorical_orient (deleted), the stable-axis
 domain-strategy key (deleted), ticks.interval (reinterpreted vocabulary, not
 renamed), and the band/point/quantize scale groups (deleted) are semantic
-changes with no lossless move and are left to raise UnsupportedSchemaError for
+changes with no lossless move and are left to raise IncompleteMigrationError for
 manual migration.
 """
 

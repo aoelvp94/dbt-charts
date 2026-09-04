@@ -7,7 +7,7 @@ from typing import Any
 
 from dbt_charts.core.compile.config import get_config
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.format import resolve_format
+from dbt_charts.core.compile.format import resolve_format_for_values
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     GeoshapeChart,
@@ -31,7 +31,10 @@ from dbt_charts.core.compile.models.style.resolved import (
 )
 from dbt_charts.core.compile.models.style.theme import GeoshapeChartStyle
 from dbt_charts.core.compile.models.vega_lite.contracts import Projection
-from dbt_charts.core.compile.resolve.chart._channels import _channels_for
+from dbt_charts.core.compile.resolve.chart._channels import (
+    _channels_for,
+    _column_numeric_values,
+)
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     _EMPTY_CHART_TEXT_VARIABLES,
     AutomaticLinkCandidate,
@@ -314,6 +317,13 @@ def _resolve_geoshape(
     geoshape = merge_onto_base(chart_style_context.geoshape, primary)
     channels = _channels_for(normalized, data)
     _tf = _title_font(normalized, chart_local_style_context, width)
+    # The tooltip formats chart.value_field (emitters/geo.py:357-364), which
+    # is normalized.value when authored, else the color channel
+    # (_resolve_choropleth_value_field) -- vote on that same field, not the
+    # color channel directly, or an authored `value:` silently outvotes it.
+    tooltip_format_values = _column_numeric_values(
+        data, _resolve_choropleth_value_field(normalized, channels)
+    )
     return ResolvedGeoshapeChart(
         **_base_kwargs(
             normalized,
@@ -331,8 +341,10 @@ def _resolve_geoshape(
         style=ResolvedGeoshapeStyle(
             geoshape=_with_baked_color_gradient(geoshape),
             scatter=chart_style_context.scatter,
-            tooltip_format=resolve_format(
-                chart_style_context.tooltip.format, chart_style_context.formats
+            tooltip_format=resolve_format_for_values(
+                chart_style_context.tooltip.format,
+                chart_style_context.formats,
+                tooltip_format_values,
             ),
             title_font=_tf,
         ),
@@ -353,6 +365,15 @@ def _resolve_point_map(
     primary = _with_color_tokens(normalized.style, chart_style_context)
     point_map = merge_onto_base(chart_style_context.point_map, primary)
     channels = _channels_for(normalized, data)
+    # geo_tooltip.py formats only size_field with tooltip_format -- the
+    # color entry gets no format at all, so voting on color would drag an
+    # unformatted column's register onto size. A negative size row never
+    # paints either (emitters/geo.py's row_has_negative_size filter drops it
+    # before Vega-Lite sees it, mark AREA cannot be negative), so it must
+    # not vote.
+    tooltip_format_values = [
+        v for v in _column_numeric_values(data, normalized.size) if v >= 0
+    ]
 
     # Lat/lon: authored value takes precedence; auto-detect from data column names as fallback.
     # Baked here (ADR-008) so the emitter reads chart.latitude/longitude without re-deriving.
@@ -453,8 +474,10 @@ def _resolve_point_map(
             single_series_fill=_effective_single_series_fill(
                 chart_style_context, primary
             ),
-            tooltip_format=resolve_format(
-                chart_style_context.tooltip.format, chart_style_context.formats
+            tooltip_format=resolve_format_for_values(
+                chart_style_context.tooltip.format,
+                chart_style_context.formats,
+                tooltip_format_values,
             ),
             title_font=_tf,
         ),

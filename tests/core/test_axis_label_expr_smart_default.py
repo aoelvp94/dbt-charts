@@ -560,6 +560,90 @@ rows:
         assert "datum.index" not in axis["labelExpr"]
         assert "utcdate(toDate(datum.value)) <= 7" in axis["labelExpr"]
 
+    def test_ordinal_bar_weekly_identity_label_does_not_shift_bucket_date(self):
+        # Regression: bar's ordinal x-axis keeps the real per-row Monday
+        # bucket dates in `values` — never Vega's own continuous, Sunday-
+        # anchored `utcyearweek` ticks — so the day-number label must read
+        # the bucket's own date, not date+1.
+        from dbt_charts.core.compile.compiler import compile
+
+        board_yaml = """
+id: test-board
+source: duckdb
+charts:
+  c1:
+    type: bar
+    x: week
+    y: value
+    query:
+      sql: SELECT '2024-01-01' AS week, 10 AS value
+rows:
+  - c1
+"""
+        result = compile(board_yaml)
+        assert result.board is not None, f"Compile failed: {result.errors}"
+        chart = list(result.board.charts.values())[0]
+        weekly_data = [
+            {"week": "2024-01-01", "value": 10},
+            {"week": "2024-01-08", "value": 20},
+            {"week": "2024-01-15", "value": 15},
+            {"week": "2024-01-22", "value": 25},
+            {"week": "2024-01-29", "value": 30},
+        ]
+        _rc = resolve(chart, weekly_data, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, weekly_data, width=400, height=200)
+        x_enc = spec["encoding"]["x"]
+        assert x_enc["type"] == "ordinal"
+        axis = x_enc.get("axis", {})
+        assert "labelExpr" in axis
+        assert "utcOffset" not in axis["labelExpr"]
+        assert axis.get("values") == [
+            "2024-01-01",
+            "2024-01-08",
+            "2024-01-15",
+            "2024-01-22",
+            "2024-01-29",
+        ]
+
+    def test_continuous_line_weekly_identity_label_shifts_sunday_anchored_tick(self):
+        # Sibling of the bar case above: a genuinely continuous temporal axis
+        # (line) gets ticks Vega computes itself at the Sunday-anchored
+        # `utcyearweek` grain, so the day-number label must shift them
+        # forward a day to read the represented Monday bucket. This must
+        # stay true even as the bar case above stays unshifted.
+        from dbt_charts.core.compile.compiler import compile
+
+        board_yaml = """
+id: test-board
+source: duckdb
+charts:
+  c1:
+    type: line
+    x: week
+    y: value
+    query:
+      sql: SELECT '2024-01-01' AS week, 10 AS value
+rows:
+  - c1
+"""
+        result = compile(board_yaml)
+        assert result.board is not None, f"Compile failed: {result.errors}"
+        chart = list(result.board.charts.values())[0]
+        weekly_data = [
+            {"week": "2024-01-01", "value": 10},
+            {"week": "2024-01-08", "value": 20},
+            {"week": "2024-01-15", "value": 15},
+            {"week": "2024-01-22", "value": 25},
+            {"week": "2024-01-29", "value": 30},
+        ]
+        _rc = resolve(chart, weekly_data, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, weekly_data, width=400, height=200)
+        x_enc = spec["encoding"]["x"]
+        assert x_enc["type"] == "temporal"
+        axis = x_enc.get("axis", {})
+        assert "labelExpr" in axis
+        assert "utcOffset('day', toDate(datum.value), 1)" in axis["labelExpr"]
+
     def test_no_smart_default_without_time_unit_on_nominal_data(self):
         """Non-temporal data: no time_unit resolved → no smart labelExpr."""
         from dbt_charts.core.compile.compiler import compile
@@ -604,7 +688,7 @@ class TestVlTimeUnit:
         assert vl_time_unit(grain) == f"utc{grain}"
 
     @pytest.mark.parametrize(
-        ("dft_unit", "expected_vl"),
+        ("raw_unit", "expected_vl"),
         [
             ("monthofyear", "month"),
             ("dayofweek", "day"),
@@ -614,9 +698,9 @@ class TestVlTimeUnit:
         ],
     )
     def test_time_part_units_pass_through_unchanged(
-        self, dft_unit: str, expected_vl: str
+        self, raw_unit: str, expected_vl: str
     ) -> None:
-        assert vl_time_unit(dft_unit) == expected_vl
+        assert vl_time_unit(raw_unit) == expected_vl
 
 
 class TestTemporalEscapeHatchEmitsUtcTimeUnit:

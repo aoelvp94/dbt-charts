@@ -2,7 +2,7 @@
 
 Covers:
   - AxisLabelStyle.tilt_increments — list[float] | None, min_length=1
-  - _pick_tilt(label, x_field, data, chart_width, label_usable_ratio) — fit-based picker
+  - _pick_tilt_for_widths(label, widths, usable_width) — fit-based picker
   - Theme default tilt_increments under axis_x.labels
 """
 
@@ -14,8 +14,9 @@ import pytest
 
 from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
 from dbt_charts.core.compile.resolve.style.axis_cascade import resolved_axis_style
+from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.render.chart.emitters._label_overlap import (
-    _pick_tilt as _pick_tilt_v2,
+    _pick_tilt_for_widths,
 )
 
 
@@ -26,7 +27,8 @@ def _pick_tilt_angle(
     chart_width: float,
     label_usable_ratio: float = 1.0,
 ) -> tuple[float, bool]:
-    """Thin adapter: run the tilt picker against the fully-merged axis_x.labels.
+    """Thin adapter: measure ``data``'s own widths and run the tilt picker
+    against the fully-merged axis_x.labels.
 
     charts.axis_x is authored-only (SkipInheritSlots) — resolved_axis_style()
     merges it onto charts.axis to get the complete, theme-cascaded axis state.
@@ -34,13 +36,12 @@ def _pick_tilt_angle(
     axis_x = resolved_axis_style(
         charts, "axis_x", "ordinal", chart_type="", label_authored=False
     )
-    return _pick_tilt_v2(
-        axis_x.labels,
-        x_field,
-        data,
-        chart_width,
-        label_usable_ratio,
-    )
+    label = axis_x.labels
+    values = list(dict.fromkeys(str(row.get(x_field, "")) for row in data[:100]))
+    values = [value for value in values if value]
+    measurer = get_font_measurer(label.font.family)
+    widths = [measurer.measure(value, label.font.size) for value in values]
+    return _pick_tilt_for_widths(label, widths, chart_width * label_usable_ratio)
 
 
 @pytest.fixture(autouse=True)
@@ -213,3 +214,39 @@ class TestPickTiltAngle:
         angle, fits = _pick_tilt_angle("x", [], charts, chart_width=1200)
         assert angle == 0
         assert fits is True
+
+
+class TestLadderReachability:
+    """Which rungs the picker can actually return, swept over every band.
+
+    The rotated footprint ``w*cos(t) + line_height*sin(t)`` only narrows on
+    labels wider than ``line_height * cot(t/2)``, so a rung is reachable for
+    long labels and unreachable for short ones — see ``_pick_tilt_for_widths``.
+    """
+
+    @staticmethod
+    def _angles_over_band_sweep(text: str) -> set[float]:
+        label = resolved_axis_style(
+            _resolved_charts(), "axis_x", "ordinal", chart_type="", label_authored=False
+        ).labels
+        width = get_font_measurer(label.font.family).measure(text, label.font.size)
+        # Two labels share the usable width, so band == usable_width / 2.
+        return {
+            _pick_tilt_for_widths(label, [width, width], band * 2)[0]
+            for band in [tenths / 10 for tenths in range(10, 3000)]
+        }
+
+    def test_long_label_reaches_every_rung(self):
+        """No rung is dead configuration: a label wide enough for tilting to
+        pay off is returned at every angle on the ladder."""
+        label_increments = _resolved_charts().axis_x.labels.tilt_increments
+        assert self._angles_over_band_sweep("Engineering") == set(label_increments)
+
+    def test_short_label_steps_flat_to_vertical(self):
+        """Tilting a label narrower than the line height widens its footprint,
+        so the intermediate rungs are correctly skipped — flat, then vertical."""
+        label_increments = _resolved_charts().axis_x.labels.tilt_increments
+        assert self._angles_over_band_sweep("Apr") == {
+            label_increments[0],
+            label_increments[-1],
+        }

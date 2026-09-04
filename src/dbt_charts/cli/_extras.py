@@ -130,7 +130,7 @@ def _build_extras_panel(
         "that are not installed:\n\n"
         + "\n".join(f"  • [cyan]{escape(p)}[/cyan]" for p in missing)
         + f"\n\nTo install manually:\n  [dim]{escape(pip_cmd)}[/dim]\n\n"
-        + f"Or reinstall Dataface with the {escape('[' + extra + ']')} extra:\n"
+        + f"Or reinstall dbt charts with the {escape('[' + extra + ']')} extra:\n"
         + f"  [dim]{escape(canonical_hint)}[/dim]",
         title=f"[yellow]Optional dependencies required for `{escape(extra)}`[/yellow]",
         expand=False,

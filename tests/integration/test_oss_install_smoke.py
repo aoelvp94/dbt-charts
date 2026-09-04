@@ -102,7 +102,7 @@ def _make_smoke_venv(wheel: Path, prefix: str, extras: str = "") -> Iterator[Pat
 @pytest.fixture(scope="module")
 def smoke_venv(built_dbt_charts_wheel: Path) -> Iterator[Path]:
     """Create a venv outside the repo, install the bare wheel, yield python."""
-    yield from _make_smoke_venv(built_dbt_charts_wheel, prefix="dft-oss-smoke-")
+    yield from _make_smoke_venv(built_dbt_charts_wheel, prefix="dct-oss-smoke-")
 
 
 def _run(
@@ -137,7 +137,7 @@ def _run(
 # --- CLI smoke ---------------------------------------------------------------
 
 
-def test_dft_help_and_version_in_clean_venv(smoke_venv: Path) -> None:
+def test_dct_help_and_version_in_clean_venv(smoke_venv: Path) -> None:
     """CLI loads end-to-end + version resolves via `importlib.metadata`."""
     help_result = _run(smoke_venv, "-m", "dbt_charts.cli.main", "--help")
     assert help_result.returncode == 0, help_result.stderr
@@ -156,7 +156,7 @@ def test_dft_help_and_version_in_clean_venv(smoke_venv: Path) -> None:
     assert re.match(r"^\d+\.\d+\.\d+([a-z]+\d+|\.dev\d+)?$", printed), printed
 
 
-def test_dft_render_smoke_in_clean_venv(smoke_venv: Path, tmp_path: Path) -> None:
+def test_dct_render_smoke_in_clean_venv(smoke_venv: Path, tmp_path: Path) -> None:
     """build → install → render an inline-CSV board → non-empty SVG."""
     work = tmp_path / "render"
     work.mkdir()
@@ -183,7 +183,7 @@ def test_dft_render_smoke_in_clean_venv(smoke_venv: Path, tmp_path: Path) -> Non
     assert output.exists() and output.stat().st_size > 0
 
 
-def test_dft_mcp_friendly_message_without_extras(smoke_venv: Path) -> None:
+def test_dct_mcp_friendly_message_without_extras(smoke_venv: Path) -> None:
     """`dct mcp serve` without the `[mcp]` extras prints a usable install hint.
 
     Without the `[mcp]` extras installed, `dct mcp serve` must:
@@ -206,7 +206,7 @@ def test_dft_mcp_friendly_message_without_extras(smoke_venv: Path) -> None:
         "dbt_charts.cli.main",
         "mcp",
         "serve",
-        env={"DCT_NO_AUTO_INSTALL": "1"},
+        env={"DCT_NO_AUTO_INSTALL": "1", "DCT_NO_WORKSPACE_GUARD": "1"},
         # `mcp serve` blocks past its gate; bound it so a regression fails
         # cleanly rather than hanging until the module-level pytest timeout.
         timeout=30,
@@ -341,7 +341,7 @@ def smoke_venv_with_extras(built_dbt_charts_wheel: Path) -> Iterator[Path]:
     """Like `smoke_venv`, but with every probed extra installed at once."""
     yield from _make_smoke_venv(
         built_dbt_charts_wheel,
-        prefix="dft-oss-smoke-extras-",
+        prefix="dct-oss-smoke-extras-",
         extras=",".join(EXTRA_PROBES),
     )
 

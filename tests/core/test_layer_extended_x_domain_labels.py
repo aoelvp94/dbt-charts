@@ -296,14 +296,21 @@ def test_label_crowding_is_measured_against_the_rendered_band_count() -> None:
     """The domain feeds ``resolve_axis_x_overlap`` too, not just the tick values.
 
     Crowding has to be judged against the bands that actually render. With 3
-    base months under a 40-month goal layer at 300px, measuring the base's own
-    3 labels says they fit flat; measuring the 40 that render says they do not.
-    Every other assertion in this file passes with the overlap half stripped —
-    the emitted spec is byte-identical — so without this one that half of the
-    fix is unpinned.
+    base months under a 400-month (33-year) goal layer at 300px, measuring the
+    base's own 3 labels says they fit flat at native month cadence; measuring
+    the 400 that render says nothing fits, even at the cadence ladder's
+    terminal `year` rung, so it tilts. Every other assertion in this file
+    passes with the overlap half stripped — the emitted spec is byte-identical
+    — so without this one that half of the fix is unpinned.
+
+    400 months (not a smaller count): the cadence ladder now loops all the
+    way to `year` when that fits — a narrower layer whose year cadence WOULD
+    fit flat no longer proves this test's point, since a wrongly-measured
+    3-label base also renders flat. 400 months keeps even `year` too dense
+    for 300px, so the tilt itself is still the signal.
     """
     base = [{"month": m, "revenue": 10.0 + i} for i, m in enumerate(_months(3))]
-    goal = [{"month": m, "goal": 20.0 + i} for i, m in enumerate(_months(40))]
+    goal = [{"month": m, "goal": 20.0 + i} for i, m in enumerate(_months(400))]
     chart = NBarChart(
         id="bar1",
         type="bar",

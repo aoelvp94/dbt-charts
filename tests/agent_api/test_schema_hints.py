@@ -17,7 +17,7 @@ def test_schema_hints_returns_typed_view_of_compile_constants() -> None:
     assert "select" in result.input_types
     assert "slider" in result.input_types
     # theme_names reflects user_facing_theme_names()
-    assert "stark" in result.theme_names
+    assert "clarity" in result.theme_names
     # Private/diagnostic-only themes must not leak into the LSP-facing view.
     assert not any(t.startswith("_") for t in result.theme_names)
     assert not any(t.startswith("diagnostics-") for t in result.theme_names)

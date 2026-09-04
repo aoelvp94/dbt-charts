@@ -92,6 +92,7 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.theme import TextStyle
     from dbt_charts.core.render.variables_layout import VariablesLayout
     from mdsvg.fonts import FontFace
+    from mdsvg.renderer import SVGRenderer
 
 from dbt_charts.core.compile.config import (
     get_chart_rendering,
@@ -130,12 +131,14 @@ from dbt_charts.core.compile.sizing import (
     item_grid_span,
     parse_dimension,
     resolve_cols_widths,
+    rows_item_width,
 )
 from dbt_charts.core.compile.template.jinja import resolve_jinja_template
 from dbt_charts.core.fonts import get_font_path
 from dbt_charts.core.numeric import aspect_ratio_height
 from dbt_charts.core.render.variables_layout import WRAP_EPSILON, lay_out_variables
 from dbt_charts.core.render.variables_resolve import resolve_controls
+from dbt_charts.core.text.case import apply_case
 
 # ============================================================================
 # HEIGHT PROVIDER PROTOCOL
@@ -398,7 +401,7 @@ MDSVG_STRUCTURAL_FIELDS: frozenset[str] = frozenset(
         # Promote to a theme token only if a theme needs a different ratio —
         # style.text.code.font.size is already the per-board absolute escape hatch.
         "code_font_scale",
-        # Inline code chip geometry — not in the Dataface theme yet; mdsvg owns
+        # Inline code chip geometry — not in the dbt charts theme yet; mdsvg owns
         # the defaults (3px padding, 3px radius). Add to the mapper when dct
         # exposes style.text.code.inline_padding / .inline_radius theme tokens.
         "inline_code_padding",
@@ -601,9 +604,9 @@ def compact_style_kwargs(
         ),
         "blockquote_font_decoration": _bq.font.decoration or "",
         "blockquote_font_case": _mdsvg_case(_bq.font.case, "blockquote"),
-        "table_border_color": _rs.chart_defaults.table.border.color,
+        "table_border_color": _rs.text.rule.color,
         "table_header_background": _table_header_bg,
-        "hr_color": _rs.chart_defaults.table.border.color,
+        "hr_color": _rs.text.rule.color,
         "text_align": text_align,
         # Top-align letterboxed markdown images (default xMidYMid centers them).
         "image_preserve_aspect_ratio": "xMidYMin meet",
@@ -616,7 +619,7 @@ def compact_style_kwargs(
         "heading_font_weight": effective_weight,
         "heading_line_height": float(_title_line_height),
         "bold_font_weight": font_weight_as_css(_bold.weight),
-        # Dataface opts in; mdsvg leaves it off for other consumers.
+        # dbt charts opts in; mdsvg leaves it off for other consumers.
         "avoid_runts": True,
     }
 
@@ -730,23 +733,28 @@ def get_title_height(
     if not title:
         return 0.0
 
-    from dbt_charts.core.compile.template.jinja import resolve_jinja_template
+    from dbt_charts.core.compile.resolve.style.typography import board_title_markdown
     from dbt_charts.core.font_measure import markdown_font_faces
     from mdsvg import measure as measure_markdown
 
     # Resolve any Jinja templates using variable defaults
     resolved_title = resolve_jinja_template(title, variable_values or {}, strict=False)
 
-    from dbt_charts.core.compile.resolve.style.typography import board_title_markdown
-
-    markdown_title, h1_size, heading_weight = board_title_markdown(
-        resolved_title, level=level, resolved_style=resolved_style
-    )
-
     # Measure the markdown to get actual dimensions (using compact style).
     # text_align is intentionally omitted: mdsvg measure() only computes
     # line-wrapped height, which is independent of horizontal alignment.
     _rs = resolved_style or resolve_style(get_theme_style())
+
+    # Apply the same case transform the renderer applies at the same width,
+    # so measure and draw see identical text and width — the two invariants
+    # that keep the reserved title box equal to the drawn title box.
+    _title_case = _rs.title.font.case
+    if _title_case is not None:
+        resolved_title = apply_case(resolved_title, _title_case)
+
+    markdown_title, h1_size, heading_weight = board_title_markdown(
+        resolved_title, level=level, resolved_style=resolved_style
+    )
     if prose:
         font_family = _rs.title.font.family
         assert font_family is not None, "style.title.font.family must be configured"
@@ -771,6 +779,88 @@ def get_title_height(
     )
 
     return size.height
+
+
+def title_renderer(
+    resolved_style: ResolvedStyle,
+    level: int,
+    prose: bool,
+    text_align: Literal["left", "center", "right"] = "left",
+) -> tuple[SVGRenderer, str]:
+    """The mdsvg renderer a board title is drawn with, and the family it resolves to.
+
+    One construction shared by every question asked about a title — what it looks
+    like, where its baseline lands, which part of its block is text — because they
+    have to be asked of the same renderer. Built separately they can disagree
+    about the face or the heading size, and the answers then describe a title
+    nobody drew.
+
+    ``font_family`` stays None for a non-prose title: mdsvg then inherits the
+    document family rather than being told one. The returned family is what that
+    inheritance resolves to, which is what gets measured.
+    """
+    from dbt_charts.core.font_measure import markdown_font_faces
+    from mdsvg.renderer import SVGRenderer
+
+    font_size, heading_weight = board_title_spec(
+        level=level, resolved_style=resolved_style
+    )
+    family = title_font_family(resolved_style, prose)
+    style = get_compact_style(
+        resolved_style,
+        text_align=text_align,
+        h1_size=font_size,
+        heading_font_weight=heading_weight,
+        font_family=family if prose else None,
+        # Title spacing is chrome: it must not grow when body prose is resized.
+        heading_margin_scale="chrome",
+    )
+    return SVGRenderer(style=style, fonts=markdown_font_faces(family, style)), family
+
+
+def title_baseline_offset(
+    resolved_style: ResolvedStyle, level: int, prose: bool
+) -> float:
+    """How far below a title block's top edge its first baseline sits.
+
+    Asked of the renderer that draws the title rather than derived from the block
+    height, because the two only stay in step by construction. Anything aligning
+    itself to a board title — the controls beside it in the title-inline band —
+    needs the number the title was actually drawn with.
+    """
+    # Level 1 is what gets asked, whatever the board's level: board_title_markdown
+    # always emits `# {title}`, and title_renderer has already baked the
+    # level-resolved size into the style's h1. Passing the board level here would
+    # read a different rung of the heading ramp than the title was drawn at —
+    # which past h6, where board_title_spec clamps and the ramp does not, is a
+    # different number.
+    return title_renderer(resolved_style, level, prose)[0].heading_baseline(1)
+
+
+def title_line_box(
+    block_height: float,
+    level: int,
+    resolved_style: ResolvedStyle,
+    prose: bool,
+) -> tuple[float, float]:
+    """The ``(top, height)`` of the text inside a title block of ``block_height``.
+
+    A heading block is a top margin, the line boxes, and a smaller bottom margin.
+    The margins are layout — the rhythm between the heading and what surrounds it
+    — and only the middle is text, which is what a selection mark should trace.
+
+    ``block_height`` must be the *measured* height, before
+    ``max(..., style.title.min_height)``: that clamp only ever pads the bottom, so
+    a clamped height would stretch the span below the text it describes.
+
+    The title text does not enter. ``board_title_spec`` sizes a board title from
+    its semantic level alone, so the span is the same whatever the title says.
+    """
+    # Level 1 for the same reason as `title_baseline_offset`: the title is drawn
+    # as an h1 whose size the renderer already carries.
+    return title_renderer(resolved_style, level, prose)[0].heading_line_box(
+        1, block_height
+    )
 
 
 # ============================================================================
@@ -969,29 +1059,24 @@ def should_use_title_inline_band(
 def compute_title_variables_inline_baseline_layout(
     title_h: float,
     vars_h: float,
+    title_baseline: float,
     label_font_size: float,
+    label_font_family: str,
     pad: float,
 ) -> tuple[float, float, float]:
     """Baseline-aligned layout for the title-inline band.
 
-    Returns ``(title_dy, vars_dy, band_h)`` — the y-translation each column
-    needs to land its first text baseline at the same shared baseline, plus
-    the total band height that results.
+    Returns ``(title_dy, vars_dy, band_h)`` — the y-translation each column needs
+    to land its first text baseline on the same shared baseline, plus the total
+    band height that results.
 
-    The ratios below are empirical, measured against the actual mdsvg /
-    foreignObject output for board titles at the default Inter weight:
-
-    - **Title baseline at 81.25% of title-block height.** mdsvg renders heading
-      text with a 1.3-line-height box plus its own block padding, putting the
-      first baseline at ``font_size * 1.3`` from the title-block top. Divided
-      by the block height (``font_size * 1.6`` for the default tier), that's
-      ``0.8125``. Pinned to the measured ratio so the rendered title and the
-      variable-label baseline land within sub-pixel of each other across font
-      tiers; do not "guess" with a rounded 0.85.
-    - **Label baseline ≈ container vertical center + 35% of label font size.**
-      Variable controls use ``align-items: center`` inside a ``container_height``
-      flex row; the centered label's baseline lands roughly half a label-em
-      below the container's vertical center.
+    Both baselines are derived, not measured-and-frozen. ``title_baseline`` comes
+    from the renderer that draws the title (``title_baseline_offset``), and the
+    label's comes from its own font: a control label is vertically centred in its
+    flex row, so its content box straddles the centre and the baseline falls half
+    an ascent above the middle and half a descent below — ``(ascent - descent)/2``
+    past the centre. A ratio fitted to one font at one size is wrong for every
+    other, which is what a band drifting out of alignment across font tiers was.
 
     Both columns are then shifted so the deeper baseline becomes the shared
     target, which guarantees neither column extends above the band's top edge.
@@ -1000,8 +1085,11 @@ def compute_title_variables_inline_baseline_layout(
         pad: Bottom padding below the band; comes from
             ``resolved_style.variables.title_inline_band_bottom_pad``.
     """
-    title_baseline = title_h * 0.8125
-    vars_baseline = vars_h / 2.0 + label_font_size * 0.35
+    from dbt_charts.core.font_measure import centered_baseline_offset
+
+    vars_baseline = vars_h / 2.0 + centered_baseline_offset(
+        label_font_family, label_font_size
+    )
     target = max(title_baseline, vars_baseline)
     title_dy = target - title_baseline
     vars_dy = target - vars_baseline
@@ -1024,7 +1112,7 @@ def compute_title_variables_inline_band_height(
     card_pad = float(board.resolved_style.frame.card_padding)
     inner = max(content_width - 2 * card_pad, 1.0)
     prose = board_is_prose(board.text)
-    title_w, vars_w = resolve_title_variables_inline_widths(
+    _, vars_w = resolve_title_variables_inline_widths(
         inner,
         board.resolved_style,
         board.visible_variables,
@@ -1035,10 +1123,14 @@ def compute_title_variables_inline_band_height(
     )
     if not board.title:
         return 0.0
+    # Measure at inner (the full band width) so the title's measured height
+    # matches the height _render_title_svg produces at that same width.
+    # The narrower title column (vars_w companion) would over-reserve when
+    # a case transform widens the title past its wrap threshold.
     title_h = max(
         get_title_height(
             board.title,
-            title_w,
+            inner,
             variable_values,
             level=board.level,
             resolved_style=board.resolved_style,
@@ -1052,8 +1144,14 @@ def compute_title_variables_inline_band_height(
         board.visible_variables, vars_w, variable_values, vs
     )
     assert vs.font.size is not None, "style.variables.font.size must be configured"
+    assert vs.font.family is not None, "style.variables.font.family must be configured"
     _title_dy, _vars_dy, band_h = compute_title_variables_inline_baseline_layout(
-        title_h, var_h, float(vs.font.size), float(vs.title_inline_band_bottom_pad)
+        title_h,
+        var_h,
+        title_baseline_offset(board.resolved_style, board.level, prose),
+        float(vs.font.size),
+        vs.font.family,
+        float(vs.title_inline_band_bottom_pad),
     )
     return band_h
 
@@ -1334,7 +1432,9 @@ def _measure_rows_layout_height(
             item,
             card_gap,
             gap,
-            available_width,
+            # Match _calculate_rows_dimensions: a width-pinned item's height is
+            # measured at its pinned width, not the full row.
+            rows_item_width(item, available_width),
             variable_values,
             height_provider,
             resolved_style=resolved_style,
@@ -1407,43 +1507,46 @@ def _measure_grid_layout_height(
     *,
     resolved_style: ResolvedStyle,
 ) -> float:
-    """Measure required height for a grid layout."""
-    columns = layout.columns if layout.columns is not None else DEFAULT_GRID_COLUMNS
-    max_row_end = 1
-    for item in layout.items:
-        item_row = item.row or 0
-        _, item_rows = item_grid_span(item)
-        max_row_end = max(max_row_end, item_row + item_rows)
+    """Measure required height for a grid layout.
 
+    Budget and demand must be the same number for a grid whose items state
+    their own ``row`` (what compile authors), so this measures the grid the way
+    ``_calculate_grid_dimensions`` lays it out: each row costs its tallest
+    item, and only rows that hold something cost anything. An auto-flow grid
+    assembled in-process is the one exception — assignment's placement pass
+    mutates ``item.row`` after this has already read it. A mean over items
+    instead of a per-row max under-asks for every grid whose items-per-row
+    varies — which, for a grid authored tile-by-tile, is the normal case.
+    """
+    columns = layout.columns if layout.columns is not None else DEFAULT_GRID_COLUMNS
     effective_gap = gap + card_gap
     total_gap_x = effective_gap * (columns - 1)
     col_width = (available_width - total_gap_x) / columns
 
-    total_item_height = 0.0
+    row_heights: dict[int, float] = {}
     for item in layout.items:
+        item_row = item.row or 0  # type-state: silent_fallback — unset row is row 0
+        item_col_span, item_row_span = item_grid_span(item)
         resolved = _resolve_layout_height(item, 0.0)
-        if resolved is not None:
-            total_item_height += resolved
-            continue
-        item_col_span, _ = item_grid_span(item)
-        item_width = grid_span_width(col_width, item_col_span, effective_gap)
-        total_item_height += _resolve_height(
-            item,
-            card_gap,
-            gap,
-            item_width,
-            variable_values,
-            height_provider,
-            resolved_style=resolved_style,
-        )
+        if resolved is None:
+            item_width = grid_span_width(col_width, item_col_span, effective_gap)
+            resolved = _resolve_height(
+                item,
+                card_gap,
+                gap,
+                item_width,
+                variable_values,
+                height_provider,
+                resolved_style=resolved_style,
+            )
+        height_per_row = resolved / item_row_span
+        for r in range(item_row, item_row + item_row_span):
+            if r not in row_heights or height_per_row > row_heights[r]:
+                row_heights[r] = height_per_row
 
-    avg_item_height = (
-        total_item_height / len(layout.items)
-        if layout.items
-        else resolved_style.chart_defaults.default_chart_height
-    )
-    total_gaps = effective_gap * (max_row_end - 1) if max_row_end > 1 else 0
-    return (max_row_end * avg_item_height) + total_gaps
+    if not row_heights:
+        return resolved_style.chart_defaults.default_chart_height
+    return sum(row_heights.values()) + effective_gap * (len(row_heights) - 1)
 
 
 def resolve_active_tab_index(
@@ -1685,7 +1788,8 @@ class BoardContentBox:
     truth for vertical stacking arithmetic — sizing pass and render pass alike.
     """
 
-    non_layout_height: float  # sum of elements + their inter-element gaps
+    content_top: float  # inset from the block's top edge to the first element
+    non_layout_height: float  # content_top + elements + their inter-element gaps
     gap_before_layout: float  # gap prepended to layout block (0 if no layout items or no content above)
 
 
@@ -1697,13 +1801,19 @@ def compute_board_content_box(
     inline_band_height: float,
     gap: float,
     has_layout_items: bool,
+    card_padding: float,
 ) -> BoardContentBox:
     """Single owner of vertical stacking arithmetic for board non-layout content.
 
     Gap rules:
-    - title→text: 0 gap.  The title is measured via mdsvg whose _render_heading
-      returns ``margin_top + text_height + margin_bottom``, so heading_margin_bottom_px
-      IS baked into title_height.  Adding a board gap on top double-counts it.
+    - content_top: ``card_padding`` before the first element, and 0 when there is
+      none.  A chart's ink sits ``card_padding`` inside its own box on all four
+      sides; prose is inset the same way so the two line up along the top of a
+      row.  Once per band, not per block — title→text is deliberately flush.
+    - title→text: 0 gap.  The title is measured via mdsvg, which draws a heading
+      opening its document as ``text_height + margin_bottom`` (the top margin
+      collapses), so heading_margin_bottom_px IS baked into title_height.
+      Adding a board gap on top double-counts it.
     - All other adjacent pairs (inline_band→text, text→variables, title→variables
       when no text, inline_band→variables): full ``gap``.
     - gap_before_layout: ``gap`` iff has_layout_items AND non_layout_height > 0.
@@ -1719,6 +1829,8 @@ def compute_board_content_box(
         gap: Board-level gap (used for all inter-element spacing except title→text).
         has_layout_items: True when the board has layout items following the
             non-layout elements.
+        card_padding: The inset a chart's ink carries inside its own card, and so
+            the inset this band's first element carries inside the block's.
 
     Returns:
         BoardContentBox with element heights and stacking totals.
@@ -1750,9 +1862,11 @@ def compute_board_content_box(
         has_prev = True
 
     gap_before_layout = gap if (has_layout_items and has_prev) else 0.0
+    content_top = card_padding if has_prev else 0.0
 
     return BoardContentBox(
-        non_layout_height=height,
+        content_top=content_top,
+        non_layout_height=height + content_top,
         gap_before_layout=gap_before_layout,
     )
 
@@ -1842,6 +1956,7 @@ def nested_board_sizing_context(
         inline_band_height=inline_band_h,
         gap=effective_child_gap,
         has_layout_items=bool(nested_board.layout.items),
+        card_padding=float(nrs.frame.card_padding),
     )
     non_layout_height = box.non_layout_height + box.gap_before_layout
 
@@ -1943,14 +2058,18 @@ def _calculate_rows_dimensions(
     content_heights: list[float] = []
     total_specified = 0.0
 
-    for item in items:
+    # An authored width: pins the item's slot (capped at the row) — heights
+    # must be resolved at the width the item will actually render at.
+    item_widths = [rows_item_width(item, available_width) for item in items]
+
+    for i, item in enumerate(items):
         authored_height = _resolve_layout_height(item, available_content_height)
         if authored_height is not None:
             content_height = _resolve_height(
                 item,
                 card_gap,
                 gap,
-                available_width,
+                item_widths[i],
                 variable_values,
                 height_provider,
                 resolved_style=resolved_style,
@@ -1967,7 +2086,7 @@ def _calculate_rows_dimensions(
                 item,
                 card_gap,
                 gap,
-                available_width,
+                item_widths[i],
                 variable_values,
                 height_provider,
                 resolved_style=resolved_style,
@@ -1994,8 +2113,10 @@ def _calculate_rows_dimensions(
     # Second pass: assign dimensions
     current_y = 0.0
     for i, item in enumerate(items):
-        item.width_fraction = 1.0
-        item.width = available_width
+        item.width = item_widths[i]
+        item.width_fraction = (
+            item.width / available_width if available_width > 0 else 1.0
+        )
         item.height = item_heights[i]
         item.x = 0.0
         item.y = current_y
@@ -2214,14 +2335,6 @@ def _calculate_grid_dimensions(
                     # Try next column
                     current_col += 1
 
-    # Calculate number of rows
-    max_row_end = 1
-    for item in items:
-        item_row = item.row or 0
-        _, item_rows = item_grid_span(item)
-        row_end = item_row + item_rows
-        max_row_end = max(max_row_end, row_end)
-
     # Calculate content-aware row height
     # Find max content height per row, then average
     row_content_heights: dict[int, float] = {}  # row_index -> max_height
@@ -2261,9 +2374,11 @@ def _calculate_grid_dimensions(
             current_max = row_content_heights.get(r, 0.0)
             row_content_heights[r] = max(current_max, height_per_row)
 
-    # Calculate total content height
+    # Calculate total content height. Gaps are charged per occupied row, not
+    # per row index: a grid whose items sit at rows 0 and 40 draws two rows
+    # with one gap between them, not 41 rows with 40 gaps.
     total_content_height = sum(row_content_heights.values())
-    total_gap_y = effective_gap * (max_row_end - 1)
+    total_gap_y = effective_gap * max(len(row_content_heights) - 1, 0)
 
     # Use content height if it fits, otherwise scale auto rows to fit.
     # Rows with user-specified heights are exempt from scaling (overflow).
@@ -2281,14 +2396,14 @@ def _calculate_grid_dimensions(
             for r, h in row_content_heights.items()
         }
 
-    # Calculate row Y positions
-    _default_h = resolved_style.chart_defaults.default_chart_height
+    # Calculate row Y positions. An unoccupied row index has no content to
+    # draw, so it advances nothing — charging it default_chart_height is what
+    # turned a grid with items at rows 0 and 40 into a 286-megapixel render.
     row_y_positions: dict[int, float] = {}
     current_y = 0.0
-    for r in range(max_row_end):
+    for r in sorted(row_heights):
         row_y_positions[r] = current_y
-        row_h = row_heights.get(r, _default_h)
-        current_y += row_h + effective_gap
+        current_y += row_heights[r] + effective_gap
 
     # Position each item
     for item in items:
@@ -2298,7 +2413,7 @@ def _calculate_grid_dimensions(
 
         # Calculate pixel position
         item.x = item_col * (col_width + effective_gap)
-        item.y = row_y_positions.get(item_row, 0.0)
+        item.y = row_y_positions[item_row]
 
         # Calculate pixel dimensions
         item.width = grid_span_width(col_width, item_col_span, effective_gap)
@@ -2306,7 +2421,7 @@ def _calculate_grid_dimensions(
         # Height spans multiple rows
         item_height = 0.0
         for r in range(item_row, item_row + item_row_span):
-            item_height += row_heights.get(r, _default_h)
+            item_height += row_heights[r]
         item_height += effective_gap * (item_row_span - 1)  # Internal gaps
         item.height = item_height
 

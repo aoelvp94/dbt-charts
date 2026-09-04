@@ -1,7 +1,7 @@
 """SVG utility functions for rendering.
 
 Stage: RENDER
-Purpose: Provide SVG-specific utilities for dataface rendering.
+Purpose: Provide SVG-specific utilities for dbt charts rendering.
 
 This module handles:
 - Grid pattern generation (loaded from template file)
@@ -74,7 +74,10 @@ def authored_kind_attr(kind: str) -> str:
 
 
 def selection_boxes(
-    outer_width: float, outer_height: float, padding: dict[str, float]
+    outer_width: float,
+    outer_height: float,
+    padding: dict[str, float],
+    mark: tuple[float, float] | None = None,
 ) -> str:
     """Two non-painting rects marking an authored block's selection boundary,
     in the tagged group's own coordinate frame. ``outer_width``/``outer_height``
@@ -95,14 +98,28 @@ def selection_boxes(
     the pointer target by the same padding turns the gutter between two
     adjacent blocks into dead space instead of belonging to whichever block
     happens to abut it.
+
+    ``mark`` is ``(y, height)`` for the outer rect alone, for a block that reserved
+    more height than its text fills — a heading, whose margin below the words is
+    rhythm rather than text. The inner rect deliberately does not follow it:
+    these are a mark and a hit target, and there is no reason the rhythm after a
+    heading should stop being clickable because the mark no longer covers it. On
+    such a block the "outer" rect is the shorter of the two on this axis; outer
+    names padding, not containment.
     """
     left, right = padding["left"], padding["right"]
     top, bottom = padding["top"], padding["bottom"]
     inner_width = max(outer_width - left - right, 0.0)
     inner_height = max(outer_height - top - bottom, 0.0)
+    # ``mark`` is measured in the content's own frame, which the inner box's
+    # padding offsets from this one. Adding ``top`` converts it rather than
+    # relying on prose padding staying vertically zero.
+    mark_y, mark_height = (
+        (mark[0] + top, mark[1]) if mark is not None else (0.0, outer_height)
+    )
     return (
-        f'<rect class="dbt-box-outer" x="0" y="0"'
-        f' width="{px(outer_width)}" height="{px(outer_height)}"'
+        f'<rect class="dbt-box-outer" x="0" y="{px(mark_y)}"'
+        f' width="{px(outer_width)}" height="{px(mark_height)}"'
         f' fill="transparent" pointer-events="none"/>'
         f'<rect class="dbt-box-inner" x="{px(left)}" y="{px(top)}"'
         f' width="{px(inner_width)}" height="{px(inner_height)}"'
@@ -111,7 +128,11 @@ def selection_boxes(
 
 
 def padded_authoring_content(
-    content: str, inner_width: float, inner_height: float, padding: dict[str, float]
+    content: str,
+    inner_width: float,
+    inner_height: float,
+    padding: dict[str, float],
+    mark: tuple[float, float] | None = None,
 ) -> str:
     """The selection-boundary rects plus ``content`` translated inward by
     ``padding`` — for a family whose content is rendered at its un-padded
@@ -125,7 +146,7 @@ def padded_authoring_content(
     outer_width = inner_width + left + right
     outer_height = inner_height + top + bottom
     return (
-        f"{selection_boxes(outer_width, outer_height, padding)}"
+        f"{selection_boxes(outer_width, outer_height, padding, mark)}"
         f'<g transform="translate({px(left)}, {px(top)})">{content}</g>'
     )
 
@@ -291,36 +312,18 @@ def render_title(
         SVG string for the title
     """
     from dbt_charts.core.compile.resolve.style.typography import board_title_markdown
-    from dbt_charts.core.font_measure import markdown_font_faces
     from dbt_charts.core.render.font_selection import record_painted_faces
-    from dbt_charts.core.render.sizing import get_compact_style, title_font_family
+    from dbt_charts.core.render.sizing import title_renderer
     from mdsvg import parse as parse_markdown
-    from mdsvg.renderer import SVGRenderer
 
-    markdown_title, h1_size, heading_weight = board_title_markdown(
+    markdown_title, _, _ = board_title_markdown(
         title, level=level, resolved_style=resolved_style
-    )
-
-    # `font_family` stays None for a non-prose title: mdsvg then inherits the
-    # document family rather than being told one. `font_path_family` is the
-    # family that inheritance resolves to, which is what gets measured — one
-    # answer, shared with the title-column measurement in `sizing`.
-    font_path_family = title_font_family(resolved_style, prose)
-    font_family = font_path_family if prose else None
-    style = get_compact_style(
-        resolved_style,
-        text_align=text_align,
-        h1_size=h1_size,
-        heading_font_weight=heading_weight,
-        font_family=font_family,
-        # Title spacing is chrome: it must not grow when body prose is resized.
-        heading_margin_scale="chrome",
     )
     # Driven through SVGRenderer rather than mdsvg's one-shot `render()` so the
     # faces this title reached can be read back off the renderer: a title carries
     # markdown, so it can be the only thing on a board that paints italic.
-    renderer = SVGRenderer(
-        style=style, fonts=markdown_font_faces(font_path_family, style)
+    renderer, font_path_family = title_renderer(
+        resolved_style, level, prose, text_align
     )
     svg = renderer.render(parse_markdown(markdown_title), width=width, padding=0.0)
     record_painted_faces(font_path_family, renderer.used_faces)

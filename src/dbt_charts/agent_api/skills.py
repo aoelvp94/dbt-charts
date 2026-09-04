@@ -56,12 +56,14 @@ _SKILLS_DIR = files("dbt_charts") / "ai" / "skills"
 # project's skills vary per tenant/branch, so re-read every call.
 PROJECT_SKILLS_DIRS: tuple[str, ...] = ("skills", ".claude/skills", ".agents/skills")
 
-# Cap on an authored (project- or user-written) skill body (chars) — mirrors
-# dbt_charts.ai.prompts.PROJECT_INSTRUCTIONS_MAX_CHARS. Skills are on-demand
-# (fetched via get_skill, not always-on like AGENTS.md), but an untrusted
-# authored skill body still shouldn't be able to blow out the model's context
-# in one tool call. Truncated with a visible notice, never silently dropped.
-AUTHORED_SKILL_BODY_MAX_CHARS = 6000
+# Cap on an authored (project- or user-written) skill body (chars). Guards
+# against an untrusted body flooding the model's context — via get_skill or the
+# bulk list_skills dump, which returns every authored body unfiltered.
+# Truncated with a visible notice, never silently dropped. Looser than
+# PROJECT_INSTRUCTIONS_MAX_CHARS on purpose: AGENTS.md is loaded every turn,
+# skills only when fetched, so bounding legitimate authored content is not the
+# goal here.
+AUTHORED_SKILL_BODY_MAX_CHARS = 10_000
 
 SkillKind = Literal["workflow", "pattern"]
 _VALID_KINDS: tuple[SkillKind, ...] = ("workflow", "pattern")
@@ -138,7 +140,7 @@ class Skill(BaseModel):
         ),
     )
 
-    @computed_field  # type: ignore[prop-decorator]
+    @computed_field  # type: ignore[prop-decorator]  # pydantic-documented computed_field/cached_property interaction
     @cached_property
     def has_examples(self) -> bool:
         return bool(self.examples)
@@ -236,7 +238,7 @@ class _ParsedFrontmatter(BaseModel):
 
 
 def _parse_skill_frontmatter(
-    raw: str, *, label: str, directory_name: str
+    raw: str, label: str, directory_name: str
 ) -> _ParsedFrontmatter:
     """Validate and parse a SKILL.md's frontmatter + body.
 
@@ -327,7 +329,7 @@ def _parse_skill_dir(directory: Traversable | Path) -> Skill:
 
 
 def _discover_project_skill_paths(
-    project: Project, *, skill_dirs: tuple[str, ...] = PROJECT_SKILLS_DIRS
+    project: Project, skill_dirs: tuple[str, ...] = PROJECT_SKILLS_DIRS
 ) -> list[str]:
     """Project-relative SKILL.md paths under every honored project skills
     location (``skill_dirs``, default ``PROJECT_SKILLS_DIRS``), sorted within
@@ -351,8 +353,8 @@ def _format_authored_skill_body(body: str, name: str, source: SkillSource) -> st
     ``dbt_charts.ai.prompts``: an authored skill is process/pattern guidance, not
     system policy, and cannot override the tool-use policy the model was given
     in its system prompt or grant the chatting user any capability they don't
-    already have. Capped like AGENTS.md, truncated with a visible notice rather
-    than silently dropped.
+    already have. Capped (AUTHORED_SKILL_BODY_MAX_CHARS), truncated with a visible
+    notice rather than silently dropped.
 
     ``source`` only picks the wording ("project" vs "user"); both are equally
     untrusted, and a user-authored body is not more privileged for having been
@@ -448,7 +450,6 @@ def _parse_extra_skill_file(project: Project, relpath: str) -> Skill:
 
 def _load_project_skills(
     project: Project,
-    *,
     skill_dirs: tuple[str, ...] = PROJECT_SKILLS_DIRS,
     extra_skill_files: tuple[str, ...] = (),
 ) -> tuple[dict[str, Skill], list[str]]:
@@ -470,7 +471,7 @@ def _load_project_skills(
     """
     skills: dict[str, Skill] = {}
     errors: list[str] = []
-    for relpath in _discover_project_skill_paths(project, skill_dirs=skill_dirs):
+    for relpath in _discover_project_skill_paths(project, skill_dirs):
         try:
             skill = _parse_project_skill(project, relpath)
         except ValueError as exc:
@@ -550,7 +551,6 @@ def _render_for_surface(skill: Skill, surface: SkillSurface) -> Skill:
 
 def _merged_skills(
     project: Project | None,
-    *,
     skill_dirs: tuple[str, ...] = PROJECT_SKILLS_DIRS,
     extra_skill_files: tuple[str, ...] = (),
     extra_skills: tuple[Skill, ...] = (),

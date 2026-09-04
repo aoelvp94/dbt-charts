@@ -51,16 +51,13 @@ _PROJECT_ISH_RE = re.compile(r"project", re.IGNORECASE)
 # sanctioned: the local/parameter is explicitly typed FilesystemProject, or
 # narrowed via isinstance immediately above. Ratchet — shrink, don't grow.
 ALLOWED: dict[tuple[str, int], str] = {
-    ("core/compile/config.py", 497): (
+    ("core/compile/config.py", 541): (
         "resolve_cache_boot(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/compile/normalize/queries.py", 369): (
-        "isinstance(base_dir.project, FilesystemProject)-narrowed just above"
-    ),
-    ("core/execute/adapters/adapter_registry.py", 148): (
+    ("core/execute/adapters/adapter_registry.py", 154): (
         "isinstance(project, FilesystemProject)-guarded data_dir computation"
     ),
-    ("core/execute/adapters/adapter_registry.py", 154): (
+    ("core/execute/adapters/adapter_registry.py", 160): (
         "isinstance(project, FilesystemProject)-guarded resolved_dbt_path computation"
     ),
     # dct serve is filesystem-only: create_server(project: FilesystemProject)
@@ -123,13 +120,13 @@ ALLOWED: dict[tuple[str, int], str] = {
         "agent_api/pack.py",
         459,
     ): "apply_proposal(project: FilesystemProject) — already FS-typed",
-    ("agent_api/_paths.py", 89): (
+    ("agent_api/_paths.py", 112): (
         "_relpath_for_fs_location: isinstance(project, FilesystemProject)-guarded"
     ),
-    ("agent_api/_paths.py", 144): (
+    ("agent_api/_paths.py", 167): (
         "resolve_board_or_error: isinstance(project, FilesystemProject)-guarded"
     ),
-    ("agent_api/project_session.py", 275): (
+    ("agent_api/project_session.py", 288): (
         'ProjectSession.charts_dir: cast("FilesystemProject", self.project)-narrowed'
     ),
     ("agent_api/serve.py", 78): (

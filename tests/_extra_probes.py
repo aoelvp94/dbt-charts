@@ -42,7 +42,6 @@ EXTRA_PROBES_EXCUSED: dict[str, str] = {
     "postgresql": "full dbt adapter + driver stack; install weight",
     "spark": "full dbt adapter + driver stack; install weight",
     "trino": "full dbt adapter + driver stack; install weight",
-    "metricflow": "pulls dbt-semantic-interfaces; install weight",
     "playground": "separate distribution, covered by playground.yml smoke-install",
     # fastapi/uvicorn are unconditional base dependencies (identical
     # versions declared both places) — the extra changes nothing an

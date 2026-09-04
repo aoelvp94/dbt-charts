@@ -1,6 +1,6 @@
-theme: editorial
+theme: clarity
 title: Neighbor monthly-bar dashboard — cadence ladder
-description: |
+notes: |
   Two neighbor monthly-bar charts (Revenue per Service / Services per Customer)
   at dashboard width, demonstrating flat non-tilted axes and aligned baselines.
   Expect: BOTH axes horizontal (no tilt), same quarter/year cadence with

@@ -1,5 +1,5 @@
 title: Table Emphasis
-description: 'Conditional formatting, background scales, colored text, and threshold
+notes: 'Conditional formatting, background scales, colored text, and threshold
   alerts. Design evaluation surface for table emphasis — heatmap fills, diverging
   palettes with auto-hinge, semantic text color, and the interaction between emphasis
   and row typing.
@@ -59,6 +59,12 @@ charts:
           scale:
             background:
               palette: dbt-seq-blue
+        population:
+          visible: false
+        poverty_rate:
+          visible: false
+        unemployment:
+          visible: false
   m1_seq_population:
     type: table
     query: us_states
@@ -73,10 +79,16 @@ charts:
           width: 22%
         population:
           label: Population
-          format: compact
+          format: number
           scale:
             background:
               palette: dbt-seq-green
+        median_income:
+          visible: false
+        poverty_rate:
+          visible: false
+        unemployment:
+          visible: false
   m1_seq_two_cols:
     type: table
     query: us_states
@@ -101,6 +113,10 @@ charts:
           scale:
             background:
               palette: dbt-seq-rust
+        population:
+          visible: false
+        unemployment:
+          visible: false
   m2_div_growth:
     type: table
     query: company_revenue
@@ -112,7 +128,7 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
@@ -123,6 +139,12 @@ charts:
         margin:
           label: Margin
           format: percent
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
   m2_div_asymmetric:
     type: table
     query: company_revenue
@@ -143,6 +165,14 @@ charts:
         margin:
           label: Margin
           format: percent
+        quarterly_revenue:
+          visible: false
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
   m2_div_symmetric:
     type: table
     query: company_revenue
@@ -163,6 +193,14 @@ charts:
         margin:
           label: Margin
           format: percent
+        quarterly_revenue:
+          visible: false
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
   m2_div_country_gdp:
     type: table
     query: growth_rates
@@ -214,13 +252,19 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
         margin:
           label: Margin
           format: percent
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
   m3_text_bold_negative:
     type: table
     query: company_revenue
@@ -239,13 +283,19 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
         margin:
           label: Margin
           format: percent
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
   m3_bg_vs_text:
     type: table
     query: company_revenue
@@ -267,6 +317,16 @@ charts:
         growth_rate:
           label: Text color
           format: percent
+        quarterly_revenue:
+          visible: false
+        margin:
+          visible: false
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
   m4_threshold_margin:
     type: table
     query: company_revenue
@@ -289,13 +349,19 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
         margin:
           label: Margin
           format: percent
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
   m4_threshold_growth:
     type: table
     query: company_revenue
@@ -318,6 +384,14 @@ charts:
         margin:
           label: Margin
           format: percent
+        quarterly_revenue:
+          visible: false
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
   m5_glyph_trend_arrows:
     type: table
     query: company_revenue
@@ -338,13 +412,19 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
         margin:
           label: Margin
           format: percent
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
   m5_glyph_warning_threshold:
     type: table
     query: company_revenue
@@ -366,6 +446,14 @@ charts:
         margin:
           label: Margin
           format: percent
+        quarterly_revenue:
+          visible: false
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
   m5_glyph_static_dot:
     type: table
     query: company_revenue
@@ -377,12 +465,20 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
           glyph: ●
           glyph_color: '#64748b'
         growth_rate:
           label: Growth
           format: percent
+        margin:
+          visible: false
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
   m6_scale_with_total:
     type: table
     query: company_revenue_total
@@ -394,7 +490,7 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
           scale:
             background:
               palette: dbt-seq-purple
@@ -433,7 +529,7 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent

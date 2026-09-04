@@ -264,7 +264,7 @@ def propose_pack(
 def _build_board_dict(dashboard: ProposedDashboard) -> dict[str, Any]:
     """Build a minimal valid board dict from a ProposedDashboard.
 
-    Sparse + valid + no TODO placeholders. Emits title + description + text only.
+    Sparse + valid + no TODO placeholders. Emits title + notes + text only.
     Queries are intentionally omitted — the user fills those in after review.
     A ``text:`` field is required because the compiler rejects boards with no
     layout type and no text content.
@@ -275,7 +275,7 @@ def _build_board_dict(dashboard: ProposedDashboard) -> dict[str, Any]:
     """
     board: dict[str, Any] = {
         "title": dashboard.title,
-        "description": dashboard.purpose,
+        "notes": dashboard.purpose,
         "text": (
             f"Dashboard for {dashboard.primary_entity}. Add queries and charts here."
         ),
@@ -306,7 +306,7 @@ def _build_index_dict(
     dash_list = "\n".join(lines)
     return {
         "title": folder_name.replace("-", " ").title(),
-        "description": f"Dashboard index for the {folder_name} pack folder.",
+        "notes": f"Dashboard index for the {folder_name} pack folder.",
         "text": f"## Dashboards\n\n{dash_list}\n",
     }
 
@@ -322,7 +322,7 @@ def _write_board(path: Path, board_dict: dict[str, Any]) -> None:
     )
 
 
-def _require_bare_filename(value: str, *, label: str) -> None:
+def _require_bare_filename(value: str, label: str) -> None:
     """Reject absolute paths, separators, and empty path components."""
     path = Path(value)
     if path.is_absolute() or path.name != value or value in {"", ".", ".."}:
@@ -377,7 +377,7 @@ def _validate_scaffold_targets(
     for partial_filename in proposal.partials:
         if not partial_filename.startswith("_"):
             partial_filename = f"_{partial_filename}"
-        _require_bare_filename(partial_filename, label="partial filename")
+        _require_bare_filename(partial_filename, "partial filename")
         partial_path, rel = _charts_target(
             project_dir,
             CHARTS_SUBDIR,
@@ -391,7 +391,7 @@ def _validate_scaffold_targets(
         _charts_target(project_dir, folder.path, label="folder path")
         if folder.landing != "index.yml":
             raise ValueError(f"folder landing must be index.yml: {folder.landing!r}")
-        _require_bare_filename(folder.landing, label="folder landing")
+        _require_bare_filename(folder.landing, "folder landing")
         landing_path, rel_landing = _charts_target(
             project_dir,
             folder.path,
@@ -401,7 +401,7 @@ def _validate_scaffold_targets(
         landing_targets.append((folder.path, landing_path, rel_landing))
 
         for dashboard in folder.dashboards:
-            _require_bare_filename(dashboard.name, label="dashboard name")
+            _require_bare_filename(dashboard.name, "dashboard name")
             dash_path, rel_dash = _charts_target(
                 project_dir,
                 folder.path,

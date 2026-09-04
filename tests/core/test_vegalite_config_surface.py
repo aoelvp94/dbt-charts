@@ -1,7 +1,7 @@
 """Tests for the hand-owned VegaLiteConfig surface contract.
 
 The VegaLiteConfig model must explicitly cover every Vega-Lite config field
-that Dataface ships through its built-in themes. style_to_vega_lite()
+that dbt charts ships through its built-in themes. style_to_vega_lite()
 validates its output against VegaLiteConfig, so a missing field on a shipped
 theme will surface here as a validation error.
 """
@@ -115,7 +115,7 @@ def test_vegalite_config_chart_mark_keys_rejected(key: str) -> None:
 
     style_to_vega_lite() never writes config.{bar,line,area,arc,point};
     mark properties go via spec.mark, built per-family in the emitters.
-    config.geoshape and config.image have no Dataface style equivalent.
+    config.geoshape and config.image have no dbt charts style equivalent.
     Generic marks (circle/square/tick/rule/trail/rect/path/shape/symbol/text)
     ARE populated and remain in VegaLiteConfig.
     """

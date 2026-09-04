@@ -28,7 +28,7 @@ def test_fanout_query_warns_but_still_returns_rows() -> None:
     )
     assert result.success is True  # not blocked
     assert result.data == [{"n": 5}]
-    assert any(d["code"] == "WARN-FANOUT-RISK" for d in result.diagnostics)
+    assert any(d.code == "WARN-FANOUT-RISK" for d in result.diagnostics)
 
 
 def test_clean_query_has_no_diagnostics() -> None:
@@ -50,9 +50,9 @@ def test_diagnostics_attached_on_execution_error() -> None:
         adapter_registry=registry,
     )
     assert result.success is False
-    assert result.error == "no such column: foo"
+    assert result.errors == ["no such column: foo"]
     # Structural diagnostics still surface even when execution failed.
-    assert any(d["code"] == "WARN-FANOUT-RISK" for d in result.diagnostics)
+    assert any(d.code == "WARN-FANOUT-RISK" for d in result.diagnostics)
 
 
 def test_validator_failure_degrades_gracefully(monkeypatch) -> None:

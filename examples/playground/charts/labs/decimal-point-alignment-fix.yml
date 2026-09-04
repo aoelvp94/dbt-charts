@@ -1,11 +1,11 @@
 title: "Decimal-point alignment: axis ticks + table column (PR #7426)"
-description: >
+notes: >
   A ladder/column mixing whole and half-step values trims to strings of
   different length ("1", "1.5", "2", "2.5"). Under text-anchor:end this used
   to right-align on the last character, so "2"'s digit landed under the "5"
   of "2.5" instead of its own "2". decimal_pad_table (baked at resolve)
   fixes both the bar chart's y-axis ticks and the table's score column.
-extends: editorial
+extends: clarity
 rows:
   - cols: [mixed_ladder_bar]
   - cols: [mixed_decimal_table]

@@ -4,15 +4,20 @@ bucketed (UTC-midnight) temporal x-axis.
 
 Proves the full seam -- compile() -> render() -> RenderResult.warnings --
 not a hand-built WarningContext. This is also the regression pin for the
-underlying bug: an authored ``timeFormat()`` label expression on a bucketed
-axis renders a tick one unit early under a negative-offset host TZ (e.g.
-``Apr 2024`` -> ``Mar 2024`` under America/Los_Angeles) because Vega-Lite's
-bucketed ``timeUnit`` transform produces UTC-midnight ``Date`` values but
-``timeFormat`` (unlike ``utcFormat``) formats them in the render host's local
-time zone. Dataface does not rewrite the authored expression -- rewriting
+underlying mechanism: Vega-Lite's bucketed ``timeUnit`` transform produces
+UTC-midnight ``Date`` values, but ``timeFormat`` (unlike ``utcFormat``) is a
+local-time accessor -- it reads them in whatever zone the rendering process
+is in. dbt charts does not rewrite the authored expression -- rewriting
 arbitrary authored code is exactly the hidden-mutation the render layer's
-no-magic policy forbids -- so the warning is the whole fix; this test only
-proves the warning fires, not that the render becomes TZ-invariant.
+no-magic policy forbids -- so the warning is the whole fix for the authoring
+mistake. It is not a fix for host-dependent drift: that half is now handled
+one layer down, by every composition root pinning the render process to
+TZ=UTC before it renders (``dbt_charts._render_tz.pin_vl_convert_tz_utc``),
+so this test (which renders inside the pinned pytest session) can no longer
+observe the old "reads a tick one bucket early on a negative-offset machine"
+symptom directly -- see
+``test_authored_label_expr_local_time_pins_current_behavior.py`` for that,
+proved against raw, unpinned vl-convert instead.
 """
 
 from __future__ import annotations

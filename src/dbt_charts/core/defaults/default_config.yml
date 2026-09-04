@@ -1,4 +1,4 @@
-# Default Dataface Configuration
+# Default dbt charts Configuration
 # ==============================
 #
 # STRUCTURE:
@@ -7,7 +7,7 @@
 # All visual/authorable config (style, theme, board layout) belongs in the
 # Board cascade via charts/meta.yaml — NOT here. A stray style:/theme: key
 # in dbt_charts.yml raises a ValidationError pointing at charts/meta.yaml.
-# See: themes/stark.yaml for the structural root style; themes/editorial.yaml
+# See: themes/stark.yaml for the structural root style; themes/clarity.yaml
 # is the shipped default.
 
 
@@ -41,7 +41,7 @@ vega:
 # field, nearest scope wins). There is no separate backend switch: the store is
 # provisioned lazily when any resolved query policy is enabled. Omitting `path`
 # = ephemeral in-memory cache auto-provisioned by the engine; setting it
-# (`cache: {path: .dft-cache.duckdb}` in dbt_charts.yml) selects a persistent
+# (`cache: {path: .dct-cache.duckdb}` in dbt_charts.yml) selects a persistent
 # cache file, created if absent.
 #
 # Written as a block, not the `cache: 24h` scalar every other scope prefers,
@@ -80,6 +80,17 @@ execution:
   # runaway fan-out when a wildcard accidentally matches thousands of files.
   # Override in dbt_charts.yml under execution.max_glob_file_count.
   max_glob_file_count: 1000
+  # Hard cap on table entries in a single files: map — bounds one source's
+  # worth of fan-out. Deliberately generous, not a typical-project quota.
+  # Override in dbt_charts.yml under execution.file_source_max_tables.
+  file_source_max_tables: 500
+  # Safety ceiling on a single file-source relation's estimated materialized
+  # byte size (5 GB). Parquet file sizes are multiplied by a fixed
+  # materialization multiplier (file_source_materializer.py) before
+  # comparing. Deliberately generous — runaway-relation protection, not a
+  # tight per-file quota. Override in dbt_charts.yml under
+  # execution.file_source_max_bytes.
+  file_source_max_bytes: 5000000000
   # Safety ceiling on rows returned by a single query. Exceeding it truncates
   # the result (with a warning), it never fails the query. Override in
   # dbt_charts.yml under execution.max_rows.
@@ -125,6 +136,12 @@ chart_rendering:
   axis:
     label_gap_spaces: 1
     label_gap_spaces_numeric: 2
+    # Absolute pixels, deliberately not a fraction of plot width — a proportional
+    # rule can't tell apart "60 monthly points at year cadence, 45px apart on a
+    # 282px card" (correct to leave flat) from "...180px apart on a 1128px card"
+    # (correct to reject as too sparse): both are 19.9% of usable width, opposite
+    # correct answers.
+    sparse_ceiling_px: 90.0
   kpi:
     # Spacing between value baseline and the title block. Title and support
     # form a fixed 3-line block at one consistent rhythm — see
@@ -181,6 +198,33 @@ chart_rendering:
     # lab — retune by re-running that calibration, not casually.
     min_width: 1.5
     max_width: 4.0
+  point:
+    # Line-chart point companion (compile/resolve/adaptive_stroke.py
+    # bake_point_companions). diameter_ratio: point diameter as a multiple of
+    # the resolved line stroke -- diameter = ratio * stroke, and size (the
+    # authored/emitted VL area unit) = diameter**2, NOT pi*r**2: measured
+    # directly off the rendered mark path radius, the pi*r**2 reading is
+    # wrong here. Calibrated 2026-08-26 against a ratio x density sweep: 1.0
+    # hides inside the stroke's round cap; 1.3 self-extinguishes by n=50;
+    # 1.6-2.0 reads clearly at low density; 2.0 beads into a caterpillar by
+    # n=140. 1.7 chosen for legibility over the density formula's own
+    # pi*stroke**2 (1.772x) -- the render cannot tell them apart.
+    diameter_ratio: 1.7
+    # Points switch on once adjacent rendered points are at least ~18px
+    # apart -- below that the dots bead into a caterpillar instead of
+    # reading as discrete observations. Expressed as px-per-point (chart
+    # width / distinct x count -- the same density signal adaptive_stroke
+    # already computes) because that is the signal resolve can see at
+    # compile time, before Vega-Lite lays out the axis. Measured 2026-08-26
+    # by rendering a line chart at a fixed 700px card width across N=8..140
+    # and reading actual point x-positions out of the SVG: rendered spacing
+    # runs narrower than px-per-point (the axis gutter eats part of the
+    # card width, and spacing divides by N-1 gaps where px-per-point divides
+    # by N), converging to a ~0.89x ratio at higher N. The measured 18px
+    # spacing crossing landed between N=31 (20.8px, px_per_point=22.58) and
+    # N=32 (17.9px, px_per_point=21.88) on that board -- 22.5 sits in that
+    # gap. Retune by re-running the sweep, not casually.
+    min_px_per_point: 22.5
   pie:
     # Wedges with share at or below this value get no direct label — the wedge
     # still renders, hover tooltip carries the value. 8% is the observed danger
@@ -218,14 +262,135 @@ chart_rendering:
     # apply_grouped_bar_spacing on the outer categorical axis scale.
     grouped_bar_padding_inner: 0.2
     grouped_bar_padding_outer: 0.2
-    # Estimated legend-row and title+padding chrome height, used to decide
-    # whether a stacked bar's legend must yield to the plot (see
-    # _stack_legend_should_yield in compile/resolve/chart/bar.py). Vega-Lite divides
-    # a card's total height between the legend and the plot; past some entry
-    # count the legend's demand leaves nothing for the marks to draw into
-    # (ERR-CHART-PAINTED-NO-MARKS). Row count divides entries across the
-    # legend's compact_columns, since the legend that actually renders at the
-    # tiny width tier is multi-column.
+    # Height a single-row (`row`) top legend costs against the plot-height
+    # floor -- bar-only; see ChartRenderingConfig.BarConfig's field comment
+    # in compile/models/config.py.
+    plot_height_floor_row_legend_total_px: 31.0
+    hover_band_trigger_fraction: 0.02
+    hover_band_extend_fraction: 0.05
+    # Vertical room one value label needs inside its bar segment, as a multiple
+    # of the label font size. 1.15: the glyph box plus enough air that a label
+    # kept at the threshold still reads as inside its band rather than welded to
+    # the segment boundary. The fit test that uses it is deliberately
+    # conservative (it bounds the segment against the whole slot height, not the
+    # smaller plot rectangle), so this only ever governs labels that provably
+    # cannot fit.
+    label_fit_line_height_multiplier: 1.15
+    # Same convention as chart_rendering.axis.label_gap_spaces, applied to the
+    # horizontal stacked-bar top rail's own adjacent-label collision check.
+    top_rail_label_gap_spaces: 1
+  plot_height_floor:
+    # Protect-the-plot floor -- see ChartRenderingConfig.PlotHeightFloorConfig's
+    # field comments in compile/models/config.py for the sweep this was
+    # calibrated against and why each constant has the value it does. Shared
+    # by every cartesian family that estimates a plot-height floor (a
+    # candidate legend's own height is passed in by the caller, not read
+    # here).
+    ratio: 0.30
+    irreducible_height_px: 52.0
+    axis_titles_height_px: 21.0
+    subtitle_height_px: 14.0
+    # Marginal cost of one wrapped compact-legend row, for use alongside the
+    # three fixed-chrome fields above -- NOT the same number as
+    # chart_rendering.legend.row_height_px (16.0), which is that legend's
+    # per-row cost inside its own *total*-footprint-at-collapse calculation
+    # (legend_wrap_required_height_px, chrome_height_px: 47.0 included).
+    # Summing this floor's own irreducible_height_px/axis_titles_height_px
+    # with that total double-counts the non-legend chrome baked into its
+    # 47.0px term. This value is the number the retired
+    # plot_height_floor_compact_legend_row_px constant carried (measured as
+    # (baseline plot height minus legend-off plot height) / row count, on the
+    # same grouped-bar sweep as the fields above) -- restored here rather than
+    # re-derived, since collapsing the two into one calculation was the bug.
+    compact_legend_row_px: 21.0
+  type_inference:
+    # Maximum ordinal bucket count before treating temporal data as continuous.
+    # An ordinal bar chart becomes an indistinguishable comb of gridlines well
+    # before decades of buckets pile up. 60 buckets (5 years of monthly ticks)
+    # is the point where individual bars stop being resolvable at typical chart
+    # widths — past it, fall back to a continuous temporal scale and let
+    # Vega-Lite pick its own sparse "nice" ticks. Also the floor for the
+    # fine-grain scaffold budget: an auto-detected day/week grain keeps its
+    # band scale only while the empty buckets gap-fill would synthesize stay
+    # within max(distinct buckets, this value).
+    max_ordinal_buckets: 60
+  frame:
+    # Vertical gap between the page footer text and the hairline rule above it.
+    # Used by both the height-reservation math and the rule-position math so
+    # the two never drift.
+    footer_rule_gap_px: 2
+    # Horizontal gap between footer-baseline timestamp and footer attribution
+    # text.
+    footer_timestamp_gap_px: 12
+  support_table:
+    # Vertical gap between divider rule and first row of the attached
+    # support table strip.
+    divider_gap: 4.0
+    # For temporal/quantitative x axes with more than this many ticks,
+    # sample every Nth column so the header row stays legible.
+    chart_support_table_max_x_ticks: 40
+    # Protect-the-plot floor for the column block (compile/resolve/chart/
+    # plot_width_floor.py). Breaching it raises rather than warns -- see
+    # ChartRenderingConfig.SupportTableConfig's own comment for why.
+    plot_width_floor_ratio: 0.30
+    # Warns when the column block alone already claims a large share of
+    # the pre-axis-chrome footprint it shares with the plot -- well before
+    # the hard floor above would raise. Calibrated against a stacked-bar +
+    # per_series + Total render sweep so a WARN window exists between a
+    # clean render and the hard floor, not a razor's edge between them.
+    column_block_share_warn_ratio: 0.4
+  gradient:
+    # Nice-tick target count for a data-derived gradient legend domain
+    # (heatmap's themed color scale — geoshape never reaches this, since
+    # its domain is read back client-side), matching the example in
+    # nice_tick_values's own docstring. Axis ticks don't hardcode a
+    # convention (ay.ticks.count is author-set, default None = no baked
+    # ticks) — this constant is specific to the gradient-legend seam.
+    nice_tick_count: 6
+  legend:
+    # Fixed chrome around each entry in a single-row top legend: the swatch
+    # box and the gap before the next entry. Matches the tooltip legend's own
+    # swatch.size (10.0, see style.tooltip.swatch in the theme). Deliberately
+    # NOT derived from mark size or entry count — a swatch stays legible-sized
+    # even when the marks it names are countless and tiny.
+    # The entry's label text itself is never estimated with a constant; it is
+    # measured against the real resolved label font (legend_row_fits).
+    row_swatch_width_px: 10.0
+    row_entry_gap_px: 16.0
+    # Fixed horizontal chrome a single-row top legend's own left edge loses
+    # before it can begin (legend_row_fits' width bound) -- Vega-Lite's
+    # autosize:fit anchors a top legend to the plot's own local origin, not
+    # the card's left edge, so a real left-side axis eats directly into the
+    # row's budget. min_reserve_px is the near-universal floor: every family
+    # reached by the top-legend fit rule defaults its quantitative measure
+    # axis to the RIGHT, so ordinarily nothing axis-driven sits to the
+    # legend's left -- measured directly on a plain vertical bar (no left
+    # axis content at all): root-frame offset 18px, rounded up for safety.
+    # dimension_axis_reserve_chrome_px is added on top of a horizontal bar's
+    # own measured dimension-label width (estimate_left_axis_reserve_px) --
+    # the one shape that puts a real, content-driven axis on the left (its
+    # dimension field becomes Vega-Lite's y-channel). Measured directly: a
+    # horizontal bar with 4 month-name category labels (widest label ~22.3px
+    # at the legend's own font) reserved 65px total -- 65 - 22.3 ≈ 43px of
+    # chrome beyond the label text itself (tick length, label offset).
+    #
+    # This fixes a real defect: a compile-time "fits" claim that ignored
+    # this reserve entirely let a single-row top legend hard-clip against
+    # the card edge at exactly the rung the fit rule exists to get right.
+    min_reserve_px: 20.0
+    dimension_axis_reserve_chrome_px: 43.0
+    # Calibrated estimate of one wrapped legend row's height (label line
+    # height plus row padding) and the fixed title/padding chrome above the
+    # rows -- the legend's *total* footprint at collapse
+    # (legend_wrap_required_height_px), used by bar.py's own
+    # stacked-legend-yield classifier (_stack_legend_should_yield), where
+    # nothing else is subtracted alongside it. The plot-height floor's own
+    # compact-legend charge and the fallback ladder's rung-2 check
+    # (legend_wrap_fits_height_budget) want the marginal per-row cost
+    # instead -- chart_rendering.plot_height_floor.compact_legend_row_px,
+    # not this pair -- since both already charge their own fixed chrome
+    # separately and summing this pair's chrome_height_px on top double-
+    # counts it.
     #
     # Calibrated by binary-searching the true collapse height directly (available
     # card height, independent of the width-derived aspect-ratio estimate — a
@@ -237,52 +402,9 @@ chart_rendering:
     # legend is top/compact) and against a 253-case sweep (widths 150-380px,
     # series 3-25) with zero false negatives — every real collapse the old
     # 18.5/20.0 constants missed (13-14 series at width <= 232px, 15-18 at
-    # 250-282px) is now caught. A card's own title/subtitle chrome (drawn inside
-    # the same Vega-Lite height budget) further tightens this in a titled chart;
-    # left unaccounted for here — see the task's Decision section.
-    stack_legend_row_height_px: 16.0
-    stack_legend_chrome_height_px: 47.0
-    hover_band_trigger_fraction: 0.02
-    hover_band_extend_fraction: 0.05
-    # Vertical room one value label needs inside its bar segment, as a multiple
-    # of the label font size. 1.15: the glyph box plus enough air that a label
-    # kept at the threshold still reads as inside its band rather than welded to
-    # the segment boundary. The fit test that uses it is deliberately
-    # conservative (it bounds the segment against the whole slot height, not the
-    # smaller plot rectangle), so this only ever governs labels that provably
-    # cannot fit.
-    label_fit_line_height_multiplier: 1.15
-  type_inference:
-    # Maximum ordinal bucket count before treating temporal data as continuous.
-    # An ordinal bar chart becomes an indistinguishable comb of gridlines well
-    # before decades of buckets pile up. 60 buckets (5 years of monthly ticks)
-    # is the point where individual bars stop being resolvable at typical chart
-    # widths — past it, fall back to a continuous temporal scale and let
-    # Vega-Lite pick its own sparse "nice" ticks.
-    max_ordinal_buckets: 60
-  frame:
-    # Vertical gap between the page footer text and the hairline rule above it.
-    # Used by both the height-reservation math and the rule-position math so
-    # the two never drift.
-    footer_rule_gap_px: 2
-    # Horizontal gap between footer-baseline timestamp and footer attribution
-    # text.
-    footer_timestamp_gap_px: 12
-  data_table:
-    # Vertical gap between divider rule and first row of the attached data
-    # table strip.
-    divider_gap: 4.0
-    # For temporal/quantitative x axes with more than this many ticks,
-    # sample every Nth column so the header row stays legible.
-    chart_data_table_max_x_ticks: 40
-  gradient:
-    # Nice-tick target count for a data-derived gradient legend domain
-    # (heatmap's themed color scale — geoshape never reaches this, since
-    # its domain is read back client-side), matching the example in
-    # nice_tick_values's own docstring. Axis ticks don't hardcode a
-    # convention (ay.ticks.count is author-set, default None = no baked
-    # ticks) — this constant is specific to the gradient-legend seam.
-    nice_tick_count: 6
+    # 250-282px) is now caught.
+    row_height_px: 16.0
+    chrome_height_px: 47.0
 
 
 # ============================================================================

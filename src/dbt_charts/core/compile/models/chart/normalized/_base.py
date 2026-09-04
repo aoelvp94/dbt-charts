@@ -3,7 +3,7 @@
 Base-class tree (shallow):
   _BaseChartFields
       _SharedChartFields        (+ title/subtitle)
-          _CartesianChartFields (+ x/y/color/sort/data_table/…)
+          _CartesianChartFields (+ x/y/color/sort/support_table/…)
           _GeoChartFields       (+ geo/projection/basemap/…)
 
 Fields are declared ONCE on the appropriate base and never re-declared on
@@ -13,14 +13,14 @@ family models. extra="forbid" on the root propagates to all subclasses.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.chart.authored import (
     BasemapConfig,
-    ChartDataTable,
     ChartSort,
+    ChartSupportTable,
     FieldConditionalFormatting,
     MultiplesConfig,
 )
@@ -32,7 +32,7 @@ from dbt_charts.core.compile.models.vega_lite.contracts import Projection
 class _BaseChartFields(BaseModel):
     """Universal fields present on every normalized chart family.
 
-    Mirrors authored._BaseChartFields: description, link, and
+    Mirrors authored._BaseChartFields: notes, link, and
     conditional_formatting belong here — declared once, never re-declared
     on any family model.
     """
@@ -70,13 +70,15 @@ class _BaseChartFields(BaseModel):
         default=False,
         description="True when query is defined inline; False for named reference.",
     )
-    description: str = Field(
+    notes: str = Field(
         default="",
-        description="Human-readable description for AI search and docs.",
+        description="Prose summary of what this chart shows, carried onto the rendered chart for tools to surface.",
     )
-    link: str | None = Field(
+    # False is the authored per-chart auto_link opt-out; resolve clears it to
+    # None at the resolved boundary, so ResolvedChart.link stays str | None.
+    link: str | Literal[False] | None = Field(
         default=None,
-        description="Click-through URL template.",
+        description="Click-through URL template, or false to stay unlinked.",
     )
     conditional_formatting: dict[str, FieldConditionalFormatting] | None = Field(
         default=None,
@@ -123,7 +125,7 @@ class _CartesianChartFields(_SharedChartFields):
         default=None,
         description="Small-multiples partition (canonical form); None = single chart.",
     )
-    data_table: ChartDataTable | None = Field(
+    support_table: ChartSupportTable | None = Field(
         default=None,
         description="Mini data-grid attached to the chart.",
     )
@@ -141,7 +143,8 @@ class _CartesianChartFields(_SharedChartFields):
         default=None, description="Maximum height ceiling."
     )
     format: str | FormatConfig | None = Field(
-        default=None, description="Number format (D3 spec, preset, or FormatConfig)."
+        default=None,
+        description="How the number is written: a D3 spec, a preset name, or a format block.",
     )
 
 

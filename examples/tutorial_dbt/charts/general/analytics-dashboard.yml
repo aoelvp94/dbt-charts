@@ -1,5 +1,5 @@
 title: Sales Analytics Dashboard
-description: Comprehensive view of sales performance across regions, products, and time
+notes: Comprehensive view of sales performance across regions, products, and time
 source: duckdb_local
 text: |
   This dashboard provides a **comprehensive view** of sales analytics with interactive filtering.
@@ -208,7 +208,7 @@ charts:
     value: avg_order_value
     style:
       value:
-        format: currency
+        format: currency_full
   daily_trend:
     title: Daily Revenue Trend
     query: daily_revenue

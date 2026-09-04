@@ -6,7 +6,7 @@ and building system prompts with context.
 Shared guides (design principles, workflow, etc.) live in dbt_charts/ai/skills/
 as SKILL.md files — the single source of truth for all AI consumers.
 App-specific prompt suffixes are allowed only for surface contracts that are
-not generic Dataface behavior, such as Playground's SSE editor mirroring or
+not generic dbt charts behavior, such as Playground's SSE editor mirroring or
 A lIe's satire persona. UI transport behavior should stay in transport code,
 not in prompt suffixes.
 """
@@ -213,7 +213,7 @@ def build_docs_pointer() -> str:
     """
     topics = ", ".join(entry.id for entry in _docs_index().topics)
     return (
-        "## Dataface YAML Reference\n\n"
+        "## dbt charts YAML Reference\n\n"
         "The full syntax reference is not inlined here — call `docs()` for the "
         f'topic index ({topics}), `docs(topic="<slug>")` for one section, '
         '`docs(topic="reference")` for the generated field spec, or '
@@ -280,9 +280,9 @@ def build_dbt_charts_system_prompt(
     surface_suffix: str | None = None,
     available_tools: set[str] | None = None,
 ) -> str:
-    """Build a shared Dataface system prompt for an AI surface.
+    """Build a shared dbt charts system prompt for an AI surface.
 
-    Generic Dataface instructions come only from shared skills. Callers may add
+    Generic dbt charts instructions come only from shared skills. Callers may add
     a tiny ``surface_suffix`` for UI/persona contracts that are unique to the
     app, but not for dashboard/YAML/tool-use rules that belong in skills.
 
@@ -293,7 +293,7 @@ def build_dbt_charts_system_prompt(
     """
     skill_names = _PROMPT_SKILLS.get(prompt_type)
     if skill_names is None:
-        raise ValueError(f"Unknown Dataface prompt type: {prompt_type}")
+        raise ValueError(f"Unknown dbt charts prompt type: {prompt_type}")
 
     sections = [
         prompt
@@ -305,11 +305,11 @@ def build_dbt_charts_system_prompt(
     ]
 
     if prompt_type in AUTHORING_PROMPT_TYPES:
-        from dbt_charts.agent_api.docs import read_full_text as _read_dataface_syntax
+        from dbt_charts.agent_api.docs import read_full_text as _read_dbt_charts_syntax
         from dbt_charts.ai.generate_sql import get_sql_generation_guidance
 
         sections.append(get_sql_generation_guidance())
-        sections.append(_read_dataface_syntax())
+        sections.append(_read_dbt_charts_syntax())
 
     context_section = build_context_section(
         database_context=database_context,

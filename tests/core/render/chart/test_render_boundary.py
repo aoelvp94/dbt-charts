@@ -12,8 +12,8 @@ Banned: compile.resolve.chart.channel, compile.resolve.style.palette,
         reach-back exception there (resolve_style, resolve_chart_style_context,
         resolve_cascaded_font, apply_emoji_to_family, et al). Two further
         symbol-level bans below (not whole-module) cover compile.merge
-        (to_padding_style) and compile.data_table
-        (apply_measure_format_to_data_table, resolved_axis_style).
+        (to_padding_style) and compile.support_table
+        (apply_measure_format_to_support_table, resolved_axis_style).
 
 Scanned root: all of render/, not just render/chart/ — except
 render/terminal.py and render/terminal_charts.py. That pair renders a
@@ -263,11 +263,11 @@ def _uses_banned_module_symbol(
     trip the guard (see ``test_tick_helper_checker_ignores_the_neutral_module``).
 
     Shared by the tick-values, ``to_padding_style``, and
-    ``apply_measure_format_to_data_table``/``resolved_axis_style``
+    ``apply_measure_format_to_support_table``/``resolved_axis_style``
     symbol-level bans below — each otherwise-legitimate module
-    (``compile.merge``, ``compile.data_table``) has one or more banned
+    (``compile.merge``, ``compile.support_table``) has one or more banned
     exports among other sanctioned ones, so banning the whole module would
-    be wrong (``row_height`` from ``compile.data_table`` is a sanctioned
+    be wrong (``row_height`` from ``compile.support_table`` is a sanctioned
     render import).
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -311,7 +311,7 @@ def test_emitters_do_not_import_data_derived_tick_helpers() -> None:
     ``numeric_domain_bounds`` is authored-config parsing, not a data reach-back,
     and is permitted. ``_measured_label_padding.py`` imports ``nice_tick_values``
     from the neutral ``dbt_charts.core.numeric`` leaf (a generic numeric primitive,
-    not the Dataface-typed tick_values.py module) to estimate the widest
+    not the dbt charts-typed tick_values.py module) to estimate the widest
     plausible label width when no tick count is baked — that import is not this
     guard's concern and carries no allowlist entry.
     """
@@ -328,16 +328,16 @@ def test_emitters_do_not_import_data_derived_tick_helpers() -> None:
 _MERGE_MODULE = "dbt_charts.core.compile.merge"
 _BANNED_MERGE_SYMBOLS = frozenset({"to_padding_style"})
 
-_DATA_TABLE_MODULE = "dbt_charts.core.compile.data_table"
-# apply_measure_format_to_data_table is data_table.py's own symbol.
-# resolved_axis_style is imported into data_table.py's namespace from the
+_SUPPORT_TABLE_MODULE = "dbt_charts.core.compile.support_table"
+# apply_measure_format_to_support_table is support_table.py's own symbol.
+# resolved_axis_style is imported into support_table.py's namespace from the
 # banned axis_cascade.py (see axis_offset()'s docstring) — any name a module
 # imports is reachable through it via `from <module> import <name>` just
 # like one it defines, so it needs the same symbol-level ban here or it
 # leaks through this otherwise-legitimate module exactly like the four
 # names round 1 found leaking through resolve/style/__init__.py.
-_BANNED_DATA_TABLE_SYMBOLS = frozenset(
-    {"apply_measure_format_to_data_table", "resolved_axis_style"}
+_BANNED_SUPPORT_TABLE_SYMBOLS = frozenset(
+    {"apply_measure_format_to_support_table", "resolved_axis_style"}
 )
 
 
@@ -368,15 +368,15 @@ def test_does_not_import_to_padding_style_from_merge() -> None:
     )
 
 
-def test_does_not_import_measure_format_helper_from_data_table() -> None:
-    """render/ must not import apply_measure_format_to_data_table or
-    resolved_axis_style from data_table.py.
+def test_does_not_import_measure_format_helper_from_support_table() -> None:
+    """render/ must not import apply_measure_format_to_support_table or
+    resolved_axis_style from support_table.py.
 
-    ``compile.data_table`` is not itself banned (``row_height`` is a sanctioned
-    render import). ``apply_measure_format_to_data_table`` specifically bakes
-    measure-format inheritance into data_table entries at resolve time —
+    ``compile.support_table`` is not itself banned (``row_height`` is a sanctioned
+    render import). ``apply_measure_format_to_support_table`` specifically bakes
+    measure-format inheritance into support_table entries at resolve time —
     render must read the baked ``format`` field, never re-derive it.
-    ``resolved_axis_style`` reaches data_table.py's namespace only because it
+    ``resolved_axis_style`` reaches support_table.py's namespace only because it
     imports it from the banned ``resolve.style.axis_cascade`` module; banning
     it here too closes that reach-through.
     """
@@ -388,12 +388,12 @@ def test_does_not_import_measure_format_helper_from_data_table() -> None:
         violations.extend(
             f"{rel}: {v}"
             for v in _uses_banned_module_symbol(
-                py_file, _DATA_TABLE_MODULE, _BANNED_DATA_TABLE_SYMBOLS
+                py_file, _SUPPORT_TABLE_MODULE, _BANNED_SUPPORT_TABLE_SYMBOLS
             )
         )
     assert not violations, (
-        "render/ must not import apply_measure_format_to_data_table or "
-        "resolved_axis_style from compile/data_table.py:\n" + "\n".join(violations)
+        "render/ must not import apply_measure_format_to_support_table or "
+        "resolved_axis_style from compile/support_table.py:\n" + "\n".join(violations)
     )
 
 

@@ -235,9 +235,16 @@ class TestLineStylePromotion:
     def test_halo_multiplier_zero_emits_single_line(self, make_chart):
         """halo=0 emits a single line mark + invisible point overlay (no halo layer).
         No zero-baseline rule: SAMPLE_DATA is all-positive and the pipeline infers
-        zero=False for line charts, so _domain_includes_zero returns False."""
+        zero=False for line charts, so _domain_includes_zero returns False.
+
+        Points pinned off explicitly: SAMPLE_DATA's 2 points sit well inside the
+        density-auto-on trigger (bake_point_companions), which would otherwise add
+        a real third visible-point layer here, unrelated to what halo=0 tests.
+        """
         board, board_context = _board_with_mark("line", "line", halo_multiplier=0.0)
-        chart = make_chart("line", x="month", y="revenue")
+        chart = make_chart(
+            "line", x="month", y="revenue", style={"marks": {"point": {"size": 0.0}}}
+        )
         spec = generate_vega_lite_spec(
             chart, SAMPLE_DATA, board_style=board, chart_style_context=board_context
         )
@@ -247,6 +254,9 @@ class TestLineStylePromotion:
         assert layer[1]["mark"]["opacity"] == 0  # overlay is invisible
 
     def test_halo_multiplier_positive_emits_layered_halo(self, make_chart):
+        """Points pinned off explicitly: SAMPLE_DATA's 2 points sit well inside
+        the density-auto-on trigger, which would otherwise add a real
+        visible-point layer here, unrelated to what the halo layering tests."""
         compiled = get_theme_style()
         line = compiled.charts.line
         line_marks = line.marks
@@ -266,11 +276,17 @@ class TestLineStylePromotion:
         )
         # Pin the stroke at the chart level so density-adaptive stroke is
         # bypassed; the authored value propagates through halo × halo_multiplier.
+        # Points pinned off separately (unrelated knob -- see docstring above).
         chart = make_chart(
             "line",
             x="month",
             y="revenue",
-            style={"marks": {"line": {"stroke": {"width": 2.0}}}},
+            style={
+                "marks": {
+                    "line": {"stroke": {"width": 2.0}},
+                    "point": {"size": 0.0},
+                }
+            },
         )
         spec = generate_vega_lite_spec(
             chart, SAMPLE_DATA, board_style=board, chart_style_context=board_context
@@ -470,7 +486,8 @@ class TestKpiStylePromotion:
         assert kpi.default_height > 0
         assert kpi.value.font.size > 0
         assert kpi.min_card_width > 0
-        assert kpi.tones.positive  # tone palette resolves through theme YAML
+        # tones is board-level (Style.tones), not per-family
+        assert compiled.tones.positive  # tone palette resolves through theme YAML
         assert kpi.content_padding.horizontal >= 0
         assert kpi.content_padding.vertical >= 0
         assert kpi.affix.font.size > 0
@@ -560,6 +577,64 @@ class TestChartTypePatchCascade:
             spec.get("mark", {}),
         )
         assert fg.get("fillOpacity") == pytest.approx(0.22)
+
+    def test_bar_patch_opacity_cascades(self, make_chart):
+        """chart.style.bar.marks.bar.opacity reaches the bar mark's fillOpacity via cascade.
+
+        Bar opacity maps to VL ``fillOpacity`` (fill-only), so an authored
+        border keeps full stroke opacity — matching BarMarkStyle.opacity's own
+        "Bar fill opacity" contract.
+        """
+        from dbt_charts.core.compile.models.style.authored import (
+            BarChartStylePatch,
+        )
+
+        chart = make_chart(
+            "bar",
+            x="month",
+            y="revenue",
+            style=BarChartStylePatch(marks={"bar": {"opacity": 0.85}}),
+        )
+        _rc = resolve(chart, SAMPLE_DATA, chart_style_context=_BOARD_CONTEXT)
+        spec = generate_vega_lite_spec(chart, SAMPLE_DATA)
+        assert _mark(spec)["fillOpacity"] == pytest.approx(0.85)
+
+    def test_bar_no_opacity_authored_leaves_mark_unchanged(self, make_chart):
+        """Default path: a bar chart with no marks.bar.opacity authored must
+        emit no 'opacity' key at all — the same shape as before this field
+        existed."""
+        chart = make_chart("bar", x="month", y="revenue")
+        _rc = resolve(chart, SAMPLE_DATA, chart_style_context=_BOARD_CONTEXT)
+        spec = generate_vega_lite_spec(chart, SAMPLE_DATA)
+        assert "opacity" not in _mark(spec)
+
+    def test_histogram_patch_opacity_cascades(self, make_chart):
+        """chart.style.bar.marks.bar.opacity also reaches histogram bars —
+        histogram shares BarChart/BarChartStylePatch and BarMarkStyle."""
+        from dbt_charts.core.compile.models.style.authored import (
+            BarChartStylePatch,
+        )
+
+        histogram_data = [{"price": n} for n in range(1, 21)]
+        chart = make_chart(
+            "histogram",
+            x="price",
+            y=None,
+            style=BarChartStylePatch(marks={"bar": {"opacity": 0.85}}),
+        )
+        _rc = resolve(chart, histogram_data, chart_style_context=_BOARD_CONTEXT)
+        spec = generate_vega_lite_spec(chart, histogram_data)
+        assert _mark(spec)["fillOpacity"] == pytest.approx(0.85)
+
+    def test_histogram_no_opacity_authored_leaves_mark_unchanged(self, make_chart):
+        """Default path: a histogram with no marks.bar.opacity authored must
+        emit no 'opacity' key — the emitted spec is unchanged from before
+        this field existed."""
+        histogram_data = [{"price": n} for n in range(1, 21)]
+        chart = make_chart("histogram", x="price", y=None)
+        _rc = resolve(chart, histogram_data, chart_style_context=_BOARD_CONTEXT)
+        spec = generate_vega_lite_spec(chart, histogram_data)
+        assert "opacity" not in _mark(spec)
 
 
 class TestSparkBarNestedPatchCascade:
@@ -693,8 +768,11 @@ def test_spark_empty_stroke_rejects_missing_sub_field() -> None:
 _KPI_SENTINEL = "#ff1234"
 _TABLE_SENTINEL = "#ab5678"
 _NEW_KPI_SENTINEL = "#aa1234"
-# Distinctive font size not used by any built-in theme's data_table.font.
-_DATA_TABLE_FONT_SIZE = 99.0
+# Font weights no built-in theme sets, so a fill is unambiguous.
+_KPI_SENTINEL_WEIGHT = 771.0
+_NEW_KPI_SENTINEL_WEIGHT = 813.0
+# Distinctive font size not used by any built-in theme's support_table.font.
+_SUPPORT_TABLE_FONT_SIZE = 99.0
 
 
 def _board_resolved():
@@ -706,18 +784,24 @@ def _board_resolved():
 
 
 class TestKpiFontInheritPropagates:
-    """Chart-local kpi.font.color must propagate to kpi.value/label/affix/glyph.font.color.
+    """A chart-local kpi.font patch must re-inherit kpi.value/label/affix/glyph.font.
 
-    kpi.value.font, kpi.label.font, kpi.affix.font, kpi.glyph.font all carry
-    InheritSlot(from_path="Style.charts.kpi.font"). When a chart-local patch
-    sets kpi.font.color, re-running apply_inherit after the merge must fill
-    those dependent leaves with the new color.
+    All four slots carry InheritSlot(from_path="Style.charts.kpi.font"), so
+    re-running apply_inherit after the chart-local merge fills their unset
+    leaves from the patch. `weight` pins that — it is unset on all four in the
+    built-in themes.
+
+    `color` is the one leaf those slots exclude from the fill. It stays a
+    genuine sentinel so the renderer can tell "the author named this slot's ink"
+    from "the KPI's ink cascaded down", which is what lets `style.value.font.color`
+    beat the whole-chart `style.color` slot.
     """
 
-    def test_kpi_font_color_propagates_to_value(self):
+    @staticmethod
+    def _patched(**leaves):
         from dbt_charts.core.compile.models.primitives import FontStyle  # noqa: PLC0415
-        from dbt_charts.core.compile.models.style.authored.kpi import (
-            KpiChartStylePatch,  # noqa: PLC0415
+        from dbt_charts.core.compile.models.style.authored.kpi import (  # noqa: PLC0415
+            KpiChartStylePatch,
         )
         from dbt_charts.core.compile.resolve.style.chart_context import (  # noqa: PLC0415
             build_chart_style_context,
@@ -727,69 +811,29 @@ class TestKpiFontInheritPropagates:
             id="t",
             type="kpi",
             value="revenue",
-            style=KpiChartStylePatch(font=FontStyle(color=_KPI_SENTINEL)),
+            style=KpiChartStylePatch(font=FontStyle(**leaves)),
         )
-        result = build_chart_style_context(_board_resolved(), chart)
-        assert result.kpi.value.font.color == _KPI_SENTINEL, (
-            f"kpi.value.font.color should be {_KPI_SENTINEL!r} (InheritSlot from kpi.font) "
-            f"but got {result.kpi.value.font.color!r} — apply_inherit ran before the chart-local patch"
+        return build_chart_style_context(_board_resolved(), chart)
+
+    @pytest.mark.parametrize("slot", ["value", "label", "affix", "glyph"])
+    def test_kpi_font_weight_propagates(self, slot):
+        got = getattr(self._patched(weight=_KPI_SENTINEL_WEIGHT).kpi, slot).font.weight
+        assert got == _KPI_SENTINEL_WEIGHT, (
+            f"kpi.{slot}.font.weight should be {_KPI_SENTINEL_WEIGHT} (InheritSlot "
+            f"from kpi.font) but got {got!r} — apply_inherit ran before the "
+            f"chart-local patch"
         )
 
-    def test_kpi_font_color_propagates_to_label(self):
-        from dbt_charts.core.compile.models.primitives import FontStyle  # noqa: PLC0415
-        from dbt_charts.core.compile.models.style.authored.kpi import (
-            KpiChartStylePatch,  # noqa: PLC0415
+    @pytest.mark.parametrize("slot", ["value", "label", "affix", "glyph"])
+    def test_kpi_font_color_stays_a_sentinel(self, slot):
+        result = self._patched(color=_KPI_SENTINEL)
+        assert result.kpi.font.color == _KPI_SENTINEL
+        got = getattr(result.kpi, slot).font.color
+        assert got is None, (
+            f"kpi.{slot}.font.color must stay None — the renderer reads it as "
+            f"\"the author named this slot's ink\" and resolves the KPI's own "
+            f"ink itself; got {got!r}"
         )
-        from dbt_charts.core.compile.resolve.style.chart_context import (  # noqa: PLC0415
-            build_chart_style_context,
-        )
-
-        chart = KpiChart(
-            id="t",
-            type="kpi",
-            value="revenue",
-            style=KpiChartStylePatch(font=FontStyle(color=_KPI_SENTINEL)),
-        )
-        result = build_chart_style_context(_board_resolved(), chart)
-        assert result.kpi.label.font.color == _KPI_SENTINEL, (
-            f"kpi.label.font.color should be {_KPI_SENTINEL!r} but got {result.kpi.label.font.color!r}"
-        )
-
-    def test_kpi_font_color_propagates_to_affix(self):
-        from dbt_charts.core.compile.models.primitives import FontStyle  # noqa: PLC0415
-        from dbt_charts.core.compile.models.style.authored.kpi import (
-            KpiChartStylePatch,  # noqa: PLC0415
-        )
-        from dbt_charts.core.compile.resolve.style.chart_context import (  # noqa: PLC0415
-            build_chart_style_context,
-        )
-
-        chart = KpiChart(
-            id="t",
-            type="kpi",
-            value="revenue",
-            style=KpiChartStylePatch(font=FontStyle(color=_KPI_SENTINEL)),
-        )
-        result = build_chart_style_context(_board_resolved(), chart)
-        assert result.kpi.affix.font.color == _KPI_SENTINEL
-
-    def test_kpi_font_color_propagates_to_glyph(self):
-        from dbt_charts.core.compile.models.primitives import FontStyle  # noqa: PLC0415
-        from dbt_charts.core.compile.models.style.authored.kpi import (
-            KpiChartStylePatch,  # noqa: PLC0415
-        )
-        from dbt_charts.core.compile.resolve.style.chart_context import (  # noqa: PLC0415
-            build_chart_style_context,
-        )
-
-        chart = KpiChart(
-            id="t",
-            type="kpi",
-            value="revenue",
-            style=KpiChartStylePatch(font=FontStyle(color=_KPI_SENTINEL)),
-        )
-        result = build_chart_style_context(_board_resolved(), chart)
-        assert result.kpi.glyph.font.color == _KPI_SENTINEL
 
 
 class TestTableFontInheritPropagates:
@@ -858,24 +902,24 @@ class TestTableFontInheritPropagates:
         assert result.table.title_row.font.color == _TABLE_SENTINEL
 
 
-class TestDataTableFontInheritPropagates:
-    """data_table.font.size must propagate to data_table.label.font.size.
+class TestSupportTableFontInheritPropagates:
+    """support_table.font.size must propagate to support_table.label.font.size.
 
-    data_table.label.font inherits from data_table.font. data_table is authored
-    under the (cartesian) family patch (style.<family>.data_table.font), so its
+    support_table.label.font inherits from support_table.font. support_table is authored
+    under the (cartesian) family patch (style.<family>.support_table.font), so its
     font must be merged pre-inherit like the top-level family fonts or the label
     font keeps the stale board value.
 
     Note: we assert `size` (not `color`). stark.yaml sets label.font.color
-    explicitly, so apply_inherit never fills it from data_table.font — asserting
+    explicitly, so apply_inherit never fills it from support_table.font — asserting
     color propagation would pin behavior the cascade does not perform. size is
     None on label.font in the theme, so it genuinely inherits.
     """
 
-    def test_data_table_font_size_propagates_to_label(self):
+    def test_support_table_font_size_propagates_to_label(self):
         from dbt_charts.core.compile.models.primitives import FontStyle  # noqa: PLC0415
         from dbt_charts.core.compile.models.style.authored import (
-            DataTableStylePatch,  # noqa: PLC0415
+            SupportTableStylePatch,  # noqa: PLC0415
         )
         from dbt_charts.core.compile.models.style.authored.bar import (
             BarChartStylePatch,  # noqa: PLC0415
@@ -888,16 +932,16 @@ class TestDataTableFontInheritPropagates:
             id="t",
             type="bar",
             style=BarChartStylePatch(
-                data_table=DataTableStylePatch(
-                    font=FontStyle(size=_DATA_TABLE_FONT_SIZE)
+                support_table=SupportTableStylePatch(
+                    font=FontStyle(size=_SUPPORT_TABLE_FONT_SIZE)
                 )
             ),
         )
         result = build_chart_style_context(_board_resolved(), chart)
-        assert result.data_table.label.font.size == _DATA_TABLE_FONT_SIZE, (
-            f"data_table.label.font.size should be {_DATA_TABLE_FONT_SIZE!r} "
-            f"(InheritSlot from data_table.font) but got "
-            f"{result.data_table.label.font.size!r} — apply_inherit ran before "
+        assert result.support_table.label.font.size == _SUPPORT_TABLE_FONT_SIZE, (
+            f"support_table.label.font.size should be {_SUPPORT_TABLE_FONT_SIZE!r} "
+            f"(InheritSlot from support_table.font) but got "
+            f"{result.support_table.label.font.size!r} — apply_inherit ran before "
             f"the chart-local patch"
         )
 
@@ -974,12 +1018,12 @@ class TestKpiFontPatchLeavesTableFamilyUnchanged:
             id="t",
             type="kpi",
             value="revenue",
-            style=KpiChartStylePatch(font=FontStyle(color=_KPI_SENTINEL)),
+            style=KpiChartStylePatch(font=FontStyle(weight=_KPI_SENTINEL_WEIGHT)),
         )
         result = build_chart_style_context(board, chart)
-        assert result.kpi.value.font.color == _KPI_SENTINEL, (
-            f"kpi.value.font.color should be {_KPI_SENTINEL!r} (per-family inherit) "
-            f"but got {result.kpi.value.font.color!r}"
+        assert result.kpi.value.font.weight == _KPI_SENTINEL_WEIGHT, (
+            f"kpi.value.font.weight should be {_KPI_SENTINEL_WEIGHT!r} (per-family "
+            f"inherit) but got {result.kpi.value.font.weight!r}"
         )
 
     def test_table_family_is_same_object_after_kpi_font_patch(self):
@@ -1170,10 +1214,13 @@ class TestFontlessFamilyPatchResolves:
 class TestDiscriminatingRegressionIntraFamilyInherit:
     """Explicit value must NOT be overwritten, even when equal to the parent.
 
-    apply_inherit fills only genuinely-None leaves. When kpi.value.font.color is
-    explicitly set to the same hex the board cascade filled it with, it must
+    apply_inherit fills only genuinely-None leaves. When kpi.value.font.weight is
+    explicitly set to the same number the board cascade filled it with, it must
     survive — inheritance keys on the None sentinel, never on value equality, so
     an explicit value is never overwritten regardless of its content.
+
+    Pinned on `weight`: `color` is excluded from these slots' fill entirely, so
+    it cannot discriminate a preserved explicit value from a skipped one.
     """
 
     def test_explicit_value_not_overwritten_but_sentinel_is_filled(self):
@@ -1189,16 +1236,16 @@ class TestDiscriminatingRegressionIntraFamilyInherit:
         )
 
         compiled = get_theme_style()
-        inherited_color = resolve_chart_style_context(compiled).kpi.font.color
-        # label.font.color must be None to confirm it is a genuine sentinel
-        assert compiled.charts.kpi.label.font.color is None
+        inherited_weight = resolve_chart_style_context(compiled).kpi.font.weight
+        # label.font.weight must be None to confirm it is a genuine sentinel
+        assert compiled.charts.kpi.label.font.weight is None
 
-        # Build a MODIFIED source Style where kpi.value.font.color is EXPLICITLY
-        # set to inherited_color (not None sentinel).
+        # Build a MODIFIED source Style where kpi.value.font.weight is EXPLICITLY
+        # set to inherited_weight (not None sentinel).
         kpi = compiled.charts.kpi
         new_value = kpi.value.model_copy(
             update={
-                "font": kpi.value.font.model_copy(update={"color": inherited_color})
+                "font": kpi.value.font.model_copy(update={"weight": inherited_weight})
             }
         )
         new_kpi = kpi.model_copy(update={"value": new_value})
@@ -1207,25 +1254,25 @@ class TestDiscriminatingRegressionIntraFamilyInherit:
         )
         board = resolve_chart_style_context(modified_compiled)
 
-        # Apply chart-local patch kpi.font.color = _NEW_KPI_SENTINEL
+        # Apply chart-local patch kpi.font.weight = _NEW_KPI_SENTINEL_WEIGHT
         chart = KpiChart(
             id="t",
             type="kpi",
             value="revenue",
-            style=KpiChartStylePatch(font=FontStyle(color=_NEW_KPI_SENTINEL)),
+            style=KpiChartStylePatch(font=FontStyle(weight=_NEW_KPI_SENTINEL_WEIGHT)),
         )
         result = build_chart_style_context(board, chart)
 
-        # Explicit value must NOT be overwritten even though it equalled old parent value
-        assert result.kpi.value.font.color == inherited_color, (
-            f"kpi.value.font.color was explicitly set to {inherited_color!r} but was "
-            f"overwritten to {result.kpi.value.font.color!r} — the heuristic confused "
-            f"an explicit value with an inherited sentinel"
+        # Explicit value must NOT be overwritten even though it equalled old parent
+        assert result.kpi.value.font.weight == inherited_weight, (
+            f"kpi.value.font.weight was explicitly set to {inherited_weight!r} but "
+            f"was overwritten to {result.kpi.value.font.weight!r} — the heuristic "
+            f"confused an explicit value with an inherited sentinel"
         )
         # Genuine None sentinel IS filled by new parent value
-        assert result.kpi.label.font.color == _NEW_KPI_SENTINEL, (
-            f"kpi.label.font.color should be {_NEW_KPI_SENTINEL!r} (genuine sentinel) "
-            f"but got {result.kpi.label.font.color!r}"
+        assert result.kpi.label.font.weight == _NEW_KPI_SENTINEL_WEIGHT, (
+            f"kpi.label.font.weight should be {_NEW_KPI_SENTINEL_WEIGHT!r} (genuine "
+            f"sentinel) but got {result.kpi.label.font.weight!r}"
         )
 
 

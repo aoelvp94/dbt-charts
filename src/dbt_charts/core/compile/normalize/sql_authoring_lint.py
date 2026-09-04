@@ -36,7 +36,7 @@ def has_literal_escaped_newlines(sql: str, *, dialect: str | None) -> bool:
 
     Args:
         sql: Raw SQL string after YAML parsing.
-        dialect: Dataface dialect name (e.g. "duckdb", "sqlserver"), or None for the default.
+        dialect: dbt charts dialect name (e.g. "duckdb", "sqlserver"), or None for the default.
             Normalised to the sqlglot equivalent via sqlglot_dialect().
 
     Returns:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import dbt_charts.agent_api.describe_query as _describe_query
 from dbt_charts.agent_api import (
@@ -341,6 +341,31 @@ def handle_tool_call(
     )
 
 
+def tool_call_outcome(result: dict[str, Any]) -> Literal["ok", "partial", "error"]:
+    """Classify a tool handler's return envelope.
+
+    Three conventions coexist in this codebase's tool results, and dispatch
+    itself only builds two of them (a bare ``{"error": ...}`` for an unknown
+    tool, and ``{"success": False, ...}`` for a raised handler): every other
+    failure is a normal return from the handler that dispatch cannot
+    distinguish from success on its own — the ``{"success": False, ...}``
+    shape mirrored by Cloud's skills/board handlers, and
+    ``BoardRenderResult``'s ``status: "ok" | "partial" | "failed"`` (no
+    ``success``/``error`` field at all). Evaluated once here, beside
+    ``dispatch_tool_call``, so no caller re-derives it from ``result``.
+    """
+    if result.get("error"):
+        return "error"
+    if result.get("success") is False:
+        return "error"
+    status = result.get("status")
+    if status == "failed":
+        return "error"
+    if status == "partial":
+        return "partial"
+    return "ok"
+
+
 def dispatch_tool_call(
     function_name: str,
     function_args: dict[str, Any],
@@ -356,7 +381,7 @@ def dispatch_tool_call(
     service that runs ``can()`` and a binding re-key instead of a raw file
     move — one tool name and contract across hosts, two backends. Checked
     BEFORE ``TOOL_HANDLERS``, unlike ``extra_handlers`` (which is for tools
-    with no meaning to dft-core at all, e.g. the Cloud-only placement tool,
+    with no meaning to dbt_charts.core at all, e.g. the Cloud-only placement tool,
     and is checked after — it never shadows a core tool name).
     """
     handler = None

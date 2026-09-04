@@ -23,14 +23,25 @@ design rests on:
   that just changed. The same goes for a chart's id: it is board-local identity,
   stable across edits while the content under it changes.
 
-**This object is a plain in-memory dict, and that is the whole point.** A durable
-host does not implement it — the host *fills* it, in one query, before the render
-starts, and drains it, in one query, after. Nothing here touches a database, so a
-render costs zero round-trips no matter how many charts it draws. The metadata a
-host needs to do that (which board a chart belongs to, which chart minted an
-entry) rides alongside the entries rather than in the key: `board_path` and
-`chart_id` are for fetching and cleanup, never part of the key — the same split
-`QueryResultCache` makes between its key and its `board_slug`/`query_name`.
+**Nothing here touches a database, and that is the whole point.** A durable host
+supplies a `loader` — an opaque callable from key to SVG — and the memo consults
+it on a miss, once per distinct key it still holds, then buffers what to write
+back. So the render reads about one row per distinct chart-content it draws, and
+never more because of what the store happens to be holding.
+
+That bound is the reason this is demand-driven rather than bulk-filled. The key
+is content, so new warehouse rows mint a fresh key for every chart that drew
+them; entries accumulate with *time*, not with a board's chart count. Anything
+that fetched a whole board's worth up front would therefore transfer a board's
+history into memory to answer for its N charts, and no ceiling on that fetch is
+better than not making it — the key of the row you want is already in hand at the
+moment you want it.
+
+`board_path` and `chart_id` ride alongside the entries as host metadata and are
+never part of the key — the same split `QueryResultCache` makes between its key
+and its `board_slug`/`query_name`. Neither is a fetch axis: a lookup is by
+content, so they answer only "which chart is this row, and where did it come
+from?" — for a host's own debugging and attribution.
 """
 
 from __future__ import annotations
@@ -38,7 +49,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import OrderedDict
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -57,7 +68,7 @@ if TYPE_CHECKING:
 # is what tracks the vendored font set and every post-processing step in
 # render_svg_content. A host store need not expire anything — an upgrade rotates
 # every entry on its own, with no migration and no manual purge.
-RENDERER_VERSION = "1"
+RENDERER_VERSION = "2"
 
 # Largest single entry worth keeping. Above this the entry would dominate any
 # store it is drained into and push out the small hot entries that make an edit
@@ -80,12 +91,19 @@ class MintedSvg:
 
 
 class RenderedSvgCache:
-    """The render's SVG memo: an LRU dict, optionally pre-filled by a host.
+    """The render's SVG memo: an LRU dict over a host's optional ``loader``.
 
     Nothing wires this by default — with no cache passed to ``render_board``
     there is no ambient memo and every chart goes through vl-convert exactly as
-    before. A host that wants durability preloads a board's entries into one of
-    these and reads ``touched`` / ``minted`` afterwards to write back.
+    before. With a cache but no ``loader`` it is a within-render memo only: two
+    identical charts on one board share a render, nothing survives the process.
+
+    A host that wants durability passes a ``loader`` and reads ``touched`` /
+    ``minted`` afterwards to write back. ``loader`` is called once per distinct
+    key while that entry stays resident — a hit is seated, a miss is remembered
+    — so a board of N charts costs about N reads however much history the store
+    holds. (Only a render drawing past ``max_entries`` distinct charts re-reads,
+    having evicted the entry it seated.)
 
     Entries are evicted, never invalidated: the key is content, so an entry is
     correct until it is dropped.
@@ -93,50 +111,67 @@ class RenderedSvgCache:
 
     def __init__(
         self,
-        entries: dict[str, str] | None = None,
+        loader: Callable[[str], str | None] | None = None,
         max_entries: int = 4096,
         max_entry_bytes: int = MAX_ENTRY_BYTES,
     ) -> None:
-        self._entries: OrderedDict[str, str] = OrderedDict(
-            entries if entries is not None else {}
-        )
+        self._loader = loader
+        self._entries: OrderedDict[str, str] = OrderedDict()
         self._max_entries = max_entries
         self._max_entry_bytes = max_entry_bytes
-        self._preloaded = frozenset(self._entries)
+        self._missing: set[str] = set()
         self._touched: set[str] = set()
         self._minted: dict[str, MintedSvg] = {}
 
     def get(self, key: str) -> str | None:
         svg = self._entries.get(key)
-        if svg is None:
+        if svg is not None:
+            self._entries.move_to_end(key)
+            return svg
+        if self._loader is None or key in self._missing:
             return None
-        self._entries.move_to_end(key)
-        if key in self._preloaded:
-            self._touched.add(key)
-        return svg
+        loaded = self._loader(key)
+        if loaded is None:
+            # Remembered so two identical charts on one board cost one read.
+            self._missing.add(key)
+            return None
+        self._touched.add(key)
+        self._seat(key, loaded)
+        return loaded
 
     def put(self, key: str, svg: str, chart_id: str) -> None:
         if len(svg.encode()) > self._max_entry_bytes:
             return
+        self._minted[key] = MintedSvg(key=key, svg=svg, chart_id=chart_id)
+        self._seat(key, svg)
+
+    def _seat(self, key: str, svg: str) -> None:
+        """Insert as most-recent and trim to the ceiling.
+
+        Shared by both entry paths deliberately: an entry the loader supplied is
+        as much a claim on the ceiling as one this render minted, and letting
+        loaded entries in around it is precisely how a bulk pre-fill used to
+        seat far more than ``max_entries`` and bound nothing.
+        """
         self._entries[key] = svg
         self._entries.move_to_end(key)
-        self._minted[key] = MintedSvg(key=key, svg=svg, chart_id=chart_id)
         while len(self._entries) > self._max_entries:
             evicted, _ = self._entries.popitem(last=False)
             self._minted.pop(evicted, None)
 
     @property
     def touched(self) -> frozenset[str]:
-        """Preloaded keys this render actually used.
+        """Keys this render took from the loader.
 
         A host bumps these so a chart that draws on every page load doesn't age
-        out of an LRU store precisely because it keeps hitting.
+        out of an LRU store precisely because it keeps hitting. Minted keys are
+        not here: their insert stamps the same column already.
         """
         return frozenset(self._touched)
 
     @property
     def minted(self) -> tuple[MintedSvg, ...]:
-        """Entries this render produced that were not preloaded."""
+        """Entries this render produced that did not come from the loader."""
         return tuple(self._minted.values())
 
 

@@ -128,8 +128,8 @@ def test_invalid_orientation_raises_validation_error():
         AxisYStyle.model_validate(data)
 
 
-def test_editorial_theme_preserves_auto_orientation_sentinel():
-    """editorial (and descendants like cream) must keep axis_y.position
+def test_clarity_theme_preserves_auto_orientation_sentinel():
+    """clarity (and descendants like paper) must keep axis_y.position
     as the 'auto' sentinel so the endpoint-labels collision flip fires.
 
     Hardcoding 'right' in a theme short-circuits ``_resolve_position_auto`` and
@@ -138,7 +138,7 @@ def test_editorial_theme_preserves_auto_orientation_sentinel():
     """
     from dbt_charts.core.compile.config import get_theme_style
 
-    for theme_name in ("editorial", "cream"):
+    for theme_name in ("clarity", "paper"):
         compiled = get_theme_style(theme_name)
         assert compiled.charts.axis_y.position == "auto", (
             f"{theme_name} theme overrides axis_y.position to "

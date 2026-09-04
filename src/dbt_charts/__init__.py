@@ -1,4 +1,4 @@
-"""Dataface - dbt-native dataface and visualization layer.
+"""dbt charts - dbt-native dashboard and visualization layer.
 
 This package provides a declarative YAML-based approach to building
 boards (analytics dashboards) that integrate with dbt projects.
@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any
 __version__ = _v("dbt-charts")
 
 # Set up package-level logger
-# This logger is the parent for all dataface submodule loggers
+# This logger is the parent for all dbt_charts submodule loggers
 logger = logging.getLogger("dbt_charts")
 
 # Configure a NullHandler to avoid "No handler found" warnings

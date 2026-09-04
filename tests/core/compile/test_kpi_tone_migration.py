@@ -21,9 +21,9 @@ from typing import Any
 import pytest
 
 from dbt_charts.core.compile.migrations import (
+    IncompleteMigrationError,
     MigrationConflictError,
     SchemaMigrationWarning,
-    UnsupportedSchemaError,
     migrate_mapping,
     migrate_yaml_text,
 )
@@ -280,8 +280,13 @@ def test_migrate_yaml_text_raises_for_kpi_with_style_tone(
     catalog: YamlSchemaCatalog,
 ) -> None:
     """migrate_yaml_text does not implement ConditionalMove, so a KPI board
-    with style.tone raises UnsupportedSchemaError rather than silently
+    with style.tone raises IncompleteMigrationError rather than silently
     leaving the field or corrupting the output.
+
+    Not ``UnsupportedSchemaError``: the grammar was recognized and its other
+    transitions did run: what failed is finishing. The two are siblings so a
+    caller can tell "this was never old" from "this was old and could not be
+    fully modernized" — only the second is worth announcing.
     """
     _, registry = _board_migration_context()
     yaml_text = (
@@ -295,5 +300,147 @@ def test_migrate_yaml_text_raises_for_kpi_with_style_tone(
         "rows: [k1]\n"
     )
 
-    with pytest.raises(UnsupportedSchemaError):
+    with pytest.raises(IncompleteMigrationError):
         migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+
+
+def test_migrate_board_yaml_text_raises_for_kpi_with_style_tone() -> None:
+    """The same guarantee as the sibling test above, through dct migrate's
+    actual (capped) entry point -- not just uncapped migrate_yaml_text.
+
+    style.tone -> support.tone is a frozen 0.4.0 -> 0.5.0 ConditionalMove
+    (versions/v0_5_0.py), so the cap is not what's under test: this pins that
+    the capped writer's completeness check
+    (_verify_reachable_via_moves_and_deletions) still catches a construct
+    only a ConditionalMove could resolve, rather than silently accepting it
+    because a different, more capable verifier (e.g. migrate_mapping, which
+    does implement ConditionalMove) would have resolved it in memory. A
+    verifier more capable than the writer would report a board `dct migrate`
+    left completely untouched as successfully migrated.
+    """
+    from dbt_charts.core.compile.migrations import migrate_board_yaml_text
+
+    yaml_text = (
+        "charts:\n"
+        "  k1:\n"
+        "    type: kpi\n"
+        "    query: q1\n"
+        "    value: revenue\n"
+        "    style:\n"
+        "      tone: positive\n"
+        "rows: [k1]\n"
+    )
+
+    with pytest.raises(IncompleteMigrationError):
+        migrate_board_yaml_text(yaml_text)
+
+
+def test_kpi_conditional_move_does_not_rewrite_a_free_form_variable_default(
+    catalog: YamlSchemaCatalog,
+) -> None:
+    """A chart-shaped value in an unconstrained slot must never be rewritten.
+
+    ``Variable.default`` carries no type constraint (``Any | None``), so an
+    author is free to put anything there -- including an object that happens
+    to carry ``type: kpi``. The positional gate on ConditionalMove must key
+    off *where* a mapping is declared as a chart in the schema, not merely
+    whether it has a ``type`` key equal to ``chart_type``: a data value is not
+    an authored chart just because it is shaped like one.
+
+    The board also carries a real KPI with ``style.tone`` so the 0.4.0
+    boundary is genuinely recognized and its transition genuinely runs --
+    proving the free-form slot survives *because* it is excluded, not because
+    the whole migration never fired.
+    """
+    import copy
+
+    raw: dict[str, Any] = {
+        "charts": {
+            "revenue_kpi": {
+                "type": "kpi",
+                "query": "q1",
+                "value": "revenue",
+                "style": {"tone": "positive"},
+                "support": {"label": "vs last year"},
+            }
+        },
+        "variables": {
+            "v": {
+                "default": {
+                    "type": "kpi",
+                    "style": {"tone": "positive"},
+                    "support": {"value": "a"},
+                }
+            }
+        },
+        "rows": ["revenue_kpi"],
+    }
+    original_default = copy.deepcopy(raw["variables"]["v"]["default"])
+
+    migrated = _migrate(raw, catalog)
+
+    # The real KPI chart migrated normally...
+    assert migrated["charts"]["revenue_kpi"]["support"]["tone"] == "positive"
+    assert "style" not in migrated["charts"]["revenue_kpi"]
+    # ...but the free-form variable default is untouched, byte for byte.
+    assert migrated["variables"]["v"]["default"] == original_default
+    AuthoredBoard.model_validate(migrated)
+
+
+def test_kpi_conditional_move_still_fires_when_the_chart_gains_a_post_freeze_value_form(
+    catalog: YamlSchemaCatalog,
+) -> None:
+    """A post-freeze *value widening* on an untouched key must not re-disable the gate.
+
+    ``KpiChart.link`` was ``str | None`` at the 0.4.0 freeze and gained a
+    ``false`` arm since (current schema only: ``link: false`` suppresses the
+    chart's automatic ``auto_link``). The gate must not ask the whole chart
+    node to validate against the frozen 0.4.0 grammar -- ``link: false`` would
+    make it fail, and unlike a genuinely *new key* (which
+    ``_strip_post_freeze`` forgives by name), a key both grammars declare
+    whose accepted value widened cannot be rescued by stripping: the key
+    isn't "newer", its value shape is. Requiring whole-subtree validity here
+    re-disables migration for boards carrying newer fields -- the same trap
+    that has bitten ``Deletion`` twice, reached a third time via
+    ConditionalMove.
+
+    Crosses both directions in one board: the real KPI (carrying
+    ``link: false``) must still migrate, and a free-form ``variables.default``
+    shaped like a chart must still be excluded -- proving the fix for one
+    direction didn't regress the other.
+    """
+    import copy
+
+    raw: dict[str, Any] = {
+        "charts": {
+            "revenue_kpi": {
+                "type": "kpi",
+                "query": "q1",
+                "value": "revenue",
+                "link": False,
+                "style": {"tone": "positive"},
+                "support": {"label": "vs last year"},
+            }
+        },
+        "variables": {
+            "v": {
+                "default": {
+                    "type": "kpi",
+                    "style": {"tone": "positive"},
+                    "support": {"value": "a"},
+                }
+            }
+        },
+        "rows": ["revenue_kpi"],
+    }
+    original_default = copy.deepcopy(raw["variables"]["v"]["default"])
+
+    migrated = _migrate(raw, catalog)
+
+    # The post-freeze `link: false` chart still migrates...
+    assert migrated["charts"]["revenue_kpi"]["support"]["tone"] == "positive"
+    assert "style" not in migrated["charts"]["revenue_kpi"]
+    assert migrated["charts"]["revenue_kpi"]["link"] is False
+    # ...and the free-form variable default is still excluded.
+    assert migrated["variables"]["v"]["default"] == original_default
+    AuthoredBoard.model_validate(migrated)

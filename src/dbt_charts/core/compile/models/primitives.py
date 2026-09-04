@@ -18,8 +18,18 @@ from dbt_charts.core.compile.models.factories import (
     register_as_own_patch,
     register_patch,
 )
-from dbt_charts.core.compile.models.markers import Color, Inherit, Merge, Strategy
-from dbt_charts.core.compile.models.schema_names import PaletteName, ScalePaletteName
+from dbt_charts.core.compile.models.markers import (
+    Color,
+    FontFamily,
+    Inherit,
+    Merge,
+    Palette,
+    Strategy,
+)
+from dbt_charts.core.compile.models.schema_names import (
+    ScalePaletteName,
+    StopsPaletteName,
+)
 from dbt_charts.core.text.format_d3 import Notation
 
 # Within-group spacing for grouped bars. Keywords resolve to an overlap fraction
@@ -62,6 +72,34 @@ HtmlPolicy = Literal["none", "safe-subset", "trusted-raw"]
 # shared StrokeStyle, and the resolved stroke all name the same three values.
 LineCap = Literal["butt", "round", "square"]
 
+# Incremental refresh setting, shared by board (AuthoredBoard.incremental) and
+# query (_BaseQueryFields.incremental): a watermark column name enables the
+# tail path, `false` opts out of an inherited setting, `None` inherits it. A
+# bare `True` is rejected by validate_incremental_value — a single field, so
+# there is no separate key field left to name a column on.
+IncrementalValue = str | Literal[False] | None
+
+
+def validate_incremental_value(
+    v: Any,  # type-state: explicit_any — mode="before" validator input; raw YAML value
+) -> Any:  # type-state: explicit_any — passthrough of the same boundary value
+    """Reject a bare `incremental: true` — it has no watermark column to key on.
+
+    Used as a `field_validator(mode="before")` body on both AuthoredBoard and
+    the shared query field, so the message is identical at either scope.
+    """
+    if v is True:
+        raise ValueError(
+            "incremental: true is not valid — give the watermark column name "
+            "instead, e.g. incremental: updated_at"
+        )
+    if isinstance(v, str) and not v.strip():
+        raise ValueError(
+            "incremental: '' is not valid — give the watermark column name, "
+            "or omit the field (or set false) to disable incremental refresh"
+        )
+    return v
+
 
 # =============================================================================
 # FORMAT CONFIG
@@ -94,11 +132,11 @@ class FormatConfig(BaseModel):
     )
     prefix: str | None = Field(
         default=None,
-        description="Custom prefix prepended to the formatted value (e.g., '$').",
+        description="Text placed before the formatted value (e.g., '$').",
     )
     suffix: str | None = Field(
         default=None,
-        description="Custom suffix appended to the formatted value (e.g., ' USD', '%').",
+        description="Text placed after the formatted value (e.g., ' USD', '%').",
     )
     notation: Notation | None = Field(
         default=None,
@@ -192,7 +230,7 @@ class FontStyle(_PatchBase):
     All fields Optional — FontStyle doubles as a patch at every level.
     """
 
-    family: str | None = Field(
+    family: Annotated[str | None, FontFamily()] = Field(
         default=None, description="Font family name (e.g., 'sans-serif', 'Roboto')."
     )
     color: Annotated[str | None, Color()] = Field(
@@ -200,13 +238,15 @@ class FontStyle(_PatchBase):
     )
     size: float | None = Field(default=None, description="Font size in pixels.")
     weight: str | float | None = Field(
-        default=None, description="Font weight (e.g., 'bold', 400, 700)."
+        default=None,
+        description="How heavy the type is drawn (e.g., 'bold', 400, 700).",
     )
     style: Literal["normal", "italic"] | None = Field(
-        default=None, description="Font style (normal or italic)."
+        default=None, description="Upright or slanted type (normal or italic)."
     )
     decoration: Literal["none", "line-through", "underline"] | None = Field(
-        default=None, description="Text decoration (underline, line-through, or none)."
+        default=None,
+        description="Line drawn on the text (underline, line-through, or none).",
     )
     case: (
         Literal["none", "sentence", "title", "upper", "lower", "slug", "camel"] | None
@@ -285,9 +325,9 @@ class ResolvedFontStyle(BaseModel):
 class RuleStyle(BaseModel):
     """Shared rule-line primitive: width, color, continuous mode.
 
-    Used for table header rules, table row rules, data-table dividers, and
-    data-table inter-row rules. All three fields are required; theme YAML
-    supplies every instance. Data-table contexts set `continuous: true` in
+    Used for table header rules, table row rules, support-table dividers, and
+    support-table inter-row rules. All three fields are required; theme YAML
+    supplies every instance. Support-table contexts set `continuous: true` in
     the theme; render code in that context does not read it.
     """
 
@@ -330,11 +370,24 @@ class BorderStyle(BaseModel):
     )
     line_cap: LineCap | None = Field(
         default=None,
-        description="SVG stroke-linecap for a dashed border. None uses the renderer default (butt).",
+        description="How each dash's ends are finished on a dashed border. None uses the renderer default (butt).",
     )
     dash_offset: float | None = Field(
-        default=None, description="SVG stroke-dashoffset in pixels. None means 0."
+        default=None,
+        description="How far into the dash pattern the line starts, in pixels. None means 0.",
     )
+
+
+class CornerStyle(BaseModel):
+    """Corner rounding only, for a slot whose renderer never draws a stroke.
+
+    A full BorderStyle's width/color/dash would validate cleanly here and
+    do nothing.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    radius: float = Field(description="Corner radius in pixels.")
 
 
 @register_patch(BorderStyle)
@@ -363,10 +416,11 @@ class BorderStylePatch(BaseModel):
     )
     line_cap: LineCap | None = Field(
         default=None,
-        description="SVG stroke-linecap for a dashed border. None uses the renderer default (butt).",
+        description="How each dash's ends are finished on a dashed border. None uses the renderer default (butt).",
     )
     dash_offset: float | None = Field(
-        default=None, description="SVG stroke-dashoffset in pixels. None means 0."
+        default=None,
+        description="How far into the dash pattern the line starts, in pixels. None means 0.",
     )
 
     @classmethod
@@ -439,13 +493,16 @@ class StrokeStyle(BaseModel):
     )
     width: float | None = Field(default=None, description="Stroke width in pixels.")
     cap: LineCap | None = Field(
-        default=None, description="Stroke line cap style (butt, round, or square)."
+        default=None,
+        description="How the stroke's ends are finished (butt, round, or square).",
     )
     join: Literal["miter", "round", "bevel"] | None = Field(
-        default=None, description="Stroke line join style (miter, round, or bevel)."
+        default=None,
+        description="How two stroke segments are joined (miter, round, or bevel).",
     )
     dasharray: str | None = Field(
-        default=None, description="SVG stroke-dasharray pattern (e.g. '4 2')."
+        default=None,
+        description="Lengths of the dashes and the blanks between them (e.g. '4 2').",
     )
 
 
@@ -464,7 +521,7 @@ class FontColorStrokeStyle(StrokeStyle):
     color: Annotated[str | None, Inherit(from_path="Style.font.color"), Color()] = (
         Field(
             default=None,
-            description="Stroke color.",
+            description="Stroke color for rule marks.",
         )
     )
 
@@ -593,7 +650,7 @@ class ScaleTargetPaletteValidationMixin(BaseModel):
     chart-local authored patches reject a bad palette at the compile boundary
     (where ``normalize_board()`` wraps the resulting ``pydantic.ValidationError``
     into a proper ``ERR-VALIDATION-FIELD`` diagnostic) instead of only at
-    resolve time, where the raw pydantic error leaks past Dataface's error
+    resolve time, where the raw pydantic error leaks past dbt charts' error
     formatting — ``build_patch_model_ext`` only carries over validators that
     live on the patch model's base class (mirrors ``ScaleDomainValidationMixin``).
     """
@@ -605,7 +662,7 @@ class ScaleTargetPaletteValidationMixin(BaseModel):
     def _validate_named_palette(cls, data: object) -> object:
         """A string palette is either a literal Vega scheme name (forwarded
         as-is to VL's ``scale.scheme`` by geo/heatmap gradient rendering) or a
-        Dataface named palette (resolved to hex stops downstream by
+        dbt charts named palette (resolved to hex stops downstream by
         ``bake_scale_target_stops``/``resolve_palette_stops``). Reject anything
         that resolves as neither.
 
@@ -617,11 +674,11 @@ class ScaleTargetPaletteValidationMixin(BaseModel):
         below.
 
         A dash-suffixed name whose prefix is a real scheme (``"blues-9"``,
-        VL's sampled-discrete shorthand, which Dataface does not forward) gets
+        VL's sampled-discrete shorthand, which dbt charts does not forward) gets
         a specific hint naming the continuous scheme instead of the generic
         unknown-palette message — that shape is the exact mistake this
         validator exists to catch: an author reaching for N discrete buckets
-        that Dataface doesn't support yet, not a random typo.
+        that dbt charts doesn't support yet, not a random typo.
 
         ``mode="before"`` on the raw dict (not ``field_validator``) so this
         runs unchanged on both ``ScaleTargetConfig`` and the generated
@@ -645,7 +702,7 @@ class ScaleTargetPaletteValidationMixin(BaseModel):
             if base in VEGA_SCHEME_NAMES and suffix.isdigit():
                 raise ValueError(
                     f"palette {value!r} requests a {suffix}-step discrete "
-                    f"variant of the '{base}' scheme. Dataface does not support "
+                    f"variant of the '{base}' scheme. dbt charts does not support "
                     "bucketed/quantized color scales yet — use the continuous "
                     f"scheme '{base}' instead."
                 ) from None
@@ -670,9 +727,11 @@ class ScaleTargetConfig(ScaleTargetPaletteValidationMixin):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     palette: Annotated[
-        ScalePaletteName | list[str] | list[float] | str, Merge(Strategy.OVERRIDE)
+        ScalePaletteName | list[str] | list[float] | str,
+        Merge(Strategy.OVERRIDE),
+        Palette(),
     ] = Field(
-        description="Color palette: a named Dataface palette or Vega scheme, a CSS color list for categorical, or a float list for relative stops."
+        description="Which colors the scale draws from: a built-in palette name or Vega scheme, a CSS color list for categorical, or a float list for relative stops."
     )
     domain: Literal["data"] | None = Field(
         default="data",
@@ -694,7 +753,7 @@ class ScaleTargetConfig(ScaleTargetPaletteValidationMixin):
             "every nice tick on the legend, mirroring Vega-Lite's own "
             "scale.nice. Applies to the color scale a gradient legend "
             "labels, not the x/y position scale. Ignored once min or max is "
-            "set — a single-sided bound already fixes that edge exactly. "
+            "set; a single-sided bound already fixes that edge exactly. "
             "Widening is currently honored on heatmap's themed color "
             "gradient only; geoshape's choropleth honors `nice: false` "
             "(exact endpoint labels) but not `nice: true`'s widening."
@@ -761,7 +820,7 @@ ResolvedScaleTarget = ResolvedNamedPaletteScaleTargetConfig | ResolvedScaleTarge
 def bake_scale_target_stops(target: ScaleTargetConfig) -> ResolvedScaleTargetConfig:
     """Construct the correct resolved subtype for a scale target.
 
-    Named Dataface palette → ResolvedNamedPaletteScaleTargetConfig with fresh
+    Named dbt charts palette → ResolvedNamedPaletteScaleTargetConfig with fresh
     resolved_stops. Vega scheme name or inline stop list → plain
     ResolvedScaleTargetConfig (no resolved_stops — structurally absent, not None).
 
@@ -822,18 +881,20 @@ class CategoricalColorStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # The PaletteName arm on palette/single_series_palette is schema-facing
+    # The StopsPaletteName arm on palette/single_series_palette is schema-facing
     # only — _expand_palette_names below eagerly resolves a named palette to
     # its list[str] stops during validation, so the name itself never
-    # survives onto a compiled instance.
+    # survives onto a compiled instance. Stops-only, not every shipped name:
+    # a tone resolves to no stops, so offering one is an authored board that
+    # parses and dies at resolve.
     palette: Annotated[
-        PaletteName | list[str] | str | None, Merge(Strategy.OVERRIDE)
+        StopsPaletteName | list[str] | str | None, Merge(Strategy.OVERRIDE), Palette()
     ] = Field(
         default=None,
         description="Categorical color palette: list of stops or a named palette. Expanded to list[str] at validation time.",
     )
     single_series_palette: Annotated[
-        PaletteName | list[str] | str | None, Merge(Strategy.OVERRIDE)
+        StopsPaletteName | list[str] | str | None, Merge(Strategy.OVERRIDE), Palette()
     ] = Field(
         default=None,
         description="Ordered list of single-series mark inks (must be non-empty when set), or a palette name.",
@@ -909,7 +970,7 @@ class CategoricalColorStyle(BaseModel):
 
 
 class StaticGradientColorStyle(BaseModel):
-    """Color config for geo/point_map/table families — no categorical arm.
+    """Color config for geo/point_map/table families, no categorical arm.
 
     Authoring ``categorical`` on these families raises a pydantic.ValidationError
     (extra_forbidden). Use ``ColorStyle`` for cartesian/pie families.
@@ -919,7 +980,7 @@ class StaticGradientColorStyle(BaseModel):
 
     static: Annotated[str | None, Color()] = Field(
         default=None,
-        description="Static mark color override.",
+        description="One explicit color: the marks on most families when no color column is encoded, the cell text on a table.",
     )
     gradient: ScaleTargetConfig | None = Field(
         default=None,
@@ -937,5 +998,5 @@ class ColorStyle(StaticGradientColorStyle):
 
     categorical: CategoricalColorStyle | None = Field(
         default=None,
-        description="Categorical color and single-series palette config.",
+        description="Palettes used when color encodes distinct categories, or a lone series.",
     )

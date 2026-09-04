@@ -1,9 +1,9 @@
 title: Q4 Budget vs Actual
-description: Before-after comparison pattern — two series (current and baseline) on the same bar chart
+notes: Before-after comparison pattern — two series (current and baseline) on the same bar chart
 
 queries:
   budget_vs_actual:
-    description: Current quarter spend vs prior-quarter baseline by department
+    notes: Current quarter spend vs prior-quarter baseline by department
     columns: [department, current, baseline]
     values:
       - [Engineering, 420000, 380000]
@@ -13,7 +13,7 @@ queries:
 
 charts:
   comparison_bar:
-    description: Current vs baseline spend — bars sit side by side per department
+    notes: Current vs baseline spend — bars sit side by side per department
     type: bar
     query: budget_vs_actual
     x: department

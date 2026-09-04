@@ -6,7 +6,7 @@ a final Vega-Lite JSON dict with config, background, and title applied.
 
 ``ChartSpec`` is VL-only; non-VL families (kpi, table) are routed before emit and
 never produce a ``ChartSpec``.  Emitters write VL mark names directly
-(``"bar"``, ``"point"``, ``"arc"``, …) so there is no Dataface-native mark
+(``"bar"``, ``"point"``, ``"arc"``, …) so there is no dbt charts-native mark
 vocabulary to translate.  The two structural dispatch sentinels —
 ``"layered"`` and ``"geoshape"`` — are not VL marks; they drive composition
 shape detection inside this module.
@@ -20,6 +20,7 @@ the standard path like any other sub-spec.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -171,7 +172,13 @@ def _translate_layer(layer: ChartSpec) -> dict[str, Any]:
     # Mirrors _translate_geo_layer: use mark object when mark_props are present.
     vl_mark_obj = {"type": vl_mark, **layer.mark_props} if layer.mark_props else vl_mark
     layer_vl: dict[str, Any] = {"mark": vl_mark_obj}
-    if layer.encoding:
+    # VL gap: Vega-Lite 6.x crashes compiling a line/area unit that has no
+    # `encoding` key at all — its point/line-overlay normalization reads
+    # `encoding.shape` unconditionally (TypeError). An empty object is
+    # accepted and means the same thing (the layer still inherits the shared
+    # parent encoding), so those marks always emit the key; a chart authoring
+    # neither x nor y is the reachable all-empty case.
+    if layer.encoding or vl_mark in ("line", "area"):
         layer_vl["encoding"] = layer.encoding
     if layer.data_name:
         layer_vl["data"] = {"name": layer.data_name}
@@ -333,6 +340,43 @@ def _spread_for_measurement(
     return [(name, y_domain_min + i * step) for i, (name, _) in enumerate(positions)]
 
 
+# Scale-probe calls in mark expressions whose scale goes child-qualified once
+# the chart is wrapped into a concat. Only x qualifies: y is shared by the
+# wrapper, and the offset channels stay top-level under their own names
+# because the label pane has no offset channel to make them independent of —
+# pinned against vl_convert by
+# test_right_pane_scale_names_match_vl_convert.
+_CONCAT_QUALIFIED_SCALE_PROBE = re.compile(r"\b(scale|bandwidth)\('(x)'")
+
+
+def _requalify_concat_scale_probes(
+    node: Any,  # type-state: explicit_any — walks arbitrary VL spec fragments
+    child_name: str,
+) -> None:
+    """Rewrite scale-name probes in *node*'s expressions for concat wrapping.
+
+    Vega compiles a concat child's independent scales under
+    ``<child>_<channel>`` names (``concat_0_x``), so a mark expression built
+    against the unwrapped spec — ``scale('x', …)``, ``bandwidth('xOffset')``
+    — addresses a scale that no longer exists and silently evaluates NaN,
+    painting zero-width marks. Walks every ``"expr"`` string in place. The
+    child name is Vega-Lite's own deterministic concat naming
+    (``concat_<index>``), pinned by the endpoint-pane tests against
+    vl_convert.
+    """
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "expr" and isinstance(value, str):
+                node[key] = _CONCAT_QUALIFIED_SCALE_PROBE.sub(
+                    rf"\1('{child_name}_\2'", value
+                )
+            else:
+                _requalify_concat_scale_probes(value, child_name)
+    elif isinstance(node, list):
+        for item in node:
+            _requalify_concat_scale_probes(item, child_name)
+
+
 def _wrap_hconcat_label_pane(
     main_vl: dict[str, Any],
     label_data: EndpointLabelData,
@@ -384,6 +428,18 @@ def _wrap_hconcat_label_pane(
     hoist_keys = ("$schema", "config", "background", "data")
     hoisted = {k: main_vl.pop(k) for k in hoist_keys if k in main_vl}
 
+    # The chart pane's x scale resolves independent inside the concat —
+    # sharing x is not an option here: side-by-side panes sharing one x range
+    # overlap and blow the overshoot correction — so Vega compiles it under
+    # the child-qualified name its own concat naming scheme assigns (chart
+    # pane = child 0 → concat_0_x). Mark expressions that probe a scale by
+    # name (continuous_bar_size_prop's scale('x', …) min-gap width) would
+    # otherwise address a scale that no longer exists and silently evaluate
+    # NaN → zero-width marks. y stays unqualified because it is shared below,
+    # and xOffset/yOffset because the label pane has no offset channel —
+    # rewriting those would inflict this exact bug on grouped bars.
+    _requalify_concat_scale_probes(main_vl, "concat_0")
+
     return {
         **hoisted,
         "spacing": label_data.label_offset,
@@ -401,11 +457,14 @@ def _wrap_vconcat_label_rail(
         {label_data.series_field: s, label_data.value_alias: x}
         for s, x in label_data.positions
     ]
+    mark: VLDict = {"type": "text", "align": "center", "baseline": "bottom"}
+    if label_data.label_mark_font_props:
+        mark.update(label_data.label_mark_font_props)
     rail: dict[str, Any] = {
         "height": label_data.height,
         "view": {"stroke": None},
         "data": {"values": rail_data},
-        "mark": {"type": "text", "align": "center", "baseline": "bottom"},
+        "mark": mark,
         "encoding": {
             "x": {
                 "field": label_data.value_alias,
@@ -431,6 +490,32 @@ def _wrap_vconcat_label_rail(
 # ---------------------------------------------------------------------------
 # Post-processing: href_link and structured tooltip wiring
 # ---------------------------------------------------------------------------
+
+
+def _disable_private_data_channel(layers: list[VLDict], channel: str) -> list[VLDict]:
+    """Set ``channel: None`` on every VL layer entry carrying its own
+    private ``data`` (a rule/reference-line sub-layer), recursing into
+    nested ``layer`` lists first.
+
+    A dual-axis zero-baseline rule (``nest_zero_rule``) sits nested one
+    level inside the entry whose scale it shares, so a shallow scan of the
+    top-level ``layer`` array alone misses it: the same reason
+    ``emitters/_cartesian.py``'s ``layer_encoding_owner`` and
+    ``support_table_attachment.py``'s ``_first_layer_encoding`` recurse.
+    """
+    patched: list[VLDict] = []
+    for layer in layers:
+        nested = layer.get("layer")
+        if isinstance(nested, list):
+            layer = {**layer, "layer": _disable_private_data_channel(nested, channel)}
+        if "data" in layer:
+            enc = layer.get("encoding")
+            layer = {
+                **layer,
+                "encoding": {**(enc if enc is not None else {}), channel: None},
+            }
+        patched.append(layer)
+    return patched
 
 
 def _in_chart_pane(vl: VLDict, stamp: Callable[[VLDict], VLDict]) -> VLDict:
@@ -497,8 +582,8 @@ def _apply_structured_tooltip(vl: dict[str, Any], expr: str) -> dict[str, Any]:
     axis/legend prefix) — surfacing a bogus tooltip on hover. Any layer with
     its own private ``data`` key gets an explicit ``description: None``
     override instead (VL's own "explicit None disables an inherited
-    channel" convention — the same one ``_full_rule_at`` and
-    ``_isolate_independent_y_axis`` already rely on for ``axis``/``legend``).
+    channel" convention: the same one ``_isolate_independent_y_axis``
+    already relies on for ``axis``/``legend``).
     """
 
     def stamp(pane: VLDict) -> VLDict:
@@ -508,20 +593,7 @@ def _apply_structured_tooltip(vl: dict[str, Any], expr: str) -> dict[str, Any]:
         result["encoding"] = enc
         layers = result.get("layer")
         if isinstance(layers, list):
-            result["layer"] = [
-                (
-                    {
-                        **layer,
-                        "encoding": {
-                            **(layer.get("encoding") or {}),
-                            "description": None,
-                        },
-                    }
-                    if "data" in layer
-                    else layer
-                )
-                for layer in layers
-            ]
+            result["layer"] = _disable_private_data_channel(layers, "description")
         return result
 
     return _in_chart_pane(vl, stamp)
@@ -549,19 +621,7 @@ def _apply_href_link(vl: dict[str, Any], href_link: str) -> dict[str, Any]:
         # it shares the same data and calculate transform as its sibling.
         layers = result.get("layer")
         if isinstance(layers, list):
-            patched: list[VLDict] = []
-            for layer in layers:
-                if "data" not in layer:
-                    patched.append(layer)
-                    continue
-                enc = layer.get("encoding")
-                patched.append(
-                    {
-                        **layer,
-                        "encoding": {**(enc if enc is not None else {}), "href": None},
-                    }
-                )
-            result["layer"] = patched
+            result["layer"] = _disable_private_data_channel(layers, "href")
         return result
 
     return _in_chart_pane(vl, stamp)
@@ -704,7 +764,12 @@ def _wrap_facet(main_vl: dict[str, Any], spec: ChartSpec) -> dict[str, Any]:
     giving a row stack, a horizontal strip, or a grid. Panels share one measure
     scale by default; ``facet_scale == "independent"`` emits a facet-root
     ``resolve.scale`` on ``spec.measure_channel`` — VL x on a horizontal bar,
-    whose flipped axes put the category on y.
+    whose flipped axes put the category on y. A second, independent producer:
+    ``spec.facet_independent_channels`` (``FacetFeature`` /
+    ``facet_bound_position_channels``) adds an entry per position channel
+    whose per-panel domain is a proper subset of its whole domain, where the
+    extra per-panel axis that narrowing forces is affordable — both producers
+    write into the same ``resolve.scale`` dict, sorted for a byte-stable spec.
 
     The facet operator owns the shared dataset and the top-level VL properties;
     the unit keeps mark/encoding/layer (+ per-panel width/height set later by the
@@ -744,6 +809,11 @@ def _wrap_facet(main_vl: dict[str, Any], spec: ChartSpec) -> dict[str, Any]:
     )
     hoisted = {k: main_vl.pop(k) for k in hoist_keys if k in main_vl}
     wrapper: dict[str, Any] = {**hoisted, "facet": facet, "spec": main_vl}
+    resolve_scale: dict[str, str] = dict.fromkeys(
+        sorted(spec.facet_independent_channels), "independent"
+    )
     if spec.facet_scale == "independent":
-        wrapper["resolve"] = {"scale": {spec.measure_channel: "independent"}}
+        resolve_scale[spec.measure_channel] = "independent"
+    if resolve_scale:
+        wrapper["resolve"] = {"scale": resolve_scale}
     return wrapper

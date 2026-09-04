@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -28,10 +28,16 @@ class KpiValueStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # InheritSlot: kpi.value.font fills from kpi.font.
-    font: Annotated[FontStyle, InheritSlot(from_path="Style.charts.kpi.font")] = Field(
+    # InheritSlot: kpi.value.font fills from kpi.font, except `color` — that
+    # leaf stays a cascade-managed sentinel so "author named this slot's ink"
+    # is distinguishable from "the KPI's ink cascaded down". The renderer needs
+    # the difference to let it beat the whole-card `style.font.color` fallback.
+    font: Annotated[
+        FontStyle,
+        InheritSlot(from_path="Style.charts.kpi.font", exclude=frozenset({"color"})),
+    ] = Field(
         default_factory=FontStyle,
-        description="KPI value font style.",
+        description="Headline value font.",
     )
     # None = author did not specify a format; resolve() finalizes the default
     # via finalize_kpi_value_format() from the headline row value.
@@ -47,8 +53,12 @@ class KpiSlotStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # InheritSlot: kpi.{label,affix,glyph}.font fills from kpi.font.
-    font: Annotated[FontStyle, InheritSlot(from_path="Style.charts.kpi.font")] = Field(
+    # InheritSlot: kpi.{label,affix,glyph}.font fills from kpi.font, except
+    # `color` — see KpiValueStyle.font.
+    font: Annotated[
+        FontStyle,
+        InheritSlot(from_path="Style.charts.kpi.font", exclude=frozenset({"color"})),
+    ] = Field(
         default_factory=FontStyle,
         description="Slot font style.",
     )
@@ -61,11 +71,13 @@ class KpiSlotStyle(BaseModel):
 
 
 class KpiTonesStyle(BaseModel):
-    """Semantic tone palette for the KPI support row and table conditional glyphs.
+    """Semantic tone palette shared by the KPI support row and table conditional glyphs.
 
     Colors are theme tokens — the renderer reads them through this model
     rather than hardcoding hexes, so themes can rebrand the semantic
-    vocabulary without touching the renderer.
+    vocabulary without touching the renderer. Lives on ``Style.tones``
+    (board level) rather than under any one chart family, since both KPI
+    and table read it.
 
     Four tones — positive, negative, warning, info (neutral blue). Tone
     lives on the block it paints: a KPI's headline value stays neutral by
@@ -107,6 +119,10 @@ class KpiChartStyle(_ChartStyleBaseAllOptional):
     KPI uses a fixed sizing contract and paints no legend — ``aspect_ratio``,
     ``min_height``, ``max_height``, and ``legend`` are absent by construction
     (``_ChartStyleBaseAllOptional``, not ``_PaintedChartStyleBaseAllOptional``).
+    ``color`` is likewise absent by construction — KPI has no series axis and
+    no gradient-eligible channel, so it has nothing for a paint config to
+    configure; ``font.color`` / ``value.font.color`` / ``label.font.color``
+    are how a KPI's text gets painted.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -133,15 +149,11 @@ class KpiChartStyle(_ChartStyleBaseAllOptional):
     content_padding: SpacingValues = Field(
         description="Inner inset (top/right/bottom/left) for KPI card content in pixels."
     )
-    tones: KpiTonesStyle = Field(
-        description="Semantic tone color palette for the KPI support row."
-    )
-    # Override: KPI has no series axis and no gradient-eligible channel (extra_forbidden
-    # via a plain str — categorical/gradient sub-fields cannot be authored at all).
-    # Cascade-managed sentinel: None means "use the theme font color fallback"
-    # (render/chart/kpi.py resolves channel color > style color > font color;
-    # tone lives on the block it paints — support.tone, not this value slot).
-    color: Annotated[str | None, Color()] = Field(  # type: ignore[assignment]
+    # Cascade-managed sentinel: None means "not authored" — the value, label,
+    # and support rows form one stacked text column at a shared content edge,
+    # so alignment is one chart-level choice, not a per-slot field. No theme
+    # default populates this; unauthored keeps today's left-anchored geometry.
+    align: Literal["left", "center", "right"] | None = Field(
         default=None,
-        description="KPI value/glyph static paint. No categorical or gradient arm — KPI has no series axis.",
+        description="Horizontal alignment of the value, label, and support text within the card.",
     )

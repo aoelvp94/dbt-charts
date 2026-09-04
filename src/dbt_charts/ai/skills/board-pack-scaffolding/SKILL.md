@@ -64,7 +64,7 @@ print(proposal_path)
 ```
 
 The planner reads schema metadata, groups tables into folders and dashboards, and
-writes a proposal artifact to `target/dataface/proposals/`. Nothing under `charts/`
+writes a proposal artifact to `target/dbt-charts/proposals/`. Nothing under `charts/`
 is touched yet.
 
 Optional: specify an organization mode if the user has a preference.
@@ -113,7 +113,7 @@ from dbt_charts.agent_api.pack import apply_proposal
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.pack.proposal_store import load_proposal
 
-proposal = load_proposal(Path("target/dataface/proposals/fivetran-zendesk/proposal.yml"))
+proposal = load_proposal(Path("target/dbt-charts/proposals/fivetran-zendesk/proposal.yml"))
 result = apply_proposal(proposal, FilesystemProject(Path(".")))
 print(result.model_dump())
 ```

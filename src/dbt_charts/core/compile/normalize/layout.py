@@ -188,8 +188,6 @@ def build_unified_layout(
             type=LayoutType.GRID,
             items=items,
             columns=grid_obj.columns,
-            gap=grid_obj.gap,
-            row_height=grid_obj.row_height,
         )
 
     elif board.tabs:
@@ -502,7 +500,7 @@ def _resolve_single_item(
             source_path=nested_path,
             user_width=user_width,
             layout_height=layout_height,
-            description=item.description,
+            notes=item.notes,
             visible=item.visible,
             **details_kwargs,
         )
@@ -659,6 +657,16 @@ def _resolve_board_file_import(
     # Convert raw YAML dict to AuthoredBoard; model_validate handles all nested models.
     nested_board = AuthoredBoard.model_validate(board_data)
 
+    # An imported file never reaches validate_board — it is loaded here, after
+    # validation ran on the importing board. Its `theme:`/`extends:` is inert
+    # for the same reason every nested board's is (no chain is folded for it),
+    # so the same check has to run, or the name is silently dropped.
+    from dbt_charts.core.compile.validate.dispatch import validate_theme_names
+
+    theme_errors = validate_theme_names(nested_board)
+    if theme_errors:
+        raise theme_errors[0]
+
     # Build parent context — the child board's refs resolve relative to the
     # imported file's own directory.
     parent_context = {
@@ -792,8 +800,8 @@ def _resolve_grid_items(
         layout_item.row = item_row
         layout_item.col_span = col_span
         layout_item.row_span = row_span
-        if grid_item.description and not layout_item.description:
-            layout_item.description = grid_item.description
+        if grid_item.notes and not layout_item.notes:
+            layout_item.notes = grid_item.notes
         resolved.append(layout_item)
 
     return resolved
@@ -875,7 +883,7 @@ def _resolve_tab_items(
                     type="board",
                     board=compiled_nested,
                     source_path=_tab_source_path(path_prefix, idx),
-                    description=tab_item.description,
+                    notes=tab_item.notes,
                 )
             )
 
@@ -884,7 +892,7 @@ def _resolve_tab_items(
             content_board = Board(
                 id=f"{board_id}_tab{idx}",
                 title=tab_item.title,
-                description=tab_item.description or "",
+                notes=tab_item.notes or "",  # type-state: silent_fallback — notes: str
                 text=tab_item.text,
                 layout=Layout(type=LayoutType.ROWS, items=[]),
                 theme=theme,
@@ -897,7 +905,7 @@ def _resolve_tab_items(
                     type="board",
                     board=content_board,
                     source_path=_tab_source_path(path_prefix, idx),
-                    description=tab_item.description,
+                    notes=tab_item.notes,
                 )
             )
 
@@ -906,7 +914,7 @@ def _resolve_tab_items(
             empty_board = Board(
                 id=f"{board_id}_tab{idx}",
                 title=tab_item.title,
-                description=tab_item.description or "",
+                notes=tab_item.notes or "",  # type-state: silent_fallback — notes: str
                 layout=Layout(type=LayoutType.ROWS, items=[]),
                 theme=theme,
                 resolved_style=resolved_style,
@@ -918,7 +926,7 @@ def _resolve_tab_items(
                     type="board",
                     board=empty_board,
                     source_path=_tab_source_path(path_prefix, idx),
-                    description=tab_item.description,
+                    notes=tab_item.notes,
                 )
             )
 

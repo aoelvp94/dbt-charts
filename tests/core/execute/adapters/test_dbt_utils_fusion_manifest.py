@@ -1,14 +1,14 @@
-"""`dbt_utils.py` against a real Fusion-emitted manifest.json.
+"""`dbt_utils.py` against a real dbt v2-emitted manifest.json.
 
 `dbt-charts/tests/fixtures/fusion_manifest/manifest.json` was produced by
 `dbt parse` with `dbt-fusion 2.0.0-preview.193` against the `jaffle-shop`
 jaffle project (Snowflake target), with the `macros` key stripped (unused
-by any dataface reader — it was 828KB of the 934KB raw file). Every other
-key is byte-for-byte what Fusion wrote.
+by any dbt charts reader — it was 828KB of the 934KB raw file). Every other
+key is byte-for-byte what dbt v2 wrote.
 
 The highest-risk field per that inventory is `relation_name` — a
-dbt-Core-computed convenience string. These tests confirm Fusion emits it
-(`DATABASE.schema.alias`, same shape as dbt-Core) so ref resolution
+dbt v1-computed convenience string. These tests confirm dbt v2 emits it
+(`DATABASE.schema.alias`, same shape as dbt v1) so ref resolution
 resolves `ref()`/`source()` calls without falling back to composing
 `schema.alias` itself.
 """
@@ -28,15 +28,15 @@ from ...._paths import DBT_CHARTS_DIR
 _FUSION_FIXTURES = DBT_CHARTS_DIR / "tests" / "fixtures" / "fusion_manifest"
 _FUSION_MANIFEST_JSON = (_FUSION_FIXTURES / "manifest.json").read_text()
 
-# A second real Fusion fixture, from the same jaffle_shop project built with a
-# DuckDB target instead of Snowflake, diffed key-for-key against a dbt-Core
+# A second real dbt v2 fixture, from the same jaffle_shop project built with a
+# DuckDB target instead of Snowflake, diffed key-for-key against a dbt v1
 # 1.12.0 manifest from the identical project (see the task worksheet's
 # divergence table). `relation_name` differs in shape by *adapter*, not by
-# engine: dbt-Core emits the 3-part `"memory"."main"."customers"` (DuckDB's
-# in-memory default database name baked in); Fusion emits the 2-part
+# engine: dbt v1 emits the 3-part `"memory"."main"."customers"` (DuckDB's
+# in-memory default database name baked in); dbt v2 emits the 2-part
 # `"main"."customers"` — no database segment. Both are still present (the
 # highest-risk field from the inventory), just quoted/segmented differently.
-# dataface's own DuckDB adapter always connects directly to one resolved
+# dbt charts' own DuckDB adapter always connects directly to one resolved
 # file/`:memory:` context (`_resolved_path` in duckdb_adapter.py) rather than
 # ATTACHing multiple databases by name, so a schema-qualified 2-part
 # reference is unambiguous and correct here — not a bug to fix.
@@ -67,7 +67,9 @@ def test_load_manifest_returns_none_without_target_manifest(
 
 def test_resolve_dbt_refs_uses_fusion_relation_name_for_model() -> None:
     loaded = LoadedManifest(
-        raw=json.loads(_FUSION_MANIFEST_JSON), relpath="target/manifest.json"
+        raw=json.loads(_FUSION_MANIFEST_JSON),
+        relpath="target/manifest.json",
+        version="v1",
     )
     sql, _ = resolve_dbt_refs_with_provenance(
         "select * from {{ ref('orders') }}", ref_index(loaded)
@@ -77,7 +79,9 @@ def test_resolve_dbt_refs_uses_fusion_relation_name_for_model() -> None:
 
 def test_resolve_dbt_refs_uses_fusion_relation_name_for_source() -> None:
     loaded = LoadedManifest(
-        raw=json.loads(_FUSION_MANIFEST_JSON), relpath="target/manifest.json"
+        raw=json.loads(_FUSION_MANIFEST_JSON),
+        relpath="target/manifest.json",
+        version="v1",
     )
     sql, _ = resolve_dbt_refs_with_provenance(
         "select * from {{ source('ecom', 'raw_customers') }}", ref_index(loaded)
@@ -88,11 +92,13 @@ def test_resolve_dbt_refs_uses_fusion_relation_name_for_source() -> None:
 def test_resolve_dbt_refs_uses_fusion_duckdb_relation_name_without_database_segment() -> (
     None
 ):
-    """DuckDB-target Fusion output: relation_name is present but 2-part
+    """DuckDB-target dbt v2 output: relation_name is present but 2-part
     (`"schema"."table"`, no database segment) — still used verbatim, no
     fallback to composing schema.alias."""
     loaded = LoadedManifest(
-        raw=json.loads(_FUSION_MANIFEST_DUCKDB_JSON), relpath="target/manifest.json"
+        raw=json.loads(_FUSION_MANIFEST_DUCKDB_JSON),
+        relpath="target/manifest.json",
+        version="v1",
     )
     sql, _ = resolve_dbt_refs_with_provenance(
         "select * from {{ ref('customers') }}", ref_index(loaded)

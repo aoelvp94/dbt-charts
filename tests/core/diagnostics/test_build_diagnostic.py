@@ -81,7 +81,7 @@ class TestToDiagnostic:
         assert fe_inst.format == "xyz"
         assert fe_inst.fields == {"format": "xyz"}
 
-    def test_cause_chains_dataface_errors_into_nested_diagnostic(self) -> None:
+    def test_cause_chains_dbt_charts_errors_into_nested_diagnostic(self) -> None:
         """When __cause__ is itself a DbtChartsError, build_diagnostic recurses
         so consumers keep code/level through the chain.
         """

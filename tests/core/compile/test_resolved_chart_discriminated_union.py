@@ -133,7 +133,11 @@ def test_area_constructs(area_style: ResolvedAreaStyle) -> None:
 
 def test_scatter_constructs(scatter_style: ResolvedScatterStyle) -> None:
     c = ResolvedScatterChart(
-        panel_axes=(), id="s", chart_type="scatter", style=scatter_style, **_C
+        panel_axes=(),
+        id="s",
+        chart_type="scatter",
+        style=scatter_style,
+        **_C,
     )
     assert c.chart_type == "scatter"
 
@@ -315,6 +319,7 @@ _SERIES_LABEL_D = {
     "font_family": "Inter",
     "font_size": 11.0,
     "font_weight": "400",
+    "font_style": "normal",
     "dark_companion_palette": [],
     "gap_px": 18.0,
 }

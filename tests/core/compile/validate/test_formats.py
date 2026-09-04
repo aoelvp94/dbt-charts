@@ -253,8 +253,8 @@ rows:
     assert result.errors[0].code == "ERR-FORMAT-INVALID"
 
 
-def test_data_table_entry_format_typo_fails_compile() -> None:
-    """data_table entries' format is validated too."""
+def test_support_table_entry_format_typo_fails_compile() -> None:
+    """support_table entries' format is validated too."""
     board = """
 title: T
 queries:
@@ -267,7 +267,7 @@ charts:
     type: bar
     x: month
     y: revenue
-    data_table:
+    support_table:
       - source: revenue
         format: percent_1
 rows:
@@ -356,7 +356,7 @@ charts:
         x: month
         y: b
         axis_y:
-          label:
+          labels:
             format: percent_1
 rows:
   - combo
@@ -694,7 +694,7 @@ charts:
         x: month
         y: b
         axis_y:
-          label:
+          labels:
             format: percent_1
 rows:
   - combo
@@ -770,10 +770,10 @@ rows:
     assert result.errors[0].code == "ERR-FORMAT-INVALID"
 
 
-def test_style_formats_null_does_not_break_number_default() -> None:
-    """Setting ``style.formats: null`` must NOT break number_default.
+def test_style_formats_null_does_not_break_number() -> None:
+    """Setting ``style.formats: null`` must NOT break number.
 
-    ``number_default`` is now a predefined engine-owned format (PredefinedNumberFormat),
+    ``number`` is now a predefined engine-owned format (PredefinedNumberFormat),
     not a theme alias. It resolves via the engine's own spec regardless of whether
     the authored board clears ``style.formats`` to null.
     """
@@ -796,7 +796,7 @@ rows:
 """
     result = compile_board(board_yaml)
     assert result.success, (
-        f"style.formats: null must not break number_default (now predefined): {result.errors}"
+        f"style.formats: null must not break number (now predefined): {result.errors}"
     )
 
 
@@ -816,7 +816,7 @@ queries:
     sql: SELECT 'Jan' AS month, 100 AS revenue
 style:
   formats:
-    compact: ",.0f"
+    number: ",.0f"
 charts:
   revenue:
     query: q
@@ -831,7 +831,7 @@ rows:
         "shadowing a predefined format name in style.formats must fail compile()"
     )
     assert result.errors[0].code == "ERR-FORMAT-PREDEFINED-SHADOW"
-    assert "compact" in result.errors[0].message
+    assert "number" in result.errors[0].message
     assert "Cannot define" in result.errors[0].message
 
 
@@ -1135,7 +1135,7 @@ rows:
 """,
     ),
     (
-        "data_table.format (via _VEGA_PAINTED_PARENTS[data_table])",
+        "support_table.format (via _VEGA_PAINTED_PARENTS[support_table])",
         """
 title: T
 queries:
@@ -1148,7 +1148,7 @@ charts:
     type: bar
     x: month
     y: revenue
-    data_table:
+    support_table:
       - source: revenue
         format: percent_number
 rows:
@@ -1208,3 +1208,185 @@ rows:
     result = compile_board(board)
     assert not result.success, "percent_number on donut total.format must fail compile"
     assert result.errors[0].code == "ERR-FORMAT-NATIVE-IN-VEGA-SLOT"
+
+
+# ── Format kind: a number alias in a time slot (and vice versa) ──────────────
+# `time_format` feeds a temporal axis and `number_format` a quantitative one.
+# Both are `<Alias> | str`, so the `str` arm swallows every name Pydantic would
+# otherwise reject — the kind check is the only thing standing between
+# `time_format: currency` and a chart that renders wrong and looks right.
+
+
+def _board_with_time_format(format_value: str, *, formats: str = "") -> str:
+    return f"""
+title: T
+queries:
+  q:
+    source: db
+    sql: SELECT '2024-01-01'::DATE AS month, 100 AS revenue
+style:
+{formats or "  background: white"}
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+    style:
+      time_format: {format_value}
+rows:
+  - revenue
+"""
+
+
+def test_number_alias_on_time_format_fails_compile() -> None:
+    """time_format: currency resolves to "$,.2f" — a d3 *number* spec.
+
+    Baked onto a temporal axis that spec produces garbage tick labels, which is
+    a wrong render that looks right until someone reads the axis.
+    """
+    result = compile_board(_board_with_time_format("currency"))
+
+    assert not result.success, "currency is a number format — illegal in time_format"
+    assert len(result.errors) == 1
+    error = result.errors[0]
+    assert error.code == "ERR-FORMAT-KIND-MISMATCH"
+    assert "currency" in error.message
+    assert "time_format" in error.message
+    assert "date_short" in error.message, "the legal names must be named"
+
+
+def test_a_typo_in_a_time_slot_is_never_pointed_at_a_number_alias() -> None:
+    """`currencyy` in a time slot must not be answered with "did you mean currency?".
+
+    The unknown-spec hint pool is the whole vocabulary by default, so the
+    nearest match to a mistyped number name is the number name — and taking that
+    suggestion just trades ERR-FORMAT-INVALID for ERR-FORMAT-KIND-MISMATCH. The
+    pool is scoped to the slot's own half so the hint is always followable.
+    """
+    result = compile_board(_board_with_time_format("currencyy"))
+
+    assert not result.success
+    error = result.errors[0]
+    assert error.code == "ERR-FORMAT-INVALID"
+    assert "currency" not in (error.hint or ""), (
+        "the hint points at a value the next compile rejects"
+    )
+
+
+def test_a_retired_format_name_is_told_its_successor_at_the_compile_boundary() -> None:
+    """The hint is the entire migration path for the format-name flip.
+
+    A value rename cannot be a schema migration — `value_map` is total over its
+    field's domain and `format:` is an open string — so an author porting a
+    board off `currency_compact` gets one chance, on this error. A fuzzy match
+    is actively wrong here: the nearest string is `currency_whole`, which
+    compiles clean and silently drops both compaction and cents.
+
+    Asserted at the boundary, not on the helper: the unit tests pin what
+    `suggest_close_format` returns; this pins that it reaches `error.hint`.
+    """
+    for retired, successor in (
+        ("currency_compact", "currency"),
+        ("compact", "number"),
+        ("number_default", "number"),
+    ):
+        result = compile_board(
+            f"""
+title: T
+queries:
+  q:
+    source: db
+    sql: SELECT 'Jan' AS month, 100 AS revenue
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+    style:
+      number_format: {retired}
+"""
+        )
+        assert not result.success, f"{retired} must fail compile"
+        error = result.errors[0]
+        assert error.code == "ERR-FORMAT-INVALID"
+        assert error.hint == f"{retired!r} was renamed to {successor!r}.", (
+            f"{retired} got {error.hint!r}"
+        )
+
+
+def test_the_kind_error_names_the_escape_hatch_its_slot_actually_has() -> None:
+    """A time slot's way out is a strftime spec, not "a raw d3 spec".
+
+    Generic advice to "use a raw d3 spec" is wrong on exactly this error: a d3
+    number spec baked onto a temporal axis is the defect being rejected.
+    """
+    message = compile_board(_board_with_time_format("currency")).errors[0].message
+    assert "%b %Y" in message
+    assert "d3" not in message, "a d3 number spec is what this slot must not take"
+
+    number_message = compile_board(_board_with_format("date_short")).errors[0].message
+    assert ",.0f" in number_message
+
+
+def test_time_alias_on_time_format_compiles_clean() -> None:
+    """date_short is the engine's temporal alias — the one name that belongs."""
+    result = compile_board(_board_with_time_format("date_short"))
+    assert result.success, f"Compile failed: {result.errors}"
+
+
+def test_strftime_on_time_format_compiles_clean() -> None:
+    """A raw d3 time spec is the other honest value for a time slot."""
+    result = compile_board(_board_with_time_format('"%b %Y"'))
+    assert result.success, f"Compile failed: {result.errors}"
+
+
+def test_board_alias_on_time_format_compiles_clean() -> None:
+    """`style.formats` keys are user-defined and carry no kind — legal on both.
+
+    The engine cannot know whether `fiscal` targets a time or a number spec, so
+    narrowing the engine's own vocabulary must not narrow the board's.
+    """
+    result = compile_board(
+        _board_with_time_format("fiscal", formats='  formats:\n    fiscal: "%b \'%y"\n')
+    )
+    assert result.success, f"Compile failed: {result.errors}"
+
+
+def test_time_alias_on_number_format_fails_compile() -> None:
+    """The narrowing runs both ways: date_short is not a number format."""
+    result = compile_board(_board_with_format("date_short"))
+
+    assert not result.success, "date_short is a time format — illegal in number_format"
+    assert result.errors[0].code == "ERR-FORMAT-KIND-MISMATCH"
+    assert "number_format" in result.errors[0].message
+
+
+def test_time_alias_on_a_kind_agnostic_format_slot_compiles_clean() -> None:
+    """An axis label format is either kind — its column decides, not the field.
+
+    Only `number_format`/`time_format` name their kind in the field itself; a
+    plain `format:` slot must keep the whole vocabulary.
+    """
+    board = """
+title: T
+queries:
+  q:
+    source: db
+    sql: SELECT '2024-01-01'::DATE AS month, 100 AS revenue
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+    style:
+      axis_x:
+        labels:
+          format: date_short
+rows:
+  - revenue
+"""
+    result = compile_board(board)
+    assert result.success, f"Compile failed: {result.errors}"

@@ -120,3 +120,60 @@ rows:
     warnings = _render(yaml_source, n_groups=3)
     codes = {w.code for w in warnings}
     assert _CODE not in codes
+
+
+def test_silent_when_narrowing_declines_for_affordability() -> None:
+    """A chart eligible to narrow (domain-subset, columns facet) whose
+    measured extra-axis reservation the affordability gate declines
+    (`emitters/_cartesian.py`'s `facet_bound_position_channels`) renders at
+    exactly its un-narrowed baseline width — the same width it would use
+    with no narrowing feature at all. That baseline comfortably clears the
+    floor here, so this warning must stay silent: declining to narrow is
+    not itself a reason to warn, only an actual sub-floor width is.
+
+    4 region columns in an 800px card: (800 - 120) / 4 = 170px baseline,
+    comfortably above the 120px floor. Realistic product-name labels
+    ("Widgets" etc.) measure a per-axis reservation the affordability gate
+    finds unaffordable at this width (170 - ~133 =~ 37px, under the floor),
+    so narrowing declines and the panel renders at the full 170px — not
+    reduced by this feature at all.
+    """
+    yaml_source = """
+title: Probe
+charts:
+  facet_heat:
+    query: q
+    type: heatmap
+    x: week
+    y: product
+    color: value
+    multiples:
+      columns: region
+queries:
+  q:
+    sql: SELECT * FROM t
+    source: test_source
+rows:
+  - cols:
+      - width: 800
+        rows:
+          - facet_heat
+"""
+    rows = [
+        {"week": w, "product": p, "region": r, "value": 10}
+        for r, prods in (
+            ("Japan", ("Widgets", "Gadgets")),
+            ("US", ("Widgets", "Gadgets", "Doodads")),
+            ("EU", ("Gadgets", "Doodads")),
+            ("UK", ("Doohickeys", "Sprockets")),
+        )
+        for p in prods
+        for w in ("2024-W01", "2024-W02")
+    ]
+    result = compile(yaml_source)
+    assert result.success and result.board is not None, result.errors
+    executor = _make_executor(result.board, result.query_registry, rows)
+    render_result = render(result.board, executor, format="svg")
+    warnings = list(render_result.warnings)
+    codes = {w.code for w in warnings}
+    assert _CODE not in codes, codes

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
     from dbt_charts.core.project import Project
 
+from dbt_charts.core.compile.errors import JinjaError
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.query.normalized import (
     AnyQuery,
@@ -25,16 +26,27 @@ from dbt_charts.core.compile.models.query.normalized import (
 )
 from dbt_charts.core.compile.sql_guard import validate_select_only
 from dbt_charts.core.compile.template.jinja import resolve_jinja_template
-from dbt_charts.core.compile.template.parameterized import render_parameterized
+from dbt_charts.core.compile.template.parameterized import (
+    _check_placeholders_present,
+    _ParameterCollector,
+    make_filter_date_range_helper,
+    make_filter_helper,
+)
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import ERR_SOURCE_INVALID_TYPE
-from dbt_charts.core.dialects import DIALECTS, get_dialect, list_dialects
+from dbt_charts.core.dialects import (
+    DIALECTS,
+    SQLDialect,
+    get_dialect,
+    list_dialects,
+)
 from dbt_charts.core.execute.adapters.base import (
     BaseAdapter,
     QueryParams,
     QueryResult,
     apply_row_limit_truncation,
     classify_warehouse_error,
+    connection_failure,
     handle_adapter_error,
     resolve_effective_row_limit,
 )
@@ -72,10 +84,10 @@ def _read_profiles_yml(
     return data
 
 
-# dbt spelling → the spelling Dataface's own code reads the field under. Deliberately
-# tiny: these are the fields *Dataface* consumes, not a mirror of dbt's schema. Adding
-# an entry here means some Dataface reader hardcodes a key name — check that first.
-_DBT_KEYS_DATAFACE_READS: dict[str, dict[str, str]] = {
+# dbt spelling → the spelling dbt charts' own code reads the field under. Deliberately
+# tiny: these are the fields *dbt charts* consumes, not a mirror of dbt's schema. Adding
+# an entry here means some dbt charts reader hardcodes a key name — check that first.
+_DBT_KEYS_DBT_CHARTS_READS: dict[str, dict[str, str]] = {
     # sql_adapter builds BigQuery's default_dataset from project/dataset;
     # database/schema are dbt's canonical names for the same two fields.
     "bigquery": {"database": "project", "schema": "dataset"},
@@ -93,7 +105,7 @@ def _read_target_dict(
     """Return the connection fields for the given profile+target from profiles.yml.
 
     profiles.yml belongs to dbt, so the installed dbt adapter's credentials class
-    validates the target — Dataface declares no schema of its own over a file it
+    validates the target — dbt charts declares no schema of its own over a file it
     does not own, which is what rejected valid dbt config (`threads`, canonical
     BigQuery `database`/`schema`). Following dbt's own sequence: drop the
     profile-level `threads` (dbt keeps it beside the credentials, not in them),
@@ -161,8 +173,8 @@ def _read_target_dict(
     # its Jinja is left raw. On the resolver path that dict becomes a
     # DbtTargetSourceConfig, whose inherited validator renders it exactly once —
     # rendering here as well would evaluate that pass's own output as a template. The
-    # two direct callers (DbtAdapter._get_adapter, metricflow lowering) never render,
-    # same as before this change.
+    # two direct callers (DbtAdapter._get_adapter, source_resolver._expand_dbt_profile)
+    # never render, same as before this change.
     try:
         credentials_cls = load_plugin(typename)
         credentials_cls.validate(
@@ -182,11 +194,14 @@ def _read_target_dict(
         ) from exc
 
     # dbt accepts several spellings per field; a few of them are read downstream by
-    # *Dataface* under its own name (the BigQuery default_dataset build in
+    # *dbt charts* under its own name (the BigQuery default_dataset build in
     # sql_adapter, normalize_duckdb_config), so those are renamed here or the
-    # setting is silently lost. Only fields Dataface itself consumes — everything
+    # setting is silently lost. Only fields dbt charts itself consumes — everything
     # else stays exactly as authored, for dbt's own credentials class to interpret.
-    for dbt_name, dbt_charts_name in _DBT_KEYS_DATAFACE_READS.get(typename, {}).items():
+    for dbt_name, dbt_charts_name in _DBT_KEYS_DBT_CHARTS_READS.get(
+        typename,
+        {},  # type-state: silent_fallback — map is deliberately sparse
+    ).items():
         if dbt_name in connection and dbt_charts_name not in connection:
             connection[dbt_charts_name] = connection.pop(dbt_name)
 
@@ -236,7 +251,7 @@ class DbtAdapter(BaseAdapter):
         """Initialize dbt adapter.
 
         Args:
-            project: The Dataface project (manifest reads route through this,
+            project: The dbt charts project (manifest reads route through this,
                 not dbt_project_path — see DbtRefResolver).
             dbt_project_path: Path to dbt project. Still used for profiles.yml
                 / dbt_project.yml resolution, which stays a raw filesystem
@@ -333,19 +348,28 @@ class DbtAdapter(BaseAdapter):
             else None
         )
 
-        try:
-            # auto_begin=False, like dbt's own select path: a SELECT needs no
-            # transaction, and one opened here is only ended by the release on
-            # context exit. Nothing to end is stronger than something to clean up.
-            with adapter.connection_named("dbt_charts_query"):
+        # auto_begin=False, like dbt's own select path: a SELECT needs no
+        # transaction, and one opened here is only ended by the release on
+        # context exit. Nothing to end is stronger than something to clean up.
+        with adapter.connection_named("dbt_charts_query"):
+            try:
+                # Force the lazy connection handle open before any SQL is
+                # sent: a connect failure here (bad credentials, unreachable
+                # host) must not be classified as a warehouse rejection —
+                # nothing has read the query yet.
+                _ = adapter.connections.get_thread_connection().handle
+            except Exception as e:  # noqa: BLE001 — connect failure, not a query rejection
+                return connection_failure(self._dialect, e)
+
+            try:
                 _, table = adapter.execute(
                     resolved_sql,
                     auto_begin=False,
                     fetch=True,
                     limit=driver_limit,
                 )
-        except Exception as e:  # noqa: BLE001
-            return classify_warehouse_error("dbt SQL execution", e, self._dialect)
+            except Exception as e:  # noqa: BLE001
+                return classify_warehouse_error("dbt SQL execution", e, self._dialect)
 
         # Result materialization is client-side (no further warehouse round
         # trip) — left unguarded so a defect here surfaces as a crash, not a
@@ -411,18 +435,26 @@ class DbtAdapter(BaseAdapter):
         """Resolve dbt refs, then render variables and filters to literal SQL.
 
         Variables resolve exactly as they always have on this path. Only the
-        filter helpers change: `resolve_jinja_template` masks them so they never
-        reach the raising interpolation stubs, and binds each one — from its own
-        author-written text — while unmasking.
+        filter helpers change: instead of the raising interpolation stubs, the
+        render context gets helpers that collect each value as a parameter and
+        emit a placeholder for it, which the inline pass below flattens to an
+        escaped literal — dbt's adapter.execute() takes a SQL string and no
+        bindings.
 
-        One render, deliberately. A second pass over this method's output would
+        One Jinja render, deliberately. A second *render* of this output would
         be re-rendering substituted variable values, and values come from URL
-        query parameters: they are data, never template source.
+        query parameters: they are data, never template source. The inline pass
+        is not a render — it substitutes a fixed NUL-delimited token that
+        cannot occur in authored SQL. A Jinja filter applied to a predicate is
+        caught on the way through, in the two shapes it can take: a token the
+        filter rewrote (`| upper`) is refused by the inline pass, and one it
+        removed outright — leaving a collected value with nowhere to bind, so
+        the query would run unconstrained — by the placeholder check above it.
 
         Binding only the helpers is also what keeps a variable written *inside*
         a literal (`'%{{ q }}%'`, `'{{ year }}-01-01'`) rendering as before; a
-        bound value arrives already quoted and cannot be spliced into the middle
-        of somebody else's string.
+        filtered value arrives already quoted and cannot be spliced into the
+        middle of somebody else's string.
 
         Args:
             sql: Query SQL, possibly containing dbt jinja and variable Jinja.
@@ -431,29 +463,37 @@ class DbtAdapter(BaseAdapter):
                 that declare lenient_variables.
         """
         resolved, _ = self._dbt_refs.resolve(sql)
-        return resolve_jinja_template(
+        collector = _ParameterCollector(variables={}, dialect=INLINE_PLACEHOLDERS)
+        rendered = resolve_jinja_template(
             resolved,
             variables,
             strict=strict,
-            bind_filters=lambda call: self._bind_filter_call(call, variables, strict),
+            filter_helpers={
+                "filter": make_filter_helper(collector.add_param),
+                "filter_date_range": make_filter_date_range_helper(collector.add_param),
+            },
         )
+        if not collector.params:
+            return rendered
+        # Before inlining: the guard inside inline_params_for_dialect can only
+        # see a mangled token, never one a filter removed outright — and a
+        # dropped parameter is a query that runs unconstrained.
+        _check_placeholders_present(rendered, collector, INLINE_PLACEHOLDERS)
+        try:
+            return inline_params_for_dialect(
+                rendered,
+                collector.params,
+                INLINE_PLACEHOLDERS,
+                escaping=self._warehouse(),
+            )
+        except ValueError as e:
+            # A surviving placeholder means a Jinja filter transformed one
+            # before it could be substituted. Coded here rather than left bare,
+            # which would reach the executor as ERR-INTERNAL.
+            raise JinjaError(str(e), resolved) from e
 
-    def _bind_filter_call(
-        self, call: str, variables: dict[str, Any] | None, strict: bool
-    ) -> str:
-        """Bind one `{{ filter(...) }}` span to a predicate with literal values.
-
-        `call` is the span exactly as authored, so rendering it is rendering
-        author-written template text — the values it references are supplied as
-        parameters and flattened to escaped literals, never rendered.
-
-        INLINE_PLACEHOLDERS rather than the warehouse's parameter syntax. A span
-        holds no author-written literal, so the warehouse's own syntax would in
-        fact round-trip today; this keeps the two halves agreeing on a style
-        that cannot collide with anything, independent of what the span
-        eventually contains. Escaping is a separate question from placeholder
-        shape, and follows the engine that will parse the literal — the target
-        this adapter connected to, never the internal placeholder style.
+    def _warehouse(self) -> SQLDialect:
+        """The dialect whose literal grammar the inlined values must satisfy.
 
         Raises:
             DbtChartsError: The dbt target's warehouse type has no dialect here,
@@ -469,12 +509,4 @@ class DbtAdapter(BaseAdapter):
                 offending_value=self._dialect,
                 available=list_dialects(),
             )
-        parameterized = render_parameterized(
-            call, variables=variables, dialect=INLINE_PLACEHOLDERS, strict=strict
-        )
-        return inline_params_for_dialect(
-            parameterized.sql,
-            parameterized.params,
-            INLINE_PLACEHOLDERS,
-            escaping=warehouse,
-        )
+        return warehouse

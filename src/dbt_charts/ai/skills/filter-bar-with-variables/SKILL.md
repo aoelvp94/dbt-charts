@@ -18,7 +18,7 @@ metadata:
 
 Variables add interactive controls to a board. Each `variables:` entry renders
 a UI widget (select, date picker, number slider). Queries reference variables
-with `{{ var_name }}` Jinja placeholders — Dataface substitutes the current
+with `{{ var_name }}` Jinja placeholders — dbt charts substitutes the current
 widget value at query time.
 
 ## When to reach for this
@@ -38,7 +38,7 @@ widget value at query time.
 variables:
   region:
     label: Region
-    description: Filter all charts to this region
+    notes: Filter all charts to this region
     options:
       static: [North, South, East, West]
 
@@ -50,7 +50,7 @@ variables:
 
 queries:
   monthly:
-    description: Monthly revenue filtered by region and date window
+    notes: Monthly revenue filtered by region and date window
     sql: |
       SELECT DATE_TRUNC('month', order_date) AS month,
              SUM(revenue) AS revenue

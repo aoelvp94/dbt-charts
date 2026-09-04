@@ -203,7 +203,7 @@ class TestTableFilterCellLinksInSVG:
                 "table": {
                     "columns": {
                         "property_industry": {
-                            "link": "/industry/{{ property_industry }}"
+                            "link": "/industry/{{ property_industry }}",
                         }
                     }
                 }

@@ -11,12 +11,17 @@ from typing import Any
 from pydantic_core import to_jsonable_python
 
 from dbt_charts.core.compile.models.style.theme import SliceLabelsStyle
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    CategoryColorScale,
+    category_scale_for,
+    color_at,
+)
 from dbt_charts.core.compile.template.labels_env import (
     label_jinja_env,
     strip_jinja_braces,
 )
 
-LABEL_FIELD = "__dft_label"
+LABEL_FIELD = "__dbt_label"
 ChartValue = Any
 ChartRow = dict[str, ChartValue]
 ChartRows = list[ChartRow]
@@ -39,8 +44,20 @@ def project_pie_table_rows(
     color_field: str | None,
     theta_field: str,
     row_indices: tuple[int, ...],
+    category_colors: tuple[CategoryColorScale, ...],
 ) -> list[dict[str, ChartValue]]:
-    """Project frozen row indices into the attached table's mechanical shape."""
+    """Project frozen row indices into the attached table's mechanical shape.
+
+    The table is the pie's legend, so each row's swatch must be the exact
+    fill its own wedge paints -- ``color_at`` keyed by the row's own value,
+    same as the wedge (see ``PieEmitter.emit``), never a row-position lookup.
+    ``category_colors`` is this chart's own board-wide binding, already
+    narrowed to the fields it draws (``chart.category_colors`` at render,
+    ``_bound_scales(...)`` at compile) -- empty for an unbound pie (no
+    board-wide binding for ``color_field``, or no color channel at all),
+    which keeps today's positional fallback: a single-series pie already
+    paints every wedge ``palette[0]`` uniformly regardless of row position.
+    """
 
     def scalar(value: ChartValue) -> str | int | float | bool:
         if isinstance(value, Decimal):
@@ -51,9 +68,20 @@ def project_pie_table_rows(
             return ""
         return str(value)
 
+    category_scale = (
+        category_scale_for(category_colors, color_field) if color_field else None
+    )
+
+    def swatch(index: int) -> str:
+        if category_scale is not None and color_field:
+            value = data[index].get(color_field)
+            if value is not None:
+                return color_at(category_scale, str(value), palette)
+        return palette[index % len(palette)]
+
     return [
         {
-            "swatch": palette[index % len(palette)],
+            "swatch": swatch(index),
             "share": f"{round(shares[index] * 100)}%",
             "name": scalar(data[index].get(color_field)) if color_field else "",
             "value": scalar(data[index].get(theta_field)),

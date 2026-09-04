@@ -2,7 +2,7 @@
 # Demonstrates the table pivot / cross-tab channels: rows, columns, values.
 
 title: Pivot Tables
-description: Cross-tabulate a long query into a wide table with rows / columns / values.
+notes: Cross-tabulate a long query into a wide table with rows / columns / values.
 source: examples_db
 
 text: |
@@ -19,12 +19,21 @@ text: |
   The four tables below walk through each variant against the
   `ecommerce_orders` sample (region, product, category, revenue, units).
 
+# Every query below orders by its pivot-column dimension, not just the row
+# dimension. A pivot keeps string column dimensions in first-seen query order
+# (sorting them would override the author's ordering), so an ORDER BY that
+# leaves the column dimension unconstrained hands the header order to DuckDB's
+# parallel hash aggregation and the render stops being reproducible.
+#
+# `style.columns` is styling-only and has no say in column order — every chart
+# here renders its pivoted columns in the query's own order, so the ORDER BY
+# above is the single knob that decides the header sequence.
 queries:
   region_category: |
     SELECT region, category, SUM(revenue) AS revenue
     FROM ecommerce_orders
     GROUP BY region, category
-    ORDER BY region
+    ORDER BY region, category
 
   region_category_measures: |
     SELECT
@@ -34,7 +43,7 @@ queries:
       SUM(units_sold) AS units
     FROM ecommerce_orders
     GROUP BY region, category
-    ORDER BY region
+    ORDER BY region, category
 
   region_category_period: |
     SELECT
@@ -54,9 +63,10 @@ queries:
 
 charts:
   # 1 — Single-measure cross-tab. Leaf columns are the distinct `category`
-  # values, so number formats key by col-value (Electronics / Accessories / Tools).
-  # In single-measure mode style.columns is also the column allowlist, so the
-  # row-dimension field (region) must be listed too or it would be dropped.
+  # values, so number formats key by col-value (Electronics / Accessories /
+  # Tools). style.columns is styling-only: a leaf value or the row dimension
+  # left unlisted still renders (unstyled) — a fourth seed category would
+  # appear on its own, listed here only when it needs a format.
   revenue_cross_tab:
     type: table
     query: region_category

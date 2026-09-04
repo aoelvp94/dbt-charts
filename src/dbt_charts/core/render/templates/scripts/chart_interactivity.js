@@ -58,11 +58,6 @@
         return showable && element.closest(MARK_GROUP_SELECTOR) !== null;
     }
 
-    function coerceNumeric(value) {
-        const numValue = parseFloat(value);
-        return !isNaN(numValue) && value === String(numValue) ? numValue : value;
-    }
-
     /*{# Returns an ORDERED list of {role, label?, value} entries -- order matters #}*/
     /*{# (header -> series -> dependent values -> footer total), so a plain object #}*/
     /*{# (used pre-hierarchy, when every row rendered identically) can't carry it. #}*/
@@ -86,16 +81,16 @@
                 entries.push({
                     role: 'header',
                     swatch: marker === ROLE_HEADER_SWATCHED,
-                    value: coerceNumeric(pair.slice(1)),
+                    value: pair.slice(1),
                 });
                 continue;
             }
             if (marker === ROLE_SERIES) {
-                entries.push({ role: 'series', value: coerceNumeric(pair.slice(1)) });
+                entries.push({ role: 'series', value: pair.slice(1) });
                 continue;
             }
             if (marker === ROLE_ORDER) {
-                entries.push({ role: 'order', value: coerceNumeric(pair.slice(1)) });
+                entries.push({ role: 'order', value: pair.slice(1) });
                 continue;
             }
 
@@ -108,7 +103,7 @@
             const value = rest.substring(colonIndex + 1).trim();
             if (!key) continue;
 
-            entries.push({ role: isTotal ? 'total' : 'value', label: key, value: coerceNumeric(value), muted: muted });
+            entries.push({ role: isTotal ? 'total' : 'value', label: key, value: value, muted: muted });
         }
 
         return entries;
@@ -144,7 +139,7 @@
     /*{# Degenerates to a single value for every family but heatmap, so this is #}*/
     /*{# not a behavior change for the single-header case. #}*/
     function headerKey(entries) {
-        return headerEntries(entries).map(function (e) { return String(e.value); }).join('|');
+        return headerEntries(entries).map(function (e) { return e.value; }).join('|');
     }
 
     function markSeriesEntry(entries) {
@@ -161,6 +156,12 @@
         return null;
     }
 
+    /*{# The baked rank is the only genuinely numeric entry the aria-label carries. #}*/
+    function orderRank(entry) {
+        const n = parseInt(entry.value, 10);
+        return isNaN(n) ? Infinity : n;
+    }
+
     function findTotalEntry(matches) {
         for (let i = 0; i < matches.length; i++) {
             const total = matches[i].entries.find(function (e) { return e.role === 'total'; });
@@ -169,15 +170,19 @@
         return null;
     }
 
-    /*{# The chart's canonical series order, read from the color legend's labels #}*/
-    /*{# in DOM order (VL renders them in the color-scale domain order). Returns a #}*/
-    /*{# {seriesValue: index} map, or an empty map when there's no legend (e.g. #}*/
-    /*{# endpoint-labelled lines) -- in which case matches keep their natural order. #}*/
+    /*{# The chart's canonical series order, read from the color legend's #}*/
+    /*{# DOM order (VL renders labels in the color-scale domain order). #}*/
+    /*{# Prefers `data-dbt-series` -- the raw, untruncated value stamped by #}*/
+    /*{# converters/chart.py's SVG post-process pass -- falling back to #}*/
+    /*{# trimmed textContent when unstamped (a scenegraph probe failure). #}*/
+    /*{# Returns a {seriesValue: index} map, or an empty map when there's no #}*/
+    /*{# legend (e.g. endpoint-labelled lines) -- in which case matches #}*/
+    /*{# keep their natural order. #}*/
     function legendSeriesOrder(svg) {
         const order = {};
         let i = 0;
         svg.querySelectorAll('.role-legend-label').forEach(function (el) {
-            const name = (el.textContent || '').trim();
+            const name = el.getAttribute('data-dbt-series') || (el.textContent || '').trim();
             if (name && !(name in order)) { order[name] = i++; }
         });
         return order;
@@ -220,7 +225,7 @@
             if (!markHeaderEntry(entries) || headerKey(entries) !== identity) return;
 
             const series = markSeriesEntry(entries);
-            const key = identity + '|' + (series ? String(series.value) : '');
+            const key = identity + '|' + (series ? series.value : '');
             if (seen[key]) return;
             seen[key] = true;
             matches.push({ mark: candidate, entries: entries });
@@ -236,8 +241,8 @@
                 const ob = markOrderEntry(b.entries);
                 const sa = markSeriesEntry(a.entries);
                 const sb = markSeriesEntry(b.entries);
-                const ka = oa ? oa.value : (sa && String(sa.value) in order ? order[String(sa.value)] : Infinity);
-                const kb = ob ? ob.value : (sb && String(sb.value) in order ? order[String(sb.value)] : Infinity);
+                const ka = oa ? orderRank(oa) : (sa && sa.value in order ? order[sa.value] : Infinity);
+                const kb = ob ? orderRank(ob) : (sb && sb.value in order ? order[sb.value] : Infinity);
                 return ka !== kb ? ka - kb : a._i - b._i;
             });
         }
@@ -302,9 +307,6 @@
 
     function formatValue(value) {
         if (value === null || value === undefined) return "__DCT_NULL_DISPLAY__";
-        if (typeof value === 'number') {
-            return escapeHtml(value.toLocaleString(undefined, { maximumFractionDigits: 2 }));
-        }
         return escapeHtml(value);
     }
 

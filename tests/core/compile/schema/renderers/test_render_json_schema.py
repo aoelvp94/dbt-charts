@@ -70,15 +70,16 @@ class TestRenderJsonSchemaUnionTypes:
         assert "string" in schema_str
 
     def test_chart_query_includes_authored_query_ref(self) -> None:
-        # BarChart.query: str | AuthoredQuery | QueryRef | None
-        # Must reference AuthoredQuery (the typed inline query model).
-        # (AuthoredChart is now a discriminated union; fields live on the family classes)
+        # BarChart.query: ChartQuery (str / AuthoredQuery / QueryRef discriminated
+        # union) | None. Must reference AuthoredQuery (the typed inline query
+        # model) and QueryRef (the cross-file ref model) as opaque $refs.
         defs = render_json_schema(introspect()).get("$defs", {})
         query_prop = defs["BarChart"]["properties"]["query"]
         schema_str = json.dumps(query_prop)
         assert "AuthoredQuery" in schema_str, (
             "query schema must reference AuthoredQuery"
         )
+        assert "QueryRef" in schema_str, "query schema must reference QueryRef"
 
     def test_dict_keyed_model_field_emits_object_with_additional_properties(
         self,
@@ -119,6 +120,29 @@ class TestRenderJsonSchemaUnionTypes:
         assert "boolean" not in schema_str, "bool must not appear — use 'none'/'zero'"
         assert "zero" in schema_str, "enum values must appear"
         assert "none" in schema_str, "'none' sentinel must appear"
+
+    def test_bare_union_field_with_dict_keyed_chart_arm_includes_that_branch(
+        self,
+    ) -> None:
+        # GridItem.item: str | AuthoredBoard | AuthoredChart | dict[str, AuthoredChart]
+        # is a *scalar* field (not list-wrapped, unlike GridLayout.items), so it
+        # takes the `all_branches = branches` fallback in _type_schema rather
+        # than the field.container == "list" branch that renders
+        # container_mapping_models as an additionalProperties arm. The
+        # dict[str, AuthoredChart] form -- `item: {my_chart: {type: bar, ...}}`
+        # -- must still appear in the rendered schema: this same renderer is
+        # both the published IDE completion/validation schema (dropping the
+        # arm makes a real, valid authoring shape look like an IDE error) and
+        # the schema `_schema_path_exists` checks a migration Move's endpoint
+        # against, so a dropped arm also makes any Move landing inside it
+        # silently unvalidatable.
+        defs = render_json_schema(introspect()).get("$defs", {})
+        item_prop = defs["GridItem"]["properties"]["item"]
+        schema_str = json.dumps(item_prop)
+        assert '"additionalProperties"' in schema_str, (
+            "dict[str, AuthoredChart] arm must render as an additionalProperties "
+            "branch, not be dropped from the union"
+        )
 
     def test_variable_dependencies_not_in_schema(self) -> None:
         # Variable.variable_dependencies is a compile-time field (exclude=True)
@@ -198,6 +222,38 @@ class TestThemeProperty:
         assert set(schema["properties"]["theme"]["enum"]) == set(
             typing.get_args(ThemeName)
         )
+
+
+class TestRenderJsonSchemaSupportTableBareString:
+    """ChartSupportTable entries accept a bare string ("revenue" == {source: revenue}),
+    and the whole block accepts a bare list ([revenue] == {entries: [revenue]}).
+
+    Both are declared on the annotation now — ChartSupportTableEntry's "source"
+    arm carries `BeforeValidator(_coerce_bare_string, json_schema_input_type=...)`,
+    and `support_table:`'s own annotation (chart/authored/_support_table.py's
+    `ChartSupportTableOrList`) carries `BeforeValidator(_accept_bare_list,
+    json_schema_input_type=list[ChartSupportTableEntry] | ChartSupportTable)` —
+    so introspection derives both shapes; json_schema.py no longer hand-widens
+    them. The bare-list branch therefore now lives on the `support_table:`
+    *field* itself (every Bar/Line/Area chart), not on a top-level
+    `ChartSupportTable` anyOf wrapper — `ChartSupportTable`'s own $defs entry is
+    just the plain object shape."""
+
+    def test_bare_list_shorthand_entries_accept_string(self) -> None:
+        # support_table: [revenue] — the array-shorthand branch, on the field.
+        defs = render_json_schema(introspect()).get("$defs", {})
+        support_table = defs["BarChart"]["properties"]["support_table"]
+        array_form = next(
+            branch for branch in support_table["anyOf"] if branch.get("type") == "array"
+        )
+        assert {"type": "string"} in array_form["items"]["anyOf"]
+
+    def test_object_form_entries_accept_string(self) -> None:
+        # support_table: {entries: [revenue]} — the explicit object-key branch.
+        defs = render_json_schema(introspect()).get("$defs", {})
+        object_form = defs["ChartSupportTable"]
+        entries_items = object_form["properties"]["entries"]["items"]
+        assert {"type": "string"} in entries_items["anyOf"]
 
 
 class TestRenderJsonSchemaOverlapStruct:

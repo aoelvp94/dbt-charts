@@ -1,8 +1,8 @@
-"""Public dft-core connection API.
+"""Public dbt_charts.core connection API.
 
-Exports test_connection(source_config) → (bool, str) plus the BigQuery
-discovery helpers hosts use to fill a connection form: build_bigquery_client,
-list_datasets, dataset_location.
+Exports test_connection(source_config) → (bool, str), probe_relation_readability,
+bulk_schema_for_config, plus the BigQuery discovery helpers hosts use to fill a
+connection form: build_bigquery_client, list_datasets, dataset_location.
 
 All DB connection machinery lives in execute/adapters/dbt_adapter_factory.py.
 Cloud and other consumers call this, not dbt.adapters directly — Cloud in
@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.source import BigQuerySourceConfig, SourceConfig
+    from dbt_charts.core.inspect.bulk_schema import SchemaTree
+    from dbt_charts.core.inspect.relations import Relation
 
 
 def import_bigquery(module_name: str) -> Any:
@@ -142,6 +144,126 @@ def test_connection(source_config: SourceConfig) -> tuple[bool, str]:
         with adapter.connection_named("test"):
             adapter.execute("SELECT 1", auto_begin=False, fetch=True)
         return True, "Connection successful"
+    except (
+        Exception  # noqa: BLE001
+    ) as e:  # broad on purpose — surfaces driver-level errors as messages
+        return False, str(e) or type(e).__name__
+
+
+def bulk_schema_for_config(source_config: SourceConfig) -> SchemaTree:
+    """Return source_config's whole schema tree from a single warehouse query.
+
+    Connection-scoped sibling of ``bulk_schema`` — same SQL builder and
+    row→tree parser, but keyed by a bare ``SourceConfig`` (via ``build_adapter``,
+    the ``test_connection`` pattern) instead of an ``AdapterRegistry``. For
+    hosts holding a connection's credentials with no project/registry, such
+    as Cloud's per-connection schema profile.
+
+    Fails only through the same narrow contract as ``bulk_schema``:
+
+      * ``NotImplementedError`` — the dialect has no bulk-introspection form
+        (e.g. BigQuery without a region qualifier).
+      * ``RuntimeError`` — the query returned or raised an error (any driver
+        exception is normalized into this), or the result was truncated by the
+        ``execution.max_rows``/``DCT_MAX_ROWS_CEILING`` ceiling — a partial
+        tree would silently under-count, so it raises instead.
+    """
+    # Function-local like every other dbt_charts import in this module: keeping
+    # the module itself leaf-light is what lets `dbt_charts.cli.main` import
+    # without eagerly loading core.compile (pinned by test_lazy_imports).
+    from dbt_charts.core.dialects import get_dialect
+    from dbt_charts.core.execute.adapters.base import (
+        apply_row_limit_truncation,
+        resolve_effective_row_limit,
+    )
+    from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+    from dbt_charts.core.inspect.bulk_schema import (
+        bulk_schema_scope,
+        parse_bulk_schema_rows,
+    )
+
+    creds = source_config.model_dump(
+        by_alias=True, exclude_unset=True, exclude_none=True
+    )
+    source_type = str(creds.get("type"))
+    dialect = get_dialect(source_type)
+    sql = dialect.bulk_schema_sql(bulk_schema_scope(source_type, creds))
+
+    # Same execution.max_rows/DCT_MAX_ROWS_CEILING guard as the registry path:
+    # bound the driver fetch where the cursor supports it, post-slice otherwise,
+    # and raise rather than return a silently partial tree.
+    row_limit = resolve_effective_row_limit(None)
+    driver_limit = (
+        row_limit.fetch_limit if dialect.cursor_supports_driver_limit else None
+    )
+
+    try:
+        # No macro context: this runs plain metadata SQL on every connection
+        # save in a long-lived worker, and register_macros' bootstrap closure
+        # keeps the adapter (and its warehouse session) alive until a gen-GC
+        # sweep.
+        adapter = build_adapter(creds, register_macros=False)
+        with adapter.connection_named("bulk_schema_for_config"):
+            _response, table = adapter.execute(
+                sql, auto_begin=False, fetch=True, limit=driver_limit
+            )
+        rows, truncated_reason = apply_row_limit_truncation(list(table.rows), row_limit)
+        tree = parse_bulk_schema_rows(
+            dict(zip(table.column_names, row, strict=True)) for row in rows
+        )
+    except (
+        Exception  # noqa: BLE001 — normalize driver errors to RuntimeError
+    ) as e:
+        raise RuntimeError(f"bulk_schema_for_config query failed: {e}") from e
+    if truncated_reason is not None:
+        raise RuntimeError(
+            f"bulk_schema_for_config query for {source_type!r} was truncated to "
+            f"{row_limit.effective_limit} rows by {truncated_reason!r} — schema "
+            "tree is incomplete. Raise execution.max_rows or "
+            "DCT_MAX_ROWS_CEILING above the source's column count to fix this."
+        )
+    return tree
+
+
+def probe_relation_readability(
+    source_config: SourceConfig, relation: Relation
+) -> tuple[bool, str]:
+    """Verify *relation* is readable with *source_config*'s credential.
+
+    ``SELECT * FROM <relation> LIMIT 0`` — a live probe. Portable across every
+    supported dialect and truthful regardless of how the grant was applied (dbt,
+    Terraform, or by hand), since it asks the warehouse directly rather than
+    reading declared config. Zero rows are ever fetched or returned; only
+    whether the statement itself was accepted.
+
+    Args:
+        source_config: The connection's own credential.
+        relation: One relation from ``inspect.relations.relations_read_by`` —
+            ``database``/``schema`` may be None when the query didn't qualify it.
+
+    Returns:
+        (True, "") when the relation is readable.
+        (False, "<error message>") on any failure — missing grant, missing
+        relation, unreachable warehouse. Never raises: a caller probes many
+        relations in a loop and one failure must not abort the rest.
+    """
+    from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+
+    creds = source_config.model_dump(
+        by_alias=True, exclude_unset=True, exclude_none=True
+    )
+    try:
+        adapter = build_adapter(creds)
+        qualified = ".".join(
+            adapter.quote(part)
+            for part in (relation.database, relation.schema, relation.name)
+            if part
+        )
+        with adapter.connection_named("probe_relation_readability"):
+            adapter.execute(
+                f"SELECT * FROM {qualified} LIMIT 0", auto_begin=False, fetch=True
+            )
+        return True, ""
     except (
         Exception  # noqa: BLE001
     ) as e:  # broad on purpose — surfaces driver-level errors as messages

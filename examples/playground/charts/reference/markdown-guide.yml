@@ -2,7 +2,7 @@
 # This dashboard showcases all markdown features available in dbt charts content blocks.
 
 title: "Markdown Guide"
-description: "All markdown features you can use in dbt charts content blocks"
+notes: "All markdown features you can use in dbt charts content blocks"
 
 text: |
   dbt charts supports rich markdown in `content` blocks. This guide showcases everything you can do!

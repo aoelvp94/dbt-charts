@@ -76,16 +76,17 @@ def _imports_with_prefix(path: Path, prefix: str) -> list[str]:
 def test_compile_dialect_and_sql_guard_edges_are_relocated() -> None:
     """Fast-follow to C1: the dialect/sql_guard/execution-error compile->execute
     edges (parameterized.py's get_dialect/VALID_OPERATORS,
-    normalize/queries.py's/sql_authoring_lint.py's sql_guard +
+    sql_authoring_lint.py's sql_guard +
     MutatingSqlError/UnparseableSqlError) were relocated below compile
     (dbt_charts.core.dialects, dbt_charts.core.compile.sql_guard,
     dbt_charts.core.diagnostics.execution). No compile file should import the old
     dbt_charts.core.execute.{dialects,sql_guard,errors} module paths anymore.
 
     The remaining compile->execute edges (DbtAdapter/SqlAdapter/
-    _read_target_dict in sources.py and normalize/queries.py) are real
-    adapter-class usage, not relocatable leaf behavior — still accepted debt,
-    each carrying its own `# tach-ignore(...)`.
+    _read_target_dict in sources.py) are real adapter-class usage, not
+    relocatable leaf behavior — still accepted debt, each carrying its own
+    `# tach-ignore(...)`. normalize/queries.py's edge left with the
+    MetricFlow lowering removal.
     """
     relocated_prefixes = (
         "dbt_charts.core.execute.dialects",

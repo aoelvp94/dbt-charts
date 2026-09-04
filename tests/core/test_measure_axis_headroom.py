@@ -384,13 +384,18 @@ def test_horizontal_bar_measure_axis_gets_headroom() -> None:
     assert scale["domainMax"] == pytest.approx(_ROUND_MAX * (1 + _HEADROOM))
 
 
-# ── Line / area / scatter ───────────────────────────────────────────────────
+# ── Line / scatter ──────────────────────────────────────────────────────────
 #
 # _bar_data(_OFF_LADDER_MAX) has min=7480, max=18700, ratio≈0.4 > 0.25 →
-# smart-zero fires zero:false (non-zero-anchored / zoomed).
+# smart-zero fires zero:false (non-zero-anchored / zoomed) for line/scatter.
 # span = 18700 - 7480 = 11220
 # domain_max = 18700 + 0.08 * 11220 = 19597.6
 # domain_min = 7480 - 0.08 * 11220 = 6582.4
+#
+# Area is excluded from this ratio-driven zoomed-axis group: it always
+# zero-anchors positive data regardless of ratio (see
+# test_area_zero_anchored_top_only_headroom below), so it takes the same
+# top-only multiplicative headroom path as bar, not this symmetric one.
 
 
 def test_line_zoomed_axis_span_relative_symmetric_headroom() -> None:
@@ -401,12 +406,13 @@ def test_line_zoomed_axis_span_relative_symmetric_headroom() -> None:
     assert scale["domainMin"] == pytest.approx(_OFF_LADDER_MAX * 0.4 - _HEADROOM * span)
 
 
-def test_area_zoomed_axis_span_relative_symmetric_headroom() -> None:
-    """Non-zero-anchored area: both edges expand by headroom * span."""
+def test_area_zero_anchored_top_only_headroom() -> None:
+    """Area at the same ratio (>0.25) that zooms line/scatter still
+    zero-anchors: top-only multiplicative headroom, floor pinned at 0."""
     scale = _y_scale("area", _bar_data(_OFF_LADDER_MAX))
-    span = _OFF_LADDER_MAX - _OFF_LADDER_MAX * 0.4
-    assert scale["domainMax"] == pytest.approx(_OFF_LADDER_MAX + _HEADROOM * span)
-    assert scale["domainMin"] == pytest.approx(_OFF_LADDER_MAX * 0.4 - _HEADROOM * span)
+    assert scale["zero"] is True
+    assert scale["domainMin"] == 0.0
+    assert scale["domainMax"] == pytest.approx(_OFF_LADDER_MAX * (1 + _HEADROOM))
 
 
 def test_scatter_zoomed_axis_span_relative_symmetric_headroom() -> None:

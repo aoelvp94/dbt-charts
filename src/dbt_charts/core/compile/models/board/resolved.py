@@ -37,7 +37,7 @@ class ChartIdentity:
     source_path: str
     defined_in_other_file: bool
     query_name: str | None
-    description: str
+    notes: str
     variable_dependencies: frozenset[str]
 
     @classmethod
@@ -48,7 +48,7 @@ class ChartIdentity:
             source_path=chart.source_path,
             defined_in_other_file=chart.defined_in_other_file,
             query_name=chart.query_name,
-            description=chart.description,
+            notes=chart.notes,
             variable_dependencies=chart.variable_dependencies,
         )
 
@@ -68,7 +68,7 @@ class ChartIdentity:
             source_path=chart.source_path,
             defined_in_other_file=chart.defined_in_other_file,
             query_name=chart.query_name,
-            description=chart.description,
+            notes=chart.notes,
             variable_dependencies=chart.variable_dependencies,
         )
 
@@ -98,7 +98,7 @@ class ResolvedLayoutItem:
     details_variable: str | None = None
     details_summary: str | None = None
     details_expanded_summary: str | None = None
-    description: str | None = None
+    notes: str | None = None
     visible: "bool | str | SingleRowBoolProbe | None" = None
     # Set instead of `chart` when the chart failed to resolve. The render walk
     # draws an error tile from it; `chart` stays None exactly as it is for any
@@ -147,7 +147,7 @@ class ResolvedBoard:
     # Identity
     id: str
     title: str
-    description: str
+    notes: str
     tags: tuple[str, ...]
     text: str
     html_policy: HtmlPolicy

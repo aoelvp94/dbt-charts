@@ -1,5 +1,5 @@
 title: "Prose readable measure — line-height, block margins, column.max_chars"
-description: >
+notes: >
   Specimen for the readable-prose model: line_height on FontStyle, the block-margin
   rhythm, and the character-based column.max_chars measure. Each block states what to
   VERIFY so the render can be judged without external notes.

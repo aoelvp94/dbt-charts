@@ -1,7 +1,7 @@
 """Hand-owned VegaLiteConfig surface contract.
 
 Stage: COMPILE
-Purpose: Define the explicit set of Vega-Lite config fields Dataface supports.
+Purpose: Define the explicit set of Vega-Lite config fields dbt charts supports.
 
 DESIGN DECISIONS
 ================
@@ -426,7 +426,7 @@ class TopLevelMarkConfig(BaseModel):
 class VegaLiteConfig(BaseModel):
     """Hand-owned VegaLiteConfig surface contract.
 
-    This model defines every Vega-Lite config field Dataface explicitly
+    This model defines every Vega-Lite config field dbt charts explicitly
     supports. It is a CLOSED contract — unknown fields are rejected.
 
     Field provenance:

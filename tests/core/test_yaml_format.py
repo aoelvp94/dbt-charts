@@ -112,7 +112,7 @@ class TestYamlFormat:
 
     def test_unauthored_collapse_is_not_serialized(self, make_chart):
         """`collapse` defaults to False on every point_map — an author who
-        never wrote it must not see it echoed back in `dft render` output
+        never wrote it must not see it echoed back in `dct render` output
         (they'd copy the unauthored default straight back into the board)."""
         data = [{"lat": 1.0, "lng": 2.0}]
         chart = make_chart("point_map", latitude="lat", longitude="lng", id="pads")
@@ -139,7 +139,7 @@ class TestYamlFormat:
         assert parsed["charts"]["pads"]["collapse"] is True
 
     def test_round_trip_compiles(self, make_chart):
-        """YAML output is valid dataface input — it re-compiles without errors."""
+        """YAML output is valid board input — it re-compiles without errors."""
         from dbt_charts.core.compile import compile
 
         data = [{"month": "Jan", "revenue": 100}, {"month": "Feb", "revenue": 200}]

@@ -97,8 +97,8 @@ def test_resolve_xy_titles_returns_named_fields() -> None:
         "date", "revenue", None, None, ax, ay, RenderBox(width=600.0, height=300.0), ""
     )
     assert isinstance(result, XYTitles)
-    assert result.x_title == "Date"
-    assert result.y_title == "Revenue"
+    assert result.x_title == "date"
+    assert result.y_title == "revenue"
 
 
 def test_build_x_enc_uses_resolved_fields() -> None:

@@ -2,7 +2,7 @@
 
   _BaseChartFields       — shared by ALL chart families (id, query, link, ...)
   _SharedChartFields     — + title/subtitle (all families except KPI)
-  _CartesianChartFields  — + x/y/color/sort/data_table/... (bar, line, area, scatter, heatmap)
+  _CartesianChartFields  — + x/y/color/sort/support_table/... (bar, line, area, scatter, heatmap)
   _GeoChartFields        — + geo/projection/basemap/... (map/geoshape, point_map/bubble_map)
   _RadialChartFields     — + theta/color/total (pie, donut)
 
@@ -18,15 +18,21 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    Discriminator,
     Field,
+    Tag,
     field_validator,
     model_validator,
 )
 
 from dbt_charts.core.compile.models.chart.authored._layer import CartesianLayer
-from dbt_charts.core.compile.models.markers import Channel, Color
+from dbt_charts.core.compile.models.markers import Channel, Color, DisplayText, Url
 from dbt_charts.core.compile.models.query.authored import AuthoredQuery
-from dbt_charts.core.compile.models.refs import QueryRef, normalize_query_value
+from dbt_charts.core.compile.models.refs import (
+    QueryRef,
+    normalize_query_value,
+    ref_or_inline,
+)
 from dbt_charts.core.compile.models.variable.authored import SingleRowBoolProbe
 from dbt_charts.core.compile.models.vega_lite.contracts import Projection
 from dbt_charts.core.compile.vega_lite.validation import validate_projection_definition
@@ -37,16 +43,49 @@ from ._annotations import (
     ChartTotal,
 )
 from ._conditional_formatting import FieldConditionalFormatting
-from ._data_table import (
-    CHART_DATA_TABLE_SUPPORTED_TYPES,
-    ChartDataTable,
-    ChartDataTablePerSeries,
-    validate_data_table_shape,
+from ._support_table import (
+    CHART_SUPPORT_TABLE_SUPPORTED_TYPES,
+    ChartSupportTableOrList,
+    ChartSupportTablePerSeries,
+    validate_support_table_shape,
 )
 
 
 def _normalize_chart_query(v: object) -> object:
     return normalize_query_value(v) if isinstance(v, dict) else v
+
+
+def _chart_query_tag(
+    v: object,  # type-state: object_annotation — Discriminator callable receives raw pre-validation input
+) -> str:
+    """Discriminate a chart's query field into '@str' / '@inline' / '@ref'.
+
+    A bare string is always a query name or SQL text, never a cross-file
+    ref — unlike board-level queries, chart-level strings are resolved
+    later in compile/normalize/charts.py, so '@str' short-circuits before
+    ref_or_inline's string-to-'@ref' rule can apply.
+    """
+    if isinstance(v, str):
+        return "@str"
+    return ref_or_inline(v, QueryRef)
+
+
+ChartQuery = Annotated[
+    Annotated[str, Tag("@str")]
+    | Annotated[AuthoredQuery, Tag("@inline")]
+    | Annotated[QueryRef, Tag("@ref")],
+    Discriminator(_chart_query_tag),
+]
+
+
+def _reject_numeric_link(
+    value: object,  # type-state: object_annotation — BeforeValidator receives raw unvalidated YAML input
+) -> object:  # type-state: object_annotation — passthrough returns the raw input for Pydantic to validate
+    # Lax number→bool coercion would otherwise let link: 0 / 0.0 reach the
+    # false arm.
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        raise ValueError("link must be a URL string, or false to stay unlinked")
+    return value
 
 
 # The YAML each chart-color rejection tells the author to write instead.
@@ -152,38 +191,41 @@ class _BaseChartFields(BaseModel):
         str | None,
         Field(
             default=None,
-            description="Explicit chart ID (auto-generated from the chart's YAML key if omitted).",
+            description="Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position.",
         ),
     ]
-    description: Annotated[
+    notes: Annotated[
         str | None,
+        DisplayText(),
         Field(
             default=None,
-            description="Human-readable description used by AI search and context tooltips.",
+            description=(
+                "Human-readable notes used by AI search. Emitted into the "
+                "SVG DOM as a data-chart-notes attribute; never painted "
+                "as visible pixels."
+            ),
         ),
     ]
     # None = author omitted query; normalizer supplies or errors at compile.
     query: Annotated[
-        str | AuthoredQuery | QueryRef | None,
+        ChartQuery | None,
         BeforeValidator(_normalize_chart_query),
         Field(
             default=None,
-            description="Named query reference, inline AuthoredQuery, or SQL string shorthand.",
+            description="Where this chart reads its data: a named query, an inline query block, or a SQL string.",
         ),
     ]
     link: Annotated[
-        str | None,
-        Field(
-            default=None, description="Click-through URL template for drill-down links."
-        ),
-    ]
-    # Semantic-layer chart sugar: normalizer desugars this into a synthesized
-    # named query and clears the field. Mutually exclusive with `query:`.
-    model: Annotated[
-        str | None,
+        str | Literal[False] | None,
+        BeforeValidator(_reject_numeric_link),
+        Url(),
         Field(
             default=None,
-            description="Semantic-layer entry point, two dot-joined names: 'source.semantic_model' for a dbt_profile (MetricFlow) source. Channel fields name the model's fields directly; roles are inferred from the dbt semantic manifest. Mutually exclusive with `query:`.",
+            description=(
+                "Click-through URL template for drill-down links. Set to false "
+                "to suppress this chart's automatic link on a board with "
+                "auto_link: true; table column links are unaffected."
+            ),
         ),
     ]
 
@@ -253,38 +295,40 @@ class _SharedChartFields(_BaseChartFields):
     # None = no chart title (KPI charts use label: on KpiChart, not title:).
     title: Annotated[
         str | None,
+        DisplayText(),
         Field(
             default=None,
-            description="Chart title displayed above the chart (not used on type: kpi).",
+            description="Heading naming what the chart shows. Rejected on type: kpi.",
         ),
     ]
     # None = no subtitle.
     subtitle: Annotated[
         str | None,
-        Field(default=None, description="Chart subtitle displayed below the title."),
+        DisplayText(),
+        Field(default=None, description="Supporting text beneath the chart title."),
     ]
 
 
 def reject_multi_series_channel_conflicts(
     family: str,
     y: str | list[str] | None,
-    color: str | None,
     layers: list[CartesianLayer] | None,
     conditional_formatting: dict[str, FieldConditionalFormatting] | None,
 ) -> None:
     """Reject encodings that carry their own series alongside a list-valued `y:`.
 
     A wide family folds its measures onto a single mark family, which spends the
-    color channel and the layer stack on the measures themselves — a second
-    series source has nowhere left to go. Bar and area enforce that here, at
-    parse. Line does not call this: it raises on `color:` and `layers:` from
-    `resolve_wide_measure_channels` (`resolve/chart/_wide_fields.py`) at resolve,
-    and on `conditional_formatting` not at all. Scatter refuses a list `y:`
-    outright, from its own resolver.
+    layer stack on the measures themselves — a second series source has nowhere
+    left to go. Bar and area enforce that here, at parse. Line does not call
+    this: it raises on `layers:` from `resolve_wide_measure_channels`
+    (`resolve/chart/_wide_fields.py`) at resolve, and on `conditional_formatting`
+    not at all. Scatter refuses a list `y:` outright, from its own resolver.
 
-    `conditional_formatting` counts as a color source: its rules project into the
-    mark-fill channel (`resolve/chart/channel.py`), so it collides exactly as an
-    authored `color:` does even though the author never wrote one.
+    An authored `color:` column is not a conflict: it is the dimension the
+    measures are grouped by, and the fold crosses it with them (one series per
+    value per measure — `resolve_wide_measure_channels`). `conditional_formatting`
+    still counts as a color source: its rules project into the mark-fill channel
+    (`resolve/chart/channel.py`), which the folded measures already use.
 
     A one-element `y:` list still counts: the emitters branch on `isinstance`,
     not on length, so `y: [revenue]` takes the same folded path as `y: [a, b]`.
@@ -292,11 +336,6 @@ def reject_multi_series_channel_conflicts(
     if not isinstance(y, list):
         return
     remedy = "Use a long-form query with one y field."
-    if color is not None:
-        raise ValueError(
-            f"{family} chart: color is not supported with multi-metric "
-            f"(y: [...]) charts. {remedy}"
-        )
     if layers:
         raise ValueError(
             f"{family} chart: layers are not supported with multi-metric "
@@ -331,22 +370,33 @@ class _CartesianChartFields(_SharedChartFields):
         ),
     ]
     x_label: Annotated[
-        str | None, Field(default=None, description="Custom label for the X axis.")
+        str | None,
+        Field(
+            default=None,
+            description="Title for the X axis, replacing the one derived from the x column's name.",
+        ),
     ]
     y_label: Annotated[
-        str | None, Field(default=None, description="Custom label for the Y axis.")
+        str | None,
+        Field(
+            default=None,
+            description="Title for the Y axis, replacing the one the chart derives on its own.",
+        ),
     ]
     # None = no color encoding (solid fill from theme).
     color: Annotated[
         str | None,
         Channel(),
-        Field(default=None, description="Color data channel: bare column name only."),
+        Field(
+            default=None,
+            description="Column that splits the marks into colored series; on heatmap, the measure its cells are shaded by. Bare column name only.",
+        ),
     ]
     sort: Annotated[
         ChartSort | None,
         Field(
             default=None,
-            description="Sort configuration: column to sort by and direction (asc/desc).",
+            description="Which column orders the marks, and in which direction (asc/desc).",
         ),
     ]
     # Partition into small multiples by `rows` and/or `columns` (at least one).
@@ -361,8 +411,13 @@ class _CartesianChartFields(_SharedChartFields):
             ),
         ),
     ]
-    data_table: Annotated[
-        ChartDataTable | None,
+    support_table: Annotated[
+        ChartSupportTableOrList | None,
+        # Every entry names a query column (`source:`/`aggregate.source:`/
+        # `per_series:`) — a design surface projects this field to a `list`
+        # of those names, the one nested spec that gets a real control rather
+        # than a drill-in group (`agent_api/design.py::_support_table_property`).
+        Channel(),
         Field(
             default=None,
             description="Optional mini data-grid attached below/above the chart.",
@@ -393,13 +448,15 @@ class _CartesianChartFields(_SharedChartFields):
             default=None,
             gt=0,
             description=(
-                "Preferred chart width in pixels. Positive number only. Contributes "
-                "to the dashboard's intrinsic width without overriding the final "
-                "layout slot — the chart still fills its allocated container. Valid "
-                "on cartesian chart families (area, bar, heatmap, histogram, line, "
-                "scatter), pie/donut, and geo families (geoshape, map, point_map, "
-                "bubble_map). Other chart families use renderer-owned or "
-                "layout-owned sizing contracts."
+                "Chart width in pixels. Positive number only. In a rows layout "
+                "the chart's slot pins to this width (a fixed footprint, capped "
+                "at the row). In cols and grid layouts it contributes to the "
+                "dashboard's intrinsic width measurement when the board has no "
+                "width of its own, and the layout still owns the final slot. "
+                "Valid on cartesian chart families (area, bar, heatmap, "
+                "histogram, line, scatter), pie/donut, and geo families "
+                "(geoshape, map, point_map, bubble_map). Other chart families "
+                "use renderer-owned or layout-owned sizing contracts."
             ),
         ),
     ]
@@ -411,41 +468,41 @@ class _CartesianChartFields(_SharedChartFields):
         return _reject_color_dict(v)
 
     @model_validator(mode="after")
-    def _validate_data_table(self) -> _CartesianChartFields:
-        if self.data_table is None:
+    def _validate_support_table(self) -> _CartesianChartFields:
+        if self.support_table is None:
             return self
-        if self.type not in CHART_DATA_TABLE_SUPPORTED_TYPES:
-            supported = ", ".join(sorted(CHART_DATA_TABLE_SUPPORTED_TYPES))
+        if self.type not in CHART_SUPPORT_TABLE_SUPPORTED_TYPES:
+            supported = ", ".join(sorted(CHART_SUPPORT_TABLE_SUPPORTED_TYPES))
             raise ValueError(
-                f"chart.data_table is not supported for chart type "
+                f"chart.support_table is not supported for chart type "
                 f"{self.type!r} in v1. Supported chart types: {supported}."
             )
         if isinstance(self.y, list) and len(self.y) > 1:
             all_by_measure = all(
-                isinstance(e, ChartDataTablePerSeries) and e.by_measure
-                for e in self.data_table.entries
+                isinstance(e, ChartSupportTablePerSeries) and e.by_measure
+                for e in self.support_table.entries
             )
             if not all_by_measure:
                 raise ValueError(
-                    "chart.data_table is not supported on charts with a "
+                    "chart.support_table is not supported on charts with a "
                     "multi-field `y:` list unless every entry is a "
                     "`per_series:` entry with `by_measure: true`. "
                     "Collapse `y:` to one field, or use "
                     "`{per_series: <alias>, by_measure: true}` entries."
                 )
         has_per_series_needing_color = any(
-            isinstance(e, ChartDataTablePerSeries) and not e.by_measure
-            for e in self.data_table.entries
+            isinstance(e, ChartSupportTablePerSeries) and not e.by_measure
+            for e in self.support_table.entries
         )
         if has_per_series_needing_color:
             color = self.color
             has_color = color is not None and color != ""
             if not has_color:
                 raise ValueError(
-                    "chart.data_table per_series: entries require the chart to have "
+                    "chart.support_table per_series: entries require the chart to have "
                     "a color: channel. Add `color: <field>` to the chart."
                 )
-        validate_data_table_shape(self.data_table.entries)
+        validate_support_table_shape(self.support_table.entries)
         return self
 
 
@@ -481,7 +538,10 @@ class _GeoChartFields(_SharedChartFields):
     color: Annotated[
         str | None,
         Channel(),
-        Field(default=None, description="Color data channel: bare column name only."),
+        Field(
+            default=None,
+            description="Column carried on the color channel: fill for geoshape regions, hue for point-map points. Bare column name only.",
+        ),
     ]
     geo: Annotated[
         str | dict[str, Any] | None,
@@ -509,7 +569,10 @@ class _GeoChartFields(_SharedChartFields):
     value: Annotated[
         str | None,
         Channel(),
-        Field(default=None, description="Data column mapped to the fill color."),
+        Field(
+            default=None,
+            description="Data column mapped to the fill color on geoshape, taking precedence over `color:` when both are set. Ignored on point_map and bubble_map.",
+        ),
     ]
     # Box geometry — height and width at chart root, not in style:.
     height: Annotated[
@@ -526,9 +589,11 @@ class _GeoChartFields(_SharedChartFields):
             default=None,
             gt=0,
             description=(
-                "Preferred chart width in pixels. Positive number only. Contributes "
-                "to the dashboard's intrinsic width without overriding the final "
-                "layout slot — the chart still fills its allocated container."
+                "Chart width in pixels. Positive number only. In a rows layout "
+                "the chart's slot pins to this width (a fixed footprint, capped "
+                "at the row). In cols and grid layouts it contributes to the "
+                "dashboard's intrinsic width measurement when the board has no "
+                "width of its own, and the layout still owns the final slot."
             ),
         ),
     ]
@@ -566,10 +631,17 @@ class _RadialChartFields(_SharedChartFields):
     color: Annotated[
         str | None,
         Channel(),
-        Field(default=None, description="Color data channel: bare column name only."),
+        Field(
+            default=None,
+            description="Column naming each wedge, giving it its own hue. Bare column name only.",
+        ),
     ]
     total: Annotated[
-        ChartTotal | None, Field(default=None, description="Donut center total.")
+        ChartTotal | None,
+        Field(
+            default=None,
+            description="Sum of the slice values, drawn in the donut hole.",
+        ),
     ]
     # Box geometry — height and width at chart root, not in style:.
     height: Annotated[
@@ -586,9 +658,11 @@ class _RadialChartFields(_SharedChartFields):
             default=None,
             gt=0,
             description=(
-                "Preferred chart width in pixels. Positive number only. Contributes "
-                "to the dashboard's intrinsic width without overriding the final "
-                "layout slot — the chart still fills its allocated container."
+                "Chart width in pixels. Positive number only. In a rows layout "
+                "the chart's slot pins to this width (a fixed footprint, capped "
+                "at the row). In cols and grid layouts it contributes to the "
+                "dashboard's intrinsic width measurement when the board has no "
+                "width of its own, and the layout still owns the final slot."
             ),
         ),
     ]

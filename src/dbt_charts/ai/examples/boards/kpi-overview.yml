@@ -1,0 +1,119 @@
+title: Revenue Overview
+notes: |
+  A complete four-part board: a KPI row across the top, a trend line and a
+  category breakdown side by side, and a detail table underneath. Shows how
+  `queries`, `charts`, and `rows`/`cols` wire together on one page — the
+  shape most boards start from.
+
+text: |
+  Three queries feed six charts. The KPI row reads a single-row aggregate;
+  the trend and breakdown each read their own shaped result. Layout is
+  `rows` of `cols` — widths are only set where the split should not be even.
+
+# Inline `columns`/`values` keep this specimen runnable anywhere. In your own
+# board, replace them with `source:` + `sql:` — see `dct docs queries`.
+queries:
+  headline:
+    notes: Single-row aggregate with prior-period deltas for the KPI row.
+    columns: [revenue, orders, avg_order, revenue_delta, orders_delta]
+    values:
+      - [1284500, 7320, 175.48, 0.124, -0.031]
+
+  monthly_revenue:
+    notes: One row per month — the trend series.
+    columns: [month, revenue]
+    values:
+      - ["2025-09", 91200]
+      - ["2025-10", 98700]
+      - ["2025-11", 104300]
+      - ["2025-12", 128900]
+      - ["2026-01", 112400]
+      - ["2026-02", 121800]
+
+  by_category:
+    notes: Revenue and order count per product category.
+    columns: [category, revenue, orders]
+    values:
+      - ["Electronics", 486200, 2140]
+      - ["Accessories", 312700, 3180]
+      - ["Tools", 274900, 1290]
+      - ["Outdoor", 210700, 710]
+
+charts:
+  revenue_kpi:
+    type: kpi
+    query: headline
+    label: Revenue
+    value: revenue
+    style:
+      value:
+        format: currency
+    support:
+      value: revenue_delta
+      label: vs prior period
+      format: percent_delta
+      glyph: "▲"
+      tone: positive
+
+  orders_kpi:
+    type: kpi
+    query: headline
+    label: Orders
+    value: orders
+    support:
+      value: orders_delta
+      label: vs prior period
+      format: percent_delta
+      glyph: "▼"
+      tone: negative
+
+  aov_kpi:
+    type: kpi
+    query: headline
+    label: Avg Order Value
+    value: avg_order
+    style:
+      value:
+        format: currency_full
+
+  revenue_trend:
+    type: line
+    query: monthly_revenue
+    title: Monthly Revenue
+    x: month
+    y: revenue
+    style:
+      axis_y:
+        labels:
+          format: "$,.3~s"
+
+  category_split:
+    type: bar
+    query: by_category
+    title: Revenue by Category
+    x: category
+    y: revenue
+    style:
+      axis_y:
+        labels:
+          format: "$,.3~s"
+
+  category_detail:
+    type: table
+    query: by_category
+    title: Category Detail
+
+rows:
+  - cols:
+      - revenue_kpi
+      - orders_kpi
+      - aov_kpi
+
+  - cols:
+      - width: "60%"
+        rows:
+          - revenue_trend
+      - rows:
+          - category_split
+
+  - category_detail

@@ -70,12 +70,12 @@ from dbt_charts.integrations.highlighting import highlight_board_yaml
 
 logger = logging.getLogger("dbt_charts.integrations.markdown")
 
-_PLAYGROUND_DEFAULT_URL = "https://play.dataface.com"
+_PLAYGROUND_DEFAULT_URL = "https://play.dbtcharts.com"
 _VALID_LAYOUTS = {"side-by-side", "stacked", "render-only", "yaml-only"}
 _EXTERNAL_QUERY_NOT_FOUND_RE = re.compile(r"External query file not found", re.I)
 
 _PROJECT_DIR_OVERRIDE: ContextVar[Path | None] = ContextVar(
-    "dataface_markdown_project_dir", default=None
+    "dbt_charts_markdown_project_dir", default=None
 )
 
 

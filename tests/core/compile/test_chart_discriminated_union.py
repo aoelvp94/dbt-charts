@@ -20,9 +20,13 @@ from dbt_charts.core.compile.models.chart.authored import (
     HeatmapChart,
     KpiChart,
     LineChart,
+    LineLayer,
     PieChart,
     PointMapChart,
     ScatterChart,
+    SparkBarChart,
+    TableChart,
+    _CartesianChartFields,
 )
 
 
@@ -294,3 +298,182 @@ def test_chartpatch_union_dispatches_already_instantiated_callout():
     callout = CalloutChart(type="callout", message="hi")
     result = adapter.validate_python(callout)
     assert isinstance(result, CalloutChart)
+
+
+# --- link: false is the per-chart auto_link opt-out ---
+
+
+def test_link_false_accepted_on_authored_chart():
+    """link: false is the typed per-chart auto_link opt-out."""
+    adapter = TypeAdapter(AuthoredChart)
+    result = adapter.validate_python(
+        {"type": "table", "query": "orders", "link": False}
+    )
+    assert result.link is False
+
+
+def test_link_true_rejected_on_authored_chart():
+    """link: true is meaningless — only false suppresses, a string links."""
+    adapter = TypeAdapter(AuthoredChart)
+    with pytest.raises(ValidationError, match="link"):
+        adapter.validate_python({"type": "table", "query": "orders", "link": True})
+
+
+def test_link_zero_rejected_on_authored_chart():
+    """link: 0 / 0.0 must not lax-coerce into the false opt-out sentinel."""
+    adapter = TypeAdapter(AuthoredChart)
+    for zero in (0, 0.0):
+        with pytest.raises(ValidationError, match="link"):
+            adapter.validate_python({"type": "table", "query": "orders", "link": zero})
+
+
+# --- layers: is not supported on type: histogram (bar/histogram share BarChart) ---
+
+
+def test_histogram_rejects_layers():
+    """layers on a histogram used to resolve to an empty tuple silently — no
+    error, no warning, overlay just never rendered. Must raise instead."""
+    with pytest.raises(ValidationError) as exc_info:
+        BarChart(
+            type="histogram",
+            x="revenue",
+            layers=[
+                LineLayer(type="line", query="revenue_target", x="month", y="target")
+            ],
+        )
+    assert "chart.layers is not supported for chart type 'histogram'" in str(
+        exc_info.value
+    )
+
+
+def test_bar_accepts_layers():
+    """Same shape on type: bar is the working case — unaffected by the guard."""
+    p = BarChart(
+        type="bar",
+        x="month",
+        y="revenue",
+        layers=[LineLayer(type="line", query="revenue_target", x="month", y="target")],
+    )
+    assert p.layers is not None
+    assert len(p.layers) == 1
+
+
+def test_histogram_layers_guard_scoped_to_barchart_not_shared_base():
+    """The histogram/layers guard must live on BarChart's own namespace, not
+    on the shared _CartesianChartFields base: HeatmapChart also inherits that
+    base but declares no `layers` field, so a hoisted validator would
+    AttributeError on every authored heatmap. `self.type == "histogram"`
+    short-circuits `and self.layers` before that attribute access ever
+    happens, so a plain `HeatmapChart(...)` construction can't detect a hoist
+    — assert the method's actual location instead."""
+    assert "_reject_histogram_layers" in BarChart.__dict__
+    assert "_reject_histogram_layers" not in _CartesianChartFields.__dict__
+
+
+def test_histogram_accepts_explicit_empty_layers():
+    """layers: [] is a no-op, not silently dropped data — nothing to drop."""
+    p = BarChart(type="histogram", x="revenue", layers=[])
+    assert p.layers == []
+
+
+# --- style.font / style.border: dead on cartesian + pie/donut, live elsewhere ---
+# Decision (2026-08-25, RJ): reject at compile time. No render path on bar,
+# line, area, scatter, histogram, heatmap, pie, or donut ever draws a
+# per-chart card, so these two fields validated, cascaded, and were silently
+# thrown away. Structural narrowing (same mechanism as `size`/`shape` on
+# scatter and `conditional_formatting`'s family allowlist) makes the
+# combination unrepresentable instead of a runtime no-op.
+
+_CARD_STYLE_DEAD_FAMILIES = [
+    (BarChart, "bar", {"x": "m", "y": "v"}),
+    (BarChart, "histogram", {"x": "m"}),
+    (LineChart, "line", {"x": "m", "y": "v"}),
+    (AreaChart, "area", {"x": "m", "y": "v"}),
+    (ScatterChart, "scatter", {"x": "m", "y": "v"}),
+    (HeatmapChart, "heatmap", {"x": "m", "y": "v"}),
+    (PieChart, "pie", {"theta": "v"}),
+    (PieChart, "donut", {"theta": "v"}),
+]
+
+
+@pytest.mark.parametrize(
+    ("chart_cls", "type_str", "required_fields"), _CARD_STYLE_DEAD_FAMILIES
+)
+def test_card_style_dead_family_rejects_style_font(
+    chart_cls, type_str, required_fields
+):
+    """style.font has no render consumer on these 8 families — extra_forbidden,
+    not a silent no-op."""
+    with pytest.raises(ValidationError, match="font"):
+        chart_cls(type=type_str, **required_fields, style={"font": {"size": 40}})  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize(
+    ("chart_cls", "type_str", "required_fields"), _CARD_STYLE_DEAD_FAMILIES
+)
+def test_card_style_dead_family_rejects_style_border(
+    chart_cls, type_str, required_fields
+):
+    """style.border has no render consumer on these 8 families — extra_forbidden,
+    not a silent no-op."""
+    with pytest.raises(ValidationError, match="border"):
+        chart_cls(
+            type=type_str,
+            **required_fields,
+            style={"border": {"width": 2, "color": "#c9c9c9"}},
+        )  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize(
+    ("chart_cls", "type_str", "required_fields"), _CARD_STYLE_DEAD_FAMILIES
+)
+def test_card_style_dead_family_default_path_unaffected(
+    chart_cls, type_str, required_fields
+):
+    """The everyday path — no style block at all — must still validate cleanly.
+    Proves the narrowing didn't collaterally break the family's normal shape."""
+    chart = chart_cls(type=type_str, **required_fields)
+    assert chart.type == type_str
+    assert chart.style is None
+
+
+def test_kpi_still_accepts_style_font():
+    """KPI draws its own card by hand — font is a real, consumed field."""
+    p = KpiChart(type="kpi", value="revenue", style={"font": {"size": 40}})
+    assert p.style is not None
+    assert p.style.font is not None
+    assert p.style.font.size == 40.0
+
+
+def test_table_still_accepts_style_font():
+    """Table draws its own card by hand — font is a real, consumed field."""
+    p = TableChart(type="table", style={"font": {"size": 14}})
+    assert p.style is not None
+    assert p.style.font is not None
+
+
+def test_spark_bar_still_accepts_style_border():
+    """spark_bar draws its own card by hand — border is a real, consumed field.
+
+    Its slot is corner rounding only (radius, no stroke), so `radius` is the
+    field to assert here — `width`/`color` are rejected on spark_bar for a
+    separate reason and do not belong in this test.
+    """
+    p = SparkBarChart(type="spark_bar", style={"border": {"radius": 4}})
+    assert p.style is not None
+    assert p.style.border is not None
+    assert p.style.border.radius == 4.0
+
+
+def test_point_map_still_accepts_style_font():
+    """Geo families are out of this task's scope — unaffected, still accepted."""
+    p = PointMapChart(type="point_map", style={"font": {"size": 12}})
+    assert p.style is not None
+    assert p.style.font is not None
+
+
+def test_callout_still_accepts_style_border():
+    """callout draws its own card by hand — border is a real, consumed field."""
+    p = CalloutChart(type="callout", message="hi", style={"border": {"width": 1}})
+    assert p.style is not None
+    assert p.style.border is not None

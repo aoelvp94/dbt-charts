@@ -1,8 +1,8 @@
-"""Dataface-shaped helpers for axis tick computation — compile boundary.
+"""dbt charts-shaped helpers for axis tick computation — compile boundary.
 
 The generic "nice step" tick algorithm lives in the neutral
 ``dbt_charts.core.numeric`` leaf (both compile and render need it); this module
-holds the Dataface-typed helpers built on top of it (domain parsing, stacked-
+holds the dbt charts-typed helpers built on top of it (domain parsing, stacked-
 bar totals) that stay compile-owned.
 """
 
@@ -57,6 +57,50 @@ def numeric_domain_bounds(domain: object) -> tuple[float, float] | None:
     ):
         return float(lo), float(hi)
     return None
+
+
+def zero_anchor_domain_floor(
+    scale_values: list[Any] | None,  # type-state: explicit_any — mirrors scale.values
+    tick_values: list[float],
+) -> list[float]:
+    """*tick_values*, or ``[]`` when *scale_values* (the axis's authored
+    ``scale.values``) is set.
+
+    A computed zero-anchored ladder is a matched set whose bottom rung is
+    always <= the data floor, so pinning a domain floor from it can never
+    exclude data. An authored ``scale.values`` list carries no such
+    guarantee -- it's a statement about tick positions, not the domain -- so
+    an authored list must never source a floor pin. The single home of this
+    provenance distinction, shared by both sides of the ``compile
+    <-> render`` boundary: render's ``resolve_measure_y_scale``/
+    ``y_zero_scale`` (``render/chart/emitters/_cartesian.py``,
+    ``render/chart/type_inference.py``) and horizontal bar's own
+    measure-axis scale (``render/chart/emitters/bar.py``) filter through it
+    before pinning a VL ``domainMin``; compile's ``_y_domain_floor``
+    (``compile/resolve/chart/_domain.py``) filters through the SAME call to
+    ask the same question at resolve time, deciding whether an x-axis tick
+    stub is needed. A caller re-deriving ``scale.values is not None`` inline
+    instead of calling this is the bug this function exists to prevent.
+    """
+    if scale_values is not None:
+        return []
+    return tick_values
+
+
+def zero_anchor_floor(tick_values: list[float] | None) -> float:
+    """The exact ``domainMin`` a zero-anchored axis pins, given *tick_values*
+    already filtered through ``zero_anchor_domain_floor`` (``None``/empty are
+    the same "no usable rung" state -- a caller with no ladder at all passes
+    ``None`` rather than manufacturing an empty list first).
+
+    Its lowest rung, or the literal ``0.0`` fallback when the ladder was
+    filtered out (an authored ``scale.values``) or never baked. Byte for
+    byte the formula render's ``y_zero_scale`` bakes onto the emitted VL
+    scale's ``domainMin`` -- the one place that decision is made, read back
+    by compile's ``_y_domain_floor`` to answer the same question at resolve
+    time without predicting it.
+    """
+    return tick_values[0] if tick_values else 0.0
 
 
 def stacked_bar_totals(

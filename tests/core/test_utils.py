@@ -1,14 +1,22 @@
-"""Tests for cross-cutting value-classification helpers in dbt_charts.core.utils."""
+"""Tests for cross-cutting value-classification and label-measurement helpers
+in dbt_charts.core.utils.
+"""
 
 from __future__ import annotations
 
 import datetime
 from decimal import Decimal
 
+import pytest
+
+from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.utils import (
+    DEFAULT_VL_LABEL_LIMIT,
+    cap_padding_to_label_limit,
     classify_date_column_align,
     is_date_like,
     is_year_shaped,
+    measured_label_padding,
 )
 
 
@@ -141,3 +149,60 @@ class TestClassifyDateColumnAlign:
             )
             is None
         )
+
+
+class TestMeasuredLabelPadding:
+    def test_empty_labels_reserve_no_gutter(self) -> None:
+        assert measured_label_padding([], "Inter", 12.0) == 0.0
+
+    def test_wider_labels_reserve_a_larger_gutter(self) -> None:
+        narrow = measured_label_padding(["5"], "Inter", 12.0)
+        wide = measured_label_padding(["1500000"], "Inter", 12.0)
+        assert wide > narrow
+
+    def test_gutter_grows_with_the_widest_label_only(self) -> None:
+        one_label = measured_label_padding(["1500000"], "Inter", 12.0)
+        many_labels = measured_label_padding(["0", "5", "1500000"], "Inter", 12.0)
+        assert one_label == many_labels
+
+    def test_does_not_add_tick_length(self) -> None:
+        """Regression: Vega-Lite's own ``labelPadding`` is already measured
+        from the tick's outer edge (``anchor_x = tickSize_if_visible +
+        labelPadding``), so adding tick length here on top double-counts it
+        whenever ticks are visible, and reserves unearned dead space when
+        they aren't. This is the "labels moved further from the axis than
+        they should" bug: the gutter is exactly ``max_label_width +
+        breathing_room``, independent of any tick size the caller might
+        otherwise have had in scope.
+        """
+        padding = measured_label_padding(["30,000"], "Inter", 11.0)
+        measurer = get_font_measurer("Inter")
+        expected = measurer.measure("30,000", 11.0) + 4.0  # breathing room
+        assert padding == pytest.approx(expected)
+
+
+class TestCapPaddingToLabelLimit:
+    """Vega-Lite truncates any axis label wider than its labelLimit
+    (``axis.label.max_width``, or VL's own 180px default when unset) with an
+    ellipsis — reserving gutter space for the *untruncated* text wastes space
+    the rendered label never uses. Capping at the same limit VL truncates to
+    keeps the gutter tight without under-reserving (VL's truncated text is
+    always <= labelLimit).
+    """
+
+    def test_caps_padding_computed_from_a_much_wider_label(self) -> None:
+        wide_label = "Connection timeout - upstream service returned malformed response"
+        uncapped = measured_label_padding([wide_label], "Inter", 12.0)
+        capped = cap_padding_to_label_limit(uncapped, label_limit=100.0)
+        assert capped < uncapped
+
+    def test_does_not_cap_when_label_already_fits(self) -> None:
+        padding = measured_label_padding(["A"], "Inter", 12.0)
+        capped = cap_padding_to_label_limit(padding, label_limit=180.0)
+        assert capped == padding
+
+    def test_default_vl_label_limit_is_a_positive_constant(self) -> None:
+        """Callers fall back to this when axis.label.max_width is unset —
+        Vega-Lite's own default (180px).
+        """
+        assert DEFAULT_VL_LABEL_LIMIT > 0

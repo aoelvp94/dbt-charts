@@ -163,7 +163,7 @@ def test_global_marks_slice_labels_populated():
     from dbt_charts.core.compile.config import get_theme_style, reset_config
 
     reset_config()
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     assert compiled.charts.marks.slice.labels is not None, (
         "marks.slice.labels must be populated in the global marks block"
     )
@@ -186,7 +186,7 @@ def test_global_marks_cascade_into_family_pie_slice():
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
     reset_config()
-    merged = resolve_chart_style_context(get_theme_style("editorial"))
+    merged = resolve_chart_style_context(get_theme_style("clarity"))
     pie_slice = merged.pie.marks.slice
     assert pie_slice is not None, "pie.marks.slice must be pre-filled from global marks"
     assert pie_slice.labels is not None

@@ -106,8 +106,42 @@ class TestLineCurveWiring:
         )
 
 
+def _visible_point_marks(spec: dict) -> list[dict]:
+    """Layered-spec point marks with opacity != 0 (the hover overlay is always
+    present at opacity 0 and is never a "visible point" for these purposes).
+
+    With halo enabled (default), this includes a halo point ring alongside the
+    foreground point -- the halo ring's size independently scales off the
+    foreground size (see _layers.py's halo_multiplier), so use
+    _foreground_point_mark to check an authored size value.
+    """
+    return [
+        lyr["mark"]
+        for lyr in spec.get("layer", [])
+        if isinstance(lyr.get("mark"), dict)
+        and lyr["mark"].get("type") == "point"
+        and lyr["mark"].get("opacity", 1) != 0
+    ]
+
+
+def _foreground_point_mark(spec: dict) -> dict | None:
+    """The last visible point-type layer -- the foreground point, after any
+    halo ring (see _visible_point_marks)."""
+    visible = _visible_point_marks(spec)
+    return visible[-1] if visible else None
+
+
 class TestLinePointSizeWiring:
-    """LineChartStyle.marks.point.size > 0 → point marks appear in spec."""
+    """LineChartStyle.marks.point.size → point marks in spec.
+
+    An explicit size at ANY tier (theme, board, or chart) is authored: it
+    survives verbatim and is never replaced by the density-driven default.
+    Only a value no tier ever set (None all the way down) is density-driven
+    (bake_point_companions). This single-point fixture (n_pts=1, always past
+    the density trigger) would show auto-sized points regardless -- so a
+    non-zero-size test must check the actual baked size, not just presence,
+    to prove the authored value (not an auto-computed one) landed in the spec.
+    """
 
     def test_nonzero_point_size_enables_line_points(self):
         spec = _spec_with_theme("line", line={"marks": {"point": {"size": 50.0}}})
@@ -126,21 +160,45 @@ class TestLinePointSizeWiring:
             mark = _get_mark(spec)
             assert mark.get("point") is not None and mark.get("point") is not False
 
-    def test_zero_point_size_does_not_enable_line_points(self):
-        """point.size=0 must not add visible point marks (the hover overlay is invisible)."""
+    def test_theme_tier_nonzero_size_is_respected_verbatim(self):
+        """A theme-level size must land in the spec unchanged, not be replaced
+        by bake_point_companions's density-driven auto-size."""
+        spec = _spec_with_theme("line", line={"marks": {"point": {"size": 50.0}}})
+        fg = _foreground_point_mark(spec)
+        assert fg is not None and fg.get("size") == 50.0, fg
+
+    def test_theme_tier_size_zero_disables_points(self):
+        """A theme-level point.size=0 must turn points off board/theme-wide.
+
+        Regression for the tier bug: size_authored used to read only the
+        chart's own style: block, so a theme (or board) setting size=0 was
+        indistinguishable from the unset global default and got silently
+        overridden by the density-driven auto-size -- the exact surface
+        PointMarkStyle.size's own description promises ("0 disables points").
+        """
         spec = _spec_with_theme("line", line={"marks": {"point": {"size": 0.0}}})
-        layers = spec.get("layer", [])
-        # The hover overlay (opacity=0) is always present; visible points are not.
-        visible_point_marks = [
-            lyr
-            for lyr in layers
-            if isinstance(lyr.get("mark"), dict)
-            and lyr["mark"].get("type") == "point"
-            and lyr["mark"].get("opacity", 1) != 0
-        ]
-        assert len(visible_point_marks) == 0, (
-            f"point.size=0 must not emit visible point marks; got {visible_point_marks!r}"
+        assert _visible_point_marks(spec) == []
+
+    def test_zero_point_size_does_not_enable_line_points(self):
+        """An author-pinned (chart-tier) point.size=0 must not add visible
+        point marks -- the innermost tier keeps working exactly as before."""
+        compiled = get_theme_style()
+        resolved, ctx = resolve_style_and_context(compiled)
+        chart = TypeAdapter(Chart).validate_python(
+            {
+                "id": "t",
+                "type": "line",
+                "x": "month",
+                "y": "rev",
+                "query": SqlQuery(sql="SELECT 1", source="src"),
+                "query_name": "q",
+                "style": {"marks": {"point": {"size": 0.0}}},
+            }
         )
+        spec = generate_vega_lite_spec(
+            chart, _DATA, board_style=resolved, chart_style_context=ctx, width=400
+        )
+        assert _visible_point_marks(spec) == []
 
 
 def _spec_with_global_point_override(chart_type: str, **point_overrides):
@@ -540,8 +598,8 @@ class TestLabelTemplate:
             },
         )
         assert len(rendered) == 2
-        assert rendered[0]["__dft_label"] == ["60% A", "$60"]
-        assert rendered[1]["__dft_label"] == ["40% B", "$40"]
+        assert rendered[0]["__dbt_label"] == ["60% A", "$60"]
+        assert rendered[1]["__dbt_label"] == ["40% B", "$40"]
 
     def test_prepare_label_data_filters_by_where(self):
         from dbt_charts.core.compile.resolve.chart.label_data import prepare_label_data
@@ -558,11 +616,11 @@ class TestLabelTemplate:
         )
         # Filtered rows stay in the dataset (so the family hook's positioning
         # transforms still reference a row per slice) but get
-        # __dft_label = None so the family layer's VL filter drops the mark.
+        # __dbt_label = None so the family layer's VL filter drops the mark.
         assert len(rendered) == 3
-        assert rendered[0]["__dft_label"] is None
-        assert rendered[1]["__dft_label"] == ["2"]
-        assert rendered[2]["__dft_label"] == ["3"]
+        assert rendered[0]["__dbt_label"] is None
+        assert rendered[1]["__dbt_label"] == ["2"]
+        assert rendered[2]["__dbt_label"] == ["3"]
 
     def test_prepare_label_data_accepts_brace_wrapped_where(self):
         """Authors may write ``where: '{{ value > 0 }}'`` — strip braces."""
@@ -573,8 +631,8 @@ class TestLabelTemplate:
         rendered = prepare_label_data(
             rows, labels, context_extras=lambda row, index: {"value": row["value"]}
         )
-        assert rendered[0]["__dft_label"] == ["1"]
-        assert rendered[1]["__dft_label"] is None
+        assert rendered[0]["__dbt_label"] == ["1"]
+        assert rendered[1]["__dbt_label"] is None
 
     def test_prepare_label_data_strict_undefined(self):
         from jinja2 import UndefinedError

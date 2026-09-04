@@ -313,6 +313,20 @@ class TestProjectSkills:
         assert "x" in skill.body
         assert len(skill.body) < AUTHORED_SKILL_BODY_MAX_CHARS * 2
 
+    def test_authored_body_between_old_and_new_cap_is_served_whole(
+        self, tmp_path: Path
+    ) -> None:
+        """A body past the old 6k limit arrives whole — the cap bounds abuse,
+        not legitimate authored content."""
+        body = "x" * 8_000
+        _write_project_skill(tmp_path, "skills/my-metric", name="my-metric", body=body)
+        project = FilesystemProject(tmp_path)
+
+        skill = get_skill("my-metric", project=project)
+
+        assert "truncated" not in skill.body.lower()
+        assert body in skill.body
+
     def test_project_skill_body_with_macro_shaped_text_does_not_crash_list_skills(
         self, tmp_path: Path
     ) -> None:
@@ -837,3 +851,77 @@ class TestExtraSkills:
         result = search_skills("system policy", extra_skills=(_user_skill("solo"),))
 
         assert "solo" not in {h.name for h in result.hits}
+
+
+# ---------------------------------------------------------------------------
+# Visualization exclusivity
+#
+# The agents that author boards run inside hosts that ship their own charting
+# and artifact tools. Disabling those is possible on some hosts and not others
+# (Claude Code has a bundled-skill kill switch; Codex has no equivalent we can
+# reach), so the durable guarantee has to live in the skill text itself, stated
+# generically rather than by naming any one vendor's tool. This is the rule
+# that survives a host we have never seen.
+# ---------------------------------------------------------------------------
+
+# Skills that compose an authoring system prompt or get installed to disk by
+# `dct init skills` — the surfaces an agent actually reads before writing YAML.
+_AUTHORING_SKILL = "board-build"
+
+
+def test_authoring_skill_forbids_other_visualization_tools() -> None:
+    """A host's own chart/artifact tools answer the same request differently —
+    with a standalone image or HTML file instead of board YAML. The skill must
+    rule them out in general terms, not per-vendor."""
+    body = get_skill(_AUTHORING_SKILL, surface="cli").body.lower()
+
+    assert "only visualization tool" in body, (
+        f"{_AUTHORING_SKILL} no longer states that dbt charts is the only "
+        "visualization tool the agent may use"
+    )
+
+
+def test_authoring_skill_teaches_single_chart_as_a_board() -> None:
+    """ "Just a chart" is the request most likely to send an agent to another
+    tool, so the skill has to say the dbt charts answer out loud: one chart in a
+    board, no title."""
+    body = get_skill(_AUTHORING_SKILL, surface="cli").body.lower()
+
+    assert "a single chart is just a board with one chart in it" in body
+    assert "leave `title:` off" in body
+
+
+def test_visualization_rule_is_vendor_neutral() -> None:
+    """Naming a vendor's tool dates the rule and misses every other host. The
+    text must generalize instead — the eval harness names specific tools, the
+    shipped skill must not."""
+    body = get_skill(_AUTHORING_SKILL, surface="cli").body.lower()
+    start = body.index("only visualization tool")
+    rule = body[start : start + 700]
+
+    named_vendors = [v for v in ("claude", "codex", "cursor", "copilot") if v in rule]
+    assert named_vendors == [], (
+        f"visualization rule names specific hosts {named_vendors}; state it "
+        "generically so it holds on hosts we have not seen"
+    )
+
+
+def test_visualization_rule_reaches_every_authoring_prompt() -> None:
+    """The rule is only worth writing if it is in context whenever an agent
+    authors YAML. Pins that the carrying skill composes every authoring prompt
+    type, so moving it into a narrower skill fails here rather than silently."""
+    from dbt_charts.ai.prompts import _PROMPT_SKILLS, AUTHORING_PROMPT_TYPES
+
+    for prompt_type in AUTHORING_PROMPT_TYPES:
+        assert _AUTHORING_SKILL in _PROMPT_SKILLS[prompt_type], (
+            f"{prompt_type} no longer includes {_AUTHORING_SKILL}, so the "
+            "visualization-exclusivity rule is not in its system prompt"
+        )
+
+
+def test_visualization_rule_is_installed_to_disk_for_cli_agents() -> None:
+    """Claude Code and Codex read skills off disk, not from our system prompt.
+    The rule only reaches them if its skill is in the file-install set."""
+    from dbt_charts.agent_api.skill_install import skills_for_file_install
+
+    assert _AUTHORING_SKILL in {s.name for s in skills_for_file_install()}

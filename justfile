@@ -33,6 +33,7 @@ default:
     @echo "  just test [ARGS]        Full test suite (excludes slow/e2e/network)"
     @echo "  just test-file FILE     Run one test file or node id"
     @echo "  just test-windows       Windows-safe release subset (-m windows)"
+    @echo "  just smoke              Build a wheel, install it, render a chart"
     @echo ""
     @echo "━━━ CODE QUALITY ━━━"
     @echo "  just fix                Format + lint with auto-fix"
@@ -56,8 +57,10 @@ default:
 # ============================================
 
 # Install all dependencies (every warehouse adapter, mcp, lsp, server extras)
+# --locked: uv.lock is a committed artifact of the monorepo export, so a lock
+# that no longer matches pyproject.toml is a bug to surface, not to re-resolve.
 install:
-    uv sync --all-extras
+    uv sync --all-extras --locked
     @echo "✅ Ready. Run 'just test' or 'just demo'."
 
 # ============================================
@@ -77,6 +80,28 @@ test-file FILE *ARGS:
 # -p no:tach: the plugin dies on the non-ASCII pyproject.
 test-windows *ARGS:
     LC_ALL=C PYTHONUTF8=0 uv run pytest -q --tb=short -p no:tach tests -m windows {{monorepo_only}} {{ARGS}}
+
+# The honesty nightly (oss-export-honesty-nightly.yml) runs this same lock
+# install against a real Copybara export, but only on its own cron -- a
+# dbt-charts-v* tag build runs off-cycle and needs its own proof the
+# committed oss/uv.lock installs and the wheel Copybara's path rewrites
+# (core.move/core.replace) produce is genuinely installable. Wheel/render
+# steps reuse the fixture and commands from the monorepo's own
+# smoke-install CI job (.github/workflows/test-dataface.yml).
+smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv sync --all-extras --locked
+    rm -rf dist .smoke-venv
+    uv build --wheel
+    uv venv .smoke-venv
+    uv pip install --python .smoke-venv/bin/python dist/*.whl
+    export DCT_NO_WORKSPACE_GUARD=1  # smoke-installs a wheel from inside this checkout on purpose
+    dct="$(pwd)/.smoke-venv/bin/dct"
+    "$dct" --help >/dev/null
+    "$dct" --version
+    (cd tests/fixtures/oss-smoke && "$dct" render sample.yml)
+    echo "✅ smoke: package builds, installs, and renders"
 
 # ============================================
 # Code quality

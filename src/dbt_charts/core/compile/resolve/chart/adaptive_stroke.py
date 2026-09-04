@@ -118,6 +118,7 @@ def facet_panel_width(
     width: float,
     panel_cols: int,
     has_mirror: bool,
+    extra_axis_px: float,
 ) -> float:
     """Per-panel pixel width for a small-multiples chart.
 
@@ -131,6 +132,21 @@ def facet_panel_width(
         panel_cols: Number of column panels derived from facet cardinality.
         has_mirror: True when the measure axis is mirrored to both edges
             (adds an extra gutter for the far-edge axis).
+        extra_axis_px: Width ONE extra axis instance costs, VL being forced
+            to draw a whole new one inside EVERY column panel beyond what
+            the base ``chrome_px`` budget already covers — the columns/
+            grid-facet case where narrowing a position channel's scale
+            independent makes VL paint that axis per panel instead of
+            sharing one down the left edge (see
+            ``render/chart/emitters/_cartesian.py``'s
+            ``facet_bound_position_channels`` docstring and
+            ``facet_extra_axis_width_px``, which measures this from the
+            channel's own widest label rather than a flat constant). Costs
+            every column panel, not the whole card once — chrome_px/
+            mirror_axis_px are shared edge gutters subtracted from the
+            total before dividing by ``panel_cols``, but this extra axis
+            repaints inside each panel, so its total cost scales with
+            ``panel_cols`` too. ``0.0`` when no channel forces that.
 
     Returns:
         Per-panel pixel width: ``(width - chrome) / panel_cols``, never
@@ -143,7 +159,7 @@ def facet_panel_width(
     facet_cfg = get_chart_rendering().facet
     chrome = facet_cfg.chrome_px + (facet_cfg.mirror_axis_px if has_mirror else 0.0)
     usable = max(width - chrome, 0.0)
-    return usable / panel_cols
+    return max(usable / panel_cols - extra_axis_px, 0.0)
 
 
 def panel_axis_cardinality(axes: tuple[PartitionAxis, ...], field: str | None) -> int:
@@ -170,6 +186,92 @@ def panel_axis_cardinality(axes: tuple[PartitionAxis, ...], field: str | None) -
     return 1
 
 
+def resolve_px_per_point(
+    channels: dict[str, ResolvedStyleChannel],
+    dataset: ChartDataset,
+    x_field: str,
+    width: float,
+    multiples: MultiplesConfig | None,
+    has_mirror: bool,
+) -> float:
+    """Chart pixel width per distinct x-value in the densest rendered series.
+
+    The shared density signal: ``adaptive_stroke``'s input, and the point-
+    companion spacing trigger (``bake_point_companions``) both key off this
+    same measurement, so it is computed once here rather than twice.
+
+    Consolidates the density block that was duplicated in ``_resolve_line`` and
+    ``_resolve_area``:  series_field extraction → per-panel width via
+    ``facet_panel_width`` when faceted → densest-panel ``max_points_per_series``.
+
+    Args:
+        channels: Resolved channel bindings for the chart (from
+            ``_channels_for``).
+        dataset: The chart's panel-split rows (one panel, keyed ``()``, for a
+            non-faceted chart — the N=1 case).
+        x_field: The x-axis field name (caller guards ``x is not None``).
+        width: Full card pixel width.
+        multiples: Small-multiples config, or ``None`` for non-faceted charts.
+        has_mirror: Whether the measure axis is mirrored (from ``ay.mirror``).
+
+    Returns:
+        Pixels of width per distinct x-value (> 0), or 0.0 when not
+        applicable (no data, zero-width panel, or zero distinct x-values).
+    """
+    color_ch = channels.get("color")
+    series_field = (
+        color_ch.data_field
+        if color_ch is not None and color_ch.mode == "series"
+        else ""
+    )
+    effective_width = width
+    if multiples is not None:
+        panel_cols = panel_axis_cardinality(dataset.axes, multiples.columns)
+        # extra_axis_px is always 0 here: the columns/grid-unbudgeted case
+        # only fires for a channel `facet_bound_position_channels` narrows,
+        # which requires a nominal/ordinal VL "y" — line/area's own y (the
+        # only families whose stroke this function computes) is always the
+        # chart's quantitative measure, so it can never be the narrowed
+        # channel this budgets for. Determining the real narrowing decision
+        # also needs the emitted VL encoding type, which does not exist yet
+        # at resolve time (compile/ cannot import render/'s FacetFeature
+        # either way).
+        effective_width = facet_panel_width(
+            width, panel_cols, has_mirror, extra_axis_px=0.0
+        )
+    if not effective_width > 0:
+        return 0.0
+    n_pts = reduce_panels(
+        dataset,
+        lambda rows: max_points_per_series(rows, x_field, series_field),
+    )
+    if not n_pts:
+        return 0.0
+    return effective_width / n_pts
+
+
+def stroke_from_px_per_point(px_per_point: float) -> float:
+    """Turn a density signal into an adaptive stroke width, or 0.0 when inapplicable.
+
+    The one place that reads ``chart_rendering.stroke``'s clamp and calls
+    ``adaptive_stroke`` — every caller that already has ``px_per_point`` (from
+    ``resolve_px_per_point``) goes through this leaf instead of re-deriving
+    the clamp read, so a future change to how a stroke derives from density
+    lands in one place for every chart family.
+
+    Args:
+        px_per_point: Pixels of width per distinct x-value, from
+            ``resolve_px_per_point``. ``<= 0`` means not applicable.
+
+    Returns:
+        Adaptive stroke in pixels (> 0), or 0.0 when not applicable.
+    """
+    if px_per_point <= 0:
+        return 0.0
+    clamp = get_chart_rendering().stroke
+    return adaptive_stroke(px_per_point, clamp.min_width, clamp.max_width)
+
+
 def density_adaptive_stroke(
     channels: dict[str, ResolvedStyleChannel],
     dataset: ChartDataset,
@@ -179,11 +281,6 @@ def density_adaptive_stroke(
     has_mirror: bool,
 ) -> float:
     """Compute the density-adaptive stroke for one chart family (line or area).
-
-    Consolidates the density block that was duplicated in ``_resolve_line`` and
-    ``_resolve_area``:  series_field extraction → per-panel width via
-    ``facet_panel_width`` when faceted → densest-panel ``max_points_per_series``
-    → ``adaptive_stroke``.
 
     Args:
         channels: Resolved channel bindings for the chart (from
@@ -199,26 +296,10 @@ def density_adaptive_stroke(
         Adaptive stroke in pixels (> 0), or 0.0 when not applicable (no data,
         zero-width panel, or zero distinct x-values).
     """
-    color_ch = channels.get("color")
-    series_field = (
-        color_ch.data_field
-        if color_ch is not None and color_ch.mode == "series"
-        else ""
+    px_per_point = resolve_px_per_point(
+        channels, dataset, x_field, width, multiples, has_mirror
     )
-    effective_width = width
-    if multiples is not None:
-        panel_cols = panel_axis_cardinality(dataset.axes, multiples.columns)
-        effective_width = facet_panel_width(width, panel_cols, has_mirror)
-    if not effective_width > 0:
-        return 0.0
-    n_pts = reduce_panels(
-        dataset,
-        lambda rows: max_points_per_series(rows, x_field, series_field),
-    )
-    if not n_pts:
-        return 0.0
-    clamp = get_chart_rendering().stroke
-    return adaptive_stroke(effective_width / n_pts, clamp.min_width, clamp.max_width)
+    return stroke_from_px_per_point(px_per_point)
 
 
 @overload
@@ -262,26 +343,59 @@ def bake_line_stroke(
 def bake_point_companions(
     point_mark: PointMarkStyle,
     stroke: float,
+    px_per_point: float,
     size_authored: bool,
     ring_authored: bool,
 ) -> PointMarkStyle:
-    """Derive a line's point-marker geometry from its baked stroke.
+    """Derive a line's point-marker geometry from its baked stroke and density.
 
     Lives next to ``bake_line_stroke`` because the two are one decision: once
     the stroke is set, the point ring and disk track it so the dot-to-line
     proportion holds across densities. Callers pass ``stroke`` = the effective
-    (post-bake) line stroke; only call when adaptive actually fired.
+    (post-bake) line stroke and ``px_per_point`` = the same density signal
+    ``resolve_px_per_point`` computes (the shared input both
+    ``density_adaptive_stroke`` and a family resolver's own
+    ``stroke_from_px_per_point`` call turn into a stroke width), which is
+    ``0.0`` when there was no density to measure — a line overlay on a
+    non-line base, or a line base with no x channel, no rows, or no width.
+    Call whenever there is a real stroke to track; the density signal gates
+    the ``size`` half below, not the call.
 
-    - Ring ``stroke_width`` follows the line stroke unless the author pinned
-      ``marks.point.stroke_width``.
-    - ``size`` becomes ``π·stroke²`` (VL area ⇒ diameter 2·stroke) unless the
-      author pinned ``marks.point.size`` OR the cascaded size is <= 0 (points
-      off — never resurrect them).
+    - Ring ``stroke_width`` follows the line stroke unless some tier authored
+      ``marks.point.stroke_width``. Unconditional: a line overlay on a bar,
+      scatter or area base has no density signal at all, and its ring must
+      still read with the weight of the line it rings rather than falling
+      through to Vega-Lite's unthemeable 2px.
+    - ``size`` is density-driven, not a themed literal: it is the square of
+      ``chart_rendering.point.diameter_ratio * stroke`` — VL ``size`` is area,
+      but the diameter-to-size relationship here is ``diameter = sqrt(size)``,
+      measured directly off the rendered mark path radius (the textbook
+      ``π·r²`` reading is wrong for this mark and gives the wrong dot) — while
+      ``px_per_point`` clears ``chart_rendering.point.min_px_per_point``, and
+      ``0.0`` (points off) below it. Skipped entirely when there is no density
+      signal (``px_per_point <= 0``): ``0.0`` is the resolved model's word for
+      "measured, and too dense to show dots", which is not what "never
+      measured" means. Leave the cascaded value standing rather than assert a
+      density that was never taken.
 
-    Returns the mark unchanged when both companions are authored/off.
+    Both gates read the *cascaded* mark, so an authoring tier is an authoring
+    tier — board, family, chart or layer alike. That read is only honest while
+    the parent style carries no theme literal for either companion: today the
+    only parent handed here is ``charts.line``, which carries neither.
+    ``charts.area``/``scatter``/``point_map`` do set ``point.stroke_width``,
+    so a future call site parented on one of those must not reuse this gate
+    unchanged.
+
+    Returns the mark unchanged when both companions are authored.
     """
     if not ring_authored:
         point_mark = point_mark.model_copy(update={"stroke_width": stroke})
-    if not size_authored and point_mark.size is not None and point_mark.size > 0:
-        point_mark = point_mark.model_copy(update={"size": math.pi * stroke**2})
+    if not size_authored and px_per_point > 0:
+        point_cfg = get_chart_rendering().point
+        auto_size = (
+            (point_cfg.diameter_ratio * stroke) ** 2
+            if px_per_point >= point_cfg.min_px_per_point
+            else 0.0
+        )
+        point_mark = point_mark.model_copy(update={"size": auto_size})
     return point_mark

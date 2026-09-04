@@ -8,9 +8,9 @@
 #
 # Use case: theme-level default ink for non-layered, single-encoding charts
 # (bar/line/area fill or stroke, table inline-bars, spark_bar.bar.color).
-# Themes pick a subset by inlining hexes into
-# `style.charts.single_series_palette` — they do not reference this palette
-# name directly (mirrors editorial-10-ink, which editorial/cream inline from).
+# Themes pick a subset through named roles in
+# `style.charts.single_series_palette` rather than referencing this palette
+# name directly (mirrors editorial-10-ink in editorial and cream).
 # The default/stark theme inks single-series marks in literal black, so it
 # does not pull from this palette; the vivid-family themes are its consumer.
 #
@@ -19,9 +19,8 @@
 #
 # Design discipline — the ink band:
 #   - Target band: L 0.30-0.36 in OKLCH (0.06 wide). Charcoal-ink anchors the
-#     floor at L 0.30. (Unlike editorial-10, whose charcoal base already sits
-#     at the floor, vivid-10's charcoal base is a mid-slate at L 0.47 — so
-#     charcoal-ink is dropped to the floor rather than set equal to base.)
+#     floor at L 0.30. Both families now have distinct graphite/charcoal base,
+#     dark, and ink stops; vivid charcoal-ink anchors this family's floor.
 #   - Stops vary by hue and chroma; slot identity is carried by hue, not
 #     lightness.
 #   - Chroma preserved from the vivid-10 base as far as the sRGB gamut allows
@@ -38,13 +37,13 @@ description: |
   `style.charts.single_series_palette`.
 
 colors:
-  - "#003761"    # 1  — blue-ink      (companion to #0073c2, L 0.33)
-  - "#004554"    # 2  — cyan-ink      (companion to #00c8ee, L 0.36)
-  - "#00442b"    # 3  — green-ink     (companion to #00ad75, L 0.34)
-  - "#54310b"    # 4  — brown-ink     (companion to #7a5531, L 0.35)
-  - "#503900"    # 5  — gold-ink      (companion to #e1a500, L 0.36)
-  - "#4d1c5a"    # 6  — purple-ink    (companion to #a46fb2, L 0.33)
-  - "#621f00"    # 7  — orange-ink    (companion to #da5a23, L 0.34)
-  - "#2a4000"    # 8  — moss-ink      (companion to #6a9228, L 0.34)
-  - "#2e3641"    # 9  — gray-ink      (companion to #949daa, L 0.33)
+  - "#003761"    # 1 — blue-ink      (companion to #0073c2, L 0.33)
+  - "#004554"    # 2 — cyan-ink      (companion to #00c8ee, L 0.36)
+  - "#00442b"    # 3 — green-ink     (companion to #00ad75, L 0.34)
+  - "#503900"    # 4 — gold-ink      (companion to #e1a500, L 0.36)
+  - "#621f00"    # 5 — orange-ink    (companion to #da5a23, L 0.34)
+  - "#4d1c5a"    # 6 — purple-ink    (companion to #a46fb2, L 0.33)
+  - "#2a4000"    # 7 — moss-ink      (companion to #6a9228, L 0.34)
+  - "#54310b"    # 8 — brown-ink     (companion to #7a5531, L 0.35)
+  - "#2e3641"    # 9 — gray-ink      (companion to #949daa, L 0.33)
   - "#252e3d"    # 10 — charcoal-ink  (floor anchor, L 0.30)

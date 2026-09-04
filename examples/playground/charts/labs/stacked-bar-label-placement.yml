@@ -1,12 +1,12 @@
 title: "Stacked bar value labels — segment midpoints and the fit test"
-description: >
+notes: >
   EXPECTED: `position: middle` centers each label inside its OWN stacked
   segment, and a segment too short to hold its label drops it instead of
   painting a collision. Before this change `middle` drew nothing at all on a
   stacked bar (the whole label layer was silently dropped), so authors used
   `top` — which pins every label to its segment's ceiling, right under the
   label of the segment above it.
-extends: editorial
+extends: clarity
 
 queries:
   starts:

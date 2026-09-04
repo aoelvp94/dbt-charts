@@ -165,6 +165,23 @@ def _pick_tilt_for_widths(
     widths: list[float],
     usable_width: float,
 ) -> tuple[float, bool]:
+    """Shallowest ladder angle whose rotated footprint fits one band.
+
+    Footprint is the rotated label's bounding-box width, ``w*cos(t) +
+    line_height*sin(t)``, which does NOT decrease monotonically down the
+    ladder. A rung is narrower than every shallower one only for labels wider
+    than ``line_height * cot(t/2)`` — at the theme's 11px labels that is
+    w > 19px for -60, > 27px for -45, > 41px for -30. Below those widths a mild
+    tilt genuinely occupies more horizontal room than flat text ("Apr" rotated
+    30 degrees is wider than "Apr" sitting flat), so a short temporal
+    vocabulary steps straight from flat to vertical. That is the geometry, not
+    a dead rung: a `2015`/`W07` axis at a 22-24px band does pick -60.
+
+    Walking the ladder in order stays optimal even where the sequence widens.
+    A rung is only reached once every shallower rung has failed, so a rung no
+    narrower than the narrowest of those failures cannot fit either — skipping
+    such rungs early would change no result, only the comparison count.
+    """
     increments = label.tilt_increments
     if increments is None:
         raise ValueError("label.tilt_increments is not baked in theme")
@@ -365,8 +382,15 @@ def _temporal_layout(
         )
     ]
     anchor_index = visible_indices[0] if visible_indices else 0
+    # At year cadence the label vocabulary promotes to the bare year (every
+    # visible tick is a January, so "Jan" repeated at every tick carries no
+    # information) — see resolve_temporal_label_visibility's docstring. Every
+    # other rung keeps the caller's own vocabulary unchanged.
+    promoted_format_time_unit = "year" if visibility == "year" else format_time_unit
     if fits:
-        return AxisLabelLayout("allow", 0.0, visibility, anchor_index, format_time_unit)
+        return AxisLabelLayout(
+            "allow", 0.0, visibility, anchor_index, promoted_format_time_unit
+        )
 
     visible_dates = [
         date
@@ -379,10 +403,10 @@ def _temporal_layout(
         )
     ]
     directive: Literal["allow", "parity"] = "allow"
-    if overlap.skip and visibility == format_time_unit and format_time_unit == "year":
+    if overlap.skip and visibility == "year":
         directive = "parity"
         visible_dates = visible_dates[::2]
-    if format_time_unit == "yearmonthdate":
+    if promoted_format_time_unit == "yearmonthdate":
         # _day_label renders two rows ("%-d" over a possibly-blank month/year
         # row) — measure that shape, not a single-row string nothing draws.
         widths = [
@@ -390,7 +414,10 @@ def _temporal_layout(
                 measurer.measure(str(date.day), font.size),
                 measurer.measure(
                     day_week_context(
-                        date, format_time_unit, position, axis.fiscal_year_start_month
+                        date,
+                        promoted_format_time_unit,
+                        position,
+                        axis.fiscal_year_start_month,
                     ),
                     font.size,
                 ),
@@ -405,15 +432,17 @@ def _temporal_layout(
             "yearweek": lambda date: portable_strftime(date, "W%V"),
         }
         widths = [
-            measurer.measure(label_texts[format_time_unit](date), font.size)
+            measurer.measure(label_texts[promoted_format_time_unit](date), font.size)
             for date in visible_dates
         ]
     if overlap.tilt:
         angle, _ = _pick_tilt_for_widths(axis.labels, widths, usable_width)
         return AxisLabelLayout(
-            directive, angle, visibility, anchor_index, format_time_unit
+            directive, angle, visibility, anchor_index, promoted_format_time_unit
         )
-    return AxisLabelLayout(directive, 0.0, visibility, anchor_index, format_time_unit)
+    return AxisLabelLayout(
+        directive, 0.0, visibility, anchor_index, promoted_format_time_unit
+    )
 
 
 def resolve_axis_x_overlap(
@@ -434,15 +463,10 @@ def resolve_axis_x_overlap(
     extend it past the base series (``overlay_x_domain_values``). Crowding
     must be measured against the bands that actually render — measuring the
     base's own rows on a layered chart under-counts them and picks a flatter
-    angle or finer cadence than the rendered axis has room for.
-
-    Honoured on the temporal branch throughout. On the ordinal/nominal branch
-    it reaches the flat-fit gate only: the tilt angle below still comes from
-    ``_pick_tilt``, which re-derives its widths from ``data``. So a nominal
-    axis can decide "these don't fit flat" against the union and then size the
-    angle for the narrower set. Pre-existing, unchanged by the domain
-    threading, and deliberately not fixed here — but do not read this
-    parameter as governing that angle.
+    angle or finer cadence than the rendered axis has room for. Honoured on
+    both the temporal and the ordinal/nominal branch: the tilt angle below is
+    picked from the same ``widths``/``usable_width`` the flat-fit gate just
+    measured, never re-derived from ``data`` alone.
     """
     overlap = axis.labels.overlap
     if overlap is None:
@@ -491,27 +515,6 @@ def resolve_axis_x_overlap(
     widths = [width + gap for width in widths]
     usable_width = chart_width * label_usable_ratio
     if overlap.tilt and not _fits_flat(widths, usable_width):
-        angle, _ = _pick_tilt(
-            axis.labels,
-            x_field,
-            data,
-            chart_width,
-            label_usable_ratio,
-        )
+        angle, _ = _pick_tilt_for_widths(axis.labels, widths, usable_width)
         return AxisLabelLayout("allow", angle, None, 0, "")
     return AxisLabelLayout("allow", 0.0, None, 0, "")
-
-
-def _pick_tilt(
-    label: ResolvedAxisElementStyle,
-    x_field: str,
-    data: list[dict[str, AxisDatum]],
-    chart_width: float,
-    label_usable_ratio: float,
-) -> tuple[float, bool]:
-    """Compatibility adapter used by focused tilt-unit tests."""
-    values = list(dict.fromkeys(str(row.get(x_field, "")) for row in data[:100]))
-    values = [value for value in values if value]
-    measurer = get_font_measurer(label.font.family)
-    widths = [measurer.measure(value, label.font.size) for value in values]
-    return _pick_tilt_for_widths(label, widths, chart_width * label_usable_ratio)

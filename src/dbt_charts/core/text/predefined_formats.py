@@ -60,16 +60,15 @@ class PredefinedNumberFormat(str, Enum):
 
     currency = "currency"
     currency_whole = "currency_whole"
-    currency_compact = "currency_compact"
+    currency_full = "currency_full"
     percent = "percent"
     percent_whole = "percent_whole"
     percent_delta = "percent_delta"
-    compact = "compact"
     integer = "integer"
     delta = "delta"
     number = "number"
+    number_full = "number_full"
     year = "year"
-    number_default = "number_default"
     percent_number = "percent_number"
     percent_number_delta = "percent_number_delta"
     percentage_points_delta = "percentage_points_delta"
@@ -81,34 +80,126 @@ class PredefinedTimeFormat(str, Enum):
     date_short is the theme-mandated default for temporal table cells. It is
     referenced by name from the theme's axis_quantitative.labels.format and
     read directly by table rendering. Absence raises at compile.
+
+    time_short is the house alias for a bare 24-hour clock reading
+    ("%H:%M") — the sub-day sibling of date_short. Also the format the
+    time-notation engine default emits for a continuous temporal axis
+    authored with ``clock: 24`` (see
+    ``time_unit_detect.default_subday_label_expr_for``).
     """
 
     def __str__(self) -> str:
         return str.__str__(self)
 
     date_short = "date_short"
+    time_short = "time_short"
 
 
 # Engine-owned d3 specs for each predefined number format member.
 # Members with a PREDEFINED_NATIVE entry bypass this table entirely.
+#
+# The SI members carry an explicit `.3` because d3's `s` type defaults to six
+# significant digits and `~` only trims trailing zeros -- a bare `~s` renders
+# 50752.9 as `50.7529 K`, six significant figures under a name that promises
+# brevity. Three, not two: `.2~s` rounds 999 up to a false `1 K`.
 PREDEFINED_SPECS: dict[str, str] = {
-    PredefinedNumberFormat.currency: "$,.2f",
+    PredefinedNumberFormat.currency: "$.3~s",
     PredefinedNumberFormat.currency_whole: "$,.0f",
-    PredefinedNumberFormat.currency_compact: "$~s",
+    PredefinedNumberFormat.currency_full: "$,.2f",
     PredefinedNumberFormat.percent: ".1%",
     PredefinedNumberFormat.percent_whole: ".0%",
     PredefinedNumberFormat.percent_delta: "+.1%",
-    PredefinedNumberFormat.compact: "~s",
     PredefinedNumberFormat.integer: ",.0f",
     PredefinedNumberFormat.delta: "+,d",
-    PredefinedNumberFormat.number: ",.2f",
+    PredefinedNumberFormat.number: ".3~s",
+    PredefinedNumberFormat.number_full: ",.2f",
     PredefinedNumberFormat.year: "d",
-    PredefinedNumberFormat.number_default: ".3~s",
 }
+
+# Predefined members whose SI spec is wrong below si_sub_unit_floor: money
+# has no sub-cent unit to name, so a value under $1 misreads -- $0.67 as
+# "$670m" (d3's SI milli prefix), colliding case-only with the house million
+# grammar and reading as 670 million dollars. Below the floor, the member
+# falls back to this plain-digit sibling instead of its SI spec.
+PREDEFINED_SUB_UNIT_FALLBACK: dict[str, str] = {
+    PredefinedNumberFormat.currency.value: PredefinedNumberFormat.currency_full.value,
+    PredefinedNumberFormat.number.value: PredefinedNumberFormat.number_full.value,
+}
+
+
+# Money-affix detection for si_sub_unit_floor: deliberately small and
+# explicit, kept next to the predicate that uses it. Currency symbols glued
+# directly onto a value, and the major ISO 4217 codes a FormatConfig
+# prefix/suffix commonly spells out (` USD` is that field's own documented
+# example).
+_MONEY_SYMBOLS = {"$", "£", "€", "¥", "₹", "₩", "₽"}
+_MONEY_CODES = {"USD", "GBP", "EUR", "JPY", "CAD", "AUD", "CHF", "CNY", "INR"}
+
+
+def _affix_is_money(affix: str | None) -> bool:
+    stripped = affix.strip() if affix else ""
+    if not stripped:
+        return False
+    return any(symbol in stripped for symbol in _MONEY_SYMBOLS) or (
+        stripped.upper() in _MONEY_CODES
+    )
+
+
+# The smallest amount `$,.2f` renders as a nonzero string. Money below this is
+# left on SI: the two-decimal fallback would paint it "$0.00".
+MONEY_SUB_UNIT_FLOOR = 0.005
+
+
+def si_sub_unit_floor(
+    spec: str, prefix: str | None = None, suffix: str | None = None
+) -> float:
+    """The lower edge of the sub-$1 band in which an adaptive member avoids SI.
+
+    Used at the call site as ``floor < abs(value) < 1.0`` -- a fixed 1.0
+    ceiling, not a general adaptive band. Fixing "$13" for $12.99 needs a
+    per-set vote over the whole slot (axis, column, ...) and is tracked
+    separately (closed PR #7854); this predicate is the narrower per-value
+    fix for amounts under a dollar, where SI is not imprecise but wrong.
+
+    ``MONEY_SUB_UNIT_FLOOR`` (0.005) for money, which has no sub-cent unit to
+    name: d3's SI ``m`` (milli) is not in the house suffix vocabulary
+    (``_D3_TO_ANALYTIC`` keys are k/M/G/T/P/E/Z/Y), so it stays glued inside
+    the number as "$670m" rather than lifting into the suffix lane.
+
+    The floor is 0.005 rather than 0.0 because the fallback it swaps to is
+    ``$,.2f``, which cannot represent less than half a cent: below that it
+    renders "$0.00" for every row of a CPC, per-token or FX column, which is
+    indistinguishable from the genuine zeros this same band is careful to
+    leave as "$0". Confining the swap to the range the fallback can actually
+    represent keeps sub-cent money on SI, where it is at least readable.
+
+    ``1.0`` for a plain quantity, whose fraction reads correctly as an SI
+    sub-unit -- ``0.671`` as "671m" is milli, and the theme's own axis
+    default has always rendered a fraction that way.
+
+    Money is a resolved spec carrying a literal ``$``, or a prefix/suffix
+    that contains a known currency symbol or spells out a major ISO 4217
+    code (``_MONEY_SYMBOLS`` / ``_MONEY_CODES`` above). This is a heuristic
+    over a small, explicit set -- it cannot enumerate the world's
+    currencies, and it does not try to. Money detection here has two ways
+    to be wrong, and only one of them is survivable: calling a real
+    currency "not money" just keeps today's SI rendering (a value like
+    ``0.002 kg`` printing an odd-looking ``2m kg`` is a cosmetic miss, and
+    that same miscall on money is the acceptable "$13 from $12.99" case
+    already tracked separately). Calling a plain quantity "money" runs it
+    through the exact-two-decimal fallback and truncates it -- ``0.002 kg``
+    would render as ``0.00 kg``, discarding a real value. So whenever this
+    predicate cannot positively identify money, it must decline the floor
+    and fall through to SI -- never the other way around.
+    """
+    is_money = "$" in spec or _affix_is_money(prefix) or _affix_is_money(suffix)
+    return MONEY_SUB_UNIT_FLOOR if is_money else 1.0
+
 
 # Engine-owned d3 time specs for each predefined time format member.
 PREDEFINED_TIME_SPECS: dict[str, str] = {
     PredefinedTimeFormat.date_short: "%-d %b %Y",
+    PredefinedTimeFormat.time_short: "%H:%M",
 }
 
 # Native formatters: bypass d3 entirely. The value already IS in the caller's
@@ -136,7 +227,7 @@ PREDEFINED_TIME_NAMES: frozenset[str] = frozenset(m.value for m in PredefinedTim
 ALL_PREDEFINED_NAMES: frozenset[str] = PREDEFINED_NUMBER_NAMES | PREDEFINED_TIME_NAMES
 # Native members bypass d3 entirely — valid only in Python-painted slots (KPI,
 # table). Vega-painted slots (axis labels, mark labels, number_format, time_format,
-# data_table) must reject these at compile; Vega has no equivalent renderer.
+# support_table) must reject these at compile; Vega has no equivalent renderer.
 PREDEFINED_NATIVE_NAMES: frozenset[str] = frozenset(PREDEFINED_NATIVE)
 
 # Every PredefinedNumberFormat member must resolve: either a d3 spec in

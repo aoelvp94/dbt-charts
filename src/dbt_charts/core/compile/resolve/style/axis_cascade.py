@@ -84,6 +84,7 @@ _ELEM_X_LABEL_PASSTHROUGH = (
     "time_unit",
     "tilt_increments",
     "values",
+    "clock",
 )
 
 
@@ -151,7 +152,7 @@ def _render_align(
     ``_effective_align``'s resolve-time fold.
 
     ``measure_axis_to_vl``'s ``_fallback_reversed_label_align`` deletes an
-    own-side or ``"center"`` ``labelAlign`` outright when Dataface can't
+    own-side or ``"center"`` ``labelAlign`` outright when dbt charts can't
     safely measure a ``labelPadding`` for it (chiefly: ``label.font.case``
     is ``upper``/``lower``, which makes VL render an injected ``labelExpr``
     a d3-format measurement can't see -- or ``"center"``, which invades
@@ -192,7 +193,7 @@ def _label_align_fallback_fires(
     outcome from resolve-time facts alone, for a ruler-bearing axis.
 
     That function deletes ``labelAlign`` when it is own-side (matches
-    ``edge``) or ``"center"``, and Dataface can't safely measure a
+    ``edge``) or ``"center"``, and dbt charts can't safely measure a
     ``labelPadding`` for it. A ruler-bearing axis (``_build_ruler``'s own
     precondition: SI-shaped ``format``, non-empty ``tick_values``, no
     authored ``label.expr``) always has exact tick content to measure from
@@ -246,7 +247,10 @@ def build_resolved_axis(
     format_authored: bool,
     format_is_alias: bool,
     is_quantitative: bool = False,
+    quantitative_for_alignment: bool | None = None,
+    zero_anchored: bool = False,
     chart_id: str,
+    y_gridline_caps_bottom: bool | None = None,
 ) -> ResolvedAxisStyle:
     """Build ResolvedAxisStyle from a channel-typed AxisXStyle or AxisYStyle.
 
@@ -287,7 +291,7 @@ def build_resolved_axis(
 
     ``format_is_alias`` says whether the *raw*, pre-resolution string the
     authoring layer set was a key in the format-alias table (e.g.
-    ``currency_compact`` resolving to ``"$~s"``), rather than a literal d3
+    ``currency`` resolving to ``"$.3~s"``), rather than a literal d3
     spec the author typed directly. It only ever relaxes
     ``format_authored``'s gate below — an authored alias still qualifies for
     the plain-digit bake, since picking a named alias for its prefix/suffix
@@ -297,6 +301,22 @@ def build_resolved_axis(
     type error, not a silent wrong answer. A caller passing
     ``format_authored=False`` may pass ``False`` here too — the value is
     inert whenever the format was never authored at all.
+
+    ``is_quantitative`` is a channel-type fact: is this axis's field numeric
+    rather than categorical. It is baked straight onto
+    ``ResolvedAxisStyle.is_quantitative`` below and, absent an explicit
+    ``quantitative_for_alignment``, also feeds the digit-alignment gate
+    (``_force_right`` below). A caller with a genuinely different axis for
+    each question — a horizontal bar's measure axis is always quantitative
+    by channel type but does not render as the column-forming axis the
+    alignment gate cares about — passes both explicitly instead of relying
+    on the shared default.
+
+    ``quantitative_for_alignment`` overrides ``is_quantitative`` for the
+    digit-alignment gate only, when the two questions diverge (see above).
+    ``None`` (the default) reuses ``is_quantitative`` itself — the two facts
+    coincide for every axis except a horizontal bar's measure axis, so only
+    that caller needs to pass this explicitly.
 
     The ``ruler`` decision folds three resolve-time facts into one: does the
     tick ladder compact (``shared_scale_for_ladder``,
@@ -316,6 +336,19 @@ def build_resolved_axis(
     ``label.format`` (shared with value labels, tooltips, and the
     currency-warning detector) or ``label.expr`` (a sentinel several other
     consumers read as "the author opted out").
+
+    ``y_gridline_caps_bottom`` resolves an ``axis_x.ticks.visible: "auto"``
+    (the base theme's default) into a concrete bool: True when this axis's
+    own gridlines are hidden (nothing else marks position) or the caller
+    says the y-axis's lowest gridline lands on the plot's bottom edge;
+    False when the caller says it doesn't (gridlines already reach the
+    labels). Only ``build_cartesian_axes`` — the one place both axes of a
+    cartesian pair are known — computes and passes a real bool; every other
+    caller (the support_table strip's solo ``axis_x`` resolution, or a
+    theme-defaults probe with no board to pair it against) leaves this None,
+    which keeps the tick showing — the same answer this axis always had
+    before ``"auto"`` existed, for a context that structurally can't ask the
+    real geometric question.
     """
 
     def _require(value: Any, path: str) -> Any:
@@ -338,7 +371,7 @@ def build_resolved_axis(
     else:
         grid_zero = None
 
-    # label passthrough: x-axis adds tilt_increments/values/time_unit from DimensionLabelStyle.
+    # label passthrough: x-axis adds tilt_increments/values/time_unit/clock from DimensionLabelStyle.
     label_kwargs = {f: getattr(axis.labels, f) for f in _LABEL_PASSTHROUGH}
     if isinstance(axis.labels, DimensionLabelStyle):
         label_kwargs.update(
@@ -357,8 +390,13 @@ def build_resolved_axis(
     # configs.  non-column-forming axes (horizontal bar measure) are exempt:
     # their reserve is always False regardless of start_anchored.
     _resolved_font = resolve_cascaded_font(axis.labels.font, "charts.axis.labels.font")
-    _force_right = (
+    _quantitative_for_alignment = (
         is_quantitative
+        if quantitative_for_alignment is None
+        else quantitative_for_alignment
+    )
+    _force_right = (
+        _quantitative_for_alignment
         and format_is_alias
         and edge == "right"
         and (not column_forming or _resolved_font.tabular_figures)
@@ -530,6 +568,18 @@ def build_resolved_axis(
             chart_id=chart_id,
         )
 
+    ticks_visible = axis.ticks.visible
+    # "auto" is only ever declared on DimensionTicksStyle (axis_x's own tick
+    # slot) -- the isinstance guard is what lets mypy see that arm at all;
+    # AxisYStyle's ticks.visible is bool | None and can never compare equal.
+    if isinstance(axis, AxisXStyle) and axis.ticks.visible == "auto":
+        if axis.grid.visible is not True:
+            ticks_visible = True  # no gridlines at all -- nothing else marks position
+        elif y_gridline_caps_bottom is None:
+            ticks_visible = True  # no cross-axis geometry available -- keep the tick
+        else:
+            ticks_visible = y_gridline_caps_bottom
+
     return ResolvedAxisStyle(
         grid=ResolvedAxisGridStyle(
             visible=_require(axis.grid.visible, "charts.axis.grid.visible"),
@@ -545,7 +595,7 @@ def build_resolved_axis(
             color=_require(axis.line.color, "charts.axis.line.color"),
         ),
         ticks=ResolvedAxisTicksStyle(
-            visible=_require(axis.ticks.visible, "charts.axis.ticks.visible"),
+            visible=_require(ticks_visible, "charts.axis.ticks.visible"),
             color=_require(axis.ticks.color, "charts.axis.ticks.color"),
             width=axis.ticks.width,
             length=axis.ticks.length,
@@ -596,6 +646,8 @@ def build_resolved_axis(
         tick_label=tick_label,
         domain_max=None if domain_max is ... else domain_max,
         domain_min=None if domain_min is ... else domain_min,
+        is_quantitative=is_quantitative,
+        zero_anchored=zero_anchored,
     )
 
 
@@ -777,7 +829,7 @@ def _merge_axis_cascade(
     re-derived from the resolved d3 spec, since a predefined name and a
     hand-typed literal can resolve to the exact same string. It feeds
     ``build_resolved_axis``'s ``format_is_alias`` keyword, which relaxes the
-    ``format_authored`` gate for a predefined name (e.g. ``currency_compact``)
+    ``format_authored`` gate for a predefined name (e.g. ``currency``)
     so it still qualifies for the plain-digit bake — only a genuine literal
     spec opts out. A ``style.formats`` alias returns False (native d3, no
     house rules) even though it resolves through the alias map.
@@ -1109,4 +1161,9 @@ def resolved_axis_style(
         format_is_alias=format_is_alias,
         is_quantitative=channel_type == "quantitative",
         chart_id="",
+        # This wrapper resolves one axis in isolation, with no paired y-axis
+        # to ask the geometric question against -- explicit, not relying on
+        # the parameter default, since this axis's own `ticks` field is never
+        # read on this no-ladder path regardless (see the comment above).
+        y_gridline_caps_bottom=None,
     )

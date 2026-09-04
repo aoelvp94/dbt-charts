@@ -16,8 +16,8 @@ class HeatmapChart(_CartesianChartFields):
 
     model_config = ConfigDict(extra="forbid")
 
-    type: Annotated[Literal["heatmap"], Field(description="Heatmap chart type.")]
+    type: Annotated[Literal["heatmap"], Field(description="Selects the chart family.")]
     style: Annotated[
         HeatmapChartStylePatch | None,
-        Field(default=None, description="Chart-local style overrides."),
+        Field(default=None, description="Appearance overrides for this chart alone."),
     ]

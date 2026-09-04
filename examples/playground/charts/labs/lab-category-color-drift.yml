@@ -1,0 +1,96 @@
+title: "Lab — category color drift across charts"
+notes: |
+  Every chart below colors by the SAME column (`category`, values
+  Electronics / Accessories / Tools), in different chart families and over
+  different subsets of the data.
+
+  WHAT TO CHECK: one category must be ONE color everywhere on this board.
+  Read the swatch for "Electronics" in each chart and confirm they match.
+  Then read "Tools", then "Accessories".
+
+source: examples_db
+
+queries:
+  by_region_category:
+    sql: |
+      SELECT region, category, SUM(revenue) AS revenue
+      FROM ecommerce_orders
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+
+  # Same column, one value missing. This is the chart that exposes the bug:
+  # dropping Accessories used to shift every remaining swatch one slot left.
+  by_region_no_accessories:
+    sql: |
+      SELECT region, category, SUM(revenue) AS revenue
+      FROM ecommerce_orders
+      WHERE category <> 'Accessories'
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+
+  # The fixture spans a single month, so bucket by week — a line needs more
+  # than one x value to be worth looking at.
+  by_week_category:
+    sql: |
+      SELECT date_trunc('week', date) AS week, category, SUM(revenue) AS revenue
+      FROM ecommerce_orders
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+
+  totals_by_category:
+    sql: |
+      SELECT category, SUM(revenue) AS revenue
+      FROM ecommerce_orders
+      GROUP BY 1
+      ORDER BY 1
+
+rows:
+  - cols:
+      - text: |
+          ### 1. Stacked bar, `color: category`
+          EXPECT: Electronics, Accessories and Tools each in their board color.
+      - text: |
+          ### 2. Same, with Accessories dropped
+          EXPECT: Electronics and Tools keep the SAME colors as chart 1.
+          They must not shift up a slot to fill the gap Accessories left.
+          The legend must NOT list Accessories — this chart never draws it.
+
+  - cols:
+      - chart:
+          query: by_region_category
+          type: bar
+          x: region
+          y: revenue
+          color: category
+          title: All categories
+      - chart:
+          query: by_region_no_accessories
+          type: bar
+          x: region
+          y: revenue
+          color: category
+          title: Accessories dropped
+
+  - cols:
+      - text: |
+          ### 3. Multi-series line, `color: category`
+          EXPECT: each line matches its bar color in charts 1 and 2.
+      - text: |
+          ### 4. Donut, `color: category`
+          EXPECT: each wedge matches its bar color above — and the direct
+          labels stay dark for contrast, NOT recolored to their own wedge.
+
+  - cols:
+      - chart:
+          query: by_week_category
+          type: line
+          x: week
+          y: revenue
+          color: category
+          title: Revenue by week and category
+      - chart:
+          query: totals_by_category
+          type: donut
+          theta: revenue
+          color: category
+          title: Share of revenue

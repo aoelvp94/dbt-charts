@@ -91,6 +91,99 @@ def test_bar_band_width_warning_uses_real_layout_width_not_theme_default() -> No
     assert narrow_warning.chart == "narrow_chart"
 
 
+_DONUT_NARROW_SLOT_YAML = """
+title: Narrow donut with large total
+charts:
+  donut_chart:
+    query: q
+    type: donut
+    theta: amount
+    total:
+      visible: true
+      format: integer
+    style:
+      inner_radius: 0.6
+      total:
+        value:
+          font:
+            size: 18
+queries:
+  q:
+    sql: SELECT amount FROM t
+    source: test_source
+rows:
+  - height: 120
+    cols:
+      - width: 150
+        rows:
+          - donut_chart
+      - filler:
+          query: q
+          type: donut
+          theta: amount
+"""
+
+
+def test_pie_total_exceeds_inner_radius_uses_layout_height() -> None:
+    """1,000,000 formatted as integer ('1,000,000' ~86px) overflows the hole
+    (~64.8px) in a 150px-wide, 120px-tall slot (min(150,120)*0.9*0.6=64.8px).
+    The detector must fire using the layout item height from
+    ctx.layout_chart_heights (ResolvedLayoutItem.height), not from vega_specs.
+    """
+    result = compile(_DONUT_NARROW_SLOT_YAML)
+    assert result.success and result.board is not None, result.errors
+    executor = _make_executor(
+        result.board, result.query_registry, [{"amount": 1_000_000}]
+    )
+
+    render_result = render(result.board, executor, format="svg")
+
+    codes = {w.code for w in render_result.warnings}
+    assert "WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS" in codes, (
+        "donut_chart has '1,000,000' (~86px) overflowing the hole in a "
+        "150px-wide slot — the detector must fire reading height from "
+        "layout_chart_heights (ResolvedLayoutItem.height), not vega_specs"
+    )
+
+
+_ATTACHED_TABLE_DONUT_YAML = _DONUT_NARROW_SLOT_YAML.replace(
+    "Narrow donut with large total", "Attached-table donut with large total"
+)
+
+# Two data rows where one slice has < 2% share. That triggers hybrid (attached-
+# table) mode in classify_arc_render_mode (invisible_slice_share default = 0.02).
+# Total = 1,000,000 → "1,000,000" (~86px at 18px) overflows a 150px wheel hole
+# (min(wheel_width, continuousHeight=300) × 0.9 × 0.6 ≤ 81px).
+_ATTACHED_TABLE_ROWS = [{"amount": 999_990}, {"amount": 10}]
+
+
+def test_pie_total_exceeds_inner_radius_fires_for_attached_table_donut() -> None:
+    """Donuts with a tiny slice enter hybrid (attached-table) mode, render as SVG,
+    and are absent from ctx.vega_specs. The detector must fire via chart.wheel_width
+    and the theme's continuousHeight (the Vega effective height when wheel renders
+    with height=None). The warning must identify donut_chart specifically."""
+    result = compile(_ATTACHED_TABLE_DONUT_YAML)
+    assert result.success and result.board is not None, result.errors
+    executor = _make_executor(result.board, result.query_registry, _ATTACHED_TABLE_ROWS)
+
+    render_result = render(result.board, executor, format="svg")
+
+    # Pin the chart id — the board also contains a filler donut (auto-total).
+    donut_warnings = [
+        w
+        for w in render_result.warnings
+        if w.code == "WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS" and w.chart == "donut_chart"
+    ]
+    assert donut_warnings, (
+        "donut_chart (hybrid/attached-table mode, absent from vega_specs) "
+        "must warn via the wheel_width + continuousHeight path"
+    )
+    # Pin the branch: the attached-table path pairs wheel_width with the
+    # theme's continuousHeight (300), so the message reports slot 150\u00d7300 —
+    # the VL path would report the 120px layout height instead.
+    assert "150\u00d7300px" in donut_warnings[0].message, donut_warnings[0].message
+
+
 _SHARED_CHART_TWO_WIDTHS_YAML = """
 title: Shared chart, no tabs
 charts:
@@ -146,3 +239,87 @@ def test_bar_band_width_warning_uses_narrowest_placement_no_tabs() -> None:
         "detector must not be silenced by also appearing full-width "
         f"elsewhere on the same (non-tabbed) board: {render_result.warnings}"
     )
+
+
+_PER_LAYER_QUERY_YAML = """
+title: Migrated multi-metric tile
+charts:
+  tile:
+    query: revenue_q
+    type: bar
+    x: month
+    y: revenue
+    layers:
+      - type: line
+        query: rate_q
+        y: rate
+queries:
+  revenue_q:
+    sql: SELECT month, revenue FROM t
+    source: test_source
+  rate_q:
+    sql: SELECT month, rate FROM t
+    source: test_source
+rows:
+  - tile
+"""
+
+_PER_LAYER_ROWS: dict[str, list[dict[str, object]]] = {
+    "revenue_q": [
+        {"month": "2026-01", "revenue": 5_000_000.0},
+        {"month": "2026-02", "revenue": 4_800_000.0},
+        {"month": "2026-03", "revenue": 5_200_000.0},
+    ],
+    "rate_q": [
+        {"month": "2026-01", "rate": 0.45},
+        {"month": "2026-02", "rate": 0.55},
+        {"month": "2026-03", "rate": 0.50},
+    ],
+}
+
+
+def _make_per_query_executor(board, query_registry, rows_by_query):
+    """Executor whose adapter returns a different result set per query name."""
+
+    def _execute(_query, _variables, **kwargs):
+        ok = Mock()
+        ok.is_success = True
+        ok.data = rows_by_query[kwargs["query_name"]]
+        ok.column_descriptions = None
+        ok.resolved_relations = None
+        ok.truncated_reason = None
+        return ok
+
+    mock_registry = Mock()
+    mock_registry.execute.side_effect = _execute
+    return Executor(
+        board, adapter_registry=mock_registry, query_registry=query_registry
+    )
+
+
+def test_y_scale_mismatch_fires_when_a_layer_has_its_own_query() -> None:
+    """The shape the deterministic migrator emits: one query per chart layer.
+
+    'revenue' (~5M) and 'rate' (~0.5) share one y-axis at a ~10,000,000x
+    ratio, so the rate line is drawn as a flat zero. The detector reads the
+    layer's own result set from ctx.layer_results — chart_results, keyed by
+    chart id, only ever holds the base query's rows.
+    """
+    result = compile(_PER_LAYER_QUERY_YAML)
+    assert result.success and result.board is not None, result.errors
+    executor = _make_per_query_executor(
+        result.board, result.query_registry, _PER_LAYER_ROWS
+    )
+
+    render_result = render(result.board, executor, format="svg")
+
+    mismatches = [
+        w
+        for w in render_result.warnings
+        if w.code == "WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH"
+    ]
+    assert mismatches, (
+        "tile's layer draws 'rate' ([0, 1]) on the same axis as 'revenue' "
+        f"(millions) — the detector must fire: {render_result.warnings}"
+    )
+    assert "revenue" in mismatches[0].message and "rate" in mismatches[0].message

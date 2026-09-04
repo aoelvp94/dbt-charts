@@ -8,7 +8,7 @@ test_wheel_asset_inventory.py — this test owns only what that one cannot:
 - `Requires-Dist: markdown-svg` is absent from METADATA (mdsvg is vendored,
   not declared as a runtime dep on PyPI).
 - `Requires-Dist: fonttools` is present (vendored mdsvg imports fonttools,
-  so dataface's own METADATA must declare it).
+  so dbt charts' own METADATA must declare it).
 """
 
 from __future__ import annotations

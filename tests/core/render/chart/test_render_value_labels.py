@@ -53,7 +53,7 @@ def reset():
 
 
 def _board_with_bar_labels_visible(visible: bool = True):
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     new_labels = compiled.charts.marks.bar.labels.model_copy(
         update={"visible": visible}
     )
@@ -64,7 +64,7 @@ def _board_with_bar_labels_visible(visible: bool = True):
 
 
 def _board_with_line_labels_visible(visible: bool = True):
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     new_labels = compiled.charts.marks.line.labels.model_copy(
         update={"visible": visible}
     )
@@ -75,7 +75,7 @@ def _board_with_line_labels_visible(visible: bool = True):
 
 
 def _board_with_point_labels_visible(visible: bool = True):
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     new_labels = compiled.charts.marks.point.labels.model_copy(
         update={"visible": visible}
     )
@@ -204,7 +204,7 @@ class TestValueLabelParity:
 
     def test_bar_horizontal_above_parity(self, make_chart):
         """Horizontal bar (default), position=above → parity."""
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         new_labels = compiled.charts.marks.bar.labels.model_copy(
             update={"visible": True, "position": "above"}
         )
@@ -227,7 +227,7 @@ class TestValueLabelParity:
 
     def test_bar_vertical_above_parity(self, make_chart):
         """Vertical bar, position=above → parity."""
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         new_labels = compiled.charts.marks.bar.labels.model_copy(
             update={"visible": True, "position": "above"}
         )
@@ -307,7 +307,7 @@ class TestValueLabelParity:
         categorical sort is preserved. This intentionally diverges from V1, which
         still emits the transform on the sub-layer (same latent bug).
         """
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         new_labels = compiled.charts.marks.bar.labels.model_copy(
             update={"visible": True, "position": position}
         )
@@ -335,7 +335,7 @@ class TestValueLabelParity:
 
     def test_scatter_top_parity(self, make_chart):
         """Scatter, position=top → parity."""
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         new_labels = compiled.charts.marks.point.labels.model_copy(
             update={"visible": True, "position": "top"}
         )
@@ -360,7 +360,7 @@ class TestValueLabelParity:
 
     def test_line_top_parity(self, make_chart):
         """Line, position=top → parity (text layers in layered spec)."""
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         new_labels = compiled.charts.marks.line.labels.model_copy(
             update={"visible": True, "position": "top"}
         )
@@ -397,7 +397,7 @@ DATA_WITH_TARGET = [
 
 def _plain_board():
     """Board with all mark labels off (default theme state)."""
-    return resolve_style_and_context(get_theme_style("editorial"))
+    return resolve_style_and_context(get_theme_style("clarity"))
 
 
 def _v2_vl_multi(

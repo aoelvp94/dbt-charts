@@ -74,7 +74,7 @@ def test_area_encoding_error_wins_over_axis_bake_error_with_stack_set() -> None:
         variable_dependencies=set(),
         style=AreaChartStylePatch.model_validate(
             {
-                "color": {"static": "dft-creams.does-not-exist"},
+                "color": {"static": "dbt-creams.does-not-exist"},
                 "axis_y": {"ticks": {"step": 5}},
             }
         ),

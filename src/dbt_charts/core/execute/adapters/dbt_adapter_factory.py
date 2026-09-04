@@ -50,7 +50,7 @@ _ADAPTER_TYPE_MAP: dict[str, tuple[str, str, str]] = {
 
 
 # dbt's Credentials base class requires both `database` and `schema` as str.
-# Dataface source config models define warehouse-conventional defaults for `schema`
+# dbt charts source config models define warehouse-conventional defaults for `schema`
 # (e.g. "PUBLIC" for Snowflake), but the registry stores raw dicts that bypass
 # Pydantic.  build_adapter applies these defaults so schema-discovery commands
 # work without requiring the user to know a schema upfront.
@@ -70,7 +70,12 @@ def _patched_duckdb_initialize_db(
     creds: Any,
     plugins: dict[str, Any] | None = None,
 ) -> Any:
-    if getattr(creds, "_dft_read_only", False) and creds.path != ":memory:":
+    if (
+        getattr(
+            creds, "_dct_read_only", False
+        )  # type-state: silent_fallback — creds is a foreign dbt Credentials instance we stamp an attribute onto conditionally; absence means read-write, the correct default
+        and creds.path != ":memory:"
+    ):
         import duckdb
 
         config = dict(creds.config_options or {})
@@ -155,20 +160,31 @@ def build_adapter(
     adapter_cls = getattr(mod, adapter_name)
     creds_cls = getattr(mod, creds_name)
 
-    # Strip 'type' and 'attribution' (Dataface cost metadata, not a dbt credential),
+    # Strip 'type' and 'attribution' (dbt charts cost metadata, not a dbt credential),
     # translate profile-style aliases (e.g. BigQuery project→database), then use
     # from_dict so extras like threads are silently dropped.
     creds_kwargs = {
         k: v for k, v in source_config.items() if k not in ("type", "attribution")
     }
-    if adapter_type_lower == "duckdb" and "duckdb_config" in creds_kwargs:
-        # Dataface's source schema names this field `duckdb_config`; dbt-duckdb's
-        # creds class names it `config_options`. Rename so the value flows to
-        # the patched read-only initialize_db path, which reads `creds.config_options`.
-        # Without this, separate build_adapter() callers (LayeredSchemaResolver,
-        # dbt-charts-super-schema) open the same DuckDB file with different config
-        # than the playground's SqlAdapter and DuckDB rejects the second connection.
-        creds_kwargs["config_options"] = creds_kwargs.pop("duckdb_config")
+    if adapter_type_lower == "duckdb":
+        if "duckdb_config" in creds_kwargs:
+            # dbt charts' source schema names this field `duckdb_config`; dbt-duckdb's
+            # creds class names it `config_options`. Rename so the value flows to
+            # the patched read-only initialize_db path, which reads
+            # `creds.config_options`. Without this, separate build_adapter() callers
+            # (LayeredSchemaResolver, dbt-charts-super-schema) open the same DuckDB
+            # file with different config than the playground's SqlAdapter and DuckDB
+            # rejects the second connection.
+            creds_kwargs["config_options"] = creds_kwargs.pop("duckdb_config")
+        # dbt-duckdb defaults keep_open=True, which parks the warehouse handle on
+        # its process-global environment for the life of the process — outliving
+        # the registry that opened it. DuckDB then rejects every later connection
+        # to that file whose config differs, so an authoring session (external
+        # access on) poisoned the next strict read-only one. Same posture
+        # DuckDBAdapter already takes for read-only file sources: hold the file
+        # only while a connection is live. dbt-duckdb keeps :memory: open
+        # regardless — closing an in-memory database would destroy it.
+        creds_kwargs.setdefault("keep_open", False)
     if adapter_type_lower == "bigquery" and "method" not in creds_kwargs:
         creds_kwargs["method"] = infer_bq_method(
             creds_kwargs.get("keyfile"), creds_kwargs.get("keyfile_json")
@@ -179,7 +195,7 @@ def build_adapter(
         if default_schema is not None:
             creds_kwargs["schema"] = default_schema
     # After translate_aliases so the field lands under the name the credentials class
-    # reads. Fills the warehouse's own identity field so "is this Dataface" is a
+    # reads. Fills the warehouse's own identity field so "is this dbt charts" is a
     # column rather than a regex over the query text — but only where the author left
     # it unset, since these fields can drive real monitoring or governance rules. An
     # unset optional arrives as an explicit None, not a missing key.
@@ -190,7 +206,7 @@ def build_adapter(
     # but it reaches the driver through the credential rather than the psycopg2
     # handle: dbt-redshift sets autocommit only `if credentials.autocommit`. Set
     # unconditionally for the same reason as the Postgres connection manager — it
-    # describes how Dataface uses the connection, not a preference about the
+    # describes how dbt charts uses the connection, not a preference about the
     # author's warehouse, and on a SELECT-only connection an authored `false` can
     # do nothing but pin locks. (Postgres needs the handle instead because
     # dbt-postgres had no such credential before 1.11 and this package supports
@@ -200,7 +216,7 @@ def build_adapter(
     creds = creds_cls.from_dict(creds_kwargs)
     if read_only and adapter_type_lower == "duckdb":
         _ensure_duckdb_readonly_initialize_db_patch()
-        creds._dft_read_only = True
+        creds._dct_read_only = True
 
     # Build a minimal duck-typed config satisfying AdapterRequiredConfig.
     # No dbt_project.yml, no manifest — but enough for dbt's macro context to
@@ -208,9 +224,9 @@ def build_adapter(
     # through execute_macro -> generate_runtime_macro_context, which reads
     # quoting / dependencies / args / vars / load_dependencies / project_root /
     # get_macro_search_order off the config.
-    profile_name = f"dft_{adapter_type_lower}"
+    profile_name = f"dct_{adapter_type_lower}"
     target_path = tempfile.mkdtemp(  # noqa: TID251 — dbt macro-context scratch dir
-        prefix="dft-target-"
+        prefix="dct-target-"
     )
 
     def _get_macro_search_order(

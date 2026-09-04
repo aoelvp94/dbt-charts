@@ -6,12 +6,14 @@ with globs, and the validate-time empty-glob check.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
 
+from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.models.source import (
     CsvSourceConfig,
     JsonSourceConfig,
@@ -211,6 +213,194 @@ class TestGlobFanoutCap:
             source, "SELECT count(*) AS n FROM reports", {}, "evals"
         )
         assert rows[0]["n"] == cap
+
+
+# ---------------------------------------------------------------------------
+# Table-count cap
+# ---------------------------------------------------------------------------
+
+
+class TestFileSourceMaxTablesCap:
+    def test_exceeding_cap_raises_before_reads(
+        self, in_memory_project: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A files: map with more tables than the cap raises before any read."""
+        monkeypatch.setenv("DCT_FILE_SOURCE_MAX_TABLES_CEILING", "2")
+        project = in_memory_project(
+            Path("/test"),
+            {
+                "data/a.json": '[{"id": 1}]',
+                "data/b.json": '[{"id": 2}]',
+                "data/c.json": '[{"id": 3}]',
+            },
+        )
+        source = JsonSourceConfig(
+            type="json",
+            files={"a": "data/a.json", "b": "data/b.json", "c": "data/c.json"},
+        )
+        mat = _mat(project)
+
+        read_calls: list[str] = []
+
+        def _spy_read_bytes(relpath: str) -> bytes:
+            read_calls.append(relpath)
+            return b""
+
+        monkeypatch.setattr(project, "read_bytes", _spy_read_bytes)
+
+        with pytest.raises(DbtChartsError, match="3 tables"):
+            mat.materialize_and_run(source, "SELECT * FROM a", {}, "evals")
+        assert read_calls == []
+
+    def test_at_cap_succeeds(
+        self, in_memory_project: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Exactly cap tables is allowed."""
+        monkeypatch.setenv("DCT_FILE_SOURCE_MAX_TABLES_CEILING", "2")
+        project = in_memory_project(
+            Path("/test"),
+            {"data/a.json": '[{"id": 1}]', "data/b.json": '[{"id": 2}]'},
+        )
+        source = JsonSourceConfig(
+            type="json", files={"a": "data/a.json", "b": "data/b.json"}
+        )
+        mat = _mat(project)
+
+        rows = mat.materialize_and_run(source, "SELECT id FROM a", {}, "evals")
+        assert rows[0]["id"] == 1
+
+    def test_project_config_cannot_raise_above_ceiling(
+        self, in_memory_project: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A project's own dbt_charts.yml can never raise file_source_max_tables
+        above the DCT_FILE_SOURCE_MAX_TABLES_CEILING deployment ceiling."""
+        from dbt_charts.core.compile.config import get_config, reset_config
+
+        monkeypatch.setenv("DCT_FILE_SOURCE_MAX_TABLES_CEILING", "1")
+        reset_config()
+        try:
+            config = get_config()
+            config.execution.file_source_max_tables = 1000
+            project = in_memory_project(
+                Path("/test"),
+                {"data/a.json": '[{"id": 1}]', "data/b.json": '[{"id": 2}]'},
+            )
+            source = JsonSourceConfig(
+                type="json", files={"a": "data/a.json", "b": "data/b.json"}
+            )
+            mat = _mat(project)
+
+            with pytest.raises(DbtChartsError, match="2 tables"):
+                mat.materialize_and_run(source, "SELECT * FROM a", {}, "evals")
+        finally:
+            reset_config()
+
+
+# ---------------------------------------------------------------------------
+# Materialized byte-size cap
+# ---------------------------------------------------------------------------
+
+
+class TestFileSourceMaxBytesCap:
+    def test_exceeding_cap_raises(
+        self, in_memory_project: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A relation whose materialized size exceeds the cap raises."""
+        monkeypatch.setenv("DCT_FILE_SOURCE_MAX_BYTES_CEILING", "10")
+        project = in_memory_project(
+            Path("/test"), {"data/big.json": '[{"id": 1, "note": "hello world"}]'}
+        )
+        source = JsonSourceConfig(type="json", files={"big": "data/big.json"})
+        mat = _mat(project)
+
+        with pytest.raises(DbtChartsError, match="exceeding"):
+            mat.materialize_and_run(source, "SELECT * FROM big", {}, "evals")
+
+    def test_under_cap_succeeds(
+        self, in_memory_project: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A relation under the byte cap materializes normally."""
+        monkeypatch.setenv("DCT_FILE_SOURCE_MAX_BYTES_CEILING", "1000000")
+        project = in_memory_project(Path("/test"), {"data/small.json": '[{"id": 1}]'})
+        source = JsonSourceConfig(type="json", files={"small": "data/small.json"})
+        mat = _mat(project)
+
+        rows = mat.materialize_and_run(source, "SELECT id FROM small", {}, "evals")
+        assert rows[0]["id"] == 1
+
+    def test_project_config_cannot_raise_above_ceiling(
+        self, in_memory_project: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A project's own dbt_charts.yml can never raise file_source_max_bytes
+        above the DCT_FILE_SOURCE_MAX_BYTES_CEILING deployment ceiling."""
+        from dbt_charts.core.compile.config import get_config, reset_config
+
+        monkeypatch.setenv("DCT_FILE_SOURCE_MAX_BYTES_CEILING", "10")
+        reset_config()
+        try:
+            config = get_config()
+            config.execution.file_source_max_bytes = 5_000_000_000
+            project = in_memory_project(
+                Path("/test"), {"data/big.json": '[{"id": 1, "note": "hello world"}]'}
+            )
+            source = JsonSourceConfig(type="json", files={"big": "data/big.json"})
+            mat = _mat(project)
+
+            with pytest.raises(DbtChartsError, match="exceeding"):
+                mat.materialize_and_run(source, "SELECT * FROM big", {}, "evals")
+        finally:
+            reset_config()
+
+    def test_json_uses_raw_bytes_not_parquet_multiplier(
+        self, in_memory_project: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CSV/JSON relations are checked against raw file bytes — the Parquet
+        20x materialization multiplier does not apply to them. A cap set
+        between the raw size and raw x 20 only passes if the multiplier is
+        correctly skipped."""
+        content = '[{"id": 1, "note": "hello world, this is a json row"}]'
+        raw_size = len(content.encode())
+        cap = raw_size * 5
+        monkeypatch.setenv("DCT_FILE_SOURCE_MAX_BYTES_CEILING", str(cap))
+        project = in_memory_project(Path("/test"), {"data/rows.json": content})
+        source = JsonSourceConfig(type="json", files={"rows": "data/rows.json"})
+        mat = _mat(project)
+
+        rows = mat.materialize_and_run(source, "SELECT id FROM rows", {}, "evals")
+        assert rows[0]["id"] == 1
+
+    def test_parquet_multiplier_applies(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The parquet materialization multiplier makes an otherwise-under-cap
+        parquet file trip the byte cap."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from dbt_charts.core.compile.models.source import ParquetSourceConfig
+
+        table = pa.table({"id": list(range(50))})
+        parquet_path = tmp_path / "data" / "events.parquet"
+        parquet_path.parent.mkdir(parents=True)
+        pq.write_table(table, parquet_path)
+        raw_size = parquet_path.stat().st_size
+
+        # Cap sits comfortably above the raw parquet byte size but below the
+        # multiplied (20x default) estimate, so only the multiplier trips it.
+        cap = raw_size * 5
+        monkeypatch.setenv("DCT_FILE_SOURCE_MAX_BYTES_CEILING", str(cap))
+
+        project = local_project(tmp_path)
+        source = ParquetSourceConfig(
+            type="parquet", files={"events": "data/events.parquet"}
+        )
+        mat = _mat(project)
+
+        with pytest.raises(DbtChartsError, match="exceeding"):
+            mat.materialize_and_run(source, "SELECT * FROM events", {}, "evals")
 
 
 # ---------------------------------------------------------------------------

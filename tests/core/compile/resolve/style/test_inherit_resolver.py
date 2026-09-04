@@ -46,7 +46,7 @@ def _reset():
 
 def test_fill_from_single_fallback():
     """None leaf is filled from its first non-None fallback."""
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#a1b2c3"
     patched_axis = base.charts.axis.model_copy(
         update={
@@ -89,14 +89,14 @@ def test_fill_from_single_fallback():
 
 def test_empty_graph_returns_merged_unchanged():
     """Empty graph short-circuits — identical object returned."""
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     result = apply_inherit(base, {})
     assert result is base
 
 
 def test_no_nones_in_graph_returns_merged_unchanged():
     """If no graph-covered path is None, nothing is written and merged is returned."""
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     # axis.labels.font.color is non-None on a compiled theme
     graph = {"Style.charts.axis.labels.font.color": "Style.font.color"}
     result = apply_inherit(base, graph)
@@ -109,7 +109,7 @@ def test_no_nones_in_graph_returns_merged_unchanged():
 
 def test_chained_fallback_resolved_in_one_pass():
     """A→B→C: when A and B are None, C's value propagates to both."""
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#deadbe"
     # Set root font color (C)
     root_font = base.font.model_copy(update={"color": distinctive})
@@ -150,7 +150,7 @@ def test_chained_fallback_resolved_in_one_pass():
 
 def test_multiple_dependents_on_shared_fallback(monkeypatch):
     """Two graph entries sharing a fallback path both receive its value."""
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#c0ffee"
     root_font = base.font.model_copy(update={"color": distinctive})
     # Clear two leaves that both fall back to font.color
@@ -191,7 +191,7 @@ def test_multiple_dependents_on_shared_fallback(monkeypatch):
 def test_none_intermediate_path_skipped_gracefully():
     """A graph path through a None optional container is a no-op — no crash."""
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     # slice.labels is SliceLabelsStyle | None = None by default in the compiled theme.
     # The path below passes through this None intermediate container.
     assert base.charts.pie.marks.slice.labels is None
@@ -209,7 +209,7 @@ def test_none_intermediate_path_skipped_gracefully():
 
 def test_direct_parent_wins_over_chain():
     """Direct parent (charts.font.color) is used; the deeper node (font.color) is not."""
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     charts_color = "#111111"
     root_color = "#222222"
     root_font = base.font.model_copy(update={"color": root_color})
@@ -240,7 +240,7 @@ def test_direct_parent_wins_over_chain():
 
 def test_none_stays_none_when_all_fallbacks_none():
     """A None leaf stays None when all fallbacks in the chain are also None."""
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     root_font = base.font.model_copy(update={"color": None})
     axis_label = base.charts.axis.labels.model_copy(
         update={"font": base.charts.axis.labels.font.model_copy(update={"color": None})}
@@ -265,7 +265,7 @@ def test_none_stays_none_when_all_fallbacks_none():
 
 
 def test_graph_excluded_legend_field_sets_are_unchanged() -> None:
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     legend = base.charts.bar.legend
     assert legend is not None
     before = _field_set_tree(legend)
@@ -278,7 +278,7 @@ def test_graph_excluded_legend_field_sets_are_unchanged() -> None:
 
 
 def test_graph_excluded_axis_field_sets_are_unchanged() -> None:
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     axis = base.charts.bar.axis_x
     assert axis is not None
     before = _field_set_tree(axis)
@@ -291,7 +291,7 @@ def test_graph_excluded_axis_field_sets_are_unchanged() -> None:
 
 
 def test_inherited_leaf_becomes_set_without_its_siblings() -> None:
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     distinctive = "#a1b2c3"
     target_font = FontStyle()
     axis_x = base.charts.axis_x.model_copy(
@@ -320,7 +320,7 @@ def test_inherited_leaf_becomes_set_without_its_siblings() -> None:
 
 
 def test_container_inheritance_precedes_descendant_fallbacks() -> None:
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     source_color = "#a1b2c3"
     fallback_color = "#d4e5f6"
     source_rule = base.charts.marks.rule.model_copy(
@@ -356,7 +356,7 @@ def test_container_inheritance_precedes_descendant_fallbacks() -> None:
 
 
 def test_container_inheritance_uses_the_target_model_type() -> None:
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     assert base.charts.line.padding is None
     graph = {
         "Style.charts.line.padding": "Style.charts.padding",
@@ -369,7 +369,7 @@ def test_container_inheritance_uses_the_target_model_type() -> None:
 
 
 def test_container_inheritance_preserves_python_mode_values() -> None:
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     # scale.values (unlike scale.continuous.domain) has no int|float|str
     # constraint -- picked so the sentinel is a Python-native type (date) that
     # a mode="json" dump would coerce to an ISO string. apply_inherit snapshots
@@ -399,7 +399,7 @@ def test_container_inheritance_preserves_python_mode_values() -> None:
 
 
 def test_inherited_cross_field_invalidity_still_raises() -> None:
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     source_scale = BaseScaleStyle(
         continuous=ScaleContinuousStyle(
             type="log", log=ScaleLogStyle(base=2), zero=False

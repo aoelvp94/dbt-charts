@@ -42,7 +42,7 @@ _CSS_VAR_STYLE_PATTERN = re.compile(
 def normalize_svg_font_families_for_vl_convert(svg_content: str) -> str:
     """Map public font family names to vendored font names for vl-convert only.
 
-    Dataface keeps emitting the public family name ``Inter`` in its SVG/CSS
+    dbt charts keeps emitting the public family name ``Inter`` in its SVG/CSS
     contract. The vendored variable font rasterizes reliably through
     ``vl-convert`` only when referenced by its internal family name,
     ``Inter Variable``. Normalize only the SVG payload sent into vl-convert so

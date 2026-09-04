@@ -67,6 +67,8 @@ charts:
         status:
           label: Status
           link: "/status-detail?status={{ status }}"   # this column links elsewhere
+        customer_id:
+          visible: false   # feeds the row link only — never a display column
 ```
 
 A column `link` applies only to that column's cells; it does not fall through

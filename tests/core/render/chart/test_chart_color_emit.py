@@ -124,10 +124,10 @@ def test_color_gradient_named_scheme_bar_chart():
     assert "range" not in scale
 
 
-def test_color_gradient_dataface_named_palette_resolves_to_stops():
-    """color: field + style.color.scale.palette: <Dataface named palette> →
+def test_color_gradient_dbt_charts_named_palette_resolves_to_stops():
+    """color: field + style.color.scale.palette: <dbt charts named palette> →
     VL scale.range of resolved hex stops, not scale.scheme with the raw
-    Dataface name — Vega doesn't recognize a Dataface name as a scheme, so
+    dbt charts name — Vega doesn't recognize a dbt charts name as a scheme, so
     forwarding it as one is a silent no-op: Vega logs an unrecognized-scheme
     warning and paints with its own default coloring instead of the palette
     the author asked for.
@@ -570,9 +570,10 @@ def test_boolean_predicate_vl_emission():
 # ============================================================================
 
 
-def test_kpi_channel_overrides_style_color():
+def test_kpi_channel_overrides_style_font_color():
     """resolved_channels color (projected from conditional_formatting) takes priority
-    over chart.style.color."""
+    over chart.style.font.color — the whole-card fallback lever now that
+    style.color is gone."""
     from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
     from dbt_charts.core.compile.resolve.style.board import resolve_style
     from dbt_charts.core.render.chart.kpi import render_kpi_svg
@@ -586,7 +587,7 @@ def test_kpi_channel_overrides_style_color():
             "type": "kpi",
             "value": "revenue",
             "style": KpiChartStylePatch.model_validate(
-                {"color": "#aaaaaa"}
+                {"font": {"color": "#aaaaaa"}}
             ),  # would be used as fallback
             "conditional_formatting": {
                 "revenue": {
@@ -607,12 +608,13 @@ def test_kpi_channel_overrides_style_color():
     assert "#aaaaaa" not in svg
 
 
-def test_kpi_style_color_used_as_fallback():
-    """chart.style.color flows through the cascade and lands as the KPI value fill.
+def test_kpi_style_font_color_used_as_fallback():
+    """chart.style.font.color flows through the cascade and lands as the KPI
+    value fill — the whole-card lever every other family already uses.
 
     Renderer reads from resolved_style — never from a Patch. The chart-local
-    color is merged onto resolved_style.color by build_chart_style_context (consumed
-    by the KPI value-color cascade in kpi.py).
+    font color is merged onto resolved_style.kpi.font.color by
+    build_chart_style_context (consumed by the KPI value-color cascade in kpi.py).
     """
     from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
     from dbt_charts.core.compile.resolve.style.board import resolve_style
@@ -625,7 +627,7 @@ def test_kpi_style_color_used_as_fallback():
         query_name="q",
         type="kpi",
         value="revenue",
-        style=KpiChartStylePatch.model_validate({"color": "#cccccc"}),
+        style=KpiChartStylePatch.model_validate({"font": {"color": "#cccccc"}}),
     )
     resolved = resolve(chart, _kpi_data, chart_style_context=_BOARD_CONTEXT)
     svg = render_kpi_svg(
@@ -634,6 +636,19 @@ def test_kpi_style_color_used_as_fallback():
         board_style=resolve_style(get_theme_style()),
     )
     assert "#cccccc" in svg
+
+
+def test_kpi_style_color_rejected():
+    """style.color is not a KPI field — it was the family outlier (a bare
+    string where every other family types an object) and had no channel of
+    its own to configure. Authoring it now raises rather than silently
+    resolving; style.font.color / style.value.font.color replace it."""
+    from pydantic import ValidationError
+
+    from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
+
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        KpiChartStylePatch.model_validate({"color": "#bf8700"})
 
 
 # ============================================================================
@@ -662,7 +677,7 @@ def test_table_cf_does_not_synthesize_style_columns_for_target_field():
             "style": TableChartStylePatch.model_validate(
                 {
                     "columns": {
-                        "name": TableColumnConfig(),
+                        "name": TableColumnConfig(visible=True),
                         "region": TableColumnConfig(),
                     }
                 }
@@ -676,8 +691,10 @@ def test_table_cf_does_not_synthesize_style_columns_for_target_field():
     assert resolved.columns is not None
     cols = resolved.columns
     fields = list(cols.keys())
-    # Only authored columns remain — no injected "arr" entry.
-    assert fields == ["name", "region"]
+    # Every query column materializes (style.columns is styling-only), but the
+    # CF rule on "arr" is not lowered into its column config.
+    assert fields == ["name", "arr", "region"]
+    assert cols["arr"].font is None
 
 
 # ============================================================================

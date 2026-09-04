@@ -1,6 +1,6 @@
 """Regression tests: table columns wired onto the shared-scale ruler machinery.
 
-An SI/compact-formatted table column (`number_default`, or any inline `~s`
+An SI/compact-formatted table column (`number`, or any inline `~s`
 spec) picks a single shared magnitude across its rows -- like an axis
 ruler's tick ladder -- instead of each row picking its own suffix
 independently. See
@@ -23,6 +23,7 @@ from dbt_charts.core.render.format_utils import format_kpi_parts
 from dbt_charts.core.text.numeral_scale import (
     SuffixMode,
     column_digit_format,
+    decimal_pad_for,
     tier_distance,
 )
 
@@ -72,7 +73,7 @@ class TestResolveSharedScaleForTableColumn:
     """
 
     def _resolve(
-        self, rows: list[dict[str, Any]], fmt: str = "number_default"
+        self, rows: list[dict[str, Any]], fmt: str = "number"
     ) -> ResolvedColumnSharedScale | None:
         columns = {"amount": TableColumnConfig(format=fmt)}
         resolved = _with_resolved_scale_stops(
@@ -117,8 +118,8 @@ class TestResolveSharedScaleForTableColumn:
         scale = self._resolve([{"amount": 1500}, {"amount": 3000}])
         assert scale is None
 
-    def test_unformatted_column_falls_back_to_number_default_for_the_gate(self) -> None:
-        # No format: authored at all (None, not the "number_default" string)
+    def test_unformatted_column_falls_back_to_number_for_the_gate(self) -> None:
+        # No format: authored at all (None, not the "number" string)
         # -- render's own format_kpi_parts(default_number=True) still treats
         # this as SI at paint time, so the resolve-time gate must match or a
         # plain unformatted column would never earn a shared_scale bake.
@@ -214,7 +215,7 @@ class TestFormatKpiPartsSharedScale:
     """
 
     def _resolved_scale(
-        self, rows: list[dict[str, Any]], fmt: str = "number_default"
+        self, rows: list[dict[str, Any]], fmt: str = "number"
     ) -> ResolvedColumnSharedScale:
         columns = {"amount": TableColumnConfig(format=fmt)}
         resolved = _with_resolved_scale_stops(
@@ -447,7 +448,7 @@ class TestSubTierPrecisionAndRefusal:
     just for the "renders as literal 0" case round 1 caught.
     """
 
-    def _resolve(self, rows: list[dict[str, Any]], fmt: str = "number_default"):
+    def _resolve(self, rows: list[dict[str, Any]], fmt: str = "number"):
         columns = {"amount": TableColumnConfig(format=fmt)}
         resolved = _with_resolved_scale_stops(
             columns,
@@ -588,11 +589,10 @@ class TestPadTableCappedAtObservedDepth:
         assert len(col.decimal_pad_table) <= actual_max_frac + 2
 
     def test_cap_never_applies_to_a_non_shared_scale_column(self) -> None:
-        # Round-3 regression: the cap is scoped to shared_scale columns
-        # only. A plain fixed-point column's pad_table is also applied
-        # (pre-existing, unconditional) to non-numeric fallback cell text in
-        # measure_column_demands -- capping it there risks under-sizing for
-        # a stray string this bake never saw. Pin the observable contract
+        # The cap is scoped to shared_scale columns only. A plain fixed-point
+        # column's pad table stays at its declared precision -- the bake has no
+        # basis for treating the observed depths as a bound the way the
+        # shared-scale path does. Pin the observable contract
         # instead of internals: a plain ",.5~f" column's pad table stays at
         # its full declared precision (7 entries) even though every row's
         # own trimmed depth is far shallower.
@@ -622,7 +622,7 @@ class TestSizingFunctionsRegression:
     """
 
     def _resolved_column(self, rows: list[dict[str, Any]]):
-        columns = {"amount": TableColumnConfig(format="number_default")}
+        columns = {"amount": TableColumnConfig(format="number")}
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
@@ -720,7 +720,7 @@ class TestAllowSharedScaleGate:
     def _resolve(
         self, rows: list[dict[str, Any]], allow_shared_scale: bool
     ) -> ResolvedColumnSharedScale | None:
-        columns = {"amount": TableColumnConfig(format="number_default")}
+        columns = {"amount": TableColumnConfig(format="number")}
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
@@ -741,3 +741,207 @@ class TestAllowSharedScaleGate:
         scale = self._resolve(rows, allow_shared_scale=True)
         assert scale is not None
         assert scale.exponent == 6
+
+
+class TestDecimalPadFallbackWhenNoSharedScaleTier:
+    """A column whose values all sit below the smallest SI tier (no majority
+    magnitude to anchor on -- shared_scale is None) still needs a
+    decimal_pad_table: decimal_pad_table_for refuses because the effective
+    format is an SI spec (type "s"), not a fixed-point trim spec (type "f"),
+    so without a fallback nothing gets baked and whole numbers in the column
+    fail to align on the decimal point with fractional ones.
+    """
+
+    def test_mixed_whole_and_fractional_below_every_tier_bakes_a_pad_table(
+        self,
+    ) -> None:
+        columns = {"amount": TableColumnConfig(format="number")}
+        rows = [{"amount": v} for v in (84.3, 88, 128.4, 42)]
+        resolved = _with_resolved_scale_stops(
+            columns,
+            text_color=None,
+            formats=None,
+            font_family=DBT_SANS_TABULAR_FONT_FAMILY,
+            rows=rows,
+        )
+        assert resolved is not None
+        col = resolved["amount"]
+        # Confirms the gap this fallback targets: no shared SI tier at all.
+        assert col.shared_scale is None
+        assert col.decimal_pad_table != ()
+
+        whole_pad = decimal_pad_for(col.decimal_pad_table, "88")
+        assert whole_pad != ""
+        # Measured placeholder unit, never a visible zero -- repo rule: no
+        # padded zeros on data values.
+        assert "0" not in whole_pad
+
+        deepest_pad = decimal_pad_for(col.decimal_pad_table, "84.3")
+        assert deepest_pad == ""
+
+    def test_sub_dollar_currency_cell_bakes_deep_enough_for_its_own_render(
+        self,
+    ) -> None:
+        # Regression: table.py's format_kpi_parts prints a sub-$1 currency
+        # cell through a different, deeper spec than the rest of the column
+        # (si_sub_unit_floor's per-row swap). A bake that measures every row
+        # with the bare SI spec is too shallow for that swapped row.
+        columns = {"amount": TableColumnConfig(format="currency")}
+        values = (0.25, 84.3, 88, 42)
+        rows = [{"amount": v} for v in values]
+        resolved = _with_resolved_scale_stops(
+            columns,
+            text_color=None,
+            formats=None,
+            font_family=DBT_SANS_TABULAR_FONT_FAMILY,
+            rows=rows,
+        )
+        assert resolved is not None
+        col = resolved["amount"]
+        assert col.shared_scale is None
+        # 0.25 -> "0.25" (2 fractional digits, the swapped fallback spec);
+        # 84.3 -> "84.3" (1); 88/42 -> 0. Precision must be the deepest: 2.
+        assert len(col.decimal_pad_table) - 2 == 2
+
+        for v in values:
+            _, number_str, _ = format_kpi_parts(v, "currency", default_number=True)
+            decimal_pad_for(col.decimal_pad_table, number_str)  # must not raise
+        assert decimal_pad_for(col.decimal_pad_table, "0.25") == ""
+        assert decimal_pad_for(col.decimal_pad_table, "84.3") != ""
+        assert decimal_pad_for(col.decimal_pad_table, "88") != ""
+
+    def test_allow_shared_scale_false_still_pads_a_homogeneous_real_tier(
+        self,
+    ) -> None:
+        """``allow_shared_scale=False`` (pie/donut's attached legend table)
+        never attempts the shared-scale bake at all, so ``shared_scale`` is
+        None for EVERY column of that caller -- including a homogeneous
+        single-real-tier one (every value in thousands, e.g. 15000/5000/
+        3500). That column still has one shared decimal position to align
+        on and must still pad -- only a genuine tier mix should refuse
+        (``column_shares_one_printed_unit``).
+        """
+        columns = {"amount": TableColumnConfig(format="number")}
+        rows = [{"amount": v} for v in (15_000, 5_000, 3_500)]
+        resolved = _with_resolved_scale_stops(
+            columns,
+            text_color=None,
+            formats=None,
+            font_family=DBT_SANS_TABULAR_FONT_FAMILY,
+            rows=rows,
+            allow_shared_scale=False,
+        )
+        assert resolved is not None
+        col = resolved["amount"]
+        assert col.shared_scale is None
+        assert col.decimal_pad_table != ()
+        assert decimal_pad_for(col.decimal_pad_table, "15") != ""
+        assert decimal_pad_for(col.decimal_pad_table, "3.5") == ""
+
+    def test_genuine_tier_mix_bakes_no_pad_at_all(self) -> None:
+        """A real mix -- some values print with a "k" suffix, some bare -- is
+        not the same "everyone's too small" case the fallback above targets.
+        shared_scale_for_column refuses this column too (a real tier can tie
+        with "no tier"), but a bare "900" and a "12.1 k" (=12,100) have no
+        shared decimal position to align on, so no pad table should be baked
+        at all.
+        """
+        columns = {"amount": TableColumnConfig(format="number")}
+        rows = [{"amount": v} for v in (12_100, 900)]
+        resolved = _with_resolved_scale_stops(
+            columns,
+            text_color=None,
+            formats=None,
+            font_family=DBT_SANS_TABULAR_FONT_FAMILY,
+            rows=rows,
+        )
+        assert resolved is not None
+        col = resolved["amount"]
+        assert col.shared_scale is None
+        assert col.decimal_pad_table == ()
+
+    def test_sub_unit_value_mixed_with_a_bare_value_bakes_no_pad(self) -> None:
+        """0.671 prints "671m" (a milli-prefixed SI suffix); 84.3 prints
+        bare. Regression: a raw-value tier classifier (``_natural_tier``)
+        only recognizes tiers at or above thousands, so it reads 0.671 as
+        having no tier at all -- the same bucket as 84.3 -- and would
+        wrongly treat this as the all-below-tier case above. The two cells
+        print in different units and must not be padded together.
+        """
+        columns = {"amount": TableColumnConfig(format="number")}
+        rows = [{"amount": v} for v in (0.671, 84.3)]
+        resolved = _with_resolved_scale_stops(
+            columns,
+            text_color=None,
+            formats=None,
+            font_family=DBT_SANS_TABULAR_FONT_FAMILY,
+            rows=rows,
+        )
+        assert resolved is not None
+        col = resolved["amount"]
+        assert col.shared_scale is None
+        assert col.decimal_pad_table == ()
+
+    def test_currency_spec_via_format_config_measures_the_sub_dollar_swap(
+        self,
+    ) -> None:
+        """``raw_format_name`` is derived from ``col.format.spec`` when the
+        column authors a ``FormatConfig`` (not a bare string) -- must not
+        skip the sub-$1 swap that measurement depends on. 0.25 falls in the
+        sub-$1 band and is measured through the deeper two-decimal fallback
+        spec; 84.3/88 are measured through the bare SI spec. Must not raise.
+        """
+        from dbt_charts.core.compile.models.primitives import FormatConfig
+
+        columns = {"amount": TableColumnConfig(format=FormatConfig(spec="currency"))}
+        rows = [{"amount": v} for v in (0.25, 84.3, 88)]
+        resolved = _with_resolved_scale_stops(
+            columns,
+            text_color=None,
+            formats=None,
+            font_family=DBT_SANS_TABULAR_FONT_FAMILY,
+            rows=rows,
+        )
+        assert resolved is not None
+        col = resolved["amount"]
+        assert col.shared_scale is None
+        # pad_table length is precision + 2 (see build_decimal_pad_table);
+        # 0.25 -> "0.25" (2 fractional digits, the swapped fallback spec) is
+        # the deepest cell, so precision is 2.
+        assert len(col.decimal_pad_table) - 2 == 2
+        assert decimal_pad_for(col.decimal_pad_table, "0.25") == ""
+        assert decimal_pad_for(col.decimal_pad_table, "84.3") != ""
+        assert decimal_pad_for(col.decimal_pad_table, "88") != ""
+
+    def test_explicit_suffix_money_code_measures_the_sub_dollar_swap(self) -> None:
+        """``explicit_suffix`` (from ``get_format_prefix_suffix``) feeds
+        ``si_sub_unit_floor``'s money detection even when the ``spec`` itself
+        carries no currency symbol -- a `` USD`` suffix must still route 0.25
+        through the deeper two-decimal fallback spec, not the bare SI one.
+        Must not raise.
+        """
+        from dbt_charts.core.compile.models.primitives import FormatConfig
+
+        columns = {
+            "amount": TableColumnConfig(
+                format=FormatConfig(spec="number", suffix=" USD")
+            )
+        }
+        rows = [{"amount": v} for v in (0.25, 84.3, 88)]
+        resolved = _with_resolved_scale_stops(
+            columns,
+            text_color=None,
+            formats=None,
+            font_family=DBT_SANS_TABULAR_FONT_FAMILY,
+            rows=rows,
+        )
+        assert resolved is not None
+        col = resolved["amount"]
+        assert col.shared_scale is None
+        # pad_table length is precision + 2 (see build_decimal_pad_table);
+        # 0.25 -> "0.25" (2 fractional digits, the swapped fallback spec) is
+        # the deepest cell, so precision is 2.
+        assert len(col.decimal_pad_table) - 2 == 2
+        assert decimal_pad_for(col.decimal_pad_table, "0.25") == ""
+        assert decimal_pad_for(col.decimal_pad_table, "84.3") != ""
+        assert decimal_pad_for(col.decimal_pad_table, "88") != ""

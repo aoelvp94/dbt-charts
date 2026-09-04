@@ -16,9 +16,10 @@ from dbt_charts.core.compile.models.style.resolved import (
 )
 from dbt_charts.core.compile.resolve.chart._axes import (
     _NO_RAIL_ENDPOINT_LABELS,
-    _author_hid_legend,
+    _authored_legend,
     _bake_ay_position_right,
     cartesian_series_naming,
+    estimate_cartesian_plot_height,
 )
 from dbt_charts.core.compile.resolve.chart._channels import (
     _classify_to_channel_type,
@@ -60,6 +61,7 @@ from dbt_charts.core.compile.resolve.chart._palette import (
 from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
     plan_cartesian,
+    quantitative_channel_values,
 )
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
@@ -117,14 +119,23 @@ def _resolve_scatter(
         y_ch_type,
         normalized.multiples,
         normalized.y,
+        has_quantitative_axis=True,
     )
     primary = plan.primary
     scatter = merge_onto_base(chart_style_context.scatter, primary)
     channels = plan.channels
+    # Scatter (and bubble -- a scatter with a size channel, not a separate
+    # family) never routes to a top legend: its legend swatch is a circle
+    # matching its own point marks in shape and comparable in size (measured
+    # 10.0px swatch vs. 7.75px marks), so a top legend would read as a
+    # duplicate scatter of marks rather than a key. The right-hand vertical
+    # legend is the deliberate default, not the top-legend fit rule's
+    # unmeasured case.
     naming = cartesian_series_naming(
         normalized,
         channels,
-        _author_hid_legend(primary),
+        _authored_legend(primary),
+        merge_onto_base(chart_style_context.legend, scatter.legend),
         width,
         _NO_RAIL_ENDPOINT_LABELS,
         endpoint_label_has_layers=False,
@@ -132,8 +143,16 @@ def _resolve_scatter(
         rail_eligible_for_suppression=False,
         suppress_wide_measure_series=False,
         multiples_wide_measure_series=False,
-        layers_route_to_top_legend=False,
-        unconditional_top_legend=False,
+        top_legend_series=None,
+        plot_height_estimate=estimate_cartesian_plot_height(normalized, scatter, width),
+        # top_legend_series=None above means the row-fit check this feeds
+        # never runs for this family -- 0.0 is inert, not a real estimate.
+        left_axis_reserve_px=0.0,
+        # top_legend_series=None above means rung 2's floor check never runs
+        # for this family either -- these three are inert, not real facts.
+        card_padding_px=0.0,
+        subtitle_present=False,
+        axis_title_costs_height=False,
     )
     ax_merged, ay_merged = plan.ax_merged, plan.ay_merged
     ay_merged = _bake_ay_position_right(ay_merged)
@@ -143,6 +162,7 @@ def _resolve_scatter(
     authored_y_domain = (
         _ay_cont_scatter.domain if _ay_cont_scatter is not None else None
     )
+    _ay_pre_zero_bake = ay_merged
     _reject_non_positive_log_scale_data(
         normalized.id,
         ay_merged,
@@ -153,11 +173,19 @@ def _resolve_scatter(
         _sy = _numeric_y_values(data, (y_field_scatter,))
         if _sy:
             if y_ch_type == "quantitative":
-                ay_merged = _bake_y_zero(ay_merged, primary, _sy, "scatter")
-            _sz = resolve_y_zero(primary, min(_sy), max(_sy), "scatter")
+                ay_merged = _bake_y_zero(ay_merged, _sy, "scatter")
+            _sz = resolve_y_zero(_ay_pre_zero_bake, min(_sy), max(_sy), "scatter")
             _scatter_anchored = _sz is True or (_sz is None and min(_sy) >= 0.0)
         else:
-            _scatter_anchored = True
+            # No numeric y values -- a nominal or temporal y (the rotated
+            # dot-plot recipe puts the category on y), or every row null.
+            # Nothing was anchored, so this field must say so rather than
+            # claim an anchor decision that never ran; it also feeds the
+            # shared-scale tick resolution below, so it moves the baked
+            # ladder AND the domain bounds, not just what the field reports:
+            # an unanchored axis fits the data instead of pinning a floor
+            # at 0.
+            _scatter_anchored = False
         scatter_ticks = _resolve_cartesian_ticks(
             normalized.id,
             ay_merged,
@@ -173,6 +201,7 @@ def _resolve_scatter(
         )
     else:
         scatter_ticks = _CartesianTickResolution((), None)
+        _scatter_anchored = False
     # Scatter's x (even a categorical "dot plot" x) is always bottom-orient —
     # only y ever places on a left/right edge.
     # No tick_values on the categorical axis -- the non-compacting bake
@@ -181,6 +210,26 @@ def _resolve_scatter(
     # Scatter's tooltip_format tracks an explicit chart-authored measure format
     # (style.number_format / chart.format) — falls back to the board default
     # tooltip.format when the author didn't override it, same as bar/line/area.
+    # emitters/scatter.py paints tooltip_format on the y encoding
+    # unconditionally, but x only ever gets it through the structured
+    # tooltip's plain (non-faceted, non-layered) scatter branch
+    # (_scatter_roles's own applies-to gate: `not chart.layers and
+    # chart.multiples is None`) -- a faceted or layered scatter never paints
+    # x with this format at all, so x must not vote there, or a sub-$1 x
+    # column drags a correctly-SI'd y column to two decimals with nothing
+    # painting the x side to justify it. A nominal y (dot plot) or nominal x
+    # naturally contributes no values regardless -- the sub-$1 floor never
+    # fires on a non-numeric column.
+    tooltip_format_values = quantitative_channel_values(data, normalized.y)
+    if (
+        x_ch_type == "quantitative"
+        and normalized.multiples is None
+        and not normalized.layers
+    ):
+        tooltip_format_values = [
+            *tooltip_format_values,
+            *quantitative_channel_values(data, normalized.x),
+        ]
     ay, style_tail = build_cartesian_axes(
         normalized.id,
         chart_style_context,
@@ -194,9 +243,20 @@ def _resolve_scatter(
         ticks=scatter_ticks,
         column_forming=True,
         measure_tooltip_format=_measure_tooltip_format(
-            normalized, primary, chart_style_context, y_ch_type
+            normalized,
+            primary,
+            chart_style_context,
+            y_ch_type,
+            values=tooltip_format_values,
         ),
+        tooltip_format_values=tooltip_format_values,
+        ax_is_quantitative=x_ch_type == "quantitative",
         ay_is_quantitative=y_ch_type == "quantitative",
+        zero_anchor=_scatter_anchored,
+        # Scatter has no endpoint-label rail (naming.py never routes it
+        # through EndpointLabelFeature), so its baked domain_min is never at
+        # risk of the shared-scale composition _y_domain_floor guards against.
+        endpoint_rail_may_discard_domain=False,
     )
     axis_is_house = (
         ay.labels.format is not None
@@ -219,6 +279,7 @@ def _resolve_scatter(
         scatter,
         normalized.query_name,
         0.0,
+        0.0,
     )
     if authored_y_domain is not None:
         _check_layers_y_domain(normalized.id, resolved_layers, authored_y_domain)
@@ -237,6 +298,8 @@ def _resolve_scatter(
             layout_padding=scatter.padding,
             suppress_legend=naming.suppress_legend,
             top_legend=naming.top_legend,
+            force_legend_visible=naming.force_legend_visible,
+            legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
         ),
         **_cartesian_kwargs(
             normalized,

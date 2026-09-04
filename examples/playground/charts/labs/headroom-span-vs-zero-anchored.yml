@@ -1,11 +1,11 @@
 title: "Headroom: anchored-floor fix — line, scatter, bar, zoomed"
-description: >
+notes: >
   Visual proof of the zero-anchor regression fix (PR #5610).
   Row 1: anchored line + anchored scatter (revenue 6k–33k, ratio≈0.18 < 0.25)
   — floor MUST be at 0, NOT below 6k.
   Row 2: zoomed line + zoomed scatter (tight 9800–10000, ratio≈0.98 > 0.25)
   — symmetric span-relative headroom on both edges (still correct).
-extends: editorial
+extends: clarity
 rows:
   - cols: [anchored_line, anchored_scatter]
   - cols: [zoomed_line, zoomed_scatter]

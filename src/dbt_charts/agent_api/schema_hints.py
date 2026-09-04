@@ -33,7 +33,7 @@ class SchemaHints(BaseModel):
 
 
 def schema_hints() -> SchemaHints:
-    """Return compile-time schema constants for Dataface authoring agents.
+    """Return compile-time schema constants for dbt charts authoring agents.
 
     Takes no arguments and reads no process state. Two consecutive calls
     return equal results.

@@ -1,34 +1,22 @@
-# Categorical palette — editorial-10-light
+# Categorical palette: editorial-10-light
 #
-# Moderate light companion to editorial-10. Each stop is the lighter,
-# desaturated counterpart of the same slot in `editorial-10.yml`.
-#
-# Pairing is positional: stop N here is the light companion of stop N in
-# editorial-10. Reviewers edit the variant set (`editorial-10`,
-# `editorial-10-dark`, `editorial-10-light`, `editorial-10-ghost`)
-# together when the editorial palette changes.
-#
-# Derivation: each slot is lifted in OKLCH L above its base stop and has
-# chroma multiplied by ~0.55, preserving hue while lowering visual weight.
-# The lift is directional, not a strict mirror of the `editorial-10-dark`
-# drop — gold is tuned down to L≈0.80 by eye (its large dark drop would
-# otherwise force a lightness-outlier lift) so the light band reads evenly.
+# Moderate de-emphasis companion. Each stop preserves the base hue while
+# reducing chroma and increasing OKLCH lightness. Aliases inherit by position.
 
 name: editorial-10-light
 extends: editorial-10
 description: |
-  Moderate light companion to editorial-10. Ten slots, each lighter and
-  more desaturated than the matching editorial-10 stop. Pairing is
-  positional: slot N here pairs with slot N in editorial-10.
+  Moderate light companion to editorial-10. Each stop is lighter and quieter
+  than its positionally paired base stop, and darker than its ghost partner.
 
 colors:
-  - "#6682a6"    # 1  — denim     (companion to #3164a3)
-  - "#a5b9d3"    # 2  — sky       (companion to #779bc9)
-  - "#c6bdac"    # 3  — sand      (companion to #ad9c7f)
-  - "#9ea6ad"    # 4  — gray      (companion to #7a8895)
-  - "#9b7d8a"    # 5  — plum      (companion to #8a576f)
-  - "#839583"    # 6  — green     (companion to #5c7b5c)
-  - "#dab696"    # 7  — gold      (companion to #d49656)
-  - "#b88c7d"    # 8  — rust      (companion to #ae6349)
-  - "#9bbcbb"    # 9  — teal      (companion to #609f9e)
-  - "#3c4349"    # 10 — charcoal  (companion to #232f3a)
+  - "#7990b6"    # 1  blue
+  - "#a3bad7"    # 2  sky
+  - "#8ea598"    # 3  green
+  - "#9a8595"    # 4  purple
+  - "#e0b993"    # 5  gold
+  - "#c29180"    # 6  rust
+  - "#bdcacb"    # 7  teal
+  - "#c7bcaa"    # 8  brown
+  - "#a0a9b1"    # 9  gray
+  - "#8a9092"    # 10 graphite

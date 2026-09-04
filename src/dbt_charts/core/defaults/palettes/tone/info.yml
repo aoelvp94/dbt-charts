@@ -8,7 +8,7 @@ description: |
   Blue convention: readable system information without warning/error semantics.
 
 design_notes: |
-  Restores the deleted semantic info palette slots captured in the DFT feedback
+  Restores the deleted semantic info palette slots captured in the dbt charts feedback
   notes: bg, border, solid, and text. subtle and solid-hover are companion
   roles for the existing tone palette contract.
 

@@ -80,7 +80,7 @@ class MissingVariable:
 
     key: str
     label: str | None
-    description: str | None
+    notes: str | None
     input_type: str | None
 
 
@@ -112,7 +112,7 @@ class MissingRequiredVariablesError(RenderError):
                 {
                     "key": mv.key,
                     "label": mv.label,
-                    "description": mv.description,
+                    "notes": mv.notes,
                     "input_type": mv.input_type,
                 }
                 for mv in missing

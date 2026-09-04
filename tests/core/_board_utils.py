@@ -65,13 +65,16 @@ def _default_resolved_board() -> ResolvedBoard:
 
 
 def make_test_resolved_chart(
-    chart: Chart, data: list[dict] | None = None
+    chart: Chart, data: list[dict] | None = None, width: float | None = None
 ) -> ResolvedChart:
     """Wrap a Chart in a ResolvedChart for warning-detector unit tests."""
     from dbt_charts.core.compile.resolve import resolve
 
     return resolve(
-        chart, data or [], chart_style_context=_default_chart_style_context()
+        chart,
+        data or [],
+        chart_style_context=_default_chart_style_context(),
+        width=width,
     )
 
 
@@ -109,7 +112,7 @@ def apply_static_layout(board: Board) -> Board:
     )
 
     _theme = get_theme_style()
-    container_width = float(_theme.frame.width)
+    container_width = float(_theme.frame.max_width)
     content_width = max(container_width - 2 * float(_theme.frame.margin), 0.0)
     min_height = float(_theme.frame.min_height)
     card_gap = float(_theme.frame.card_gap) if board.card_gap else 0.0

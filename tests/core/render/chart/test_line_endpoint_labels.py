@@ -43,12 +43,13 @@ def _resolve_endpoint_label_positions(
     last_per_series = last_nonnull_value_per_series(
         data, x_field, y_field, series_field
     )
-    return _apply_label_cascade(
+    positions, _dropped = _apply_label_cascade(
         last_per_series,
         min_data_gap=min_data_gap,
         y_domain_min=y_domain_min,
         y_domain_max=y_domain_max,
     )
+    return positions
 
 
 _BOARD_STYLE = resolve_style(get_theme_style())
@@ -1107,46 +1108,58 @@ def test_zero_rule_does_not_expand_domain_for_positive_data(make_chart):
 
 
 # ---------------------------------------------------------------------------
-# 8. Label cascade domain clamping — labels must never exceed y_domain bounds
+# 8. Label cascade domain invariant — kept labels must never exceed y_domain bounds
 # ---------------------------------------------------------------------------
 
 
-def test_label_cascade_clamped_downward():
-    """Downward cascade must not push labels below y_domain_min.
+def test_label_cascade_stays_in_domain_downward():
+    """Downward cascade must not push a KEPT label below y_domain_min.
 
-    Regression: _apply_label_cascade cascaded without clamping, so 3 series
-    clustered in the upper half of a narrow domain (range < 2 * min_data_gap)
-    could produce label y positions below y_domain_min. The hconcat shared
-    y-scale then expanded the rendered SVG height beyond the sizing pass
-    estimate, causing ~81px overshoot on multi-series line charts.
+    Regression: _apply_label_cascade used to cascade without any bound at
+    all, so 3 series clustered in the upper half of a narrow domain (range
+    < 2 * min_data_gap) could produce label y positions below y_domain_min.
+    The hconcat shared y-scale then expanded the rendered SVG height beyond
+    the sizing pass estimate, causing ~81px overshoot on multi-series line
+    charts.
+
+    This domain genuinely cannot hold all 3 labels at this gap — (3-1)*15 =
+    30 exceeds the 10-unit span — so today's fix drops what does not fit
+    (need-based, see TestRailOverflowDrop in test_endpoint_label_gap.py)
+    rather than clamping every survivor onto one pixel or letting them
+    escape the domain. The bound invariant this test pins is on whatever
+    stays: nothing kept ever sits below y_domain_min.
     """
 
     y_domain_min, y_domain_max = 50.0, 60.0
-    # min_data_gap > (y_max - y_min) / 2 guarantees overflow without clamping
+    # min_data_gap > (y_max - y_min) / 2 guarantees overflow
     min_data_gap = 15.0
 
     # Centroid = 58.7 > domain_mid=55 → downward cascade
     anchors = {"A": 59.0, "B": 58.0, "C": 57.0}
-    result = _apply_label_cascade(
+    result, dropped = _apply_label_cascade(
         anchors,
         min_data_gap=min_data_gap,
         y_domain_min=y_domain_min,
         y_domain_max=y_domain_max,
     )
 
+    # A sits at its own true anchor already, needs no push, and the domain
+    # cannot hold two more 15 apart from it — B and C are the ones that
+    # genuinely have nowhere to go.
+    assert dropped == ["B", "C"], f"expected B and C to be dropped, got {dropped}"
     ys = [y for _, y in result]
     assert all(y >= y_domain_min for y in ys), (
-        f"Downward cascade pushed labels below y_domain_min={y_domain_min}: {ys}"
+        f"Downward cascade pushed a kept label below y_domain_min={y_domain_min}: {ys}"
     )
     assert all(y <= y_domain_max for y in ys), (
-        f"Labels exceed y_domain_max={y_domain_max}: {ys}"
+        f"Kept labels exceed y_domain_max={y_domain_max}: {ys}"
     )
 
 
-def test_label_cascade_clamped_upward():
-    """Upward cascade must not push labels above y_domain_max.
+def test_label_cascade_stays_in_domain_upward():
+    """Upward cascade must not push a KEPT label above y_domain_max.
 
-    Mirror of test_label_cascade_clamped_downward for the lower-half cluster
+    Mirror of test_label_cascade_stays_in_domain_downward for the lower-half cluster
     case (centroid < domain_mid → cascade upward).
     """
 
@@ -1155,19 +1168,20 @@ def test_label_cascade_clamped_upward():
 
     # Centroid = 51.3 < domain_mid=55 → upward cascade
     anchors = {"A": 51.0, "B": 52.0, "C": 53.0}
-    result = _apply_label_cascade(
+    result, dropped = _apply_label_cascade(
         anchors,
         min_data_gap=min_data_gap,
         y_domain_min=y_domain_min,
         y_domain_max=y_domain_max,
     )
 
+    assert dropped == ["B", "C"], f"expected B and C to be dropped, got {dropped}"
     ys = [y for _, y in result]
     assert all(y >= y_domain_min for y in ys), (
-        f"Labels fell below y_domain_min={y_domain_min}: {ys}"
+        f"Kept labels fell below y_domain_min={y_domain_min}: {ys}"
     )
     assert all(y <= y_domain_max for y in ys), (
-        f"Upward cascade pushed labels above y_domain_max={y_domain_max}: {ys}"
+        f"Upward cascade pushed a kept label above y_domain_max={y_domain_max}: {ys}"
     )
 
 

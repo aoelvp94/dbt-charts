@@ -132,6 +132,36 @@ class TestQueryRef:
         for loc in locs:
             assert "QueryRef" not in loc, f"Found 'QueryRef' in loc: {loc}"
 
+    def test_chart_inline_query_typo_validates_one_arm(self):
+        """A typo in a chart's inline query block should validate against exactly
+        one union arm, not all three (str / AuthoredQuery / QueryRef)."""
+        with pytest.raises(PydanticValidationError) as exc_info:
+            _board(
+                charts={
+                    "c1": {
+                        "type": "bar",
+                        "query": {"sq": "select 1"},
+                        "x": "a",
+                        "y": "b",
+                    }
+                }
+            )
+        errors = exc_info.value.errors()
+        assert len(errors) == 1, f"Expected one error, got: {errors}"
+        assert errors[0]["loc"] == (
+            "charts",
+            "c1",
+            "@inline",
+            "bar",
+            "query",
+            "@inline",
+            "sql",
+            "sq",
+        )
+        loc_str = str(errors[0]["loc"])
+        assert "QueryRef" not in loc_str, f"Found 'QueryRef' in loc: {loc_str}"
+        assert "tagged-union" not in loc_str, f"Found 'tagged-union' in loc: {loc_str}"
+
 
 class TestChartRef:
     def test_chart_ref_coerces_from_inline_string(self):

@@ -63,6 +63,34 @@ class ResolvedBarStyle(_SeriesCartesianResolvedStyle):
             "register. Mirrors label_is_house for the separate total-label call site."
         ),
     )
+    plot_height_below_floor: bool = Field(
+        default=False,
+        description=(
+            "True when this chart's plot has been squeezed below the "
+            "readability floor for its card. Informational only: no chrome "
+            "is removed and nothing is resized. False for histograms, which "
+            "do not measure this."
+        ),
+    )
+    estimated_plot_height_px: float = Field(
+        default=0.0,
+        description=(
+            "Estimated height of the plot area in pixels, once everything "
+            "drawn around it is subtracted. Negative for a severely "
+            "squeezed card. 0.0 for histograms, which do not measure this."
+        ),
+    )
+    estimated_card_height_px: float = Field(
+        default=0.0,
+        description=(
+            "Total height of the card in pixels, card padding included, "
+            "that the plot height above was measured against. Taken from "
+            "the chart's own height when one is set, and from its aspect "
+            "ratio otherwise — an estimate either way, not a measurement of "
+            "the finished render. 0.0 for histograms, which do not measure "
+            "this."
+        ),
+    )
 
 
 __all__ = ["ResolvedBarStyle"]

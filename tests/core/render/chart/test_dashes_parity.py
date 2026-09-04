@@ -57,9 +57,8 @@ _DASHES: list[list[int]] = [[12, 16], [2, 6], [12, 10, 0, 10]]
 def _make_board_style(*, dashes: list[list[int]] | None = None):
     """Return (ResolvedStyle, ChartStyleContext), optionally overriding dashes.
 
-    Uses the 'stark' theme because the 'editorial' (default) theme suppresses
+    Uses the 'stark' theme because 'clarity' (the shipped default) suppresses
     the legend (legend.visible=False), which would obscure legend-related assertions.
-    The dashes-palette-lab.yml board also uses stark.
     """
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context

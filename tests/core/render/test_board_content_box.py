@@ -40,6 +40,10 @@ class TestComputeBoardContentBox:
     """Gap arithmetic rules for the single-owner stacking function."""
 
     def _call(self, **kwargs):
+        """``card_padding`` defaults to 0 so each gap assertion is about gaps.
+
+        The band's own top inset is a separate rule with its own tests below.
+        """
         from dbt_charts.core.render.sizing import compute_board_content_box
 
         return compute_board_content_box(
@@ -50,6 +54,7 @@ class TestComputeBoardContentBox:
                 "inline_band_height": 0.0,
                 "gap": 8.0,
                 "has_layout_items": False,
+                "card_padding": 0.0,
                 **kwargs,
             }
         )
@@ -109,6 +114,45 @@ class TestComputeBoardContentBox:
         """inline_band → text: normal gap (not the 0-gap title special case)."""
         box = self._call(inline_band_height=60.0, text_height=20.0, gap=8.0)
         assert box.non_layout_height == pytest.approx(60.0 + 8.0 + 20.0)
+
+    def test_the_band_is_inset_by_card_padding_before_its_first_element(self):
+        """The inset a chart's ink already carries, so prose starts level with it."""
+        box = self._call(title_height=50.0, text_height=20.0, card_padding=16.0)
+
+        assert box.content_top == pytest.approx(16.0)
+        assert box.non_layout_height == pytest.approx(16.0 + 50.0 + 20.0)
+
+    def test_the_inset_is_claimed_once_for_the_band_not_once_per_element(self):
+        """Title → text stays flush; only the band's own top edge is inset."""
+        one = self._call(title_height=50.0, card_padding=16.0)
+        three = self._call(
+            title_height=50.0,
+            text_height=20.0,
+            variables_height=30.0,
+            card_padding=16.0,
+        )
+
+        assert three.non_layout_height - one.non_layout_height == pytest.approx(
+            20.0 + 8.0 + 30.0
+        )
+
+    def test_a_variables_only_band_is_inset_like_any_other(self):
+        """It is the band that is inset, not prose specifically.
+
+        A board with controls and no title or text still opens a band, and its
+        controls line up with chart ink for the same reason a heading does.
+        """
+        box = self._call(variables_height=30.0, card_padding=16.0)
+
+        assert box.content_top == pytest.approx(16.0)
+        assert box.non_layout_height == pytest.approx(16.0 + 30.0)
+
+    def test_a_board_with_no_band_is_not_inset(self):
+        """Nothing to inset, and a chart-only board must not grow by a padding."""
+        box = self._call(has_layout_items=True, card_padding=16.0)
+
+        assert box.content_top == 0.0
+        assert box.non_layout_height == 0.0
 
 
 # ---------------------------------------------------------------------------

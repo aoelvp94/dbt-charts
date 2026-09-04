@@ -3,7 +3,7 @@
 ``ChartSpec`` is produced by a family emitter and mutated by the ``ChartFeature``
 pipeline before being assembled to Vega-Lite by ``assemble_final_vl()``
 (see ``translate.py``).  Emitters write Vega-Lite encoding and mark names
-directly — ChartSpec is a VL-shaped builder intermediate, not a Dataface-native
+directly — ChartSpec is a VL-shaped builder intermediate, not a dbt charts-native
 vocabulary.  The two structural dispatch sentinels (``"layered"`` and
 ``"geoshape"``) are not VL marks; they drive composition shape detection in the
 assembler.
@@ -36,6 +36,31 @@ class RenderBox:
 
     width: float
     height: float
+    # The per-column-panel width a faceted chart WOULD use if no position
+    # channel narrowed independently — i.e. `width` before any
+    # `facet_extra_axis_width_px()` reservation is subtracted. `None` for a
+    # non-faceted chart (nothing to narrow) or a caller that built this box
+    # without running the real facet geometry (e.g. a test harness's fixed
+    # box). `FacetFeature` (`features/facet.py`) invents no stand-in when it
+    # is None — it passes the value straight through.
+    #
+    # None is PERMISSIVE, not restrictive: `facet_bound_position_channels`
+    # starts from the full candidate set and the affordability gate only ever
+    # `discard`s from it, so a None here makes that discard unreachable and
+    # narrowing proceeds unchecked — `resolve.scale.y = independent` gets
+    # stamped with no width reserved for the axis it forces. A box built
+    # without the real facet geometry is therefore the permissive case; that
+    # is tolerable only because the sole `src/` construction site always
+    # supplies it.
+    #
+    # Do NOT "helpfully" default this to `width` either: `width` has already
+    # had the reservation subtracted, so re-checking against it double-charges
+    # the axis and declines narrowing that was in fact affordable.
+    # Populated by `_render_vl_artifact`
+    # (`vega_lite.py`) so the affordability check in
+    # `facet_bound_position_channels` (`emitters/_cartesian.py`) has the same
+    # number both there and in the pre-spec width budget it must agree with.
+    facet_unnarrowed_panel_width: float | None = None
 
 
 @dataclass
@@ -88,7 +113,8 @@ class EndpointLabelData:
     # the main pane).  Set by EndpointLabelFeature, already capped there to
     # chart_rendering.endpoint_labels.max_width_fraction of the chart's width.
     label_pane_width: float = 0.0
-    # VL text-mark font props {"fontSize", "font", "fontWeight"} for the label pane.
+    # VL text-mark font props {"fontSize", "font", "fontWeight", "fontStyle"}
+    # for the label pane.
     # Empty dict → no explicit font (VL uses global config defaults).
     # Populated by EndpointLabelFeature from chart.style.series_label.font_*.
     label_mark_font_props: dict[str, Any] = field(default_factory=dict)
@@ -103,7 +129,7 @@ class ChartSpec:
             ``"circle"``, ``"rule"``, …) OR a structural sentinel
             (``"layered"`` / ``"geoshape"``) that drives composition shape
             detection in ``assemble_final_vl``.  Emitters write VL names
-            directly — no Dataface-native mark vocabulary.
+            directly — no dbt charts-native mark vocabulary.
         encoding: Channel name → encoding config (VL keys).
         layers: Overlay sub-specs appended by features (zero-baseline rule layers,
             etc.).  Empty for single-layer charts before features run.
@@ -206,3 +232,15 @@ class ChartSpec:
     # — out of this field's vocabulary, and its independent-scale resolution is
     # unaddressed.
     measure_channel: Literal["x", "y"] = "y"
+    # VL position channels ("x"/"y") whose per-panel domain is a proper
+    # subset of the channel's whole domain — decided from the data, not from
+    # a field-name match, so it covers a panel field that differs from the
+    # axis field (region panels over a product axis, where a panel sells
+    # only some products). VL's facet default shares a channel's scale
+    # domain across every panel, so without forcing these independent a
+    # panel reserves band/axis space for values it never draws. Narrowing
+    # costs a real per-panel axis, so it applies only where that width is
+    # affordable — see `facet_bound_position_channels`. Colour scales are
+    # deliberately never added here — cross-panel colour identity stays
+    # shared; only positional band/axis space narrows.
+    facet_independent_channels: frozenset[Literal["x", "y"]] = frozenset()

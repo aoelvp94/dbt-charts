@@ -579,7 +579,7 @@ def test_assert_relpath_rejects_escape() -> None:
 
 _INLINE_BOARD = """\
 title: Sales Report
-description: sales metrics for testing
+notes: sales metrics for testing
 queries:
   q:
     columns: [n]

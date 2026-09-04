@@ -1,5 +1,5 @@
 title: Table Foundations
-description: 'Design evaluation surface for dbt charts table rendering. Each group tests
+notes: 'Design evaluation surface for dbt charts table rendering. Each group tests
   a specific structural decision from the Table Design Handbook against the current
   renderer. Inspect these as design probes, not finished dashboards.
 
@@ -103,13 +103,19 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
         margin:
           label: Margin
           format: percent
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
       symbol_mode: anchors
   symbols_all:
     type: table
@@ -122,13 +128,19 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
         margin:
           label: Margin
           format: percent
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
       symbol_mode: all
   leaderboard:
     type: table
@@ -153,7 +165,7 @@ charts:
           label: City
         visitors:
           label: Visitors
-          format: compact
+          format: number
   pipeline_raw:
     type: table
     query: sales_pipeline
@@ -229,13 +241,19 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency
+          format: currency_full
         growth_rate:
           label: Growth
           format: .4%
         margin:
           label: Margin
           format: .4%
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
   precision_right:
     type: table
     query: company_revenue
@@ -254,6 +272,12 @@ charts:
         margin:
           label: Margin
           format: percent
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
   precision_low:
     type: table
     query: company_revenue
@@ -265,13 +289,19 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent_whole
         margin:
           label: Margin
           format: percent_whole
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
   type_display:
     type: table
     query: country_gdp
@@ -305,7 +335,7 @@ charts:
           width: 22%
         population:
           label: Population
-          format: compact
+          format: number
         median_income:
           label: Median Income
           format: currency_whole
@@ -329,7 +359,7 @@ charts:
           width: 22%
         population:
           label: Population
-          format: compact
+          format: number
         median_income:
           label: Median Income
           format: currency_whole
@@ -358,7 +388,7 @@ charts:
           label: State
         population:
           label: Population
-          format: compact
+          format: number
         median_income:
           label: Median Income
           format: currency_whole
@@ -382,7 +412,7 @@ charts:
           label: State
         population:
           label: Population
-          format: compact
+          format: number
         median_income:
           label: Median Income
           format: currency_whole
@@ -403,7 +433,7 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
@@ -423,7 +453,7 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
@@ -448,7 +478,7 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
@@ -458,6 +488,8 @@ charts:
         revenue_share:
           label: Share
           format: percent
+        row_role:
+          visible: false
   dates_iso:
     type: table
     query: events_dates
@@ -472,6 +504,16 @@ charts:
         amount:
           label: Amount
           format: currency_whole
+        date_us:
+          visible: false
+        date_short:
+          visible: false
+        year_month:
+          visible: false
+        quarter:
+          visible: false
+        year:
+          visible: false
   dates_mixed:
     type: table
     query: events_dates
@@ -491,6 +533,10 @@ charts:
           label: Year-Month
         quarter:
           label: Quarter
+        year:
+          visible: false
+        amount:
+          visible: false
   dates_full:
     type: table
     query: events_dates_full
@@ -527,13 +573,19 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
         margin:
           label: Margin
           format: percent
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
   rules_header_gapped:
     type: table
     query: company_revenue
@@ -545,13 +597,19 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
         margin:
           label: Margin
           format: percent
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
       header:
         rule:
           width: 1
@@ -567,13 +625,19 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
         margin:
           label: Margin
           format: percent
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
       header:
         rule:
           width: 0
@@ -588,13 +652,19 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
         margin:
           label: Margin
           format: percent
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
       header:
         rule:
           width: 0
@@ -612,13 +682,19 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
         margin:
           label: Margin
           format: percent
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
       header:
         rule:
           width: 2
@@ -633,13 +709,19 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
         margin:
           label: Margin
           format: percent
+        nrr:
+          visible: false
+        headcount:
+          visible: false
+        region:
+          visible: false
       header:
         rule:
           width: 1
@@ -657,7 +739,7 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
@@ -682,7 +764,7 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
@@ -707,7 +789,7 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent

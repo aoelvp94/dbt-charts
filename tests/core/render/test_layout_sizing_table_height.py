@@ -524,6 +524,56 @@ class TestGrowBy2RuleOnSelfSizing:
         )
 
 
+class TestCapNoteHeightReservation:
+    """A static export whose real page count exceeds the pre-render cap
+    (_STATIC_MULTI_PAGE_MAX_PAGES) draws an extra "Showing pages 1-N of M"
+    line below the pager. The sizer must reserve that line too, or an
+    explicit-height render (dct render, a grid: layout whose siblings don't
+    self-correct off a table's actual height) overflows its slot.
+    """
+
+    def _paginated_chart(self, page_rows: int) -> Chart:
+        return _make_table_chart(
+            ChartStylePatch.model_validate(
+                {"table": {"pagination": {"enabled": True, "page_rows": page_rows}}}
+            )
+        )
+
+    def test_page_count_within_cap_reserves_no_extra_line(self):
+        from dbt_charts.core.render.chart.table import _PAGINATION_CONTROL_HEIGHT
+
+        chart = self._paginated_chart(page_rows=5)
+        # 100 rows / 5 per page = 20 pages -- exactly at the cap, not past it.
+        height_100 = _call_provider(chart, _make_executor(100))
+        height_5 = _call_provider(chart, _make_executor(5))
+
+        assert height_100 == height_5 + _PAGINATION_CONTROL_HEIGHT, (
+            f"20 pages is within the static-export cap -- no cap-note line "
+            f"should be reserved: got height_100={height_100} vs "
+            f"height_5={height_5} + _PAGINATION_CONTROL_HEIGHT"
+        )
+
+    def test_page_count_past_cap_reserves_the_cap_note_line(self):
+        from dbt_charts.core.render.chart.table import (
+            _PAGINATION_CAP_NOTE_HEIGHT,
+            _PAGINATION_CONTROL_HEIGHT,
+        )
+
+        chart = self._paginated_chart(page_rows=5)
+        # 105 rows / 5 per page = 21 pages -- one page past the cap.
+        height_105 = _call_provider(chart, _make_executor(105))
+        height_5 = _call_provider(chart, _make_executor(5))
+
+        assert (
+            height_105
+            == height_5 + _PAGINATION_CONTROL_HEIGHT + _PAGINATION_CAP_NOTE_HEIGHT
+        ), (
+            f"21 pages exceeds the static-export cap (20) -- the cap-note "
+            f"line must be reserved: got height_105={height_105} vs "
+            f"height_5={height_5} + control + cap-note height"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Regression: oversized slot must not produce dead whitespace (Solution B)
 # ---------------------------------------------------------------------------

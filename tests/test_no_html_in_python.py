@@ -1,7 +1,7 @@
 """Guard: no hand-authored HTML document/chrome markup in Python source files.
 
 Detects HTML page-builder tags embedded in Python string literals within the
-dataface core package (the ``core`` subpackage) — where the audit's
+dbt charts core package (the ``core`` subpackage) — where the audit's
 hand-authored page chrome (board wrapper, nav, serve prompt, variable controls)
 lived.
 
@@ -211,7 +211,7 @@ def test_no_hand_authored_html_in_python_source() -> None:
     """Fail if any non-allowlisted Python file contains HTML doc/chrome markup.
 
     This guards against regressions where someone adds a new inline HTML
-    page-builder f-string to the dataface core Python source.
+    page-builder f-string to the dbt charts core Python source.
     """
     # Guard against the vacuous-green failure mode: if the scan roots don't
     # resolve, the loop below scans nothing and the test passes for free.

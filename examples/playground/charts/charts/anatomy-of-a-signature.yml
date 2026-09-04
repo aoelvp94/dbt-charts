@@ -9,8 +9,8 @@
 # the top-accounts table). Everything else lives in thirds or quarters.
 
 title: Anatomy of a Signature
-description: How Dundersign's 91,495 documents move from sent to signed
-theme: cream
+notes: How Dundersign's 91,495 documents move from sent to signed
+theme: paper
 source: dundersign_db
 
 style:
@@ -348,7 +348,7 @@ charts:
     value: median_hours_to_sign
     style:
       value:
-        format: number
+        format: number_full
     support:
       label: hours, sent → completed
 
@@ -510,7 +510,7 @@ charts:
             max: 1
         avg_pages:
           label: Avg pages
-          format: number
+          format: number_full
           align: right
         top_plan:
           label: Top plan

@@ -1,4 +1,4 @@
-"""SQLite-specific SchemaSource for the inspect / dft-schema path.
+"""SQLite-specific SchemaSource for the inspect / schema-browser path.
 
 Uses stdlib ``sqlite3`` only — no new dependencies. SQLite always has a
 single schema called ``main`` (plus ``temp`` for temp tables, which we skip).

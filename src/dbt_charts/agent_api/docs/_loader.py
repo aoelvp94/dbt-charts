@@ -77,7 +77,7 @@ class DocsSearchHit(BaseModel):
 
 
 class DocsArgs(BaseModel):
-    """Browse the Dataface YAML reference offline. Modes: no args = topic index (slug + one-line description per H2), topic='<slug>' = one section, topic='all' = whole reference unsliced, search='<query>' = substring search across topics. Use this before writing YAML to learn field names, valid values, and examples. Call with no args first to see the available topics."""
+    """Browse the dbt charts YAML reference offline. Modes: no args = topic index (slug + one-line description per H2), topic='<slug>' = one section, topic='all' = whole reference unsliced, search='<query>' = substring search across topics. Use this before writing YAML to learn field names, valid values, and examples. Call with no args first to see the available topics."""
 
     topic: str | None = Field(
         None,
@@ -136,7 +136,7 @@ def docs(
         return DocsResult(
             mode="topic",
             topic=Topic(
-                id=_ALL_TOPIC, title="Dataface YAML Syntax", content=read_full_text()
+                id=_ALL_TOPIC, title="dbt charts YAML Syntax", content=read_full_text()
             ),
         )
 
@@ -147,17 +147,17 @@ def docs(
     generated_topics = {
         _REFERENCE_TOPIC: (
             _REFERENCE_FILE,
-            "Dataface YAML Field Reference (generated)",
-            "yaml-reference.md not found inside the dataface package. Regenerate with the repo's `gen-references`/`gen-yaml-reference` recipe and commit the result.",
+            "dbt charts YAML Field Reference (generated)",
+            "yaml-reference.md not found inside the dbt_charts package. Regenerate with the repo's `gen-references`/`gen-yaml-reference` recipe and commit the result.",
         ),
         _ERROR_REFERENCE_TOPIC: (
             _ERROR_REFERENCE_FILE,
-            "Dataface Error Reference (generated)",
+            "dbt charts Error Reference (generated)",
             "error-reference.md is missing from the installed package.",
         ),
         _WARNING_REFERENCE_TOPIC: (
             _WARNING_REFERENCE_FILE,
-            "Dataface Warning Reference (generated)",
+            "dbt charts Warning Reference (generated)",
             "warning-reference.md is missing from the installed package.",
         ),
     }
@@ -213,7 +213,7 @@ def read_full_text() -> str:
     except FileNotFoundError as exc:
         raise DocsCorpusMissingError(
             f"Docs source file missing (path={_SYNTAX_FILE}). "
-            "The Dataface wheel is broken or the file was monkeypatched away."
+            "The dbt charts wheel is broken or the file was monkeypatched away."
         ) from exc
 
 

@@ -3,8 +3,8 @@
 Tests three specific V2 gaps vs V1:
   Gap 1 — hconcat pane height: V2 must stamp $df_target_width/$df_target_height
            on the outer hconcat wrapper so _correct_concat_overshoot fires.
-           Carve-out: a wrapper carrying an attached data_table strip drops
-           $df_target_height (vega_lite._apply_data_table_strip) — its pixel
+           Carve-out: a wrapper carrying an attached support_table strip drops
+           $df_target_height (vega_lite._apply_support_table_strip) — its pixel
            literals are anchored to spec.height and must not be resized after
            the fact. The charts below carry no strip, so both sentinels apply.
   Gap 3 — fontSize int vs float: config.title.fontSize must be int, not float.
@@ -101,7 +101,7 @@ class TestHconcatDfTargetSentinels:
     """V2 must stamp $df_target_width/$df_target_height on hconcat wrappers.
 
     Strip-free wrappers only — see the module docstring's carve-out for the
-    data_table case, pinned by test_data_table_concat_anchor.py.
+    support_table case, pinned by test_support_table_concat_anchor.py.
     """
 
     def _render(

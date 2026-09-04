@@ -16,6 +16,9 @@ from dbt_charts.core.compile.models.primitives import (
     ResolvedFontStyle,
 )
 from dbt_charts.core.compile.models.style.theme import SliceLabelsStyle, TableChartStyle
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    CategoryColorScale,
+)
 from dbt_charts.core.compile.resolve.chart.label_data import (
     LABEL_FIELD,
     ChartRows,
@@ -109,6 +112,29 @@ def compute_shares(theta_field: str, data: ChartRows) -> list[float]:
     return [value / total for value in values]
 
 
+def arc_disk_width(
+    label_lines: list[str],
+    font_family: str,
+    font_size: float,
+    label_offset: float,
+    width: float,
+) -> float:
+    """Width left for the arc disk after slice labels reserve their reach.
+
+    Under autosize fit the leader-line label layer shrinks the view. This is
+    the one model of that reach — shared by render-mode classification here
+    and the center-total overflow detector, so the two can't disagree about
+    how much width the labels consume.
+    """
+    pie_cfg = get_chart_rendering().pie
+    measurer = get_font_measurer(font_family)
+    reach = pie_cfg.label_reach_coefficient * max(
+        (measurer.measure(line, font_size) for line in label_lines),
+        default=0.0,
+    )
+    return max(0.0, width - 2.0 * (label_offset + reach))
+
+
 def classify_arc_render_mode(
     shares: list[float],
     label_lines: list[str],
@@ -123,12 +149,7 @@ def classify_arc_render_mode(
     visible = sum(share > pie_cfg.wedge_label_min_share for share in shares)
     if visible == 0:
         return "full_table"
-    measurer = get_font_measurer(font_family)
-    reach = pie_cfg.label_reach_coefficient * max(
-        (measurer.measure(line, font_size) for line in label_lines),
-        default=0.0,
-    )
-    labeled = max(0.0, width - 2.0 * (label_offset + reach))
+    labeled = arc_disk_width(label_lines, font_family, font_size, label_offset, width)
     ratio = min(1.0, labeled / (width * pie_cfg.outer_fraction))
     if ratio < pie_cfg.wheel_dominance_min_ratio:
         return "full_table"
@@ -169,8 +190,17 @@ def plan_attachment(
     value_format: FormatState,
     table_style: TableChartStyle,
     width: float,
+    category_colors: tuple[CategoryColorScale, ...],
 ) -> AttachmentPlan:
-    """Measure the companion table and split the card between it and the wheel."""
+    """Measure the companion table and split the card between it and the wheel.
+
+    ``category_colors`` doesn't change the measured swatch column width (it's
+    a fixed constant, see ``build_attached_table_columns``) -- it's threaded
+    through so the swatch this compile-time plan bakes into ``rows`` stays
+    consistent with the one the render path (``prepare_pie_render_rows``)
+    projects from the same wedge-fill resolution, rather than the two paths
+    quietly diverging.
+    """
     pie_cfg = get_chart_rendering().pie
     row_indices = tuple(
         range(len(data))
@@ -182,7 +212,7 @@ def plan_attachment(
         )
     )
     rows = project_pie_table_rows(
-        data, shares, palette, color_field, theta_field, row_indices
+        data, shares, palette, color_field, theta_field, row_indices, category_colors
     )
     columns, natural_width = build_attached_table_columns(
         rows, value_format, table_style

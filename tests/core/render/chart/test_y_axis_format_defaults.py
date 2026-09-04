@@ -1,6 +1,6 @@
 """Tests for quantitative y-axis format defaults via theme cascade.
 
-The theme default ``axis_quantitative.format`` references the ``number_default``
+The theme default ``axis_quantitative.format`` references the ``number``
 alias, which resolves to ``.3~s`` — a bounded (3-sig-fig) compact SI format that
 drives number formatting for all quantitative y-axes — including ``type: layered``
 — without magic column-name inference. The alias lives in ``_base.yaml``.
@@ -41,7 +41,7 @@ class TestBarChartGetsCompactFormat:
         Uses explicit vertical orientation so the VL y-axis is quantitative
         and the theme's axis_quantitative.format cascade applies. The emitted
         value is the fully resolved literal (``.3~s``), never the raw alias
-        name (``number_default``) — this doubles as the alias no-leak guard.
+        name (``number``) — this doubles as the alias no-leak guard.
         """
         chart = make_chart(
             "bar",
@@ -58,7 +58,7 @@ class TestBarChartGetsCompactFormat:
         axis_fmt = spec["encoding"]["y"]["axis"].get("format")
         assert axis_fmt == ".3~s", (
             f"Expected axis.format='.3~s' from theme cascade, got {axis_fmt!r}. "
-            "axis_quantitative.format references the number_default alias (.3~s) "
+            "axis_quantitative.format references the number alias (.3~s) "
             "in _base.yaml; the alias must resolve, not leak its name."
         )
 

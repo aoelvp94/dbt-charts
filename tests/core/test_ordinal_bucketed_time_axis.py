@@ -29,6 +29,7 @@ from dbt_charts.core.compile.models.style.authored import (
     AxisXStylePatch,
     BarChartStylePatch,
     DimensionLabelStylePatch,
+    DimensionTicksStylePatch,
     LineChartStylePatch,
 )
 from dbt_charts.core.compile.resolve import resolve
@@ -50,8 +51,15 @@ def _area(x: str = "month", y: str = "revenue", **kwargs: object) -> Chart:
     return AreaChart(id="test_area", type="area", x=x, y=y, **kwargs)
 
 
-def _monthly_data() -> list[dict]:
-    return [{"month": f"2024-{m:02d}-01", "revenue": m * 100} for m in range(1, 13)]
+def _monthly_span(n_months: int = 12) -> list[dict]:
+    """``n_months`` of first-of-month ISO strings starting 2024-01-01."""
+    return [
+        {
+            "month": dt.date(2024 + (i // 12), (i % 12) + 1, 1).isoformat(),
+            "revenue": i * 10,
+        }
+        for i in range(n_months)
+    ]
 
 
 class TestOrdinalDefaultForBucketedTime:
@@ -59,7 +67,7 @@ class TestOrdinalDefaultForBucketedTime:
 
     def test_bar_monthly_string_dates_emits_ordinal(self) -> None:
         chart = _bar()
-        data = _monthly_data()
+        data = _monthly_span()
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
 
@@ -70,7 +78,7 @@ class TestOrdinalDefaultForBucketedTime:
         # Line always routes a bucketed-calendar grain to continuous temporal
         # (see value-driven-axis-type-inference task) — bar stays ordinal.
         chart = _line()
-        data = _monthly_data()
+        data = _monthly_span()
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
 
@@ -79,7 +87,7 @@ class TestOrdinalDefaultForBucketedTime:
 
     def test_area_monthly_string_dates_emits_temporal(self) -> None:
         chart = _area()
-        data = _monthly_data()
+        data = _monthly_span()
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
 
@@ -123,11 +131,30 @@ class TestOrdinalDefaultForBucketedTime:
         spec = render_resolved_chart(resolved, data, _BOARD_STYLE, width=400).payload
 
         assert spec["encoding"]["x"]["type"] == "ordinal"
-        assert ": ''" not in spec["encoding"]["x"]["axis"]["labelExpr"]
+        # Coarsens to year cadence at this width: the stacked year-row check
+        # now also catches the domain's literal first tick (Jan 2022, the
+        # labelExpr's unconditional `anchor`) against the very next quarter's
+        # own fiscal-year-start year row (April 2022, `fiscal_month === 0`)
+        # — a real collision the old flush-only year-row check missed
+        # (`_pair_clears` used to gate a tick carrying the year row on being
+        # a FLUSHED edge, but the anchor tick's year row paints regardless of
+        # flush). Every value actually placed on this axis is a genuine
+        # fiscal-year opener, so the labelExpr's period-opener gate
+        # (`fiscal_month === 0`) is always true for what renders — nothing
+        # paints blank, even though the expression itself still carries a
+        # defensive `: ''` fallback for values outside this set.
+        values = spec["encoding"]["x"]["axis"].get("values")
+        assert values, (
+            "expected explicit tick values on the ordinal fiscal-quarter axis"
+        )
+        assert all(dt.date.fromisoformat(v).month == 4 for v in values), (
+            f"every rendered tick must be a fiscal-year opener, or the "
+            f"period-opener gate would blank it: {values}"
+        )
 
     def test_ordinal_path_emits_no_timeunit(self) -> None:
         chart = _bar()
-        data = _monthly_data()
+        data = _monthly_span()
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
 
@@ -141,7 +168,7 @@ class TestOrdinalDefaultForBucketedTime:
         # Dates on the temporal path; UTC components match `scale.type: utc`
         # so the cadence gate doesn't drift in non-UTC renderers.
         chart = _bar()
-        data = _monthly_data()
+        data = _monthly_span()
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
 
@@ -160,7 +187,7 @@ class TestOrdinalDefaultForBucketedTime:
 
     def test_ordinal_path_emits_axis_values(self) -> None:
         chart = _bar()
-        data = _monthly_data()
+        data = _monthly_span()
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
 
@@ -206,7 +233,7 @@ class TestTemporalEscapeHatch:
     def test_axis_x_type_temporal_forces_temporal(self) -> None:
         style = BarChartStylePatch(axis_x=AxisXStylePatch(type="temporal"))
         chart = _bar(style=style)
-        data = _monthly_data()
+        data = _monthly_span()
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
 
@@ -219,7 +246,7 @@ class TestTemporalEscapeHatch:
     def test_axis_x_type_temporal_emits_timunit_and_label_expr(self) -> None:
         style = BarChartStylePatch(axis_x=AxisXStylePatch(type="temporal"))
         chart = _bar(style=style)
-        data = _monthly_data()
+        data = _monthly_span()
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
 
@@ -232,7 +259,7 @@ class TestTemporalEscapeHatch:
         # "auto" is the default; behaves same as None (ordinal for bucketed time)
         style = BarChartStylePatch(axis_x=AxisXStylePatch(type="auto"))
         chart = _bar(style=style)
-        data = _monthly_data()
+        data = _monthly_span()
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
 
@@ -329,7 +356,7 @@ class TestTimeUnitNoneStaysTemporal:
     def test_time_unit_none_stays_temporal(self) -> None:
         style = BarChartStylePatch(axis_x=AxisXStylePatch(time_unit="none"))
         chart = _bar(style=style)
-        data = _monthly_data()
+        data = _monthly_span()
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
 
@@ -346,7 +373,7 @@ class TestTimePartUnitsRemainTemporal:
     def test_monthofyear_stays_temporal(self) -> None:
         style = BarChartStylePatch(axis_x=AxisXStylePatch(time_unit="monthofyear"))
         chart = _bar(style=style)
-        data = _monthly_data()
+        data = _monthly_span()
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
 
@@ -396,9 +423,15 @@ def _daily_data(n_days: int = 400) -> list[dict]:
 
 
 class TestDailyTickDensity:
-    """Daily labels promoted to months carry monthly ticks with them."""
+    """Daily labels promoted to months, without re-graining bar's ticks.
 
-    def test_daily_400_points_uses_month_opener_ticks(self) -> None:
+    Bar gets the _LABEL_THINNING_TICK_MARK_TYPES restoration: a render-local
+    (non-authored) promotion keeps a tick under every daily bucket (`values`
+    stays every day) and turns `ticks: True` back on — only the label TEXT
+    thins to monthly openers via labelExpr gating.
+    """
+
+    def test_daily_400_points_keeps_every_bucket_and_restores_ticks(self) -> None:
         chart = BarChart(id="daily_bar", type="bar", x="day", y="value")
         data = _daily_data(400)
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
@@ -406,10 +439,11 @@ class TestDailyTickDensity:
 
         x_axis = spec.get("encoding", {}).get("x", {}).get("axis", {})
         values = x_axis.get("values", [])
-        assert 13 <= len(values) <= 14
+        assert len(values) == 400
+        assert x_axis.get("ticks") is True
 
     def test_daily_400_points_labels_thin_to_monthly_openers(self) -> None:
-        """Automatic monthly labels and ticks share the same openers."""
+        """Automatic monthly label TEXT thins via labelExpr, not `values`."""
         chart = BarChart(id="daily_bar2", type="bar", x="day", y="value")
         data = _daily_data(400)
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
@@ -417,7 +451,7 @@ class TestDailyTickDensity:
 
         x_axis = spec.get("encoding", {}).get("x", {}).get("axis", {})
         values = x_axis.get("values", [])
-        assert 13 <= len(values) <= 14
+        assert len(values) == 400
         label_expr = x_axis.get("labelExpr", "")
         assert label_expr, "labelExpr must be present to thin label text"
         assert "utcmonth" in label_expr, (
@@ -444,3 +478,79 @@ class TestDailyTickDensity:
 
         values = spec.get("encoding", {}).get("x", {}).get("axis", {}).get("values", [])
         assert len(values) >= 28
+
+
+class TestHighCardinalityTemporalBarTicks:
+    """A bar past ``max_ordinal_buckets`` resolves temporal but still needs ticks.
+
+    The ordinal branch's restoration cannot reach it, so year-cadence labels
+    would otherwise sit over 137 unmarked monthly bars with nothing linking a
+    label to the bar it names.
+    """
+
+    def test_137_month_bar_restores_ticks_at_the_label_cadence_grain(self) -> None:
+        data = _monthly_span(137)
+        chart = _bar(x="month")
+        resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
+        spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
+
+        x_enc = spec["encoding"]["x"]
+        assert x_enc["type"] == "temporal"
+        x_axis = x_enc.get("axis", {})
+        assert x_axis.get("ticks") is True
+        values = x_axis.get("values", [])
+        assert len(values) == 12, (
+            "ticks must land at the year label cadence, not under every bucket; "
+            f"got {len(values)} values"
+        )
+
+    def test_unthinned_bar_keeps_its_ticks_hidden(self) -> None:
+        """Every bucket labeled — a tick under each would say nothing new."""
+        data = _monthly_span(12)
+        chart = _bar(x="month")
+        resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
+        spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
+
+        x_enc = spec["encoding"]["x"]
+        # Under the cap, so this pins the ORDINAL branch's restoration, not the
+        # temporal guard above it.
+        assert x_enc["type"] == "ordinal"
+        x_axis = x_enc.get("axis", {})
+        assert x_axis.get("ticks") is False
+        assert len(x_axis.get("values", [])) == 12
+
+    def test_thinned_line_keeps_its_ticks_the_theme_left_them(self) -> None:
+        """The mark-type half of the gate: only bar/histogram get restoration.
+
+        A line on the same thinned 137-month domain must not have its ticks
+        flipped on. Without this, deleting the ``mark_type`` check would
+        silently restore ticks on line/area/scatter with green CI.
+        """
+        data = _monthly_span(137)
+        style = LineChartStylePatch(
+            axis_x=AxisXStylePatch(ticks=DimensionTicksStylePatch(visible=False))
+        )
+        chart = _line(x="month", style=style)
+        resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
+        spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
+
+        x_enc = spec["encoding"]["x"]
+        assert x_enc["type"] == "temporal"
+        x_axis = x_enc.get("axis", {})
+        assert x_axis.get("ticks") is False
+        # Same thinning the bar case sees — so the gate, not the absence of
+        # thinning, is what keeps these off.
+        assert len(x_axis.get("values", [])) == 12
+
+    def test_authored_tick_count_keeps_the_axis_the_authors(self) -> None:
+        """An authored cadence owns the ticks; the render does not override it."""
+        data = _monthly_span(137)
+        style = BarChartStylePatch(
+            axis_x=AxisXStylePatch(ticks=DimensionTicksStylePatch(count=6))
+        )
+        chart = _bar(x="month", style=style)
+        resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
+        spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
+
+        x_axis = spec["encoding"]["x"].get("axis", {})
+        assert x_axis.get("ticks") is False

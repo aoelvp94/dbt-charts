@@ -3,7 +3,7 @@
 # result cache ({{ queries.X.cache }} + cache: false).
 
 title: Reusing Queries & the Cache
-description: Build queries from other queries, and let the result cache do the repeated work.
+notes: Build queries from other queries, and let the result cache do the repeated work.
 source: examples_db
 
 text: |

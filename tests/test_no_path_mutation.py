@@ -15,7 +15,7 @@ intentionally not covered here.
 
 An absolute-dotted-import invariant used to live here too (``from
 dbt-charts.tests... import``), guarding against a real but easy mistake when
-the top-level directory was ``dataface`` (a valid Python identifier). The
+the pre-rename top-level directory was a valid Python identifier. The
 directory rename to ``dbt-charts`` made that mistake syntactically
 impossible — a dotted import segment can't contain a hyphen, so no ``.py``
 file can ever spell that import — and the guard was deleted along with it.

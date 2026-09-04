@@ -19,6 +19,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
     BarChart,
     Chart,
+    HeatmapChart,
     LineChart,
 )
 from dbt_charts.core.compile.models.chart.resolved._partition import PartitionAxis
@@ -37,10 +38,12 @@ def reset():
 
 
 def _board() -> Any:
-    return resolve_style_and_context(get_theme_style("editorial"))
+    return resolve_style_and_context(get_theme_style("clarity"))
 
 
-def _v2_vl(norm: Chart, data: list[dict[str, Any]]) -> dict[str, Any]:
+def _v2_vl(
+    norm: Chart, data: list[dict[str, Any]], box: RenderBox = _DEFAULT_BOX
+) -> dict[str, Any]:
     from dbt_charts.core.compile.resolve import resolve
     from dbt_charts.core.render.chart.session import BoardRenderSession
 
@@ -48,7 +51,28 @@ def _v2_vl(norm: Chart, data: list[dict[str, Any]]) -> dict[str, Any]:
     resolved = resolve(norm, data, chart_style_context=board_ctx)
     session = BoardRenderSession.create(board_rs)
     return session.finalize_vl(
-        session.emit_chart(resolved, _DEFAULT_BOX, {resolved.query_name: data})
+        session.emit_chart(resolved, box, {resolved.query_name: data})
+    )
+
+
+def _wide_columns_box(
+    card_width: float, data: list[dict[str, Any]], col_field: str
+) -> RenderBox:
+    """A RenderBox carrying a REAL ``facet_unnarrowed_panel_width`` (not
+    ``_DEFAULT_BOX``'s ``None``) — for tests that must exercise
+    ``facet_bound_position_channels``'s affordability gate honestly rather
+    than lean on ``None`` skipping it. Column cardinality is read straight
+    off the test's own authored ``data`` (the same value resolve would bake
+    onto ``panel_axes``), not re-resolved, since the caller already knows
+    it. ``card_width`` should be wide enough that the real reservation
+    genuinely fits — a test asserting "resolves independently" must be
+    honest about affordability, not merely untested for it."""
+    from dbt_charts.core.compile.resolve.chart.adaptive_stroke import facet_panel_width
+
+    panel_cols = len({row[col_field] for row in data})
+    unnarrowed = facet_panel_width(card_width, panel_cols, False, extra_axis_px=0.0)
+    return RenderBox(
+        width=card_width, height=300.0, facet_unnarrowed_panel_width=unnarrowed
     )
 
 
@@ -69,6 +93,15 @@ def _grid_data() -> list[dict[str, Any]]:
     return rows
 
 
+def _bar_x_is_facet_field_data() -> list[dict[str, Any]]:
+    """One row per ``product`` — an x field that IS the facet field can hold
+    at most one row per panel (bar requires pre-aggregated data)."""
+    return [
+        {"product": p, "revenue": 100 + i * 10}
+        for i, p in enumerate(("Widgets", "Gadgets", "Doodads"))
+    ]
+
+
 def _row_data() -> list[dict[str, Any]]:
     return [
         {"month": m, "region": r, "revenue": 100 + m * 5}
@@ -86,6 +119,44 @@ def _grouped_horizontal_bar_data() -> list[dict[str, Any]]:
             for segment in ("A", "B")
             for q in ("Q1", "Q2")
         )
+    ]
+
+
+def _series_faceted_data() -> list[dict[str, Any]]:
+    """One row per (series, month) — the 17A/17G corpus shape: a facet field
+    that is ALSO bound to an inner channel (bar's ``color``, heatmap's ``y``)."""
+    return [
+        {"x_time": f"2024-{m:02d}-01", "series": s, "value": 10 + m + i * 5}
+        for i, s in enumerate(("S1", "S2", "S3", "S4", "S5"))
+        for m in range(1, 13)
+    ]
+
+
+def _grid_two_fields_sparse_y_data() -> list[dict[str, Any]]:
+    """4 panels split by (region, quarter) — two DIFFERENT facet fields,
+    neither named ``series`` — each holding a proper subset of the 5-series
+    ``y`` domain. Unlike ``_series_faceted_data`` above (a facet field
+    double-encoded onto ``y``), no field here is named on more than one
+    channel/axis; this is the shape ERR-MULTIPLES-SELF-CROSSED does NOT
+    refuse (that error is specifically for naming the SAME field on both
+    facet axes, which fills only the diagonal — see
+    ``test_heatmap_y_bound_to_grid_over_different_fields_resolves_independently``)."""
+    cells = {
+        ("West", "Q1"): ("S1", "S2"),
+        ("West", "Q2"): ("S1", "S2", "S3"),
+        ("East", "Q1"): ("S3", "S4"),
+        ("East", "Q2"): ("S4", "S5"),
+    }
+    return [
+        {
+            "x_time": "2024-01-01",
+            "series": s,
+            "value": 10,
+            "region": region,
+            "quarter": quarter,
+        }
+        for (region, quarter), series_list in cells.items()
+        for s in series_list
     ]
 
 
@@ -132,6 +203,21 @@ def _area(multiples: dict[str, Any], **extra: Any) -> AreaChart:
             "query_name": "q",
             "x": "month",
             "y": "revenue",
+            "multiples": multiples,
+            **extra,
+        }
+    )
+
+
+def _heatmap(multiples: dict[str, Any], **extra: Any) -> HeatmapChart:
+    return HeatmapChart.model_validate(
+        {
+            "id": "t",
+            "type": "heatmap",
+            "query_name": "q",
+            "x": "x_time",
+            "y": "series",
+            "color": "value",
             "multiples": multiples,
             **extra,
         }
@@ -222,7 +308,12 @@ class TestFacetScale:
         chart = _bar(
             {"rows": "region", "scale": "independent"},
             "horizontal",
-            layers=[{"type": "line", "x": "revenue", "y": "target"}],
+            # No layer `x`: in authored space `x` is the CATEGORY column on both
+            # orientations, so the layer inherits the base's. (This once read
+            # `x: revenue` — the measure — and validated only because the
+            # overlay compared it against the base's VL x, which a horizontal
+            # base draws its measure on.)
+            layers=[{"type": "line", "y": "target"}],
         )
         spec = _v2_vl(chart, _lopsided_row_data())
         scale_resolve = spec.get("resolve", {}).get("scale", {})
@@ -278,6 +369,62 @@ class TestFacetMirrorDefault:
             "left",
             "right",
         ], f"expected 2 outer edges, got {edges}"
+
+    def test_columns_without_y_does_not_mirror(self):
+        """A columns chart authoring no `y:` has no measure axis, so the
+        auto-mirror default has nothing to reflect — it must stay off and the
+        chart must render. Previously the default fired anyway (the family
+        resolvers pass the semantic y channel type, "quantitative", even when
+        no y exists) and MirrorAxisFeature died with the code-less
+        ChartDataError that surfaces as ERR-INTERNAL — for a board the design
+        panel can produce by clearing y."""
+        chart = LineChart.model_validate(
+            {
+                "id": "t",
+                "type": "line",
+                "query_name": "q",
+                "x": "month",
+                "multiples": {"columns": "region"},
+            }
+        )
+        spec = _v2_vl(chart, _row_data())
+        assert _y_axis_orients(spec["spec"]) == set()
+        # The render-side guard alone would satisfy the spec assertion above
+        # (no y -> no y axis either way) — pin the resolve-side edit itself:
+        # the auto-default must not bake mirror onto a measure-less chart.
+        from dbt_charts.core.compile.resolve import resolve
+
+        _, board_ctx = _board()
+        resolved = resolve(chart, _row_data(), chart_style_context=board_ctx)
+        assert resolved.style.axis_y.mirror is None
+
+    def test_columns_with_layers_does_not_auto_mirror(self):
+        """The overlay assembly moves every y encoding onto the layers, so a
+        layered chart has no shared y encoding for the ghost to bind — an
+        authored mirror there is refused with ERR-MIRROR-LAYERS at render,
+        and the engine's own auto-default must never author its way into
+        that refusal. Regression: the default fired, render skipped it
+        silently, and facet_panel_width still reserved the mirrored-edge
+        gutter for an axis that never painted."""
+        from dbt_charts.core.compile.resolve import resolve
+
+        chart = LineChart.model_validate(
+            {
+                "id": "t",
+                "type": "line",
+                "query_name": "q",
+                "x": "month",
+                "y": "revenue",
+                "layers": [{"type": "line", "y": "target"}],
+                "multiples": {"columns": "region"},
+            }
+        )
+        data = [{**row, "target": 90} for row in _row_data()]
+        _, board_ctx = _board()
+        resolved = resolve(chart, data, chart_style_context=board_ctx)
+        assert resolved.style.axis_y.mirror is None
+        spec = _v2_vl(chart, data)
+        assert spec["spec"].get("resolve", {}).get("axis", {}).get("y") != "independent"
 
     def test_explicit_mirror_false_wins_with_columns(self):
         """Explicit author intent always wins: mirror:false stays off with columns."""
@@ -726,7 +873,12 @@ class TestFacetLayout:
 
         vl = _facet_vl(row="region")
         _apply_facet_layout(
-            vl, _axes(("region", 3)), has_mirror=False, width=800, height=300
+            vl,
+            _axes(("region", 3)),
+            has_mirror=False,
+            width=800,
+            height=300,
+            extra_axis_px=0.0,
         )
         # One column: full slot minus the header/axis gutter.
         assert vl["spec"]["width"] == 800 - _facet_cfg().chrome_px
@@ -739,7 +891,12 @@ class TestFacetLayout:
         # Columns-only strip: one row, three columns, both-edge axis present.
         vl = _facet_vl(column="region", both_edge=True)
         _apply_facet_layout(
-            vl, _axes(("region", 3)), has_mirror=True, width=900, height=200
+            vl,
+            _axes(("region", 3)),
+            has_mirror=True,
+            width=900,
+            height=200,
+            extra_axis_px=0.0,
         )
         chrome = _facet_cfg().chrome_px + _facet_cfg().mirror_axis_px
         assert vl["spec"]["width"] == (900 - chrome) / 3
@@ -755,6 +912,7 @@ class TestFacetLayout:
             has_mirror=True,
             width=800,
             height=300,
+            extra_axis_px=0.0,
         )
         chrome = _facet_cfg().chrome_px + _facet_cfg().mirror_axis_px
         assert vl["spec"]["width"] == (800 - chrome) / 2
@@ -773,6 +931,7 @@ class TestFacetLayout:
             has_mirror=False,
             width=100,
             height=300,
+            extra_axis_px=0.0,
         )
         # Two product columns, no mirror: (100 - chrome_px) floored at 0, / 2.
         assert vl["spec"]["width"] < _facet_cfg().min_panel_px
@@ -930,7 +1089,7 @@ class TestRenderChartBridge:
             "no explicit height given: nothing should be stamped on the unit spec"
         )
         y_title = traced["spec"]["encoding"]["y"]["title"]
-        assert y_title == ["Estimated Total Revenue from New", "Customers"], (
+        assert y_title == ["estimated total revenue from new", "customers"], (
             f"y title wrapped against a divided height, got {y_title!r}"
         )
 
@@ -1070,26 +1229,434 @@ class TestFacetRefusals:
         with pytest.raises(ChartDataError, match="not found in the query result"):
             _v2_vl(chart, _row_data())
 
-    def test_facet_plus_data_table_raises(self):
-        """Fires the typed ERR-MULTIPLES-DATA-TABLE code, never the
+    def test_facet_plus_support_table_raises(self):
+        """Fires the typed ERR-MULTIPLES-SUPPORT-TABLE code, never the
         ERR-INTERNAL fallback."""
-        from dbt_charts.core.compile.models.chart.authored import ChartDataTable
-        from dbt_charts.core.diagnostics.codes_render import ERR_MULTIPLES_DATA_TABLE
+        from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
+        from dbt_charts.core.diagnostics.codes_render import ERR_MULTIPLES_SUPPORT_TABLE
         from dbt_charts.core.render.chart.features.facet import FacetFeature
         from dbt_charts.core.render.chart.spec import ChartSpec
 
         resolved = self._resolved_area({"rows": "region"}).model_copy(
             update={
-                "data_table": ChartDataTable.model_validate(
+                "support_table": ChartSupportTable.model_validate(
                     {"entries": [{"source": "revenue"}]}
                 )
             }
         )
-        with pytest.raises(ChartDataError, match="data_table") as exc_info:
+        with pytest.raises(ChartDataError, match="support_table") as exc_info:
             FacetFeature().apply(
                 ChartSpec(mark="area"),
                 resolved,
                 _DEFAULT_BOX,
                 {resolved.query_name: _row_data()},
             )
-        assert exc_info.value.code is ERR_MULTIPLES_DATA_TABLE
+        assert exc_info.value.code is ERR_MULTIPLES_SUPPORT_TABLE
+
+
+class TestFacetFieldDoubleEncoding:
+    """A facet panel's rows carry a proper subset of a position channel's
+    domain — 17G (heatmap's ``y`` double-encoding the facet field) in the
+    chart-case matrix corpus is one instance of this, not the whole rule.
+    The colour scale stays shared across panels; only positional band/axis
+    space narrows to the panel's own subset — a panel must not reserve a
+    band slot or an axis row for a value it does not contain.
+
+    Narrowing is decided from the actual per-panel data
+    (``_panel_domain_is_proper_subset`` in ``emitters/_cartesian.py``), not
+    from whether the channel's field happens to equal a facet field — a
+    facet field double-encoded onto a channel always narrows by
+    construction (every panel holds exactly its one facet-key value, a
+    proper subset of the full domain whenever more than one exists), but so
+    does an unrelated field whose data just happens to be sparse per panel.
+
+    A row-varying channel (VL "y" under a rows facet) costs no unbudgeted
+    space to narrow — VL already draws that axis once per row panel. A
+    column-varying channel (VL "y" under a columns/grid facet) forces VL to
+    draw a whole extra axis inside every column panel; `facet_panel_width()`
+    budgets that extra, measured width (`facet_extra_axis_width_px`) rather
+    than refusing to narrow there. See ``facet_bound_position_channels``'s
+    docstring in ``emitters/_cartesian.py``.
+    """
+
+    def test_heatmap_y_bound_to_rows_only_facet_resolves_independently(self):
+        """heatmap ``y: series``, ``multiples: {rows: series}`` — VL's facet
+        default shares position scales across panels, so without this fix
+        every panel's y axis lists all 5 series even though it draws cells for
+        only one."""
+        spec = _v2_vl(_heatmap({"rows": "series"}), _series_faceted_data())
+        assert spec.get("resolve", {}).get("scale", {}).get("y") == "independent"
+
+    def test_heatmap_y_bound_to_columns_only_resolves_independently(self):
+        """heatmap ``y: series``, ``multiples: {columns: series}`` — under a
+        columns facet VL otherwise draws the y axis once, at the left;
+        forcing it independent paints a whole extra axis inside every
+        column panel. That extra axis is now budgeted by measurement
+        (``facet_extra_axis_width_px``), so this narrows too — each panel
+        still holds exactly one of the five series.
+
+        Not an exemplary authoring shape: naming the facet field on ``y``
+        too is exactly the redundant/degenerate case
+        WARN-REDUNDANT-ENCODING flags elsewhere (the facet channels are
+        counted alongside x/y/color/size/shape/theta when checking a field
+        against >= 2 channels) — this board would render with that warning
+        attached. Kept here anyway because it still genuinely exercises the
+        domain-subset predicate on real per-panel data (each panel's own
+        "series" values are computed and checked, not shortcut by a name
+        match), it just does so on a shape an author would normally be
+        steered away from. The general, unredundant case — different
+        fields, still narrows — is `TestDomainSubsetPredicate` in
+        `test_facet_domain_subset_narrowing.py`.
+
+        Uses a wide `_wide_columns_box`, not `_DEFAULT_BOX`: this is the
+        columns/grid-facet width-BUDGETED case
+        (`facet_bound_position_channels`'s affordability gate), and
+        `_DEFAULT_BOX` carries no real `facet_unnarrowed_panel_width` — at
+        `_DEFAULT_BOX`'s narrow 600px/5-column baseline the honest
+        arithmetic actually declines (matches the registered matrix-corpus
+        trade-off for this exact 5-column shape). A card wide enough that
+        the reservation genuinely fits is what makes "resolves
+        independently" a true claim rather than an artifact of skipping
+        the affordability check.
+        """
+        data = _series_faceted_data()
+        box = _wide_columns_box(3000.0, data, "series")
+        spec = _v2_vl(_heatmap({"columns": "series"}), data, box)
+        assert spec.get("resolve", {}).get("scale", {}).get("y") == "independent"
+
+    def test_heatmap_y_bound_to_grid_over_different_fields_resolves_independently(
+        self,
+    ):
+        """A grid over two DIFFERENT facet fields (``rows: region``,
+        ``columns: quarter``) — authorable, unlike naming the same field on
+        both axes (ERR-MULTIPLES-SELF-CROSSED refuses that at compile: only
+        the diagonal panels could ever hold a row, so a name-crossed grid is
+        not a real board an author can write). ``y: series`` is a THIRD
+        field, sparsely populated per (region, quarter) cell — e.g. the
+        West/Q1 panel holds only 2 of the 5 series. Pins the same assertion
+        as the single-dimension cases above on a shape that stays
+        authorable: a panel holding a proper subset narrows regardless of
+        how many facet dimensions are involved, whatever field each one
+        names.
+
+        Uses `_wide_columns_box`, same reasoning as the columns-only case
+        above — a real, generously affordable `facet_unnarrowed_panel_width`
+        rather than `_DEFAULT_BOX`'s `None` (which would only pass by
+        skipping the affordability check, not by genuinely satisfying it).
+        """
+        data = _grid_two_fields_sparse_y_data()
+        box = _wide_columns_box(3000.0, data, "quarter")
+        spec = _v2_vl(_heatmap({"rows": "region", "columns": "quarter"}), data, box)
+        assert spec.get("resolve", {}).get("scale", {}).get("y") == "independent"
+
+    def test_heatmap_color_measure_stays_shared(self):
+        """The value gradient is not bound to the facet field, so it keeps one
+        shared scale across panels — comparability is the point of small
+        multiples, and this fix must not touch it."""
+        spec = _v2_vl(_heatmap({"rows": "series"}), _series_faceted_data())
+        assert spec.get("resolve", {}).get("scale", {}).get("color") != "independent"
+
+    def test_heatmap_y_sparse_against_a_different_facet_field_resolves_independently(
+        self,
+    ):
+        """The general case this fix exists for: the facet field (``panel``)
+        and the narrowed channel's field (``series``) are NOT the same field
+        — no name match — yet each panel's own rows still carry a proper
+        subset of the five-series domain (Group A: S1-S3, Group B: S4-S5).
+        A name-match predicate would miss this entirely; a domain-subset
+        predicate catches it because it reads the panels' actual data."""
+        data = [
+            {
+                "x_time": f"2024-{m:02d}-01",
+                "series": s,
+                "panel": "Group A" if i < 3 else "Group B",
+                "value": 10 + m + i * 5,
+            }
+            for i, s in enumerate(("S1", "S2", "S3", "S4", "S5"))
+            for m in range(1, 13)
+        ]
+        spec = _v2_vl(_heatmap({"rows": "panel"}), data)
+        assert spec.get("resolve", {}).get("scale", {}).get("y") == "independent"
+
+    def test_heatmap_y_full_domain_in_every_panel_stays_shared(self):
+        """The negative control for the domain-subset predicate: faceting on
+        a field whose panels each still carry the FULL ``series`` domain
+        (every panel has all 5 series) gains nothing from narrowing, so it
+        must stay shared — the predicate is data-driven, not "narrow
+        whenever the facet field differs from the channel field"."""
+        data = [
+            {
+                "x_time": f"2024-{m:02d}-01",
+                "series": s,
+                "panel": p,
+                "value": 10 + m,
+            }
+            for p in ("Group A", "Group B")
+            for s in ("S1", "S2", "S3", "S4", "S5")
+            for m in range(1, 13)
+        ]
+        spec = _v2_vl(_heatmap({"rows": "panel"}), data)
+        assert spec.get("resolve", {}).get("scale", {}).get("y") != "independent"
+
+    def test_vertical_bar_x_bound_to_columns_only_resolves_independently(self):
+        """The symmetric, un-flipped counterpart of the heatmap ``y`` case:
+        ``chart.x`` maps straight to VL ``x`` (no orientation flip), and a
+        columns-only facet already draws an x axis once per column panel by
+        default — narrowing it costs no unbudgeted space."""
+        spec = _v2_vl(
+            _bar({"columns": "product"}, "vertical"), _bar_x_is_facet_field_data()
+        )
+        assert spec.get("resolve", {}).get("scale", {}).get("x") == "independent"
+
+    def test_horizontal_bar_x_bound_to_rows_facet_resolves_y_not_x(self):
+        """A horizontal bar flips its axes — the category (``chart.x``) rides
+        VL ``y``. Narrowing must land on ``y``, not ``x``: swap the mapping
+        and the render frees the measure scale instead, leaving the phantom
+        category rows in place while un-sharing a scale the author never
+        asked to un-share."""
+        spec = _v2_vl(
+            _bar({"rows": "product"}, "horizontal"), _bar_x_is_facet_field_data()
+        )
+        scale_resolve = spec.get("resolve", {}).get("scale", {})
+        assert scale_resolve.get("y") == "independent"
+        assert scale_resolve.get("x") != "independent"
+
+    def test_facet_bound_channel_and_author_opted_measure_scale_coexist(self):
+        """The author-opted ``multiples.scale: independent`` (measure
+        channel) and this fix's facet-bound-channel narrowing write into the
+        same ``resolve.scale`` dict under different keys — one must not
+        clobber the other."""
+        spec = _v2_vl(
+            _bar({"columns": "product", "scale": "independent"}, "vertical"),
+            _bar_x_is_facet_field_data(),
+        )
+        scale_resolve = spec.get("resolve", {}).get("scale", {})
+        assert scale_resolve.get("x") == "independent"  # facet-bound category
+        assert scale_resolve.get("y") == "independent"  # author-opted measure
+
+    def test_vertical_bar_x_bound_to_rows_facet_stays_shared(self):
+        """The `_unbudgeted("x")` guard: a rows (or grid) facet already
+        shares the x axis across the row-varying dimension by default —
+        narrowing it there paints a whole extra axis per row panel,
+        unbudgeted, the direct analog of the CRITICAL this fix's columns/grid
+        restriction closed for `y`. A mutation that drops or inverts this
+        guard leaves every other test in this file green."""
+        spec = _v2_vl(
+            _bar({"rows": "product"}, "vertical"), _bar_x_is_facet_field_data()
+        )
+        assert spec.get("resolve", {}).get("scale", {}).get("x") != "independent"
+
+    def test_quantitative_y_bound_to_facet_field_stays_shared(self):
+        """A quantitative channel must never narrow, even in the otherwise-
+        safe rows-only shape: one panel's single value is not "the domain
+        with the unused slots trimmed" the way it is for an ordinal band —
+        it is a degenerate single-point scale that throws away the position-
+        within-the-shared-range information the chart exists to show.
+        Reachable shape from review: `type: line, y: revenue,
+        multiples: {rows: revenue}`."""
+        chart = LineChart.model_validate(
+            {
+                "id": "t",
+                "type": "line",
+                "query_name": "q",
+                "x": "month",
+                "y": "revenue",
+                "multiples": {"rows": "revenue"},
+            }
+        )
+        data = [{"month": i, "revenue": i * 10} for i in range(1, 6)]
+        spec = _v2_vl(chart, data)
+        assert spec.get("resolve", {}).get("scale", {}).get("y") != "independent"
+
+    def test_quantitative_x_bound_to_facet_field_stays_shared(self):
+        """Symmetric x-channel case, columns-only (otherwise the
+        `_unbudgeted` guard would also have excluded it, conflating the two
+        gates) — `type: line, x: revenue, multiples: {columns: revenue}`."""
+        chart = LineChart.model_validate(
+            {
+                "id": "t",
+                "type": "line",
+                "query_name": "q",
+                "x": "revenue",
+                "y": "month",
+                "multiples": {"columns": "revenue"},
+            }
+        )
+        data = [{"month": i, "revenue": i * 10} for i in range(1, 6)]
+        spec = _v2_vl(chart, data)
+        assert spec.get("resolve", {}).get("scale", {}).get("x") != "independent"
+
+    def test_layered_horizontal_bar_x_bound_to_rows_facet_stays_shared(self):
+        """A `layers:` overlay moves the base's own category (`chart.x`,
+        VL "y" once flipped) off the top-level VL encoding onto
+        `spec.layers[0]` — the gate in `FacetFeature` (which reads the
+        top-level encoding) and `effective_horizontal_bar_category_count`
+        (which runs before any ChartSpec exists, so it can't follow that
+        relocation) must agree on NOT narrowing here, or one budgets a
+        1-category height floor while the other keeps painting all 5 —
+        a real render squeeze with the warning that would flag it silenced.
+        Regression for a layered chart specifically; the unlayered sibling
+        is `test_horizontal_bar_x_bound_to_rows_facet_resolves_y_not_x`."""
+        chart = BarChart.model_validate(
+            {
+                "id": "t",
+                "type": "bar",
+                "query_name": "q",
+                "x": "product",
+                "y": "revenue",
+                "multiples": {"rows": "product"},
+                "style": {"orientation": "horizontal"},
+                "layers": [{"type": "line", "x": "target"}],
+            }
+        )
+        data = [
+            {"product": p, "revenue": 100 + i * 10, "target": 90 + i * 10}
+            for i, p in enumerate(("Widgets", "Gadgets", "Doodads"))
+        ]
+        spec = _v2_vl(chart, data)
+        assert spec.get("resolve", {}).get("scale", {}).get("y") != "independent"
+
+        from dbt_charts.core.compile.resolve import resolve
+        from dbt_charts.core.render.chart.emitters._cartesian import (
+            effective_horizontal_bar_category_count,
+        )
+
+        resolved = resolve(chart, data, chart_style_context=_board()[1])
+        # Must match the "not narrowed" verdict above: the whole-dataset
+        # union (3), not the 1-category-per-panel count a narrowed chart
+        # would need.
+        assert effective_horizontal_bar_category_count(resolved, data, None) == 3
+
+
+class TestBarColorFacetFieldCharacterization:
+    """Characterizes existing behaviour for 17A (bar's ``color`` double-
+    encoding the facet field) — NOT exercised by ``facet_bound_position_
+    channels``, which only narrows position channels (``x``/``y``). 17A's
+    band-width fix predates this task: ``_is_color_1to1_with_x``
+    (``emitters/bar.py``) already suppresses ``xOffset`` whenever a colour
+    channel is 1:1 with x per panel, which a facet-field/colour double-
+    encoding always is by construction. These pin that pre-existing
+    behaviour so a future change to either mechanism doesn't silently
+    regress it."""
+
+    def test_bar_color_bound_to_facet_field_paints_full_band(self):
+        chart = BarChart.model_validate(
+            {
+                "id": "t",
+                "type": "bar",
+                "query_name": "q",
+                "x": "x_time",
+                "y": "value",
+                "color": "series",
+                "multiples": {"rows": "series"},
+            }
+        )
+        spec = _v2_vl(chart, _series_faceted_data())
+        inner = spec["spec"]
+        assert "xOffset" not in inner.get("encoding", {})
+
+    def test_bar_color_scale_stays_shared_across_panels(self):
+        """Cross-panel colour identity: the colour scale stays one shared
+        domain even though it double-encodes the facet field — a category
+        must read the same colour in every panel. Vacuously true today
+        (``resolve`` is absent entirely for this chart — bar's ``color``
+        never enters ``facet_independent_channels``), so this also pins that
+        ``resolve`` stays absent rather than gaining a ``color`` entry."""
+        chart = BarChart.model_validate(
+            {
+                "id": "t",
+                "type": "bar",
+                "query_name": "q",
+                "x": "x_time",
+                "y": "value",
+                "color": "series",
+                "multiples": {"rows": "series"},
+            }
+        )
+        spec = _v2_vl(chart, _series_faceted_data())
+        assert "resolve" not in spec
+        assert spec.get("resolve", {}).get("scale", {}).get("color") != "independent"
+
+
+def _v2_artifact(
+    norm: Chart,
+    data: list[dict[str, Any]],
+    width: float = 600.0,
+    height: float | None = 300.0,
+) -> dict[str, Any]:
+    """The full artifact from ``_render_vl_artifact`` — one stage past ``_v2_vl``.
+
+    ``_v2_vl`` stops at ``finalize_vl``, which is before the facet branch stamps
+    its panel-geometry sentinels and bounds the root title, so neither is
+    reachable through it.
+    """
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.render.chart.vega_lite import _render_vl_artifact
+
+    board_rs, board_ctx = _board()
+    resolved = resolve(norm, data, chart_style_context=board_ctx)
+    artifact = _render_vl_artifact(
+        resolved,
+        data,
+        board_rs,
+        width=width,
+        height=height,
+        is_placeholder=False,
+        datasets=None,
+        padding=None,
+    )
+    assert artifact.kind == "vega_spec"
+    return artifact.payload
+
+
+@pytest.mark.parametrize(
+    ("multiples", "data_fn", "want_cols", "want_rows"),
+    [
+        ({"columns": "region"}, _row_data, 3, 1),
+        ({"rows": "region"}, _row_data, 1, 3),
+        ({"rows": "region", "columns": "product"}, _grid_data, 2, 3),
+    ],
+)
+def test_facet_artifact_stamps_panel_geometry_for_the_overshoot_probe(
+    multiples: dict[str, Any],
+    data_fn: Any,
+    want_cols: int,
+    want_rows: int,
+) -> None:
+    """The facet artifact carries the panel counts and the card's own bounds.
+
+    ``render_vega_spec``'s overshoot correction divides a measured overshoot by
+    these counts, so it cannot re-derive them — the facet branch is the only
+    place that holds both the baked ``panel_axes`` and the slot size. Without
+    them the correction silently does nothing at all.
+    """
+    vl = _v2_artifact(_area(multiples), data_fn(), width=600.0, height=300.0)
+
+    assert vl["$df_facet_panel_cols"] == want_cols
+    assert vl["$df_facet_panel_rows"] == want_rows
+    assert vl["$df_target_width"] == 600.0
+    assert vl["$df_target_height"] == 300.0
+
+
+def test_facet_title_is_bounded_by_the_card_width() -> None:
+    """A facet root's title wraps to the card, like every other family's.
+
+    A facet composite carries no top-level ``width`` — only its inner unit spec
+    does — so the title has nothing to wrap against unless the card width is
+    passed in explicitly. Left unbounded it reports its full natural width into
+    the overshoot probe, which then shrinks every panel to pay for a title that
+    was never really that wide.
+    """
+    long_title = (
+        "A deliberately long small-multiples title that runs well past the "
+        "width of the card it is drawn on"
+    )
+    vl = _v2_artifact(
+        _area({"columns": "region"}, title=long_title), _row_data(), width=600.0
+    )
+
+    assert vl["title"]["limit"] is not None
+    assert vl["title"]["limit"] <= 600.0
+    # The bound reached the text: whether the theme's overflow mode wraps it
+    # into lines or truncates it, what ships is no longer the untouched source.
+    assert vl["title"]["text"] != long_title

@@ -1,11 +1,31 @@
 # Categorical palette — vivid-10
 #
-# Chroma-pushed retune of category-10's arrangement: same hue-per-slot
-# identity, more saturated on the dull cool leads. Blue/cyan/green/gold/moss
-# are pushed toward the sRGB gamut ceiling (chroma ~0.13-0.16, hue held);
-# brown/purple/orange/gray/charcoal are byte-identical to the old category-10
-# stops. Purple is deliberately NOT bumped — a more-chromatic purple slides
-# toward blue under protanopia and worsens the blue-purple pair.
+# Chroma-pushed retune of category-10's hues, in green-third slot order.
+# Blue/cyan/green/gold/moss are pushed toward the sRGB gamut ceiling (chroma
+# ~0.13-0.16, hue held); brown/purple/orange/gray/charcoal are byte-identical
+# to the old category-10 stops. Purple is deliberately NOT bumped — a
+# more-chromatic purple slides toward blue under protanopia and worsens the
+# blue-purple pair.
+#
+# Slot order — the three constraints it satisfies, in priority order:
+#   1. Brown and charcoal sit past slot 7. They are the only two stops under
+#      3:1 against neon's near-black canvas (2.73:1 and 2.63:1), so a chart
+#      needs eight series before it draws one. Brown is also the least
+#      chromatic of the eight non-neutral hues (OKLCH C 0.071, under half of
+#      blue's 0.150 — only gray and charcoal sit lower, and they are meant
+#      to), a poor fit for slot 4 of a palette named for its chroma.
+#   2. Purple holds slot 6. Blue+purple is the weakest pair in the palette
+#      under protanopia (ΔE 5.33) and is the binding constraint on every
+#      ordering. Compacting the other hues forward to close brown's gap would
+#      promote purple to slot 5 and drop the five-series worst case from
+#      11.97 to 5.33; re-laying slots 3-7 instead holds 11.97 through N=5.
+#   3. Cyan holds slot 2.
+#
+# Worst-case CIEDE2000 across deuteranopia/protanopia/tritanopia as the first
+# N stops accumulate: 23.27, 11.97, 11.97, 11.97, 5.33, 4.35, ... The N=6 drop
+# is a ceiling rather than a regression — every ordering of these ten hexes
+# reaches it, because purple cannot sit later than 6 without pulling something
+# worse forward. Pinned in tests/core/test_vivid_10_palette.py.
 #
 # Categorical palettes have no LUT, no surface variants, no interpolation.
 # Stops are what you get — exactly as authored.
@@ -23,20 +43,20 @@
 name: vivid-10
 description: |
   Default 10-color categorical palette for qualitative data encoding.
-  Blue-first; chroma-pushed cool leads over an earth-and-neutral expansion
-  after the first five hues. Retune of the former category-10 arrangement,
-  holding each slot's hue while lifting the muted blue/cyan/green/gold/moss
-  toward the M2 chart-fill chroma band.
+  Blue-first, green third; the six most chromatic hues lead, then moss,
+  brown, and the two neutrals. Retune of the former category-10
+  hues, lifting the muted blue/cyan/green/gold/moss toward the M2 chart-fill
+  chroma band.
 
 colors:
   - "#0073c2"    # 1 — blue (default single-series)
   - "#00c8ee"    # 2 — cyan
   - "#00ad75"    # 3 — green
-  - "#7a5531"    # 4 — brown
-  - "#e1a500"    # 5 — gold
+  - "#e1a500"    # 4 — gold
+  - "#da5a23"    # 5 — orange
   - "#a46fb2"    # 6 — purple
-  - "#da5a23"    # 7 — orange
-  - "#6a9228"    # 8 — moss
+  - "#6a9228"    # 7 — moss
+  - "#7a5531"    # 8 — brown
   - "#949daa"    # 9 — gray
   - "#505b6b"    # 10 — charcoal
 
@@ -49,10 +69,10 @@ aliases:
   blue: 1
   sky: 2
   green: 3
-  brown: 4
-  gold: 5
+  gold: 4
+  orange: 5
   purple: 6
-  orange: 7
-  sage: 8
+  sage: 7
+  brown: 8
   gray: 9
   charcoal: 10

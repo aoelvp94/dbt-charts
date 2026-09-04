@@ -1,4 +1,4 @@
-"""Release-time writer and verifier for immutable Dataface YAML schemas."""
+"""Release-time writer and verifier for immutable dbt charts YAML schemas."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def freeze_yaml_schema(
     released_at: date,
     candidate: dict[str, Any],
 ) -> YamlSchemaEntry:
-    """Append a changed candidate under its Dataface release version."""
+    """Append a changed candidate under its dbt charts release version."""
     candidate_bytes = canonical_schema_bytes(candidate)
     manifest_path = directory / "manifest.json"
     if manifest_path.exists():
@@ -42,7 +42,7 @@ def freeze_yaml_schema(
     snapshot_path = directory / filename
     if snapshot_path.exists():
         raise FileExistsError(
-            f"Frozen Dataface YAML schema already exists: {snapshot_path}"
+            f"Frozen dbt charts YAML schema already exists: {snapshot_path}"
         )
 
     directory.mkdir(parents=True, exist_ok=True)
@@ -77,14 +77,14 @@ def verify_released_yaml_schema(
     catalog = load_yaml_schema_catalog_from(directory)
     if _version_key(catalog.latest.version) > _version_key(version):
         raise ValueError(
-            f"Latest Dataface YAML schema {catalog.latest.version} is newer than "
-            f"the Dataface release {version}."
+            f"Latest dbt charts YAML schema {catalog.latest.version} is newer than "
+            f"the dbt charts release {version}."
         )
     if canonical_schema_bytes(
         catalog.schema_for(catalog.latest.version)
     ) != canonical_schema_bytes(candidate):
         raise ValueError(
-            f"Dataface {version} has an unfrozen YAML grammar. Run "
+            f"dbt charts {version} has an unfrozen YAML grammar. Run "
             f"`just freeze-yaml-schema {version} <released_at>` and commit "
             "the result."
         )
@@ -94,16 +94,16 @@ def _version_key(version: str) -> tuple[int, int, int]:
     parts = version.split(".")
     if len(parts) != 3 or any(not part.isdigit() for part in parts):
         raise ValueError(
-            f"Dataface release version must be MAJOR.MINOR.PATCH, got {version!r}."
+            f"dbt charts release version must be MAJOR.MINOR.PATCH, got {version!r}."
         )
     major, minor, patch = parts
     return int(major), int(minor), int(patch)
 
 
 def main() -> None:
-    """Freeze or verify the current authored grammar for a Dataface release."""
+    """Freeze or verify the current authored grammar for a dbt charts release."""
     parser = argparse.ArgumentParser(
-        description="Append or verify a changed Dataface YAML schema."
+        description="Append or verify a changed dbt charts YAML schema."
     )
     parser.add_argument("version")
     parser.add_argument("released_at", type=date.fromisoformat, nargs="?")

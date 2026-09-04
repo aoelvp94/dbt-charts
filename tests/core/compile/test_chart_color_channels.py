@@ -36,8 +36,8 @@ def test_scale_target_config_accepts_known_scheme_name():
     assert cfg.palette == "blues"
 
 
-def test_scale_target_config_accepts_dataface_named_palette():
-    """A Dataface named palette (not a Vega scheme) is also a valid string —
+def test_scale_target_config_accepts_dbt_charts_named_palette():
+    """A dbt charts named palette (not a Vega scheme) is also a valid string —
     the same field backs table/KPI conditional formatting, which resolves
     this vocabulary via resolve_palette_stops rather than a VL scheme name."""
     cfg = ScaleTargetConfig.model_validate({"palette": "dbt-seq-blue"})
@@ -66,11 +66,11 @@ def test_scale_target_config_has_no_resolved_stops_field():
         )
 
 
-def test_bake_scale_target_stops_resolves_a_dataface_named_palette():
+def test_bake_scale_target_stops_resolves_a_dbt_charts_named_palette():
     """bake_scale_target_stops constructs ResolvedNamedPaletteScaleTargetConfig
-    with fresh resolved_stops for a named Dataface palette. Regression: before
+    with fresh resolved_stops for a named dbt charts palette. Regression: before
     the authored/resolved split, only some construction paths baked resolved_stops,
-    so a heatmap/geoshape gradient using a Dataface name crashed at render."""
+    so a heatmap/geoshape gradient using a dbt charts name crashed at render."""
     from dbt_charts.core.compile.models.primitives import (
         ResolvedNamedPaletteScaleTargetConfig,
         bake_scale_target_stops,
@@ -110,7 +110,7 @@ def test_bake_scale_target_stops_produces_plain_resolved_for_scheme_and_inline()
 
 
 def test_scale_target_config_dash_suffixed_name_hints_at_bucketing():
-    """'blues-9' (VL's sampled-discrete shorthand, which Dataface does not
+    """'blues-9' (VL's sampled-discrete shorthand, which dbt charts does not
     forward) is *the* mistake this validator exists to catch: reaching for a
     dash-suffixed discrete scheme is exactly what an author does when they
     want buckets. The error must name the valid continuous scheme and say
@@ -121,7 +121,7 @@ def test_scale_target_config_dash_suffixed_name_hints_at_bucketing():
         ValueError,
         match=(
             r"palette 'blues-9' requests a 9-step discrete variant of the "
-            r"'blues' scheme\. Dataface does not support bucketed/quantized "
+            r"'blues' scheme\. dbt charts does not support bucketed/quantized "
             r"color scales yet — use the continuous scheme 'blues' instead\."
         ),
     ):
@@ -157,12 +157,12 @@ def test_scale_target_config_patch_rejects_unsupported_scheme_name():
 
 def test_scale_target_config_bad_scheme_in_board_yaml_yields_diagnostic_not_raw_pydantic():
     """An author authoring 'style.color.gradient.palette: blues-9' directly in
-    board YAML must get a Dataface diagnostic (ERR-VALIDATION-FIELD, a doc
+    board YAML must get a dbt charts diagnostic (ERR-VALIDATION-FIELD, a doc
     pointer, a source location) from compile() — not an uncaught
     pydantic.ValidationError with a pydantic.dev link, which happens when the
     palette check only fires on ScaleTargetConfig at resolve time instead of
     on the authored patch during normalize_board()."""
-    from dbt_charts.core.compile.compiler import compile as dataface_compile
+    from dbt_charts.core.compile.compiler import compile as dbt_charts_compile
 
     yaml_content = """
 title: Bad scheme
@@ -186,11 +186,11 @@ charts:
 rows:
   - choropleth_bad
 """
-    result = dataface_compile(yaml_content, file="bad_scheme.yaml")
+    result = dbt_charts_compile(yaml_content, file="bad_scheme.yaml")
     assert result.errors, "expected a compile error, not a successful compile"
     error = result.errors[0]
     assert error.code == "ERR-VALIDATION-FIELD", (
-        f"expected a Dataface diagnostic, got code={error.code!r}"
+        f"expected a dbt charts diagnostic, got code={error.code!r}"
     )
     assert "bucketed/quantized" in error.message
 
@@ -577,7 +577,7 @@ def test_gradient_scale_to_vl_inline_list_emits_range():
 
 def test_gradient_scale_to_vl_named_palette_emits_resolved_stops_as_range():
     """A ResolvedNamedPaletteScaleTargetConfig produces {"range": <resolved_stops>}.
-    This is the key shape change: the Dataface palette name is never forwarded to
+    This is the key shape change: the dbt charts palette name is never forwarded to
     VL as a scheme string (which silently no-ops); the baked stops are used."""
     from dbt_charts.core.compile.models.primitives import (
         ResolvedNamedPaletteScaleTargetConfig,

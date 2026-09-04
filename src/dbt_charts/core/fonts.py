@@ -227,6 +227,21 @@ WEIGHT_FACE_ALIASES: dict[str, dict[str, str]] = {
     },
 }
 
+
+def offered_font_families() -> tuple[str, ...]:
+    """The families an editor can offer for a `family:` value.
+
+    The browser-served vendored faces (``web_file`` set — the internal
+    weight-alias instances are vl-convert plumbing, never an offer), plus the
+    CSS generics. Shortcuts, not a closed set: any family or stack stays a
+    legal value.
+    """
+    vendored = dict.fromkeys(
+        face.family for face in FONT_REGISTRY if face.web_file is not None
+    )
+    return (*vendored, "system-ui", "sans-serif", "serif", "monospace")
+
+
 FONT_REGISTRY: tuple[VendoredFace, ...] = (
     VendoredFace(
         family=INTER_VARIABLE_FONT_FAMILY,

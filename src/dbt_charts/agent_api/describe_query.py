@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.execute.adapters import AdapterRegistry
-from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
-from dbt_charts.core.inspect.query_validator import validate_query
+from dbt_charts.core.execute.warehouse_check import WarehouseCheck, check_ad_hoc_query
+from dbt_charts.core.inspect.query_validator import QueryDiagnostic, validate_query
 
 
 class DescribeQueryArgs(BaseModel):
@@ -19,6 +17,11 @@ class DescribeQueryArgs(BaseModel):
     predicates with actionable diagnostics; otherwise returns columns alongside any
     non-error diagnostics (e.g. WARN-FANOUT-RISK warnings) so the agent can read them
     without being blocked from the column shape.
+
+    Only ever uses a cheap, no-execution check: DuckDB's own DESCRIBE, or a
+    BigQuery dry run. A source with neither (Postgres, Snowflake, Redshift, ...)
+    returns success=False explaining that it cannot list columns without
+    running the query, rather than running it for you.
     """
 
     sql: str = Field(..., description="SQL query to describe.")
@@ -35,9 +38,6 @@ class DescribeQueryColumn(BaseModel):
 
     name: str
     type: str
-    char_size: int | None = None
-    numeric_precision: int | None = None
-    numeric_scale: int | None = None
 
 
 class DescribeQueryResult(BaseModel):
@@ -45,7 +45,7 @@ class DescribeQueryResult(BaseModel):
 
     success: bool
     columns: list[DescribeQueryColumn] | None = None
-    diagnostics: list[dict[str, Any]] = Field(
+    diagnostics: list[QueryDiagnostic] = Field(
         default_factory=list,
         description="Dialect-specific diagnostic messages from the query runner.",
     )
@@ -59,11 +59,21 @@ def describe_query(
     dialect: str | None = None,
     adapter_registry: AdapterRegistry,
 ) -> DescribeQueryResult:
-    """Return the column schema for a SQL string using the dbt adapter.
+    """Return the column schema for a SQL string, never at full-query price.
 
     Runs validate_query first; short-circuits on error-severity diagnostics
-    (WARN-PARSE-ERROR, WARN-MISSING-JOIN-PREDICATE) without calling the warehouse.
-    Non-error diagnostics are surfaced on the result alongside the column schema.
+    (WARN-PARSE-ERROR, WARN-MISSING-JOIN-PREDICATE) without calling the
+    warehouse. Non-error diagnostics are surfaced on the result alongside the
+    column schema.
+
+    Column lookup is dispatch, never execution: a DuckDB source uses its own
+    read-only DESCRIBE, and every other adapter goes through
+    ``core.execute.warehouse_check.check_ad_hoc_query`` — a BigQuery dry run;
+    an EXPLAIN on Postgres/Redshift/Snowflake that proves validity but returns
+    no schema (so the refusal below still fires, after a warehouse round-trip
+    that validates the SQL); or an explicit refusal for an adapter with no
+    mechanism at all. That refusal is the answer for such an adapter, never a
+    silent fall-through to running the query in full.
     """
     try:
         diags = validate_query(sql, dialect=dialect)
@@ -73,7 +83,7 @@ def describe_query(
             return DescribeQueryResult(
                 success=False,
                 columns=None,
-                diagnostics=[d.to_dict() for d in diags],
+                diagnostics=diags,
                 error=error_diags[0].message,
             )
 
@@ -85,24 +95,24 @@ def describe_query(
             # with dct serve.
             cols = _duckdb_describe(sql, source, adapter_registry)
         else:
-            adapter = build_adapter(cfg, read_only=True)
-            with adapter.connection_named("dbt_charts_describe"):
-                raw = adapter.get_column_schema_from_query(sql)
-            cols = [
-                DescribeQueryColumn(
-                    name=c.name,
-                    type=c.dtype,
-                    char_size=c.char_size,
-                    numeric_precision=c.numeric_precision,
-                    numeric_scale=c.numeric_scale,
+            check = check_ad_hoc_query(
+                sql, source=source, adapter_registry=adapter_registry
+            )
+            if check.status != "valid" or not check.columns_checked:
+                return DescribeQueryResult(
+                    success=False,
+                    columns=None,
+                    diagnostics=diags,
+                    error=_describe_refusal(check),
                 )
-                for c in raw
+            cols = [
+                DescribeQueryColumn(name=c.name, type=c.type) for c in check.columns
             ]
 
         return DescribeQueryResult(
             success=True,
             columns=cols,
-            diagnostics=[d.to_dict() for d in diags],
+            diagnostics=diags,
         )
 
     except Exception as e:  # noqa: BLE001 — adapter boundary, mirrors execute_query
@@ -110,6 +120,26 @@ def describe_query(
             success=False,
             error=str(e),
         )
+
+
+def _describe_refusal(check: WarehouseCheck) -> str:
+    """Build describe_query's caller-facing message for a non-column outcome.
+
+    ``check.reason``/``check.error`` are worded for ``dct validate
+    --warehouse``'s audience (a board author auditing many queries at once —
+    "unchecked" is a fine verdict there). describe_query's caller asked for
+    columns and got none, so the message has to say what happened and what to
+    do about it, not just classify the outcome.
+    """
+    if check.status == "invalid":
+        # The warehouse read this SQL and rejected it — its own message names
+        # the defect directly; nothing to add.
+        return check.error
+    detail = check.reason or check.error
+    return (
+        f"Cannot list columns without running the query: {detail}. Run it "
+        "by executing it in full if you accept that cost."
+    )
 
 
 def _duckdb_describe(

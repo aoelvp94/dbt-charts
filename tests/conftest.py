@@ -12,6 +12,7 @@ from typing import IO, TYPE_CHECKING, Any
 import pytest
 from pydantic import BaseModel
 
+from dbt_charts._render_tz import pin_vl_convert_tz_utc
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -93,6 +94,29 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.theme import Style
 
 _DBT_CHARTS_DIR = DBT_CHARTS_DIR
+
+
+@pytest.fixture(scope="session", autouse=True)
+def pin_render_tz_utc() -> None:
+    """Pin the test session to vl-convert's TZ=UTC before any test renders.
+
+    The test harness (``tests/visual/discovery.py`` in particular, which
+    powers golden regeneration) calls into ``core.render`` directly, not
+    through a `dct` composition root, so it needs its own pin. Without this,
+    a golden approved on one contributor's machine can silently differ from
+    one regenerated on another's -- see ``dbt_charts._render_tz`` for why.
+
+    Setting the env var alone only pins vl-convert's *next* fresh process --
+    within this one, vl-convert's own TZ cache still seeds off whatever the
+    first call observes. Force that first observation to happen right here,
+    so no fixture-ordering accident (some other autouse fixture, or a test
+    that imports vl-convert before this one runs) can seed it from the
+    ambient host zone instead.
+    """
+    import vl_convert as vlc
+
+    pin_vl_convert_tz_utc()
+    vlc.get_local_tz()
 
 
 @pytest.fixture

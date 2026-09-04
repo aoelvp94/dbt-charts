@@ -28,14 +28,19 @@ class TestDefsKey:
 
 
 class TestIdeExtras:
-    def test_file_match_present(self, vscode_schema) -> None:
-        """fileMatch covers the real project-config filename alongside the
-        `.dbt-charts.*` retirement carve-out and the `charts/` directory
-        convention — no dead `dbt_charts.yml`/`.yaml` bare entries for a config
-        file that no longer exists on disk."""
-        assert "fileMatch" in vscode_schema
-        file_match = vscode_schema["fileMatch"]
-        assert any("dbt_charts.yml" in p for p in file_match)
+    def test_file_match_is_exactly_the_current_conventions(self, vscode_schema) -> None:
+        """fileMatch is the project config, the `charts/` directory convention,
+        and `*.board.yml` — nothing else. The retired pre-rename suffix
+        aliases must not reappear (pre-launch: no read-compat aliases)."""
+        assert vscode_schema["fileMatch"] == [
+            "dbt_charts.yml",
+            "dbt_charts.yaml",
+            "charts/*.yml",
+            "charts/*.yaml",
+            "charts/**/*.yml",
+            "charts/**/*.yaml",
+            "*.board.yml",
+        ]
 
     def test_root_any_of_layout_constraint(self, vscode_schema) -> None:
         any_of = vscode_schema.get("anyOf", [])
@@ -48,7 +53,7 @@ class TestIdeExtras:
         theme_prop = vscode_schema["properties"]["theme"]
         schema_str = json.dumps(theme_prop)
         assert "enum" in schema_str
-        assert "editorial" in schema_str  # built-in theme name
+        assert "clarity" in schema_str  # built-in theme name
 
     def test_authored_chart_type_enum_present(self, vscode_schema) -> None:
         # AuthoredChart.type must have an enum covering all authorable tags including "donut"
@@ -136,18 +141,21 @@ class TestStringShorthands:
     def test_queries_bare_sql_shorthand_valid_in_schema(self, vscode_schema) -> None:
         """Bare SQL shorthand (queries: {sales: 'SELECT * FROM sales'}) must be valid in the schema.
 
-        The queries additionalProperties oneOf must include an unconstrained string arm
+        The queries additionalProperties anyOf must include an unconstrained string arm
         (no pattern constraint) so that bare SQL strings don't get red-squiggles in the
         VS Code IDE extension. Runtime (Pydantic) already enforces the grammar.
         """
         q_schema = vscode_schema["properties"]["queries"]
-        arms = q_schema["additionalProperties"]["oneOf"]
+        object_form = next(
+            branch for branch in q_schema["anyOf"] if branch.get("type") == "object"
+        )
+        arms = object_form["additionalProperties"]["anyOf"]
         # There must be at least one string arm with no 'pattern' constraint
         unconstrained_string_arms = [
             arm for arm in arms if arm.get("type") == "string" and "pattern" not in arm
         ]
         assert unconstrained_string_arms, (
-            "queries additionalProperties oneOf must contain an unconstrained "
+            "queries additionalProperties anyOf must contain an unconstrained "
             '{"type": "string"} arm for bare SQL shorthand; only pattern-constrained '
             "string arms found — bare SQL will be red-squiggles in VS Code"
         )

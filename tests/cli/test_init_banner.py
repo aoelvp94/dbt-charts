@@ -3,7 +3,7 @@
 The banner nudges users toward `dct init` when they invoke `dct`,
 `dct -h`, or `dct --help` in a directory that hasn't been scaffolded.
 "charts/" (created by `dct init`) is the canonical "this directory is a
-Dataface project" marker — `dbt_charts.yml` is optional and several
+dbt charts project" marker — `dbt_charts.yml` is optional and several
 canonical example projects don't have one.
 """
 
@@ -22,7 +22,7 @@ from dbt_charts.cli.main import _render_init_banner, app
 
 runner = CliRunner()
 
-BANNER_PHRASE = "Welcome to Dataface"
+BANNER_PHRASE = "Welcome to dbt charts"
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 _BOX_CHARS = re.compile(r"[╭╮╰╯│─]")

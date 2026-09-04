@@ -14,8 +14,8 @@ if TYPE_CHECKING:
         AxisYStylePatch,
         BandAxisStylePatch,
         BaseAxisStylePatch,
-        DataTableStylePatch,
         QuantitativeAxisStylePatch,
+        SupportTableStylePatch,
     )
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -36,7 +36,10 @@ from dbt_charts.core.compile.models.primitives import (
     FontStyle,
     StaticGradientColorStyle,
 )
-from dbt_charts.core.compile.models.schema_names import FormatAlias
+from dbt_charts.core.compile.models.schema_names import (
+    NumberFormatAlias,
+    TimeFormatAlias,
+)
 from dbt_charts.core.compile.models.style.theme.board import (
     PaddingStyle,
     TitleStyle,
@@ -60,14 +63,21 @@ class _ChartStyleBase(BaseModel):
     ``ChartsStyle`` via the cascade".  Painting families inherit
     ``_PaintedChartStyleBaseAllOptional`` instead, which additionally carries
     ``legend`` and the three sizing fields.
+
+    ``font``/``border`` are deliberately NOT declared here. Only families with a
+    hand-drawn per-chart card render surface (kpi, table, spark_bar, callout,
+    the geo families via ``_GeoChartStyle``) consume a per-chart font/border —
+    each of those declares its own ``font``/``border`` field directly. Bar,
+    line, area, scatter, histogram, heatmap, pie, and donut have no such
+    surface: ``ChartsStyle`` (the board-level authoritative source) declares
+    ``font``/``border`` itself in ``charts.py``, and the eight VL-emitted
+    families never redeclare them, so authoring ``style.font``/``style.border``
+    on those families raises ``extra_forbidden`` instead of validating and
+    silently doing nothing.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    font: FontStyle = Field(
-        default_factory=FontStyle,
-        description="Chart-level font overrides.",
-    )
     preferred_width: Annotated[
         float, Inherit(from_path="Style.charts.preferred_width")
     ] = Field(description="Preferred chart width in pixels.")
@@ -78,7 +88,6 @@ class _ChartStyleBase(BaseModel):
     padding: Annotated[PaddingStyle, InheritSlot(from_path="Style.charts.padding")] = (
         Field(description="Per-chart-type padding override; 4 sides in pixels.")
     )
-    border: BorderStyle = Field(description="Chart card border style.")
 
     # Cascade-managed sentinels — chart-local paint and typography overrides.
     # None propagates unchanged through the cascade; no theme-level default
@@ -88,16 +97,6 @@ class _ChartStyleBase(BaseModel):
         default=None,
         description="Chart-local background color override; None inherits from theme.",
     )
-    # Unified color config: static ink, categorical palette, and gradient scale.
-    # Required at ChartsStyle level (theme must supply color.categorical).
-    # Per-family patches (derived via build_patch_model_ext) get ColorStyle | None.
-    # No Merge marker: ColorStyle is a BaseModel, so merge_patches uses Strategy.DEEP by
-    # default. This lets theme patches contribute individual color sub-fields
-    # (e.g. one layer sets categorical.palette, another sets categorical.single_series_palette)
-    # without the later layer wiping out the earlier one.
-    color: ColorStyle = Field(
-        description="Chart color: static mark paint, categorical palette, and/or gradient scale."
-    )
     title: Annotated[TitleStyle | None, SkipInheritSlots()] = Field(
         default=None,
         description="Chart-level title style override; None inherits the theme title style.",
@@ -105,17 +104,49 @@ class _ChartStyleBase(BaseModel):
 
 
 if TYPE_CHECKING:
-
+    # build_patch_model_ext returns a dynamically-created type[BaseModel] at
+    # runtime; mypy needs a real class definition to accept it as a base class
+    # (KpiChartStyle, TableChartStyle). No color narrowing needed here anymore
+    # — color moved to _PaintedChartStyleBase, so every field on this class
+    # keeps its _ChartStyleBase-declared type.
     class _ChartStyleBaseAllOptional(_ChartStyleBase):
-        # At runtime build_patch_model_ext makes every _ChartStyleBase field Optional;
-        # declare color | None so callers on _ChartStyleBaseAllOptional subclasses
-        # know they must guard before accessing .static/.gradient.
-        # The assignment is narrowing (ColorStyle → ColorStyle | None) — intentional.
-        color: ColorStyle | None  # type: ignore[assignment]
+        pass
 
 else:
     _ChartStyleBaseAllOptional = build_patch_model_ext(
         _ChartStyleBase, is_recursive=True
+    )
+
+
+class _ChartCardStyleMixin(BaseModel):
+    """font/border for families with a hand-drawn per-chart card render surface.
+
+    Not part of ``_ChartStyleBase`` (see its docstring) — kpi/table/spark_bar/
+    callout declare font/border directly on their own theme classes, and
+    ``_GeoChartStyle`` mixes this in (geo is out of this task's narrowing
+    scope). Goes through ``build_patch_model_ext`` below, same as
+    ``_ChartStyleBase``, so the Optional variant mirrors the shape that used
+    to come from inheriting ``_ChartStyleBase`` directly — no behavior change
+    for geoshape/point_map.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    font: FontStyle = Field(
+        default_factory=FontStyle,
+        description="Chart-level font overrides.",
+    )
+    border: BorderStyle = Field(description="Chart card border style.")
+
+
+if TYPE_CHECKING:
+
+    class _ChartCardStyleMixinAllOptional(_ChartCardStyleMixin):
+        pass
+
+else:
+    _ChartCardStyleMixinAllOptional = build_patch_model_ext(
+        _ChartCardStyleMixin, is_recursive=True
     )
 
 
@@ -127,6 +158,13 @@ class _PaintedChartStyleBase(_ChartStyleBase):
     fields structurally.  No family (including these nine) declares ``tooltip`` at
     the per-family level — the only authoritative tooltip slot is ``ChartsStyle.tooltip``
     (global, board-wide), which is how every real tooltip consumer reads it.
+
+    ``color`` lives here rather than on ``_ChartStyleBase`` — KPI and table paint
+    no series/mark color channel (KPI has no series axis at all; table overrides
+    the field with its own narrower type), so ``color`` is structurally absent
+    from ``_ChartStyleBaseAllOptional`` and every family that inherits it
+    directly. Painting families get the field from here; table re-declares its
+    own ``color`` independently (not an override of this one).
     """
 
     # Inherit markers on scalars: picked up by build_patch_model_ext and forwarded
@@ -141,6 +179,16 @@ class _PaintedChartStyleBase(_ChartStyleBase):
         description="Maximum chart height in pixels."
     )
     legend: LegendStyle = Field(description="Chart legend style.")
+    # Unified color config: static ink, categorical palette, and gradient scale.
+    # Required at ChartsStyle level (theme must supply color.categorical).
+    # Per-family patches (derived via build_patch_model_ext) get ColorStyle | None.
+    # No Merge marker: ColorStyle is a BaseModel, so merge_patches uses Strategy.DEEP by
+    # default. This lets theme patches contribute individual color sub-fields
+    # (e.g. one layer sets categorical.palette, another sets categorical.single_series_palette)
+    # without the later layer wiping out the earlier one.
+    color: ColorStyle = Field(
+        description="Chart color: static mark paint, categorical palette, and/or gradient scale."
+    )
 
 
 if TYPE_CHECKING:
@@ -162,6 +210,8 @@ class _CartesianChartStyle(_PaintedChartStyleBaseAllOptional):
     """Cartesian families: bar, line, area, scatter, histogram, heatmap.
 
     Shared axis tier — theme YAML populates per-family axis overrides here.
+    ``axis_quantitative`` is NOT declared here — see
+    ``_QuantitativeAxisChartStyleMixin`` below.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -188,33 +238,52 @@ class _CartesianChartStyle(_PaintedChartStyleBaseAllOptional):
         default=None,
         description="Per-chart-type y-axis style overrides; None inherits the global axis_y at render.",
     )
+    axis_band: Annotated[BandAxisStylePatch | None, SkipInheritSlots()] = Field(
+        default=None,
+        description="Per-chart-type categorical (band) axis overrides; None inherits the global band axis at render.",
+    )
+    number_format: Annotated[NumberFormatAlias | str | None, Format(kind="number")] = (
+        Field(
+            default=None,
+            description="Default number format for axes and tooltips (D3 format string); None inherits from theme.",
+        )
+    )
+    time_format: Annotated[TimeFormatAlias | str | None, Format(kind="time")] = Field(
+        default=None,
+        description="Default time format for temporal axes (D3 time format string or strftime spec like '%b %Y'); None inherits from theme.",
+    )
+    # InheritSlot: per-family support_table inherits from Style.charts.support_table.
+    # Field stays nullable so theme YAML can omit it; inherit_graph.py emits a
+    # container-level copy link for nullable InheritSlot fields so apply_inherit
+    # copies the whole parent when None (and fills sub-fields when partially set).
+    support_table: Annotated[
+        SupportTableStylePatch | None,
+        InheritSlot(from_path="Style.charts.support_table"),
+    ] = Field(
+        default=None,
+        description="Per-chart-type support_table style override.",
+    )
+
+
+class _QuantitativeAxisChartStyleMixin(BaseModel):
+    """``axis_quantitative`` — cartesian families with a quantitative axis to style.
+
+    Mixed into bar/line/area/scatter/histogram's theme classes alongside
+    ``_CartesianChartStyle``. Heatmap does not inherit this: both its axes
+    are nominal (styled via ``axis_band``), so it has no quantitative axis
+    for this field to apply to — authoring it on a heatmap is a parse-time
+    error rather than a silently inert field.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # SkipInheritSlots: sparse per-family patch, same rationale as
+    # _CartesianChartStyle's axis/axis_x/axis_y/axis_band fields above.
     axis_quantitative: Annotated[
         QuantitativeAxisStylePatch | None, SkipInheritSlots()
     ] = Field(
         default=None,
         description="Per-chart-type quantitative-axis overrides; None inherits the global axis_quantitative at render.",
-    )
-    axis_band: Annotated[BandAxisStylePatch | None, SkipInheritSlots()] = Field(
-        default=None,
-        description="Per-chart-type categorical (band) axis overrides; None inherits the global band axis at render.",
-    )
-    number_format: Annotated[FormatAlias | str | None, Format()] = Field(
-        default=None,
-        description="Default number format for axes and tooltips (D3 format string); None inherits from theme.",
-    )
-    time_format: Annotated[FormatAlias | str | None, Format()] = Field(
-        default=None,
-        description="Default time format for temporal axes (D3 time format string); None inherits from theme.",
-    )
-    # InheritSlot: per-family data_table inherits from Style.charts.data_table.
-    # Field stays nullable so theme YAML can omit it; inherit_graph.py emits a
-    # container-level copy link for nullable InheritSlot fields so apply_inherit
-    # copies the whole parent when None (and fills sub-fields when partially set).
-    data_table: Annotated[
-        DataTableStylePatch | None, InheritSlot(from_path="Style.charts.data_table")
-    ] = Field(
-        default=None,
-        description="Per-chart-type data_table style override.",
     )
 
 
@@ -231,16 +300,22 @@ class _RadialChartStyle(_PaintedChartStyleBaseAllOptional):
         default=None,
         ge=0,
         le=1,
-        description="Hole-to-disk ratio 0–1 (inner radius / outer radius). None = solid pie (no hole).",
+        description="Hole-to-disk ratio 0–1 (inner radius / outer radius). None = solid pie; `type: donut` overrides this with a chart-local 0.6 patch, beating a theme value.",
     )
     total: TotalStyle = Field(description="Donut center total paint (value and label).")
 
 
-class _GeoChartStyle(_PaintedChartStyleBaseAllOptional):
+class _GeoChartStyle(
+    _ChartCardStyleMixinAllOptional, _PaintedChartStyleBaseAllOptional
+):
     """Geo families: geoshape (choropleth), point_map.
 
     ``geo_source`` is intentionally absent — it is a chart-root channel field
-    (on ``_GeoChartFields``), not a style concern.
+    (on ``_GeoChartFields``), not a style concern. Mixes in
+    ``_ChartCardStyleMixinAllOptional`` for font/border — geo is out of scope
+    for the cartesian/pie/donut card-style narrowing (see ``_ChartStyleBase``'s
+    docstring); this keeps geoshape/point_map accepting both fields exactly as
+    before.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

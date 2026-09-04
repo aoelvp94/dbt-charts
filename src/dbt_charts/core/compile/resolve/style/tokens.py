@@ -7,30 +7,22 @@ tree, and inserts the emoji font family into CSS font-family stacks.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from typing import Any
 
 from pydantic import BaseModel
 
+from dbt_charts.core.colors import is_color_token
 from dbt_charts.core.compile.models.primitives import FontStyle
 from dbt_charts.core.compile.models.style.theme import Style
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    CategoryColorBinding,
+)
 from dbt_charts.core.fonts import NOTO_EMOJI_FONT_FAMILY
 
-# Dotted palette token: "<palette-name>.<slot>" — e.g. "dbt-grays.gray-30",
-# "negative.solid", "vivid-10.1". The leading character must be a letter so
-# that hex literals (#abcdef), CSS rgb()/rgba() values, decimal numerics like
-# "0.5", and quoted font-family lists never match.
-#
-# Contract: any string anywhere in Style that matches this regex is
-# treated as a palette token. If a future non-color string field could match
-# (none today), it must be excluded from the walk or the field reshaped.
-# Two token shapes: dotted (`dbt-grays.ink`, `vivid-10.1` — absolute
-# palette.slot or role.alias) and bracket (`category[2]` — 1-indexed role
-# slot, resolved through the theme's `style.palettes` bindings by
-# color_from_theme()).
-_COLOR_TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+|\[\d+\])$")
-
+# `is_color_token` lives in the neutral core.colors leaf so the authored
+# models can validate token *shape* without importing this cascade module
+# (models -> resolve would close an import cycle).
 
 # Theme-self tokens: strings that name a value elsewhere in the same compiled
 # style tree, resolved against the root Style. The canonical use case
@@ -211,7 +203,7 @@ def _resolve_color_tokens(
                 updates[name] = new
         return node.model_copy(update=updates) if updates else node
     if isinstance(node, str):
-        if _COLOR_TOKEN_RE.match(node):
+        if is_color_token(node):
             return _resolve_one_color_token(node, palettes, roles)
         return node
     if isinstance(node, list):
@@ -315,6 +307,14 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
     roles = base.roles
 
     def _walk(node: Any) -> Any:
+        if isinstance(node, CategoryColorBinding):
+            return node.model_copy(
+                update={
+                    "values": {
+                        value: _walk(color) for value, color in node.values.items()
+                    }
+                }
+            )
         if isinstance(node, BaseModel):
             updates: dict[str, Any] = {}
             for name, value in node:
@@ -327,7 +327,7 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
         if isinstance(node, str):
             if node in _THEME_SELF_TOKENS:
                 return _self_token_replacement(node, base)
-            if _COLOR_TOKEN_RE.match(node):
+            if is_color_token(node):
                 return _resolve_one_color_token(node, palettes, roles)
             return node
         if isinstance(node, list):
@@ -337,6 +337,13 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
                 if any(a is not b for a, b in zip(new_list, node, strict=True))
                 else node
             )
+        if isinstance(node, dict):
+            # Bindings only — see the matching branch in _resolve_color_tokens
+            # for why every other dict on Style is left alone.
+            return {
+                key: _walk(value) if isinstance(value, CategoryColorBinding) else value
+                for key, value in node.items()
+            }
         return node
 
     return _walk(patch)

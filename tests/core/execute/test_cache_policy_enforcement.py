@@ -165,8 +165,11 @@ rows:
             "of a query has to see the same rows read at the same instant"
         )
 
-    def test_call_level_use_cache_false_still_bypasses_the_memo(self) -> None:
-        """The call-level opt-out is the one that skips the memo, not the policy."""
+    def test_call_level_use_cache_false_keeps_the_memo_too(self) -> None:
+        """No opt-out skips the memo — only `force_refresh` re-executes.
+
+        Why the memo is unconditional: `execute_query`'s Step 3 comment.
+        """
         result = df_compile(_board_yaml("cache: 1h"))
         adapter = _ok_adapter()
         executor = Executor(
@@ -177,7 +180,7 @@ rows:
         )
         executor.execute_query("q", use_cache=False)
         executor.execute_query("q", use_cache=False)
-        assert adapter.execute.call_count == 2
+        assert adapter.execute.call_count == 1
 
 
 class TestDisabledRootStillHonorsANearerOptIn:
@@ -331,8 +334,8 @@ class TestTtlLazyExpiry:
             cache.close()
 
 
-class TestUseCacheFalseBypassesEverything:
-    """Call-level use_cache=False bypasses read and write regardless of policy."""
+class TestUseCacheFalseIsNoStore:
+    """Call-level use_cache=False skips the persistent store's read and write."""
 
     def test_use_cache_false_does_not_write_through(self, tmp_path) -> None:
         cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
@@ -600,7 +603,7 @@ class TestNoStoreIsEnforcedAtTheStoreRead:
     """`cache: false` must be refused where the store is actually read.
 
     Both production callers gate on the policy before probing — `execute_query`
-    via `should_use_cache`, `is_cached` via its own early return — so this is
+    via `should_use_cache`, `_lookup_cached` before its probe — so this is
     redundant today, which is exactly why it is worth pinning. A future caller
     of `_warm_from_cache` that forgets would load persisted rows into a disabled
     query's memo slot and `execute_query` would serve them, reinstating the bug

@@ -284,12 +284,13 @@ def test_fires_when_faceted_by_the_color_field() -> None:
     """Small multiples partitioned on the same field bound to color.
 
     `multiples: {columns: series}` splits the *data* before it reaches a
-    panel, but Vega-Lite resolves the xOffset scale SHARED across facet
-    panels by default (only `y` ever gets `resolve.scale: independent`) — so
-    each panel's band still divides across the full, global series domain,
-    with a single sub-slot occupied. Real render measurement: 1.18px bars at
-    this exact shape. The detector must fire, not stay silent because the
-    data looks partitioned.
+    panel, but the colour/offset scale is never one of the channels
+    `facet_bound_position_channels` narrows — only a position channel (x/y)
+    double-encoding the facet field resolves independently, and colour stays
+    shared across panels by design. So each panel's band still divides
+    across the full, global series domain, with a single sub-slot occupied.
+    Real render measurement: 1.18px bars at this exact shape. The detector
+    must fire, not stay silent because the data looks partitioned.
     """
     chart = BarChart(
         id="c1",
@@ -312,6 +313,44 @@ def test_fires_when_faceted_by_the_color_field() -> None:
     assert warnings[0].code == WARN_BAR_BAND_WIDTH_TOO_NARROW.code
     assert "1.67px" in warnings[0].message
     assert "6 series" in warnings[0].message
+
+
+def test_no_fire_when_faceted_by_the_x_field_itself() -> None:
+    """Small multiples partitioned on the SAME field bound to x (not color) —
+    the shape `facet_bound_position_channels` actually narrows.
+
+    `multiples: {columns: cat}`, `x: cat` — the emitted spec carries
+    `resolve.scale.x: "independent"` (each panel's x domain is genuinely one
+    value; the columns-only-safe case). Whole-dataset `distinct` (24) would
+    read a razor-thin band that isn't there; the real render is one
+    full-width bar per panel. The detector must read the emitted `resolve`,
+    not just the unpartitioned row count.
+    """
+    chart = BarChart(
+        id="c1",
+        type="bar",
+        query_name="q",
+        x="cat",
+        y="val",
+        width=42,
+        style=BarChartStylePatch.model_construct(orientation="vertical"),
+        multiples=MultiplesConfig(columns="cat"),
+    )
+    rows = [{"cat": f"c{i:03d}", "val": i} for i in range(24)]
+    resolved = make_test_resolved_chart(chart, rows)
+    board = make_test_resolved_board(charts={resolved.id: resolved})
+    ctx = WarningContext(
+        board_spec=board,
+        chart_results={resolved.id: rows},
+        vega_specs={
+            resolved.id: {
+                "facet": {"column": {"field": "cat"}},
+                "spec": {"encoding": {"x": {"type": "ordinal"}}, "width": 42},
+                "resolve": {"scale": {"x": "independent"}},
+            }
+        },
+    )
+    assert detector.detect(ctx) == []
 
 
 def test_no_fire_on_comfortable_grouped_bar() -> None:
@@ -365,6 +404,35 @@ def test_fires_on_wide_form_grouped_measures_below_floor() -> None:
     assert warnings[0].code == WARN_BAR_BAND_WIDTH_TOO_NARROW.code
     assert "3.33px" in warnings[0].message
     assert "3 series" in warnings[0].message
+
+
+def test_wide_form_grouped_by_dimension_counts_every_composite() -> None:
+    """y: [a, b, c] + color: with two values subdivides the band six ways, not
+    three. 30 x-categories at 600px: 20px/band; 6 composites → 3.33px/bar under
+    the floor, where 3 measures alone (6.67px) would pass.
+    """
+    chart = BarChart(
+        id="c1",
+        type="bar",
+        query_name="q",
+        x="month",
+        y=["a", "b", "c"],
+        color="series",
+        width=600,
+        style=BarChartStylePatch.model_construct(orientation="vertical"),
+    )
+    rows = [
+        {"month": f"m{x}", "series": f"s{k}", "a": x, "b": x, "c": x}
+        for x in range(30)
+        for k in range(2)
+    ]
+    from dbt_charts.core.compile.resolve.chart._wide_fields import WIDE_LABEL_FIELD
+
+    ctx = _grouped_ctx(chart, rows, width=600, offset_field=WIDE_LABEL_FIELD)
+    warnings = detector.detect(ctx)
+    assert len(warnings) == 1
+    assert "3.33px" in warnings[0].message
+    assert "6 series" in warnings[0].message
 
 
 def test_no_fire_on_gradient_offset_type() -> None:
@@ -454,3 +522,187 @@ class TestDetectorReadsThePreEmitPanelWidth:
         )
         detector.detect(ctx)  # must not raise; exercises the real unwrap path
         assert vl["spec"]["width"] == emitter_panel_width
+
+
+def test_widest_panel_count_not_a_flat_one_when_domain_subset_narrows() -> None:
+    """Small multiples over a DIFFERENT field (`grp`, not x's own field
+    `cat`) where each panel still holds a proper subset of the x domain —
+    the general domain-subset case `facet_bound_position_channels` narrows
+    now, not only the old name-matched degenerate shape where every panel
+    held exactly one value by construction. Panel "A" holds 3 of 5
+    categories, panel "B" holds 2. The detector must read the WIDEST
+    panel's own count (3) — a flat 1 would compute 10/1=10px (comfortably
+    above the floor, silent) and the whole-dataset union (5) would compute
+    10/5=2px (narrower than what "A" actually paints). 10/3=3.33px is the
+    real value, and it crosses the 4px floor."""
+    chart = BarChart(
+        id="c1",
+        type="bar",
+        query_name="q",
+        x="cat",
+        y="val",
+        width=10,
+        style=BarChartStylePatch.model_construct(orientation="vertical"),
+        multiples=MultiplesConfig(columns="grp"),
+    )
+    rows = [{"cat": c, "grp": "A", "val": 1} for c in ("c0", "c1", "c2")] + [
+        {"cat": c, "grp": "B", "val": 1} for c in ("c3", "c4")
+    ]
+    resolved = make_test_resolved_chart(chart, rows)
+    board = make_test_resolved_board(charts={resolved.id: resolved})
+    ctx = WarningContext(
+        board_spec=board,
+        chart_results={resolved.id: rows},
+        vega_specs={
+            resolved.id: {
+                "facet": {"column": {"field": "grp"}},
+                "spec": {"encoding": {"x": {"type": "ordinal"}}, "width": 10},
+                "resolve": {"scale": {"x": "independent"}},
+            }
+        },
+    )
+    warnings = detector.detect(ctx)
+    assert len(warnings) == 1
+    assert warnings[0].code == WARN_BAR_BAND_WIDTH_TOO_NARROW.code
+    assert "3 bands" in warnings[0].message
+    assert "3.33px" in warnings[0].message
+
+
+# ── continuous (quantitative) x — bar-width-overlap variant ────────────────
+
+
+def _numeric_hour_chart(**style_marks_bar: Any) -> BarChart:
+    style = (
+        BarChartStylePatch.model_validate({"marks": {"bar": style_marks_bar}})
+        if style_marks_bar
+        else None
+    )
+    return BarChart(id="c1", type="bar", query_name="q", x="hour", y="val", style=style)
+
+
+def _numeric_rows(n: int) -> list[dict[str, Any]]:
+    return [{"hour": h, "val": h + 1} for h in range(n)]
+
+
+def _continuous_ctx(
+    chart: BarChart, rows: list[dict[str, Any]], width: float
+) -> WarningContext:
+    resolved = make_test_resolved_chart(chart, rows)
+    board = make_test_resolved_board(charts={resolved.id: resolved})
+    return WarningContext(
+        board_spec=board,
+        chart_results={resolved.id: rows},
+        vega_specs={
+            resolved.id: {"encoding": {"x": {"type": "quantitative"}}, "width": width}
+        },
+    )
+
+
+def test_silent_for_histogram() -> None:
+    """A histogram's x is quantitative but BINNED, so neither premise of the
+    continuous ladder holds: `_emit_histogram` sizes the mark as a band
+    fraction of the bin span and installs no `scale.padding`, and the bars
+    drawn are bins, not rows. Running the continuous detector over the raw
+    rows reports the raw-value spacing as a bar gap and the row count as a
+    bar count -- every number in the message fictional. Same carve-out, and
+    same reason, as `test_silent_for_histogram` in the bucketed-axis
+    detector's suite. Must stay silent."""
+    chart = BarChart(
+        id="c1", type="histogram", query_name="q", x="hour", y="val", style=None
+    )
+    # Dense raw rows: adjacent spacing is a small fraction of a pixel, which
+    # is exactly what the continuous branch would misreport as an overlap.
+    rows = [{"hour": h / 25.0, "val": h} for h in range(300)]
+    ctx = _continuous_ctx(chart, rows, width=600.0)
+    assert detector.detect(ctx) == []
+
+
+def test_fires_when_computed_min_size_clamp_forces_overlap() -> None:
+    """10 hourly values (step 1) in a 100px chart, minus the emitter's own
+    reserved padding (max_size/2 per side = 20 total, unauthored) ->
+    (100 - 20) / 9 = 8.89px between adjacent values. A min_size floor above
+    that (15px) forces the computed bar wider than the gap it has to sit in
+    -> overlap."""
+    chart = _numeric_hour_chart(gap=2.0, min_size=15.0, max_size=20.0)
+    ctx = _continuous_ctx(chart, _numeric_rows(10), width=100.0)
+    warnings = detector.detect(ctx)
+    assert len(warnings) == 1
+    assert warnings[0].code == WARN_BAR_BAND_WIDTH_TOO_NARROW.code
+    assert warnings[0].field == "hour"
+    assert "bands" not in warnings[0].message, (
+        "the continuous branch has no band scale — 'bands' is categorical-only wording"
+    )
+    assert "10 bars" in warnings[0].message
+    assert "15.00px" in warnings[0].message
+    assert "8.89px" in warnings[0].message
+
+
+def test_does_not_fire_when_only_the_double_counted_padding_would_overlap() -> None:
+    """Discriminates the correct padding correction from double-counting it.
+
+    11 values (step 1) at 130px with an authored size of 11. The emitter
+    reserves size/2 = 5.5px per side, so the usable span is 119px and the
+    per-value step is 11.90px — an 11px bar fits, no warning. Subtracting
+    2 * size instead gives (130 - 22) / 10 = 10.80px and would fire a false
+    overlap that also prints a step narrower than the one actually rendered.
+    """
+    chart = _numeric_hour_chart(gap=2.0, min_size=4.0, max_size=20.0, size=11.0)
+    ctx = _continuous_ctx(chart, _numeric_rows(11), width=130.0)
+    assert detector.detect(ctx) == []
+
+
+def test_no_fire_when_max_size_ceiling_keeps_bar_under_the_gap() -> None:
+    """Same shape, a much wider chart: the computed default clamps at
+    max_size well below the now-generous per-value gap -> no overlap."""
+    chart = _numeric_hour_chart(gap=2.0, min_size=15.0, max_size=20.0)
+    ctx = _continuous_ctx(chart, _numeric_rows(10), width=1000.0)
+    assert detector.detect(ctx) == []
+
+
+def test_fires_on_authored_size_too_wide_for_the_gap() -> None:
+    """An authored bar.size bypasses the gap/min/max ladder entirely — it
+    can still overlap, and this warns exactly the same way."""
+    chart = _numeric_hour_chart(size=15.0)
+    ctx = _continuous_ctx(chart, _numeric_rows(10), width=100.0)
+    warnings = detector.detect(ctx)
+    assert len(warnings) == 1
+    assert warnings[0].code == WARN_BAR_BAND_WIDTH_TOO_NARROW.code
+
+
+def test_no_fire_on_comfortable_continuous_spacing() -> None:
+    """24 hourly values in a generously wide chart, default theme sizing —
+    the ordinary case must stay silent."""
+    chart = _numeric_hour_chart()
+    ctx = _continuous_ctx(chart, _numeric_rows(24), width=800.0)
+    assert detector.detect(ctx) == []
+
+
+def test_no_fire_on_single_distinct_x_value() -> None:
+    """One distinct x value has no adjacent pair to measure a gap from."""
+    chart = _numeric_hour_chart()
+    ctx = _continuous_ctx(chart, [{"hour": 1, "val": 1}] * 5, width=100.0)
+    assert detector.detect(ctx) == []
+
+
+def test_fires_when_the_naive_estimate_would_silently_miss_the_overlap() -> None:
+    """The old `render_width / domain_span` estimate ignores the pixel
+    padding the emitter reserves on each side of the plot for the bar's own
+    half-width (`padding = effective_bar_size / 2` per side, installed on
+    every quantitative x — `bar.py`'s `_emit_vertical`) — it treats the whole
+    render_width as usable domain span, so it systematically overestimates
+    the real per-value pixel step and can miss an overlap the live scale
+    would actually render.
+
+    11 values 0..10 (step 1) at width=130, authored size=12.0: the naive
+    estimate (130 / 10 = 13.0px) sits just above the 12px bar and would stay
+    silent; the corrected estimate, which nets out `2 * effective_bar_size`
+    (24px) before dividing ((130 - 24) / 10 = 10.6px), correctly falls below
+    the 12px bar and fires.
+    """
+    chart = _numeric_hour_chart(size=12.0)
+    ctx = _continuous_ctx(chart, _numeric_rows(11), width=130.0)
+    warnings = detector.detect(ctx)
+    assert len(warnings) == 1, (
+        f"the naive estimate (13.0px) sits above the 12px bar and would "
+        f"silently miss this overlap; got {warnings!r}"
+    )

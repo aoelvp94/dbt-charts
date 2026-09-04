@@ -1,7 +1,7 @@
 """Tests for per-layer y-axis chrome extensions (defects #11, #12, #16).
 
 #11 — LayerAxisYStyle extended with scale.domain, ticks.count, grid.visible,
-      label.format; each propagates through resolved → render VL output.
+      labels.format; each propagates through resolved → render VL output.
 #12 — chart-level axis_y.ticks.count / format reach BOTH dual y-axes.
 #16 — chart-level axis_y.scale.domain with split-side dual-axis raises
       ERR-LAYERS-AMBIGUOUS-Y-DOMAIN at compile (resolve) time.
@@ -83,37 +83,35 @@ def _render_bar_with_layers(layers: list, **bar_kwargs) -> dict:  # type: ignore
     return translate_to_vl(spec)
 
 
+def _walk_layers(vl: dict):  # type: ignore[no-untyped-def]
+    """Yield every VL layer dict under ``vl["layer"]``, recursing into nested
+    ``layer`` arrays. A dual-axis zero-baseline rule nests one level inside
+    the entry whose scale it shares (see ``emitters/_cartesian.py``'s
+    ``nest_zero_rule``), so a shallow scan of the top-level array alone can
+    miss a base or overlay entry."""
+    for layer in vl.get("layer", []):
+        yield layer
+        yield from _walk_layers(layer)
+
+
 def _find_layer_y_axis(vl: dict, orient: str) -> dict | None:
     """Walk VL spec layers to find a y-encoding axis with the given orient."""
-    layers = vl.get("layer", [])
-    for layer in layers:
-        # nested layers
-        for sub in layer.get("layer", []) or [layer]:
-            enc = sub.get("encoding", {})
-            y = enc.get("y", {})
-            axis = y.get("axis", {})
-            if axis.get("orient") == orient:
-                return axis
+    for layer in _walk_layers(vl):
         enc = layer.get("encoding", {})
         y = enc.get("y", {})
-        axis = y.get("axis", {})
-        if axis.get("orient") == orient:
+        axis = y.get("axis")
+        if isinstance(axis, dict) and axis.get("orient") == orient:
             return axis
     return None
 
 
 def _find_layer_y_scale(vl: dict, orient: str) -> dict | None:
     """Walk VL spec layers to find a y-encoding scale for a given orient."""
-    layers = vl.get("layer", [])
-    for layer in layers:
-        for sub in layer.get("layer", []) or [layer]:
-            enc = sub.get("encoding", {})
-            y = enc.get("y", {})
-            if y.get("axis", {}).get("orient") == orient:
-                return y.get("scale")
+    for layer in _walk_layers(vl):
         enc = layer.get("encoding", {})
         y = enc.get("y", {})
-        if y.get("axis", {}).get("orient") == orient:
+        axis = y.get("axis")
+        if isinstance(axis, dict) and axis.get("orient") == orient:
             return y.get("scale")
     return None
 
@@ -158,15 +156,15 @@ def test_layer_axis_y_grid_visible_parses() -> None:
 
 
 def test_layer_axis_y_label_format_parses() -> None:
-    """axis_y.label.format on a layer parses as a string."""
+    """axis_y.labels.format on a layer parses as a string."""
     from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
 
     layer = LineLayer.model_validate(
-        {"type": "line", "y": "target", "axis_y": {"label": {"format": "$,.0f"}}}
+        {"type": "line", "y": "target", "axis_y": {"labels": {"format": "$,.0f"}}}
     )
     assert layer.axis_y is not None
-    assert layer.axis_y.label is not None
-    assert layer.axis_y.label.format == "$,.0f"
+    assert layer.axis_y.labels is not None
+    assert layer.axis_y.labels.format == "$,.0f"
 
 
 # ── #11: per-layer fields survive through resolve ─────────────────────────
@@ -253,13 +251,13 @@ def test_layer_axis_y_grid_visible_false_emits_to_vl() -> None:
 
 
 def test_layer_axis_y_label_format_emits_to_vl() -> None:
-    """axis_y.label.format on a right-side layer sets format in VL axis."""
+    """axis_y.labels.format on a right-side layer sets format in VL axis."""
     from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
 
     layer = LineLayer(
         type="line",
         y="target",
-        axis_y={"position": "right", "label": {"format": "$,.0f"}},
+        axis_y={"position": "right", "labels": {"format": "$,.0f"}},
     )
     vl = _render_bar_with_layers([layer])
     axis = _find_layer_y_axis(vl, orient="right")
@@ -268,7 +266,7 @@ def test_layer_axis_y_label_format_emits_to_vl() -> None:
 
 
 def test_layer_axis_y_label_format_inline_d3_is_native() -> None:
-    """axis_y.label.format authored as a literal d3 spec passes through unmodified.
+    """axis_y.labels.format authored as a literal d3 spec passes through unmodified.
 
     Inline d3 specs are on the native-d3 path — no round-aware trim, no notation
     post-process. An author who wants trim writes ".2~s" explicitly. Both axes
@@ -278,7 +276,7 @@ def test_layer_axis_y_label_format_inline_d3_is_native() -> None:
     layer = LineLayer(
         type="line",
         y="target",
-        axis_y={"position": "right", "label": {"format": ".2s"}},
+        axis_y={"position": "right", "labels": {"format": ".2s"}},
     )
     vl = _render_bar_with_layers([layer], format=".2s")
     left_axis = _find_layer_y_axis(vl, orient="left")
@@ -426,7 +424,7 @@ def test_chart_level_domain_same_side_layers_does_not_raise() -> None:
 
 def _find_measure_y_orient(vl: dict, field: str) -> str | None:  # type: ignore[no-untyped-def]
     """Return the axis orient of the y encoding for the given measure field."""
-    for layer in vl.get("layer", []):
+    for layer in _walk_layers(vl):
         y = layer.get("encoding", {}).get("y", {})
         if y.get("field") == field and isinstance(y.get("axis"), dict):
             return y["axis"].get("orient")
@@ -511,13 +509,14 @@ def _render_dual_axis() -> dict:  # type: ignore[no-untyped-def]
 
 def test_dual_axis_base_axis_shows_title() -> None:
     """A dual-axis chart labels BOTH sides: the base (left) axis title is restored
-    from its field even though single-axis charts suppress the y-axis title."""
+    from its field even on a dual-axis overlay, which needs both sides labeled
+    to distinguish them."""
     vl = _render_dual_axis()
     checked = False
-    for layer in vl.get("layer", []):
+    for layer in _walk_layers(vl):
         y = layer.get("encoding", {}).get("y", {})
         if y.get("field") == "revenue" and isinstance(y.get("axis"), dict):
-            assert y["axis"].get("title") == "Revenue"
+            assert y["axis"].get("title") == "revenue"
             checked = True
     assert checked, "no layer's y encoding matched revenue/axis — spec shape changed"
 
@@ -564,7 +563,7 @@ def test_dual_axis_labelled_not_suppressed_shows_title() -> None:
     case the suppression gate must not treat as suppressed)."""
     vl = _render_dual_axis_with_label()
     checked = False
-    for layer in vl.get("layer", []):
+    for layer in _walk_layers(vl):
         y = layer.get("encoding", {}).get("y", {})
         if y.get("field") == "revenue" and isinstance(y.get("axis"), dict):
             axis = y["axis"]
@@ -620,7 +619,7 @@ def test_dual_axis_honors_explicit_title_visible_false() -> None:
     whenever a layer pinned a side, discarding the author's own false)."""
     vl = _render_dual_axis_with_suppressed_base_title()
     checked = False
-    for layer in vl.get("layer", []):
+    for layer in _walk_layers(vl):
         y = layer.get("encoding", {}).get("y", {})
         if y.get("field") == "revenue" and isinstance(y.get("axis"), dict):
             axis = y["axis"]
@@ -631,7 +630,7 @@ def test_dual_axis_honors_explicit_title_visible_false() -> None:
     assert checked, "no layer's y encoding matched revenue/axis — spec shape changed"
 
 
-def _render_horizontal_dual_axis(suppress: str | None) -> dict:  # type: ignore[no-untyped-def]
+def _render_horizontal_layered(suppress: str | None) -> dict:  # type: ignore[no-untyped-def]
     """Dual-axis overlay on a *horizontal* bar.
 
     Horizontal puts the CATEGORY axis on VL y (governed by axis_x/x_label);
@@ -639,10 +638,7 @@ def _render_horizontal_dual_axis(suppress: str | None) -> dict:  # type: ignore[
     ``title.visible: false`` alongside its label: "x" (the category axis
     actually drawn on VL y) or "y" (the measure axis, which is not).
     """
-    from dbt_charts.core.compile.models.chart.authored._layer import (
-        LayerAxisYStyle,
-        LineLayer,
-    )
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
     from dbt_charts.core.compile.models.chart.normalized import BarChart as NBarChart
     from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
     from dbt_charts.core.compile.resolve import resolve
@@ -670,9 +666,11 @@ def _render_horizontal_dual_axis(suppress: str | None) -> dict:  # type: ignore[
                 **({axis_key: {"title": {"visible": False}}} if suppress else {}),
             }
         ),
-        layers=[
-            LineLayer(type="line", y="target", axis_y=LayerAxisYStyle(position="right"))
-        ],
+        # No axis_y.position: a horizontal base measures along VL x, whose
+        # sides are top and bottom, so pinning a left/right side raises. The
+        # property under test is the CATEGORY axis title, which a plain layered
+        # horizontal bar draws just the same.
+        layers=[LineLayer(type="line", y="target")],
     )
     resolved = resolve(chart, vdata, _default_board_style())
     return translate_to_vl(
@@ -689,7 +687,7 @@ def _base_category_axis(vl: dict) -> dict | None:  # type: ignore[no-untyped-def
     return None
 
 
-def test_horizontal_dual_axis_suppresses_the_axis_the_author_named() -> None:
+def test_horizontal_layered_bar_titles_its_category_axis_from_axis_x() -> None:
     """On a horizontal bar the category axis is drawn on VL y, so it is
     axis_x/x_label that governs it — not axis_y/y_label.
 
@@ -697,24 +695,38 @@ def test_horizontal_dual_axis_suppresses_the_axis_the_author_named() -> None:
     (the measure axis, drawn on VL x) must leave the category title alone.
     Reading axis_y for both would delete a title the author never suppressed.
     """
-    suppressed_x = _base_category_axis(_render_horizontal_dual_axis("x"))
+    suppressed_x = _base_category_axis(_render_horizontal_layered("x"))
     assert suppressed_x is not None
     assert "title" in suppressed_x and suppressed_x["title"] is None, (
         "axis_x.title.visible:false must suppress the category axis title "
         "that a horizontal bar draws on VL y"
     )
 
-    suppressed_y = _base_category_axis(_render_horizontal_dual_axis("y"))
+    suppressed_y = _base_category_axis(_render_horizontal_layered("y"))
     assert suppressed_y is not None
-    assert suppressed_y.get("title"), (
-        "suppressing the measure axis (axis_y) must not delete the category "
+    # Not-suppressed is the ABSENCE of an explicit override, not a title
+    # stamped onto the axis: the category axis inherits its text from the
+    # encoding. (The overlay's dual-axis path used to stamp one here, which is
+    # why this once read as a truthy title — an artifact of a path a horizontal
+    # base no longer takes, not the property.)
+    assert "title" not in suppressed_y, (
+        "suppressing the measure axis (axis_y) must not touch the category "
         "axis title, which axis_x governs"
     )
 
 
 def test_dual_axis_skips_floating_zero_rule() -> None:
-    """A datum:0 baseline rule can't bind to the base scale under independent y,
-    so it must not be emitted (the base x-axis at 0 is the visible baseline)."""
+    """No zero rule sits at the TOP level of `layer[]` as a floating,
+    unbound sibling. `_has_datum_zero_rule` only scans that shallow level,
+    one above where `nest_zero_rule` actually nests a dual-axis rule.
+
+    `_render_dual_axis()` calls `BarEmitter().emit()` directly and never runs
+    the feature pipeline, so this pins the bare emitter's own output shape,
+    not a `BaselineFeature` verdict. Regression coverage for per-scale
+    zero-rule insertion (which entry gets a rule, and which doesn't) lives in
+    `test_zero_baseline.py`'s `test_dual_axis_*` tests, which run the full
+    pipeline via `generate_vega_lite_spec` and assert the nested shape
+    directly."""
     vl = _render_dual_axis()
     assert not _has_datum_zero_rule(vl)
 

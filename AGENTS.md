@@ -1,22 +1,25 @@
-# Dataface
+# dbt charts
 
-The Dataface core engine: YAML dashboard compiler, query executor, renderer, HTTP server, and inspector. The CLI (`dct`) and AI/MCP interfaces are thin wrappers over this package's Python APIs.
+The dbt charts core engine: YAML dashboard compiler, query executor, renderer, HTTP server, and inspector. The CLI (`dct`) and AI/MCP interfaces are thin wrappers over this package's Python APIs.
 
 ## Verbs
 | Verb | Purpose |
 |------|---------|
-| `dct validate [PATH]` | Validate face YAML for errors (no DB); default: `charts/` |
-| `dct render <face>` | Compile + execute + write static exports |
+| `dct validate [PATH]` | Validate board YAML for errors (no DB); default: `charts/` |
+| `dct render <board>` | Compile + execute + write static exports |
 | `dct query SOURCE 'SELECT …'` | Execute raw SQL and return sample rows (CLI parity with MCP `execute_query`) |
-| `dct query face.yaml NAME` | Run a named face query (sample rows) |
+| `dct query board.yaml NAME` | Run a named board query (sample rows) |
 | `dct query SOURCE 'SELECT …' --validate` | Static SQL lint for raw SQL in a source context |
-| `dct query face.yaml NAME --validate` | Lint the SQL of a named face query |
+| `dct query board.yaml NAME --validate` | Lint the SQL of a named board query |
 | `dct query SOURCE 'SELECT …' --describe` | Column schema for a SQL string |
 | `dct search <query>` | Search dashboards by keyword with ranked results |
+| `dct impact <column>` | Which boards reference a column (reverse index; no DB) |
 | `dct serve` | Start local server; use its URL for browser previews |
-| `dct init` | Bootstrap a Dataface project |
+| `dct examples [SLUG]` | List bundled board specimens, or print one's YAML |
+| `dct init` | Bootstrap a dbt charts project |
 | `dct init skills` | Install workflow skills for file-based agent auto-discovery |
 | `dct init mcp` | Wire up MCP server for AI assistants |
+| `dct init ci` | Scaffold a GitHub Actions workflow running `dct validate` on PRs |
 | `dct --version` | Print version + install path; first check when output looks stale |
 
 ## Quick start
@@ -28,7 +31,7 @@ charts:
 dct validate charts/rev.yaml && dct render charts/rev.yaml
 ```
 
-Errors carry doc pointers and `did you mean` hints — follow them. Canonical registry: `dataface/core/diagnostics/`. Every code is `ERR-{SLUG}` (no domain segment in the string — `ErrorCode.domain` carries that); ERR-INTERNAL is a fallback that signals a bug (an unmigrated or wrapped raise site), not an accepted tier — treat any occurrence on a common failure path as a defect.
+Errors carry doc pointers and `did you mean` hints — follow them. Canonical registry: `dbt_charts/core/diagnostics/`. Every code is `ERR-{SLUG}` (no domain segment in the string — `ErrorCode.domain` carries that); ERR-INTERNAL is a fallback that signals a bug (an unmigrated or wrapped raise site), not an accepted tier — treat any occurrence on a common failure path as a defect.
 
 ## Testing
 
@@ -97,15 +100,16 @@ there are not needed for the common one-site-per-line case.
 - `core/render/` — normalized doc → output (HTML, SVG, etc.)
 - `core/serve/` — HTTP server for dashboards
 - `core/inspect/` — schema inspection / table profiling (powers `dct inspect` and the `/data` browser)
-- `core/registered_views/` — route→template→generated-face mechanism that powers the `/data/` browser; each *registered view* matches a URL pattern, runs optional pre-template queries, and renders an auto-generated face. Not to be confused with the `/data/` surface itself (user-facing) or `plan_entity_variables` (which uses a different, unrelated meaning of "entity"). **Reserved slug prefixes:** `data/` and `inspector/` route to the built-in registered-view system views (the `/data/` browser + schema inspector) on both hosts. Don't name user faces with these prefixes — they collide with the built-in handlers (a face *file* at the prefix is shadowed by the router; a real `charts/data/` *directory* is still directory-listed in `dct serve`). Cloud mounts them under `/d/` alongside dashboards.
+- `core/registered_views/` — route→template→generated-board mechanism that powers the `/data/` browser; each *registered view* matches a URL pattern, runs optional pre-template queries, and renders an auto-generated board. Not to be confused with the `/data/` surface itself (user-facing) or `plan_entity_variables` (which uses a different, unrelated meaning of "entity"). **Reserved slug prefixes:** `data/` and `inspector/` route to the built-in registered-view system views (the `/data/` browser + schema inspector) on both hosts. Don't name user boards with these prefixes — they collide with the built-in handlers (a board *file* at the prefix is shadowed by the router; a real `charts/data/` *directory* is still directory-listed in `dct serve`). Cloud mounts them under `/d/` alongside dashboards.
 - `src/dbt_charts/core/render/chart/AGENTS.md` — **canonical chart-rendering philosophy and render-layer invariants** (its `## Implementation philosophy`)
 - `cli/` — `dct` command-line interface (thin wrapper)
 - `ai/` — AI/MCP interfaces (thin wrappers)
 - `agent_api/` — typed Python API every CLI and MCP verb delegates to
-- `integrations/` — external integrations (Pygments lexer for face YAML, markdown, etc.)
+- `integrations/` — external integrations (Pygments lexer for board YAML, markdown, etc.)
 - `core/compile/schema/renderers/` — schema IR → derived artifacts (JSON Schema, highlight manifest, TextMate grammar)
 - `data/highlighting/board.json` — **committed highlight manifest** (single source of truth for top-level keys, enum values, SQL block scalar keys). Regenerate with `just gen-highlight-artifacts` after model changes.
-- `core/defaults/themes/*.yaml`, `core/defaults/palettes/`, `core/defaults/default_config.yml` — themes, palettes, and default config (chart-level defaults live in theme YAML). Adding or removing a theme/palette YAML file also requires `just generate-schema-names` (regenerates `core/compile/models/schema_names.py`'s `ThemeName`/`PaletteName`/`ScalePaletteName`).
+- `core/defaults/themes/*.yaml`, `core/defaults/palettes/`, `core/defaults/default_config.yml` — themes, palettes, and default config (chart-level defaults live in theme YAML). Adding or removing a theme/palette YAML file also requires `just generate-schema-names` (regenerates `core/compile/models/schema_names.py`'s `ThemeName`/`PaletteName`/`StopsPaletteName`/`ScalePaletteName`).
+- `oss/uv.lock` — **committed standalone lock** for the Copybara OSS export (Copybara only moves files; it can't run `uv`). Regenerate with `just oss-lock` after changing dbt-charts' dependencies, extras, or dev group; `tests/packaging/test_oss_uv_lock.py` fails when it drifts.
 
 ## Visual regression testing — golden approval rule
 
@@ -148,7 +152,7 @@ why it belongs in `.env` rather than exported from `~/.zshrc`.
 
 **Canonical architecture docs.** Maintainer-grade pages live under `docs/contributing/architecture/`. Use those and package `AGENTS.md` files rather than expanding inline guidance here.
 
-**New author-surface fields are reviewed, not free.** Faces, charts, and themes are a public contract — the JSON Schema, docs, and highlight manifest all derive from it, and removing a field later breaks every dashboard that authored it. Before adding a field, try hard to reuse or slightly reshape an existing field's semantics instead (see the accepted/rejected chart-field table in `src/dbt_charts/core/AGENTS.md`). A diff touching `apps/docs/docs/reference/yaml-reference.md` or `dbt-charts/src/dbt_charts/agent_api/docs/yaml-reference.md` should carry a stated reason an existing field couldn't cover the need — question new entries there in review, don't wave them through.
+**New author-surface fields are reviewed, not free.** Boards, charts, and themes are a public contract — the JSON Schema, docs, and highlight manifest all derive from it, and removing a field later breaks every dashboard that authored it. Before adding a field, try hard to reuse or slightly reshape an existing field's semantics instead (see the accepted/rejected chart-field table in `src/dbt_charts/core/AGENTS.md`). A diff touching `apps/docs/docs/reference/yaml-reference.md` or `dbt-charts/src/dbt_charts/agent_api/docs/yaml-reference.md` should carry a stated reason an existing field couldn't cover the need — question new entries there in review, don't wave them through.
 
 **No internal decision identifiers in shipped artifacts.** Design-doc section labels (`C7`, `S3`, `D12`, etc.) are internal planning shorthand — they must not appear in code, tests, docstrings, AGENTS.md files, or any artifact that ships in the package or is visible to contributors. Use a plain description instead.
 
@@ -161,17 +165,17 @@ why it belongs in `.env` rather than exported from `~/.zshrc`.
 2. Call a function from `dbt_charts.agent_api`
 3. Format the result for output
 
-Any validation, path resolution, compilation, execution, or rendering in these layers is a violation. A PR that adds a new `dct <verb>` without a corresponding `agent_api` function is rejected. A PR that adds business logic to a CLI command file or MCP server module is rejected.
+Any validation, path resolution, compilation, execution, or rendering in these layers is a violation. A PR that adds a new `dct <verb>` without a corresponding `agent_api` function is rejected — **except `dct cloud` verbs**, whose one call is into `dbt_charts.cloud_client` instead (below), never `agent_api`: `agent_api` is local-by-contract (no network, no Django) and `cloud_client` is the only module that talks to Cloud. A PR that adds business logic to a CLI command file or MCP server module is rejected.
 
 ### Module boundaries
 
-tach enforces: `dbt_charts.cli` may depend only on `dbt_charts.agent_api` (explicit `depends_on` on an unlayered module — in tach 0.35, layer ordering implicitly allows skip-level and same-layer edges, so this is the enforcing shape); `dbt_charts.core` cannot import `dbt_charts.cli` or `dbt_charts.ai` (layer ordering); `dbt_charts.ai.tools` cannot import `dbt_charts.ai.mcp`.
+tach enforces: `dbt_charts.cli` may depend only on `dbt_charts.agent_api` and `dbt_charts.cloud_client` (both explicit `depends_on` edges on unlayered modules — in tach 0.35, layer ordering implicitly allows skip-level and same-layer edges, so this is the enforcing shape); `dbt_charts.cloud_client` may import nothing first-party at all (`cli/commands/cloud.py` parses arguments, calls one client method, prints the result — same thin-wrapper rule, `cloud_client`'s networked sibling of `agent_api`); `dbt_charts.core` cannot import `dbt_charts.cli` or `dbt_charts.ai` (layer ordering); `dbt_charts.ai.tools` cannot import `dbt_charts.ai.mcp`.
 
 `dbt_charts.cli` → `dbt_charts.core` is forbidden — route through `dbt_charts.agent_api`. The remaining direct import (`commands/mcp.py`'s lazy `dbt_charts.ai.mcp` import) carries a `# tach-ignore(cli->ai debt…)` marker; the burn-down task deletes it.
 
-## Product skills (`dataface/ai/skills/`)
+## Product skills (`dbt_charts/ai/skills/`)
 
-Skills under `dataface/ai/skills/` ship in the wheel and are the knowledge product Dataface offers to AI agents. They are different from the contributor-facing `.claude/skills/` skills (which guide the humans + agents working *on* the repo, not consumers of the wheel).
+Skills under `dbt_charts/ai/skills/` ship in the wheel and are the knowledge product dbt charts offers to AI agents. They are different from the contributor-facing `.claude/skills/` skills (which guide the humans + agents working *on* the repo, not consumers of the wheel).
 
 ### How agents reach them
 
@@ -181,10 +185,19 @@ The CLI verbs (bare `dct`, as a customer would invoke them):
 dct skills                # list all product skills
 dct skills <name>         # print one skill's SKILL.md body
 dct docs                  # topic catalog (bare) or cheatsheet overview
-dct docs <topic>          # one H2 section (face, queries, charts, variables, layout, getting-started, errors, …)
+dct docs <topic>          # one H2 section (board, queries, charts, variables, layout, getting-started, errors, …)
 dct docs all              # full reference file
 dct docs --search <q>     # full-text search across all topics
+dct examples              # list bundled board specimens
+dct examples <slug>       # print one specimen's board YAML (e.g. boards/kpi-overview)
+dct examples --search <q> # search slugs, titles, and specimen YAML
 ```
+
+`dct examples` is the third knowledge surface: skills give workflow prose, docs
+give field reference, examples give a whole working board to copy. Specimens
+live in `dbt_charts/ai/examples/<category>/` and every one renders standalone —
+inline `columns`/`values` data, no `source:` — so an agent can paste one into a
+project the wheel knows nothing about.
 
 Topics are sliced from `dbt-charts/src/dbt_charts/DBT_CHARTS_SYNTAX.md` (single source).
 
@@ -199,6 +212,8 @@ Two surfaces, two conventions — keep them straight:
 
 When the same content appears in both places (e.g. quoting a `dct docs` example in a worksheet), pick the form that matches the document's audience, not the lowest common denominator.
 
+`cli/_workspace_guard.py` makes a violation of that second rule visible: inside a checkout that contains the package, `dct` warns to stderr when the running build didn't come from that checkout's own editable install. It never fails the command. Two limits worth knowing: a build published before the guard existed stays silent wherever it answers from, and the probe reads the source tree rather than the install, so a pip-installed `dct` run from inside a clone of the public export warns too. Machine stderr consumers set `DCT_NO_WORKSPACE_GUARD=1` (the extension's preview spawn and the CI smoke job do) — the advisory's non-JSON first line otherwise corrupts a `--diagnostics-json` parse.
+
 ### Authoring a product skill
 
-Before writing or renaming a skill under `dataface/ai/skills/`, read `docs/contributing/product-skills-authoring.md` — surface macros (`{{ s_X }}` + `surface_aliases.yaml`), the `<object>-<action>` naming standard, and the required `kind: workflow | pattern` frontmatter.
+Before writing or renaming a skill under `dbt_charts/ai/skills/`, read `docs/contributing/product-skills-authoring.md` — surface macros (`{{ s_X }}` + `surface_aliases.yaml`), the `<object>-<action>` naming standard, and the required `kind: workflow | pattern` frontmatter.

@@ -11,18 +11,18 @@ from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.render.utils import normalize_data_types
 
 
-def build_dataface_json(
+def build_dbt_charts_json(
     chart: Chart,
     data: list[dict[str, Any]],
     width: float | None = None,
     height: float | None = None,
 ) -> dict[str, Any]:
-    """Build the normalized Dataface JSON representation for a chart."""
+    """Build the normalized dbt charts JSON representation for a chart."""
     normalized_data = normalize_data_types(data)
     result: dict[str, Any] = {"type": chart.type}
 
     # These fields vary by chart family — use getattr for polymorphic access.
-    for _fname in ("title", "label", "subtitle", "description"):
+    for _fname in ("title", "label", "subtitle", "notes"):
         _val = getattr(chart, _fname, None)
         if _val:
             result[_fname] = _val

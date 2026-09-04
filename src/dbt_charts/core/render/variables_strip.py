@@ -22,18 +22,19 @@ decided in ``variables_layout``. This module only draws.
 
 from __future__ import annotations
 
+import datetime
 import html
 import json
 from typing import TYPE_CHECKING, Literal
 
 from dbt_charts.core.compile.models.style.theme import font_weight_as_css
+from dbt_charts.core.font_measure import centered_baseline_offset
 from dbt_charts.core.render.controls import controls_are_interactive
-from dbt_charts.core.render.svg_utils import authored_attrs, px
+from dbt_charts.core.render.svg_utils import authored_attrs, authored_kind_attr, px
 from dbt_charts.core.render.variables_layout import (
-    ARROW_ORNAMENT,
-    CALENDAR_ORNAMENT,
     lay_out_variables,
     ornament_width,
+    traits_of,
 )
 from dbt_charts.core.render.variables_resolve import (
     UNSET_DATERANGE_LABEL,
@@ -166,10 +167,30 @@ def _draw_control(
     )
     field_height = float(variables_style.input.height)
     field_y = box.y + (box.height - field_height) / 2
-    baseline = box.y + box.height / 2 + font_size * 0.35
+    baseline = (
+        box.y + box.height / 2 + centered_baseline_offset(label_font.family, font_size)
+    )
+
+    # A variable is scoped to the board that declares it, so its handle is that
+    # board's `variables:` key regardless of which chart reads it — the strip is
+    # the one place a user can point at one. Unless the key only names it: a
+    # cross-file reference has coordinates in this file but its definition in
+    # another, and a handle to a reference string sends the click to the board.
+    authored = variables_path and not control.var_def.defined_in_other_file
+    handle = (
+        authored_attrs(f"{variables_path}.{box.name}", "variable") if authored else ""
+    )
+    # The label run is the one part of a control that is not a value, which is
+    # what makes it the control's handle as well as its one editable key: a
+    # pointer aiming at the value surface belongs to the filter, and a host that
+    # selected there would open a code panel on someone who was changing it.
+    # Only when the control is authored here — no path, no keys, and the whole
+    # control is value surface.
+    label_kind = authored_kind_attr("label") if authored else ""
 
     parts = [
-        f'<text x="{px(x)}" y="{px(baseline)}" font-size="{px(font_size)}" '
+        f'<text{label_kind} x="{px(x)}" y="{px(baseline)}" '
+        f'font-size="{px(font_size)}" '
         f'font-weight="{weight}" font-family="{family}" '
         f'fill="{variables_style.label.font.color}">{html.escape(box.label)}:</text>'
     ]
@@ -209,7 +230,7 @@ def _draw_control(
         f' data-dbt-min="{control.slider_min:g}"'
         f' data-dbt-max="{control.slider_max:g}"'
         f' data-dbt-step="{control.slider_step:g}"'
-        if box.input in ("slider", "range")
+        if traits_of(box.input).sizing == "slider"
         else ""
     )
     # Whether an empty value is a legal state to land in, and what it reads as.
@@ -217,15 +238,14 @@ def _draw_control(
     # multiselect emptied by unchecking its last member renders the next page
     # with no board — and so no control to recover from.
     unset = ""
-    if box.input in ("select", "multiselect", "radio"):
+    unset_style = traits_of(box.input).unset
+    if unset_style != "none":
+        default_label = (
+            UNSET_SELECT_LABEL if unset_style == "chooser" else UNSET_DATERANGE_LABEL
+        )
         unset = f' data-dbt-can-unset="{"true" if control.can_unset else "false"}"'
         if control.can_unset:
-            label = read_only_unset_label(control.var_def, UNSET_SELECT_LABEL)
-            unset += f' data-dbt-unset-label="{html.escape(label, quote=True)}"'
-    elif box.input == "daterange":
-        unset = f' data-dbt-can-unset="{"true" if control.can_unset else "false"}"'
-        if control.can_unset:
-            label = read_only_unset_label(control.var_def, UNSET_DATERANGE_LABEL)
+            label = read_only_unset_label(control.var_def, default_label)
             unset += f' data-dbt-unset-label="{html.escape(label, quote=True)}"'
     # The chrome draws the committed value; the options a host opens travel
     # with it, so a live board needs no second round trip for something the
@@ -235,16 +255,6 @@ def _draw_control(
     options = (
         f' data-dbt-options="{html.escape(json.dumps(list(control.option_values)), quote=True)}"'
         if control.option_values and controls_are_interactive()
-        else ""
-    )
-    # A variable is scoped to the board that declares it, so its handle is that
-    # board's `variables:` key regardless of which chart reads it — the strip is
-    # the one place a user can point at one. Unless the key only names it: a
-    # cross-file reference has coordinates in this file but its definition in
-    # another, and a handle to a reference string sends the click to the board.
-    handle = (
-        authored_attrs(f"{variables_path}.{box.name}", "variable")
-        if variables_path and not control.var_def.defined_in_other_file
         else ""
     )
     return (
@@ -268,7 +278,12 @@ def _committed_value(control: ResolvedControl) -> str:
     if current is None:
         return ""
     if isinstance(current, (list, tuple)):
-        return json.dumps(list(current))
+        return json.dumps(
+            [
+                member.isoformat() if isinstance(member, datetime.date) else member
+                for member in current
+            ]
+        )
     return str(current)
 
 
@@ -282,9 +297,10 @@ def _draw_field(
     variables_style: VariablesStyle,
 ) -> list[str]:
     """The input itself — a checkbox and a slider are shapes, the rest are fields."""
-    if box.input == "checkbox":
+    sizing = traits_of(box.input).sizing
+    if sizing == "checkbox":
         return _draw_checkbox(control, x, y, variables_style)
-    if box.input in ("slider", "range"):
+    if sizing == "slider":
         return _draw_slider(control, box, x, y, width, height, variables_style)
     return _draw_text_field(box, x, y, width, height, variables_style)
 
@@ -304,7 +320,7 @@ def _draw_text_field(
     family = html.escape(str(value_font.family))
     input_style = variables_style.input
     text_x = x + float(input_style.padding.left)
-    baseline = y + height / 2 + font_size * 0.35
+    baseline = y + height / 2 + centered_baseline_offset(value_font.family, font_size)
 
     parts = [
         _field_rect(x, y, width, height, variables_style),
@@ -312,9 +328,10 @@ def _draw_text_field(
         f'font-family="{family}" fill="{value_font.color}">'
         f"{html.escape(box.value)}</text>",
     ]
-    if box.input in ARROW_ORNAMENT:
+    ornament = traits_of(box.input).ornament
+    if ornament == "arrow":
         parts.append(_draw_arrow(x + width, y + height / 2, font_size, variables_style))
-    elif box.input in CALENDAR_ORNAMENT:
+    elif ornament == "calendar":
         parts.append(
             _draw_calendar(x + width, y + height / 2, font_size, variables_style)
         )
@@ -385,7 +402,7 @@ def _draw_slider(
         f'<circle cx="{px(thumb)}" cy="{px(mid)}" r="6" '
         f'fill="{variables_style.value.font.color}"/>',
         f'<text x="{px(x + track_width + float(variables_style.control_gap))}" '
-        f'y="{px(mid + font_size * 0.35)}" font-size="{px(font_size)}" '
+        f'y="{px(mid + centered_baseline_offset(value_font.family, font_size))}" font-size="{px(font_size)}" '
         f'font-family="{family}" fill="{variables_style.value.font.color}">'
         f"{html.escape(box.value)}</text>",
     ]

@@ -1,5 +1,5 @@
 title: "Prose columns — the scenario matrix"
-description: >
+notes: >
   Two variables drive every column decision: how wide the slot is, and how much text
   is in it. This board sweeps each one independently while holding the other fixed, then
   exercises the cases where the rule is most likely to break — mixed block types across

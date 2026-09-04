@@ -10,7 +10,7 @@ used to sit in the "medium" tier (title-slot family) sliding into "narrow"
 (body family), quietly losing serif titles on themes like editorial/cream.
 
 These tests assert relationships and behavior, never threshold pixel
-literals or theme values (see ``dataface/AGENTS.md``): sizes/weights/families
+literals or theme values (see ``dbt-charts/AGENTS.md``): sizes/weights/families
 are always compared against each other or against the live theme, not
 hardcoded numbers or strings.
 """
@@ -33,7 +33,7 @@ from dbt_charts.core.compile.resolve.style.typography import (
 from ...._board_utils import apply_static_layout
 
 _TWO_COLUMN_BOARD_YAML = """
-extends: editorial
+extends: clarity
 title: Two Column Regression Check
 queries:
   sales:
@@ -67,9 +67,9 @@ class TestBoardMarginRegression:
     """
 
     def test_reference_content_width_tracks_default_board_geometry(self) -> None:
-        frame = resolve_style(get_theme_style("editorial")).frame
+        frame = resolve_style(get_theme_style("clarity")).frame
 
-        assert frame.width - 2 * frame.margin == _REFERENCE_CONTENT_WIDTH
+        assert frame.max_width - 2 * frame.margin == _REFERENCE_CONTENT_WIDTH
 
     def test_two_column_card_at_default_board_width_keeps_title_family(self) -> None:
         result = compile(_TWO_COLUMN_BOARD_YAML)
@@ -81,7 +81,7 @@ class TestBoardMarginRegression:
         card_width = board.layout.items[0].width
         assert card_width == board.layout.items[1].width
 
-        editorial = get_theme_style("editorial")
+        editorial = get_theme_style("clarity")
         charts_style = resolve_chart_style_context(editorial)
         _, _, family = chart_title_spec(card_width, chart_style_context=charts_style)
 
@@ -104,7 +104,7 @@ class TestTinyBoundary:
     """
 
     def test_weight_floor_applies_only_below_the_tiny_boundary(self) -> None:
-        charts_style = resolve_chart_style_context(get_theme_style("editorial"))
+        charts_style = resolve_chart_style_context(get_theme_style("clarity"))
 
         # Read the theme's own configured weight from comfortably inside the
         # tier above tiny, rather than hardcoding it.
@@ -134,7 +134,7 @@ class TestNarrowBoundary:
     """
 
     def test_family_and_size_step_at_the_narrow_boundary(self) -> None:
-        editorial = get_theme_style("editorial")
+        editorial = get_theme_style("clarity")
         charts_style = resolve_chart_style_context(editorial)
 
         below_size, _, below_family = chart_title_spec(

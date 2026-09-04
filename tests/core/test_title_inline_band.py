@@ -26,10 +26,12 @@ from dbt_charts.core.render.sizing import (
     get_title_height,
     resolve_title_variables_inline_widths,
     should_use_title_inline_band,
+    title_baseline_offset,
 )
 
 from ._board_utils import apply_static_layout
 from ._control_utils import render_strip_for
+from ._svg_render import authored_boxes, variables_box_x
 
 
 class TestTitleInlineBand:
@@ -90,7 +92,12 @@ rows:
         # max(title_h, var_h) + a small delta. Assert ≥ max with a tolerance
         # against the helper that owns the math.
         _t_dy, _v_dy, expected = compute_title_variables_inline_baseline_layout(
-            title_h, var_h, float(vs.font.size), float(vs.title_inline_band_bottom_pad)
+            title_h,
+            var_h,
+            title_baseline_offset(board.resolved_style, board.level, False),
+            float(vs.font.size),
+            vs.font.family,
+            float(vs.title_inline_band_bottom_pad),
         )
         assert band == expected
         assert band >= max(title_h, var_h)
@@ -107,10 +114,15 @@ rows:
         # ~9px down so the label baseline meets the title baseline. The
         # exact delta is owned by the helper; we just pin that one of the
         # two translates is strictly positive.
+        from dbt_charts.core.compile.resolve.style.board import resolve_style
+
+        style = resolve_style(get_theme_style())
         title_dy, vars_dy, band_h = compute_title_variables_inline_baseline_layout(
             title_h=38.4,  # mdsvg's natural block height for 24px Inter at line-height 1.3
             vars_h=36.0,  # default variables container_height
+            title_baseline=title_baseline_offset(style, 1, False),
             label_font_size=11.0,  # default variables font size
+            label_font_family=style.variables.font.family,
             pad=24.0,  # default title_inline_band_bottom_pad from _base.yaml
         )
         assert title_dy > 0 or vars_dy > 0, (
@@ -327,6 +339,74 @@ rows:
         assert "data-dbt-variables-box" in svg
         assert 'data-dbt-align="start"' in svg
         assert 'data-dbt-align="end"' not in svg
+
+
+class TestTitleSelectionBoxDoesNotOverhangVariablesColumn:
+    """Regression: the title band's selection box claims card_padding on both
+    horizontal sides, but its right neighbour in the band is the variables
+    column, not the card edge — so the box overhangs the column by
+    card_padding minus variables.gap whenever the gap is narrower than the
+    padding. Computed from the rendered geometry (not the theme's literal
+    16/10 defaults), so the assertion tracks whatever the theme actually
+    produces rather than a value pinned here. Its regression power still
+    depends on the current defaults keeping variables.gap narrower than
+    frame.card_padding — if a theme edit widened the gap past the padding,
+    the assertion would pass trivially regardless of the fix.
+    """
+
+    def test_title_box_right_edge_does_not_cross_variables_column_origin(
+        self, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        yaml_content = """
+title: "Sales"
+variables:
+  region:
+    input: text
+    default: west
+style:
+  variables:
+    position: title-inline
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue: 100}
+      - {month: Feb, revenue: 150}
+charts:
+  c:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+rows:
+  - c
+"""
+        result = compile(yaml_content)
+        assert result.success, result.errors
+        apply_static_layout(result.board)
+        resolved = resolve_board(result.board)
+        executor = Executor(
+            result.board,
+            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            query_registry=result.query_registry,
+        )
+        svg = render_board_svg(
+            resolved,
+            executor,
+            result.board.variable_defaults,
+            background=None,
+            render_cache={},
+        )
+
+        title_x, _y, title_w, _h = authored_boxes(svg, "dbt-box-outer")["title"]
+        title_right_edge = title_x + title_w
+        variables_x = variables_box_x(svg)
+
+        assert title_right_edge <= variables_x, (
+            f"title selection box right edge {title_right_edge} overhangs the "
+            f"variables column starting at {variables_x} by "
+            f"{title_right_edge - variables_x}px"
+        )
 
 
 class TestPaintTitleSvgFillRegression:
@@ -1043,4 +1123,137 @@ rows:
         assert 'data-dbt-align="start"' in every_category, (
             "every category selected does not fit beside the title, so the "
             "render must fall back to the full-width strip under it"
+        )
+
+
+class TestInlineBandTitleHeightUsesDrawWidth:
+    """Regression: measured title height must use the draw width (inner), not title_w.
+
+    The draw path calls _render_title_svg at `inner` (full band inner width).
+    The sizing path was calling get_title_height at `title_w` (the narrower
+    title column). After a case transform makes the title-cased string wider,
+    it wraps at `title_w` but not at `inner`, over-reserving ~25px of blank
+    space under the board title on both affected corpus boards.
+    """
+
+    _YAML = """
+title: "dbt charts quick start cheat sheet"
+style:
+  frame:
+    width: 1200
+  variables:
+    position: title-inline
+variables:
+  date_range:
+    input: daterange
+    label: Date Range
+  signup_source:
+    input: select
+    label: Signup Source
+    options:
+      static: [a, b]
+  plan:
+    input: select
+    label: Plan
+    options:
+      static: [free, pro]
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue: 100}
+charts:
+  c:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+rows:
+  - c
+"""
+
+    def test_band_height_uses_inner_width_not_column_width(self) -> None:
+        from dbt_charts.core.render.sizing import (
+            compute_title_variables_inline_band_height,
+            compute_title_variables_inline_baseline_layout,
+            compute_variable_controls_height,
+            get_title_height,
+            resolve_title_variables_inline_widths,
+        )
+
+        result = compile(self._YAML)
+        assert result.success, result.errors
+        board = apply_static_layout(result.board)
+
+        content_w = float(board.layout.content_width)
+        card_pad = float(board.resolved_style.frame.card_padding)
+        inner = max(content_w - 2 * card_pad, 1.0)
+        vs = board.resolved_style.variables
+        prose = False
+
+        title_w, vars_w = resolve_title_variables_inline_widths(
+            inner,
+            board.resolved_style,
+            board.visible_variables,
+            board.title,
+            board.variable_defaults,
+            board.level,
+            prose,
+        )
+
+        assert board.title is not None
+        h_at_inner = max(
+            get_title_height(
+                board.title,
+                inner,
+                board.variable_defaults,
+                level=board.level,
+                resolved_style=board.resolved_style,
+                prose=prose,
+            ),
+            float(board.resolved_style.title.min_height),
+        )
+        h_at_title_w = max(
+            get_title_height(
+                board.title,
+                title_w,
+                board.variable_defaults,
+                level=board.level,
+                resolved_style=board.resolved_style,
+                prose=prose,
+            ),
+            float(board.resolved_style.title.min_height),
+        )
+
+        # The fixture must discriminate the two widths for the test to be meaningful.
+        assert h_at_inner != h_at_title_w, (
+            f"Fixture title must produce different heights at inner={inner:.1f} and "
+            f"title_w={title_w:.1f} after case transform. "
+            f"Got h_at_inner={h_at_inner}, h_at_title_w={h_at_title_w}. "
+            "Adjust the fixture (title, frame.width, or variable count)."
+        )
+
+        # Expected band height using inner (the width the draw uses).
+        var_h = compute_variable_controls_height(
+            board.visible_variables, vars_w, board.variable_defaults, vs
+        )
+        assert vs.font.size is not None
+        _, _, expected_band_h = compute_title_variables_inline_baseline_layout(
+            h_at_inner,
+            var_h,
+            title_baseline_offset(board.resolved_style, board.level, False),
+            float(vs.font.size),
+            vs.font.family,
+            float(vs.title_inline_band_bottom_pad),
+        )
+
+        actual_band_h = compute_title_variables_inline_band_height(
+            board, content_w, board.variable_defaults
+        )
+
+        assert actual_band_h == expected_band_h, (
+            f"Band height must be measured at inner={inner:.1f} (draw width), "
+            f"not title_w={title_w:.1f} (column width). "
+            f"Got {actual_band_h}, expected {expected_band_h} (from h_inner={h_at_inner}). "
+            f"Measured at title_w would give {h_at_title_w}."
         )

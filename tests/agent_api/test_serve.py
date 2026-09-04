@@ -123,7 +123,7 @@ class TestPrepareServe:
             ),
             patch("dbt_charts.core.serve.server.create_server", return_value=object()),
         ):
-            monkeypatch.setenv("DCT_DEFAULT_THEME", "cream")
+            monkeypatch.setenv("DCT_DEFAULT_THEME", "paper")
             result = prepare_serve(
                 project,
                 port=None,
@@ -136,11 +136,11 @@ class TestPrepareServe:
             )
         assert isinstance(result, ServeSetup)
 
-    def test_dataface_yml_validation_error_propagates_uncaught(
+    def test_dbt_charts_yml_validation_error_propagates_uncaught(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("DCT_DEFAULT_THEME", raising=False)
-        (tmp_path / "dbt_charts.yml").write_text("theme: cream\n", encoding="utf-8")
+        (tmp_path / "dbt_charts.yml").write_text("theme: paper\n", encoding="utf-8")
         project = FilesystemProject(tmp_path)
         with pytest.raises(ValidationError):
             prepare_serve(

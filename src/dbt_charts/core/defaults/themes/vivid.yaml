@@ -2,7 +2,7 @@
 # Loud-systematic sans, light canvas. FOUR coarse chrome tiers from dbt-grays
 # (no opacity — every gray is a real scaffold stop). "Values pop": numeric
 # readouts get the max-contrast tier, above titles — TradingView's philosophy,
-# the opposite of editorial's soft mid-anchored ramp.
+# the opposite of clarity's soft mid-anchored ramp.
 #   VALUE #222222 (ink)           — quant-axis numbers, data labels, values, zero-baseline (max)
 #   HIGH  #313233 (heading)       — titles, legend, table headers
 #   MID   #626366 (muted)         — category labels, axis titles, support text
@@ -12,7 +12,7 @@
 # only way to sit the category grid behind the measure grid is contrast, so the
 # two split across rungs. Every other chrome role stays on the four tiers above.
 # All color comes from vivid-10 marks only. Confident marks, flat fills.
-# stark = 1 chrome tier · vivid = 4 coarse/extreme tiers (+1 grid split) · editorial = 9 soft tiers.
+# stark = 1 chrome tier · vivid = 4 coarse/extreme tiers (+1 grid split) · clarity = 9 soft tiers.
 extends: stark
 style:
   palettes:
@@ -36,6 +36,9 @@ style:
   text:
     font:
       color: *high
+    # Markdown rules + markdown-table gridlines (was charts.table.border.color).
+    rule:
+      color: *faint
   charts:
     color:
       categorical:
@@ -77,9 +80,9 @@ style:
       ticks:
         color: *faint              # tracks the quantitative grid above
         width: 1                   # the hairline this theme's grid is drawn at
-        count: 6                   # sparse, like editorial
+        count: 6                   # sparse, like clarity
     legend:
-      visible: false               # direct-labeling by default (editorial posture)
+      visible: false               # direct-labeling by default (clarity posture)
       label:
         font:
           color: *high
@@ -136,8 +139,6 @@ style:
       geoshape:
         fill: dbt-grays.grid-emphasis   # unjoined regions = neutral, recede
     table:
-      border:
-        color: *faint
       header:
         font:
           color: *high
@@ -148,10 +149,10 @@ style:
         # Light progress-bar track on the FAINT chrome tier so the fill pops.
         # Track fills are theme-pinned (stark pins dbt-grays.fill-muted); this
         # override keeps vivid's track on its own 4-tier ladder instead
-        # (cream sets its track the same way, under table.spark).
+        # (paper sets its track the same way, under table.spark).
         bar:
           background: dbt-grays.grid-emphasis
-    data_table:
+    support_table:
       font:
         color: *value              # cell values = max
       label:
@@ -182,7 +183,7 @@ style:
       border:
         color: *faint
         # No border on shadowed themes: the shadow separates the card, so the
-        # outline is redundant (kept only on stark — see editorial.yaml).
+        # outline is redundant (kept only on stark — see clarity.yaml).
         width: 0.0
         radius: 4.0
       shadow:
@@ -195,6 +196,3 @@ style:
       color: *mid
     border:
       color: *faint
-    input:
-      border:
-        color: *faint

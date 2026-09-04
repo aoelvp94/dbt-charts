@@ -30,7 +30,7 @@ def test_theme_names_exclude_synthetic_default_and_private_and_diagnostics() -> 
     assert "default" not in names
     assert all(not name.startswith("_") for name in names)
     assert all(not name.startswith("diagnostics-") for name in names)
-    assert "editorial" in names
+    assert "clarity" in names
 
 
 def test_build_catalog_returns_decorated_json_schema() -> None:

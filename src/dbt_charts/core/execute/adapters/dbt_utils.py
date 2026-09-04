@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from dbt_charts.core.dbt_manifest import RefIndex
     from dbt_charts.core.project import Project
 
-DBT_PROJECT_DB_NAMES = ["sample.duckdb", "dataface_examples.duckdb", "dev.duckdb"]
+DBT_PROJECT_DB_NAMES = ["sample.duckdb", "dbt_charts_examples.duckdb", "dev.duckdb"]
 
 
 def resolve_dbt_refs_with_provenance(
@@ -83,10 +83,14 @@ def resolve_dbt_refs_with_provenance(
 class DbtRefResolver:
     """Resolves `{{ ref() }}` / `{{ source() }}` against a project's dbt manifest.
 
-    Every adapter that prepares raw SQL owns one and calls `resolve()` before
-    rendering variable Jinja: the variable renderer runs under StrictUndefined,
-    so a `ref()` that survives to it dies as an undefined Jinja global — an
-    error that names neither dbt nor the manifest.
+    Call `resolve()` before rendering variable Jinja over raw SQL: the variable
+    renderer runs under StrictUndefined, so a `ref()` that survives to it dies
+    as an undefined Jinja global — an error that names neither dbt nor the
+    manifest. Every adapter (`DbtAdapter`, `SqlAdapter`, `DuckDBAdapter`,
+    `SqliteAdapter`) owns one for its own `_execute`/`prepare_sql`;
+    `AdapterRegistry` owns one too, for the board-render composition step in
+    `_compose_query_refs` that runs ahead of (and independently from) any
+    adapter's own resolve-then-render.
 
     The manifest is the gate. SQL without dbt Jinja is returned untouched and
     reads no files; SQL with it and no manifest to resolve against raises

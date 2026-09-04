@@ -2,8 +2,8 @@
 
 Stage: leaf (no compile/execute/render dependencies).
 
-Every query Dataface sends carries an attribution payload so a warehouse cost model
-can tell a Dataface query apart from ad-hoc human querying. Without it a dashboard
+Every query dbt charts sends carries an attribution payload so a warehouse cost model
+can tell a dbt charts query apart from ad-hoc human querying. Without it a dashboard
 render is indistinguishable from someone typing SQL into a console, and cost
 attribution has to guess.
 
@@ -68,7 +68,19 @@ _process_surface: dict[str, str] = {}
 
 # The dimensions a scope may establish. `surface` is here too so a narrower scope
 # (the inspector, say) can override what the entry point declared.
-SCOPE_DIMENSIONS = frozenset({"surface", "board", "query", "target"})
+#
+# `actor`, `client`, and `request` are per-request identity, not engine-derived
+# state: a host establishes them here, at this ContextVar seam, specifically
+# because `set_surface()`'s process-global dict and `connection_identity()`'s
+# pooled-connection payload are both cross-tenant traps for them — a Cloud
+# process serves many users concurrently, and neither of those two places
+# unwinds per request the way `attribute()`'s scope does. Values are opaque
+# IDs the host mints, never emails or display names: the label charset would
+# mangle a PII value anyway, and warehouse query history is broadly readable
+# and long-retained.
+SCOPE_DIMENSIONS = frozenset(
+    {"surface", "board", "query", "target", "actor", "client", "request"}
+)
 
 
 def validate_attribution(attribution: Mapping[str, str]) -> None:
@@ -128,7 +140,7 @@ def current_attribution() -> dict[str, str]:
 
 
 def set_surface(surface: str) -> None:
-    """Declare which Dataface entry point this process is: ``cli``, ``serve``, ``cloud``…
+    """Declare which dbt charts entry point this process is: ``cli``, ``serve``, ``cloud``…
 
     The surface is a property of the running process, not of a request or a session,
     so it is set once at the entry point rather than threaded through every registry

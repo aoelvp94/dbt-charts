@@ -8,7 +8,13 @@ Detection rule:
 
 from __future__ import annotations
 
-from dbt_charts.core.compile.models.chart.resolved import effective_color_field
+from dbt_charts.core.compile.models.chart.resolved import (
+    ResolvedAreaChart,
+    ResolvedBarChart,
+    ResolvedLineChart,
+    effective_color_field,
+)
+from dbt_charts.core.compile.resolve.chart._wide_fields import wide_series_names
 from dbt_charts.core.diagnostics import WARN_TOO_MANY_COLOR_CATEGORIES, Diagnostic
 from dbt_charts.core.render.warnings.base import WarningContext, encoding_channel_type
 
@@ -33,13 +39,23 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
         if color_type not in _CATEGORICAL_TYPES:
             continue
 
-        distinct = len(
-            {
-                row[color_field]
-                for row in ctx.chart_results[chart_id]
-                if color_field in row
-            }
-        )
+        rows = ctx.chart_results[chart_id]
+        # The authored key the series come from — what the message names.
+        authored_key, authored_field = "color", color_field
+        if (
+            isinstance(chart, (ResolvedBarChart, ResolvedLineChart, ResolvedAreaChart))
+            and chart.wide_measures
+        ):
+            # The fold's series field exists only post-fold: count the pinned
+            # domain (measures × dimension values — an all-null measure still
+            # holds its palette slot), not the cells that carry a value.
+            distinct = len(wide_series_names(chart.wide_measures, chart.color, rows))
+            if chart.color is None:
+                authored_key = authored_field = "y"
+            else:
+                authored_field = chart.color
+        else:
+            distinct = len({row[color_field] for row in rows if color_field in row})
         if distinct <= _MAX_CATEGORIES:
             continue
 
@@ -47,11 +63,11 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             Diagnostic.from_code(
                 WARN_TOO_MANY_COLOR_CATEGORIES,
                 chart=chart_id,
-                path=f"charts.{chart_id}.color",
-                field=color_field,
+                path=f"charts.{chart_id}.{authored_key}",
+                field=authored_field,
                 message=WARN_TOO_MANY_COLOR_CATEGORIES.message_template.format(
                     chart_id=chart_id,
-                    field=color_field,
+                    field=authored_field,
                     count=distinct,
                     max_categories=_MAX_CATEGORIES,
                 ),

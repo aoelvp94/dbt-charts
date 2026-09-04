@@ -15,8 +15,9 @@ KPIs sit side-by-side in a row.
 from __future__ import annotations
 
 import html
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from dbt_charts.core.colors import sanitize_color
 from dbt_charts.core.compile.config import get_chart_rendering
@@ -94,11 +95,72 @@ _AFFIX_ELEVATION = 0.37
 # theme needs to diverge.
 _INLINE_GAP = 14.0
 
+# Always "start". Alignment is achieved by shifting a run's `x` (see
+# `_resolve_run_x`), never by an "end"/"middle" anchor: every value/label/
+# support tspan in this file carries its own absolute `y` (or, for wrapped
+# label lines, its own absolute `x`), and SVG 1.1 section 10.5 treats an
+# absolute-positioned tspan as opening a new text chunk — an "end"/"middle"
+# anchor re-anchors each chunk independently and the run overlaps itself.
+_TEXT_ANCHOR = "start"
+
+
+def _card_align(
+    align: Literal["left", "center", "right"] | None,
+    available_width: float,
+    run_widths: Sequence[float],
+    chart_id: str,
+    authored_text: str,
+) -> Literal["left", "center", "right"] | None:
+    """The alignment the card can actually honour, decided once for all runs.
+
+    ``align`` is a whole-card choice (see ``KpiChartStyle.align``): value, label
+    and support form one stacked text column at a shared content edge. So the
+    decision must be made from the *widest* run, not per run — clamping each run
+    independently right-aligns the ones that fit and snaps the overflowing one
+    back to the left edge, producing a card with two different alignments that is
+    neither what the author asked for nor the pre-``align`` geometry.
+
+    When any run overflows, ``align`` is dropped for the whole card and the
+    degradation is reported once via ``WARN-KPI-ALIGN-OVERFLOW``. Shifting an
+    overflowing run would give it a negative ``x``, and the card's SVG viewport
+    clips at ``x = 0`` — destroying the run's *leading* characters, so a
+    right-aligned ``1,234,567,890`` would read as a well-formed, wrong
+    ``234,567,890``. Left is the pre-``align`` direction, where overflow spills
+    right and reads as visibly truncated.
+    """
+    if align not in ("right", "center"):
+        return align
+    if run_widths and max(run_widths) > available_width:
+        record_text_truncation(
+            chart_id, "kpi_align_overflow", authored_text, "style.align"
+        )
+        return None
+    return align
+
+
+def _resolve_run_x(
+    content_x: float,
+    available_width: float,
+    run_width: float,
+    align: Literal["left", "center", "right"] | None,
+) -> float:
+    """``x`` for a text run of ``run_width``, given the card's effective align.
+
+    ``align`` must already have come through ``_card_align``, which drops it to
+    ``None`` when any run on the card overflows — so ``available_width -
+    run_width`` is non-negative here for every run and no clamp is needed.
+    """
+    if align == "right":
+        return content_x + available_width - run_width
+    if align == "center":
+        return content_x + (available_width - run_width) / 2
+    return content_x
+
 
 def _tone_color(tone: ToneLiteral | None, tones: KpiTonesStyle) -> str | None:
     """Resolve a semantic tone name to the theme-provided color.
 
-    ``tones`` is the ``KpiTonesStyle`` from ``resolved_style.kpi.tones``
+    ``tones`` is the board-level ``KpiTonesStyle`` from ``resolved_style.tones``
     — the renderer reads tone hexes from theme YAML rather than hardcoding
     them so themes can rebrand the semantic vocabulary. ``tone`` is typed
     ``ToneLiteral`` so the compile boundary guarantees a valid value; the
@@ -245,7 +307,7 @@ def _explicit_color_override(value: Any) -> str | None:
 
 def _resolve_value_color(
     channel_color: str | None,
-    style_color: str | None,
+    value_font_color: str | None,
     fallback: str,
 ) -> str:
     """Resolve KPI value color with deterministic precedence.
@@ -253,8 +315,15 @@ def _resolve_value_color(
     Highest → lowest:
 
     1. ``channel_color`` — data-driven color from ``conditional_formatting``
-    2. ``style.color`` — chart-local style color
-    3. theme ``kpi.font.color`` — last-resort ink
+    2. ``style.value.font.color`` — names this slot alone
+    3. ``style.font.color`` (via ``fallback``) — the whole-card slot every
+       other family already types this way; theme ``kpi.font.color`` when
+       unauthored
+
+    The specific key beats the shared one, as every other style patch resolves.
+    ``value_font_color`` is a cascade-managed sentinel (``KpiValueStyle.font``
+    excludes ``color`` from its InheritSlot), so ``None`` means unauthored
+    rather than "the theme's ink arrived here".
 
     No tone arm: the headline value is direction-neutral by design (NYT/FT
     convention) — tone lives on the block it paints, the support row
@@ -263,8 +332,8 @@ def _resolve_value_color(
     """
     if channel_color is not None:
         return channel_color
-    if style_color:
-        return sanitize_color(style_color, fallback)
+    if value_font_color:
+        return sanitize_color(value_font_color, fallback)
     return fallback
 
 
@@ -321,6 +390,23 @@ class _SupportRow:
     explainer: str
     value_fill: str
     glyph_fill: str
+
+
+def _support_run_text(support_row: _SupportRow) -> str:
+    """Plain-text content of a support row's glyph + value + explainer run.
+
+    Mirrors the tspan sequence ``_emit_kpi_stacked``/``_emit_kpi_inline`` build
+    (same spacer rule), so a measurer sees exactly what gets painted.
+    """
+    text = ""
+    if support_row.glyph:
+        text += support_row.glyph + " "
+    if support_row.value_str:
+        text += support_row.value_str
+    if support_row.explainer:
+        spacer = " " if support_row.value_str or support_row.glyph else ""
+        text += spacer + support_row.explainer
+    return text
 
 
 def _resolve_label_weight(kpi_config: Any) -> str:
@@ -616,7 +702,6 @@ def _resolve_kpi_colors(
     kpi_config: KpiChartStyle,
     resolved_channels: dict[str, ResolvedStyleChannel],
     chart_background: str | None,
-    chart_color: str | None,
     formats: dict[str, str] | None = None,
     *,
     board_style: ResolvedStyle,
@@ -654,25 +739,25 @@ def _resolve_kpi_colors(
     )
     value_fill = _resolve_value_color(
         channel_color=channel_color,
-        style_color=chart_color,
+        value_font_color=kpi_config.value.font.color,
         fallback=kpi_font_color,
     )
     # Glyph has no independent tone source (tone lives on support only) — it
     # shares the value's neutral/channel-driven fill.
     glyph_fill = value_fill
 
-    # Label color: use the body text color directly. The legacy "label
-    # picks up style.title.font.color" coupling tied two distinct slots
-    # together (chart-section title and KPI label) and only worked by
-    # reading the authored Patch — i.e. by discriminating "did the chart
-    # author override style.title.font.color." After the cascade rename,
+    # Label color: the label's own slot, else body text color. The legacy
+    # "label picks up style.title.font.color" coupling tied two distinct slots
+    # together (chart-section title and KPI label) and only worked by reading
+    # the authored Patch — i.e. by discriminating "did the chart author
+    # override style.title.font.color." After the cascade rename,
     # resolved_style.title.font.color is always populated by the theme
-    # default, so the legacy fallthrough to body color silently flipped
-    # to a different theme value. Drop the coupling: the KPI label uses
-    # body text color (theme charts.color / sanitized fallback), and a
-    # future task can add a typed ``style.label.font.color`` slot if a
-    # KPI label override is genuinely needed.
-    label_fill = sanitize_color(None, kpi_font_color)
+    # default, so the legacy fallthrough to body color silently flipped to a
+    # different theme value. The typed slot replaces it: `style.label.font.
+    # color` names the label and nothing else. `style.value.font.color`
+    # deliberately does not reach here — it is the value's own slot, and
+    # pulling the label along would recreate the coupling that was removed.
+    label_fill = sanitize_color(kpi_config.label.font.color, kpi_font_color)
     assert label_fill is not None, (
         "sanitize_color with non-None fallback must return str"
     )
@@ -742,7 +827,6 @@ def _render_kpi_svg_core(
     *,
     chart: ResolvedKpiChart,
     chart_background: str | None,
-    chart_color: str | None,
     kpi_config: KpiChartStyle,
     title_style: TitleStyle,
     formats: dict[str, str] | None,
@@ -757,7 +841,7 @@ def _render_kpi_svg_core(
     name (id/value/label/support/variant/link/resolved_channels) — reading
     them via plain attribute access lets one function serve both without
     re-declaring their types. Style-derived fields (kpi_config, title_style,
-    chart_background/color, formats) differ in how each caller maps its own
+    chart_background, formats) differ in how each caller maps its own
     style tree, so those are resolved by the caller and passed in directly.
     """
     chart_id = chart.id
@@ -805,12 +889,11 @@ def _render_kpi_svg_core(
         kpi_config,
         chart.resolved_channels,
         chart_background,
-        chart_color,
         formats,
         board_style=board_style,
     )
     support_row = _resolve_support_row(
-        chart.support, row, kpi_config.tones, palette.muted, chart_id, formats
+        chart.support, row, board_style.tones, palette.muted, chart_id, formats
     )
     layout = _resolve_kpi_layout(
         label_text,
@@ -855,6 +938,7 @@ def _render_kpi_svg_core(
             value_font_family=value_font_family,
             body_font_family=body_font_family,
             kpi_config=kpi_config,
+            layout=layout,
         )
     if chart.variant == "compact":
         return _emit_kpi_compact(
@@ -898,7 +982,7 @@ def render_kpi_svg(
     """Render a KPI from the typed ``ResolvedKpiChart`` model.
 
     Mapping from V1: ``chart.resolved_style.kpi.X`` -> ``chart.style.kpi.X``;
-    ``chart.resolved_style.background/color/title`` (whole-chart-type merged
+    ``chart.resolved_style.background/title`` (whole-chart-type merged
     fields with no equivalent) -> the per-family override on
     ``chart.style.kpi`` if authored, else the board-level default — the same
     fallback build_chart_style_context() applies upstream in V1.
@@ -910,7 +994,7 @@ def render_kpi_svg(
             "populate ResolvedKpiStyle.kpi before rendering."
         )
     board_charts = board_style.chart_defaults
-    # background/color: kpi_config.X is None whenever no chart-local or
+    # background: kpi_config.background is None whenever no chart-local or
     # per-family theme override is set. Passed through as-is (no board
     # fallback) — _resolve_kpi_colors's None-vs-board-background comparison
     # and _explicit_color_override(None) both collapse to "no override" in
@@ -918,11 +1002,9 @@ def render_kpi_svg(
     title_style = (
         kpi_config.title if kpi_config.title is not None else board_charts.title
     )
-    chart_color = kpi_config.color
     return _render_kpi_svg_core(
         chart=chart,
         chart_background=kpi_config.background,
-        chart_color=chart_color,
         kpi_config=kpi_config,
         title_style=title_style,
         formats=board_charts.formats,
@@ -947,11 +1029,19 @@ def _emit_kpi_stacked(
     kpi_config: KpiChartStyle,
 ) -> str:
     """Mechanical SVG assembly given pre-resolved layout/palette/support."""
+    from dbt_charts.core.font_measure import get_font_measurer  # noqa: PLC0415
+
     parts: list[str] = []
 
     chrome = _emit_card_chrome(palette, kpi_config, layout.width, layout.height)
     if chrome is not None:
         parts.append(chrome)
+
+    # Usable content width, shared by every row's align computation below —
+    # value/label/support each anchor to this same right edge/centerline,
+    # measuring their own run width independently (see task worksheet for why
+    # this is a computed `x`, not `text-anchor="end"`/`"middle"`).
+    available_width = layout.width - layout.content_x - kpi_config.content_padding.right
 
     value_tspans = _emit_value_tspans(
         kpi_config,
@@ -967,14 +1057,50 @@ def _emit_kpi_stacked(
         layout.affix_font,
         layout.glyph_font,
     )
+    value_run_width = _measure_kpi_value_run(
+        value_font_family,
+        kpi_config,
+        prefix,
+        number_str,
+        suffix,
+        value_is_numeric,
+        layout.value_font,
+        layout.affix_font,
+        layout.glyph_font,
+    )
+    # Alignment is a whole-card choice, so every run on the card must be
+    # measured before it is decided — see _card_align.
+    _label_measurer = get_font_measurer(layout.label_font_family)
+    _run_widths = [value_run_width]
+    if layout.label_original:
+        _run_widths += [
+            _label_measurer.measure(line, layout.label_font_size)
+            for line in layout.label_lines
+        ]
+    if support_row is not None:
+        _run_widths.append(
+            get_font_measurer(body_font_family).measure(
+                _support_run_text(support_row), layout.support_font_size
+            )
+        )
+    card_align = _card_align(
+        kpi_config.align,
+        available_width,
+        _run_widths,
+        chart.id,
+        layout.label_original,
+    )
+    value_x = _resolve_run_x(
+        layout.content_x, available_width, value_run_width, card_align
+    )
     # font-weight on the parent <text> so glyph/prefix/value/suffix all inherit
     # the same weight. The cascade resolves it from ``kpi.value.font.weight``.
     kpi_link = _resolve_kpi_link(chart.link)
     if kpi_link:
         parts.append(f'<a href="{html.escape(kpi_link, quote=True)}">')
     parts.append(
-        f'<text x="{layout.content_x}" y="{layout.value_baseline}" '
-        f'text-anchor="start" font-family="{value_font_family}" '
+        f'<text x="{value_x}" y="{layout.value_baseline}" '
+        f'text-anchor="{_TEXT_ANCHOR}" font-family="{value_font_family}" '
         f'font-weight="{layout.value_weight}">'
         f"{''.join(value_tspans)}</text>"
     )
@@ -993,18 +1119,29 @@ def _emit_kpi_stacked(
             if layout.label_truncated
             else ""
         )
+        line_xs = [
+            _resolve_run_x(
+                layout.content_x,
+                available_width,
+                _label_measurer.measure(line, layout.label_font_size),
+                card_align,
+            )
+            for line in layout.label_lines
+        ]
         parts.append(
-            f'<text x="{layout.content_x}" y="{layout.label_baseline_first}"'
+            f'<text x="{line_xs[0]}" y="{layout.label_baseline_first}"'
             f"{authored_kind_attr('label')} "
-            f'text-anchor="start" font-family="{layout.label_font_family}" '
+            f'text-anchor="{_TEXT_ANCHOR}" font-family="{layout.label_font_family}" '
             f'font-size="{layout.label_font_size}" fill="{palette.label_fill}" '
             f'font-weight="{layout.label_weight}">'
             f"{inner_title}"
         )
-        for line_index, line in enumerate(layout.label_lines):
+        for line_index, (line, line_x) in enumerate(
+            zip(layout.label_lines, line_xs, strict=True)
+        ):
             line_y = layout.label_baseline_first + line_index * layout.label_line_height
             parts.append(
-                f'<tspan x="{layout.content_x}" y="{line_y}">{html.escape(line)}</tspan>'
+                f'<tspan x="{line_x}" y="{line_y}">{html.escape(line)}</tspan>'
             )
         parts.append("</text>")
 
@@ -1032,9 +1169,17 @@ def _emit_kpi_stacked(
         weight_attr = (
             f' font-weight="{layout.support_weight}"' if layout.support_weight else ""
         )
+        support_x = _resolve_run_x(
+            layout.content_x,
+            available_width,
+            get_font_measurer(body_font_family).measure(
+                _support_run_text(support_row), layout.support_font_size
+            ),
+            card_align,
+        )
         parts.append(
-            f'<text x="{layout.content_x}" y="{layout.support_baseline}" '
-            f'text-anchor="start" font-family="{body_font_family}" '
+            f'<text x="{support_x}" y="{layout.support_baseline}" '
+            f'text-anchor="{_TEXT_ANCHOR}" font-family="{body_font_family}" '
             f'font-size="{layout.support_font_size}"{weight_attr}>'
             f"{''.join(s_tspans)}</text>"
         )
@@ -1062,6 +1207,7 @@ def _emit_kpi_inline(
     value_font_family: str,
     body_font_family: str,
     kpi_config: Any,
+    layout: _KpiLayout,
 ) -> str:
     """Inline variant — value, label, support baseline-aligned on a single row.
 
@@ -1076,6 +1222,12 @@ def _emit_kpi_inline(
     Implementation: emit a single ``<text>`` with sequential ``<tspan>``s that
     flow left-to-right using ``dx`` to insert gaps. Affixes still ride their
     cap-aware baselines via per-tspan ``y``; the row baseline is the value's.
+
+    When the assembled run does not fit the card (measured with the same
+    primitive compact uses for its value column, ``_measure_kpi_value_run``),
+    fall back to the stacked arrangement for this card instead of painting
+    past the card edge — ``layout`` is the stacked layout ``_render_kpi_svg_core``
+    already computed unconditionally, so the fallback costs nothing extra.
     """
     value_font, value_weight, affix_font, glyph_font = _resolve_value_font_spec(
         kpi_config
@@ -1108,6 +1260,48 @@ def _emit_kpi_inline(
 
     label_weight = _resolve_label_weight(kpi_config)
     support_weight = _resolve_support_weight(kpi_config)
+
+    run_width = _measure_kpi_inline_run_width(
+        value_font_family,
+        body_font_family,
+        label_font_family,
+        kpi_config,
+        prefix,
+        number_str,
+        suffix,
+        value_is_numeric,
+        value_font,
+        affix_font,
+        glyph_font,
+        label_text,
+        label_font_size,
+        support_row,
+        support_font_size,
+    )
+    available_width = requested_w - pad.horizontal
+    # A bare value (no label, no support) has nothing for the stacked
+    # arrangement to move to its own line — `_emit_kpi_stacked` paints the
+    # same untruncated number at the same x and size, so falling back would
+    # only grow the card and break the row's shared baseline while leaving
+    # the identical overflow in place. Stacking can't help; don't try it.
+    can_fall_back = label_text or support_row is not None
+    if run_width > available_width and can_fall_back:
+        record_text_truncation(
+            chart.id, "kpi_inline_fallback", chart.variant, "variant"
+        )
+        return _emit_kpi_stacked(
+            chart=chart,
+            layout=layout,
+            palette=palette,
+            support_row=support_row,
+            prefix=prefix,
+            number_str=number_str,
+            suffix=suffix,
+            value_is_numeric=value_is_numeric,
+            value_font_family=value_font_family,
+            body_font_family=body_font_family,
+            kpi_config=kpi_config,
+        )
 
     parts: list[str] = []
     chrome = _emit_card_chrome(palette, kpi_config, requested_w, requested_h)
@@ -1176,8 +1370,16 @@ def _emit_kpi_inline(
                 f"{html.escape(spacer + support_row.explainer)}</tspan>"
             )
 
+    row_x = _resolve_run_x(
+        content_x,
+        available_width,
+        run_width,
+        _card_align(
+            kpi_config.align, available_width, [run_width], chart.id, label_text
+        ),
+    )
     parts.append(
-        f'<text x="{content_x}" y="{value_baseline}" text-anchor="start" '
+        f'<text x="{row_x}" y="{value_baseline}" text-anchor="{_TEXT_ANCHOR}" '
         f'font-family="{value_font_family}" font-weight="{value_weight}">'
         f"{''.join(tspans)}</text>"
     )
@@ -1211,8 +1413,18 @@ def _measure_kpi_value_run(
     text layout (``font_measure.get_font_measurer``), with ``numeric=True``
     on the number portion so we measure the tabular-figures advance the SVG
     will actually render. The trailing ``+2.0`` mirrors the ``dx="2"`` kern
-    emitted before the suffix tspan so the measured width matches the
-    rendered geometry exactly.
+    emitted before the suffix tspan.
+
+    Not exact: ``get_font_measurer`` never passes a weight, so every slot
+    measures the regular (400) instance while the markup can emit a heavier
+    ``font-weight``; ``get_font_path`` special-cases only Source Serif, so a
+    body-font slot measures the generic Inter stand-in even when the theme
+    paints a different family. Both are one-directional under-measures — the
+    real advance is always at or above this number, never below — which is
+    exactly the safe direction for compact's right-column offset (worst case,
+    a little tighter than ideal, never overlapping) and for
+    ``_measure_kpi_inline_run_width``'s fit predicate (worst case, a
+    should-have-fallen-back run that doesn't, not a false fallback).
     """
     from dbt_charts.core.font_measure import (  # noqa: PLC0415
         get_font_measurer,
@@ -1231,6 +1443,73 @@ def _measure_kpi_value_run(
     if value_is_numeric and suffix:
         width += main.measure(suffix, affix_font) + 2.0
     return width
+
+
+def _measure_kpi_inline_run_width(
+    value_font_family: str,
+    body_font_family: str,
+    label_font_family: str,
+    kpi_config: KpiChartStyle,
+    prefix: str,
+    number_str: str,
+    suffix: str,
+    value_is_numeric: bool,
+    value_font: float,
+    affix_font: float,
+    glyph_font: float,
+    label_text: str,
+    label_font_size: float,
+    support_row: _SupportRow | None,
+    support_font_size: float,
+) -> float:
+    """Measured width of the inline variant's full baseline run.
+
+    Built on ``_measure_kpi_value_run`` (the value-run primitive `_emit_kpi_compact`
+    also uses) plus the label and support slots, one ``_INLINE_GAP`` before each
+    slot that is actually emitted — mirroring the ``dx`` sequence
+    ``_emit_kpi_inline`` renders, where the support glyph/value/explainer chain
+    reads as one joined string with no gap between its own sub-parts.
+    """
+    from dbt_charts.core.font_measure import (  # noqa: PLC0415
+        get_font_measurer,
+    )
+
+    width = _measure_kpi_value_run(
+        value_font_family,
+        kpi_config,
+        prefix,
+        number_str,
+        suffix,
+        value_is_numeric,
+        value_font,
+        affix_font,
+        glyph_font,
+    )
+    if label_text:
+        label_measurer = get_font_measurer(label_font_family)
+        width += _INLINE_GAP + label_measurer.measure(label_text, label_font_size)
+    if support_row is not None:
+        support_measurer = get_font_measurer(body_font_family)
+        width += _INLINE_GAP + support_measurer.measure(
+            _support_run_text(support_row), support_font_size
+        )
+    return width
+
+
+def _measure_payload_width(
+    payload: list[tuple[str, float, str | None, str, str, str]],
+) -> float:
+    """Total measured width of a compact right-column payload's tspans.
+
+    ``payload`` is ``(font_family, font_size, font_weight, leaf_kind, fill,
+    text)`` per tspan — see ``_emit_kpi_compact``'s top/bottom payload shape.
+    """
+    from dbt_charts.core.font_measure import get_font_measurer  # noqa: PLC0415
+
+    return sum(
+        get_font_measurer(family).measure(text, size)
+        for family, size, _weight, _kind, _fill, text in payload
+    )
 
 
 def _emit_kpi_compact(
@@ -1371,7 +1650,28 @@ def _emit_kpi_compact(
         affix_font,
         glyph_font,
     )
-    right_column_x = content_x + value_run_width + _INLINE_GAP
+    # Compact's value column and right column are one rigid block under
+    # `align` — the right column's x is derived from the value run's own
+    # width, so both must shift by the same amount or the columns separate.
+    available_width = requested_w - pad.horizontal
+    right_block_width = max(
+        _measure_payload_width(top_payload), _measure_payload_width(bottom_payload)
+    )
+    has_right_column = bool(top_payload or bottom_payload)
+    block_width = (
+        value_run_width + _INLINE_GAP + right_block_width
+        if has_right_column
+        else value_run_width
+    )
+    block_x = _resolve_run_x(
+        content_x,
+        available_width,
+        block_width,
+        _card_align(
+            kpi_config.align, available_width, [block_width], chart.id, label_text
+        ),
+    )
+    right_column_x = block_x + value_run_width + _INLINE_GAP
 
     # Top line sits one top-line-font line-height above the baseline so the
     # bottom line stays flush with the value baseline. The top line is the
@@ -1408,7 +1708,7 @@ def _emit_kpi_compact(
         glyph_font,
     )
     parts.append(
-        f'<text x="{content_x}" y="{value_baseline}" text-anchor="start" '
+        f'<text x="{block_x}" y="{value_baseline}" text-anchor="{_TEXT_ANCHOR}" '
         f'font-family="{value_font_family}" font-weight="{value_weight}">'
         f"{''.join(value_tspans)}</text>"
     )
@@ -1430,7 +1730,7 @@ def _emit_kpi_compact(
         )
         return (
             f'<text x="{right_column_x}" y="{baseline}" '
-            f'text-anchor="start">{body}</text>'
+            f'text-anchor="{_TEXT_ANCHOR}">{body}</text>'
         )
 
     if top_payload:

@@ -9,7 +9,10 @@ from dbt_charts.core.compile.models.style.resolved import ResolvedLegendStyle
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     WIDE_LABEL_FIELD,
     WIDE_ORDER_FIELD,
+    WIDE_SERIES_SEPARATOR,
     WIDE_VALUE_FIELD,
+    wide_dimension_values,
+    wide_series_names,
 )
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.emitters._cartesian import (
@@ -20,31 +23,12 @@ from dbt_charts.core.render.chart.emitters._channels import (
     apply_color_legend,
     pin_legend_display_order,
 )
+from dbt_charts.core.render.utils import normalize_scalar_for_json
+from dbt_charts.core.utils import Rows
 
 # Internal key field for the raw fold; only WIDE_LABEL_FIELD is exposed to VL
 # encodings (it carries the human-readable measure name).
 _WIDE_KEY_FIELD = "__dbt_charts_wide_key__"
-
-
-def unfold_wide_rows(
-    data: list[VLDict], measures: tuple[str, ...] | list[str]
-) -> list[VLDict]:
-    """Pre-fold wide (one-row-per-x, N measure columns) rows into long form.
-
-    Mirrors the VL ``fold`` transform this module emits for the actual mark
-    data, so Python-side code that must reason about real values (not just
-    VL field references) — series ordering, endpoint-label positions,
-    negative-value checks — can feed a wide chart's data through the exact
-    same functions an authored ``color:`` chart's real long-form rows
-    already go through. VL's own fold runs client-side, after this spec
-    ships, so it never does this unpivot for us.
-    """
-    return [
-        {**row, WIDE_LABEL_FIELD: measure, WIDE_VALUE_FIELD: row[measure]}
-        for row in data
-        for measure in measures
-        if row.get(measure) is not None
-    ]
 
 
 @dataclass(frozen=True)
@@ -58,21 +42,80 @@ class FoldedMeasures:
     order: VLDict
 
 
-def _label_expression(key_field: str, measures: list[str]) -> str:
-    """Map raw fold key to itself in a Vega expression (identity relabel).
+def _label_expression(
+    key_field: str, measures: list[str], dimension: str | None, data: Rows
+) -> str:
+    """Map raw fold key to itself in a Vega expression (identity relabel),
+    prefixed by the ``dimension`` column's value when the chart authors one.
 
     The measure name is the color-series value, same as any authored color:
     field carries its column's raw data values verbatim — never humanized.
+    ``unfold_wide_rows`` is this expression's Python mirror, and the prefix
+    is built the same way: each observed dimension value is matched as the
+    JSON literal the row carries and mapped to its Python ``str()`` — never
+    re-stringified by Vega, whose ``toString`` disagrees with Python on
+    booleans and floats — so the label VL computes is the name Python pinned
+    into the scale domain, by construction.
     """
     parts = [
         f"datum[{json.dumps(key_field)}] === {json.dumps(measure)} ? {json.dumps(measure)}"
         for measure in measures
     ]
-    return " : ".join(parts) + " : ''"
+    label = " : ".join([*parts, "''"])
+    if dimension is None:
+        return label
+    field = f"datum[{json.dumps(dimension)}]"
+    # The fallback rides inside the join: with no rows there are no arms, and
+    # a bare ``( : '')`` is not a Vega expression.
+    prefix = " : ".join(
+        [
+            *(
+                f"{field} === {json.dumps(normalize_scalar_for_json(value))} ? "
+                f"{json.dumps(str(value))}"
+                for value in wide_dimension_values(data, dimension)
+            ),
+            "''",
+        ]
+    )
+    return f"({prefix}) + {json.dumps(WIDE_SERIES_SEPARATOR)} + ({label})"
+
+
+def _measure_paint_order(
+    measures: list[str], dimension: str | None, data: Rows, fold_order: list[str]
+) -> list[str]:
+    """The VL fold list: ``fold_order`` itself on a plain wide chart, else the
+    measures ranked by their earliest composite in ``fold_order``.
+
+    ``fold_order`` is a paint order over series labels — composites on a
+    chart with a dimension — or, on a stacked chart whose order channel
+    governs accumulation, the authored measures themselves. Any composite
+    it does not name (a measure null across one dimension value, or the
+    stacked callers' measure list) ranks last, authored order breaking ties,
+    so the fold never depends on the caller having enumerated the whole
+    cross product.
+    """
+    if dimension is None:
+        return fold_order
+    rank = {label: index for index, label in enumerate(fold_order)}
+    last = len(fold_order)
+    values = wide_dimension_values(data, dimension)
+    return sorted(
+        measures,
+        key=lambda m: min(
+            (
+                rank[label]
+                for v in values
+                if (label := f"{v}{WIDE_SERIES_SEPARATOR}{m}") in rank
+            ),
+            default=last,
+        ),
+    )
 
 
 def fold_wide_measures(
     measures: list[str],
+    dimension: str | None,
+    data: Rows,
     palette: tuple[str, ...],
     legend: ResolvedLegendStyle,
     *,
@@ -84,6 +127,15 @@ def fold_wide_measures(
 
     A transform keeps the query result intact while giving Vega-Lite one unit
     spec over which its native stack and offset transforms can operate.
+
+    ``dimension`` is the authored ``color:`` column the measures are grouped
+    by, if any; ``data`` is the chart's pre-fold rows, read only for the
+    dimension's observed values. The color-scale domain is
+    ``wide_series_names(measures, dimension, data)`` — the measure names, or
+    their ``<value> — <measure>`` composites. ``fold_order`` is the paint
+    order of those series; with a dimension the fold — which only sequences
+    measures *within* each source row — follows it as far as a fold can, per
+    ``_measure_paint_order`` above.
 
     Series ordering is entirely the caller's decision, not this function's —
     ``display_order`` (color scale + legend, always) and ``baseline_order``
@@ -111,20 +163,25 @@ def fold_wide_measures(
     adjacent, non-overlapping stacked segments, so there's no reason to
     reorder it away from authored order.
     """
+    series = wide_series_names(measures, dimension, data)
+    fold = _measure_paint_order(measures, dimension, data, fold_order)
     transforms: list[VLDict] = [
-        {"fold": fold_order, "as": [_WIDE_KEY_FIELD, WIDE_VALUE_FIELD]},
+        {"fold": fold, "as": [_WIDE_KEY_FIELD, WIDE_VALUE_FIELD]},
         {
-            "calculate": _label_expression(_WIDE_KEY_FIELD, fold_order),
+            "calculate": _label_expression(_WIDE_KEY_FIELD, fold, dimension, data),
             "as": WIDE_LABEL_FIELD,
         },
     ]
     color: VLDict = {"field": WIDE_LABEL_FIELD, "type": "nominal", "title": None}
     apply_color_legend(color, legend)
-    if palette:
-        color["scale"] = spatial_color_scale(sorted(measures), palette, display_order)
+    # No rows, no series: nothing to pin a domain or a stack order on, and an
+    # empty order chain is not a Vega expression.
+    if palette and series:
+        palette_order = baseline_order if baseline_order is not None else series
+        color["scale"] = spatial_color_scale(palette_order, palette, display_order)
         pin_legend_display_order(color, display_order)
     order: VLDict = {}
-    if baseline_order is not None:
+    if baseline_order:
         transforms.append(
             {
                 "calculate": series_order_expression(WIDE_LABEL_FIELD, baseline_order),

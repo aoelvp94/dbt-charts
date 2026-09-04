@@ -201,11 +201,11 @@ def _sql_identifier(name: str, dialect: str | None) -> str:
 
     Args:
         name: Raw identifier string, possibly from an untrusted URL path param.
-        dialect: Dataface source dialect name (e.g. ``"bigquery"``,
+        dialect: dbt charts source dialect name (e.g. ``"bigquery"``,
             ``"sqlserver"``), or ``None`` for sqlglot's default (ANSI
             double-quoting). Translated to the sqlglot dialect name via
             ``sqlglot_dialect`` — the same translator ``sql_guard`` uses, so
-            there is exactly one Dataface-name-to-sqlglot-name mapping.
+            there is exactly one dbt charts-name-to-sqlglot-name mapping.
 
     Returns:
         Quoted SQL identifier string, e.g. ``"orders"`` (ANSI) or

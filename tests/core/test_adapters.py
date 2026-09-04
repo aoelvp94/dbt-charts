@@ -1,6 +1,6 @@
 """Tests for query adapters.
 
-Tests the dataface.execute.adapters module for query execution.
+Tests the dbt_charts.core.execute.adapters module for query execution.
 
 Uses the unified query interface with type-specific query classes.
 """
@@ -41,7 +41,9 @@ from dbt_charts.core.execute.duckdb_config import normalize_duckdb_config
 
 
 def _ri(raw: dict) -> RefIndex:
-    return ref_index(LoadedManifest(raw=raw, relpath="target/manifest.json"))
+    return ref_index(
+        LoadedManifest(raw=raw, relpath="target/manifest.json", version="v1")
+    )
 
 
 def _sql(
@@ -923,7 +925,7 @@ class TestDbtAdapterDirectInstantiation:
             "Check that dbt-duckdb is installed and profiles.yml is valid."
         )
 
-        with adapter.connection_named("dataface_test"):
+        with adapter.connection_named("dbt_charts_test"):
             _, table = adapter.execute("SELECT 42 AS x", fetch=True)
 
         columns = list(table.column_names)

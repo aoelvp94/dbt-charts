@@ -17,64 +17,21 @@ from dbt_charts.core.compile.models.chart.resolved._base import (
 from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
+from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
 from dbt_charts.core.compile.models.primitives import FormatConfig
-from dbt_charts.core.render.chart.emitters._cartesian import effective_measure_domain
+from dbt_charts.core.compile.resolve.chart._chart_rows import ChartRows
+from dbt_charts.core.render.chart.emitters._cartesian import (
+    authored_measure_domain,
+    build_zero_rule_if_applicable,
+    effective_measure_domain,
+    full_rule_at,
+    multiples_scale_independent,
+    non_bar_zero_rule_should_fire,
+)
 from dbt_charts.core.render.chart.feature import chart_rows
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.layout_sizing import rows_for_query
 from dbt_charts.core.utils import numeric_column_values
-
-
-def _full_rule_at(
-    value: float,
-    axis: str,
-    measure_field: str,
-    color: str,
-    width: float,
-    suppress_axis: bool = False,
-) -> ChartSpec:
-    """Return a full VL ``rule`` sub-spec spanning the full plot width/height.
-
-    ``axis`` controls orientation:
-    - ``"x"``: rule at x=value spanning full y height (horizontal bar zero line)
-    - ``"y"``: rule at y=value spanning full x width (vertical zero line)
-
-    ``suppress_axis`` sets ``axis: null`` on the datum channel. Needed only when
-    the chart resolves that channel's scale independently (dual y-axis layered):
-    the datum would otherwise spawn its own degenerate [0,0] axis. Left False for
-    every shared-scale chart, where the datum shares the main layer's axis.
-    """
-    datum_channel = axis  # "x" or "y" — the channel carrying the datum value
-    datum_enc: dict[str, Any] = {"datum": value, "type": "quantitative"}
-    if suppress_axis:
-        datum_enc["axis"] = None
-    if datum_channel == "x":
-        encoding: dict[str, Any] = {
-            "x": datum_enc,
-            "y": {"value": 0},
-            "y2": {"value": "height"},
-            "color": {"value": color},
-            "yOffset": {"value": 0},
-        }
-    else:
-        encoding = {
-            "y": datum_enc,
-            "x": {"value": 0},
-            "x2": {"value": "width"},
-            "color": {"value": color},
-            "xOffset": {"value": 0},
-        }
-    return ChartSpec(
-        mark="rule",
-        mark_props={
-            "color": color,
-            "strokeWidth": width,
-            "opacity": 1,
-            "tooltip": False,
-        },
-        encoding=encoding,
-        data=[{measure_field: value}],
-    )
 
 
 def _insert_rule(
@@ -134,16 +91,11 @@ def _is_percent_format(fmt: FormatState) -> bool:
     return False
 
 
-def _values_straddle_zero(rows: list[dict[str, Any]], field: str) -> bool:
-    """True when ``field``'s numeric values in ``rows`` straddle (or touch) 0."""
-    values = numeric_column_values(rows, field)
-    if not values:
-        return False
-    return min(values) <= 0 <= max(values)
-
-
 def _measure_field(
-    chart: ResolvedBarChart | ResolvedLineChart | ResolvedAreaChart,
+    chart: ResolvedBarChart
+    | ResolvedLineChart
+    | ResolvedAreaChart
+    | ResolvedScatterChart,
     spec: ChartSpec,
     axis: str,
 ) -> str | Literal[False]:
@@ -155,8 +107,82 @@ def _measure_field(
     return False
 
 
+def _zero_in_shared_domain(
+    chart: ResolvedBarChart
+    | ResolvedLineChart
+    | ResolvedAreaChart
+    | ResolvedScatterChart,
+    measure_field: str,
+    datasets: dict[str | None, ChartRows],
+) -> bool:
+    """Whether 0 lies inside the y domain every mark on this scale shares.
+
+    Mirrors ``_shared_y_values``, the resolve-time function that actually
+    decides the domain: the union of the base measure (or every wide
+    measure) and every layer not pinned to an independent right axis.
+    ``apply()`` has already bailed out for an independent dual axis, so
+    every layer reaching here shares the base's scale.
+
+    The union is the question, not "does any one series straddle 0". Two
+    series that each stay on one side of zero still bracket it once they
+    share a scale — an all-negative base under an all-positive overlay
+    renders a domain spanning 0, and the rule belongs on it.
+    """
+    base_rows = chart_rows(chart, datasets).all_rows()
+    # Wide charts carry the authored measures in wide_measures; query rows
+    # have the real columns, not the synthetic WIDE_VALUE_FIELD. Scatter has
+    # no fold/multi-measure render path, so it never has wide measures.
+    fields = (
+        chart.wide_measures
+        if isinstance(chart, (ResolvedLineChart, ResolvedAreaChart))
+        and chart.wide_measures
+        else (measure_field,)
+    )
+    values = [v for field in fields for v in numeric_column_values(base_rows, field)]
+    for layer in chart.layers:
+        if layer.type == "bar":
+            # VL bars always extend to/from 0 regardless of their own data
+            # range — 0 is unconditionally in the shared domain once any bar
+            # layer exists.
+            return True
+        if layer.y is None:
+            continue
+        values.extend(
+            numeric_column_values(
+                rows_for_query(layer.query_name, datasets, base_rows), layer.y
+            )
+        )
+    if not values:
+        return False
+    return min(values) <= 0.0 <= max(values)
+
+
+def _y_carries_the_measure(chart: ResolvedChart) -> bool:
+    """Whether the y channel holds the measure a ``datum`` rule references.
+
+    Line and area always put the measure on y. Scatter has no orientation
+    field — x and y are both free-form data columns — so the dot-plot recipe
+    rotates a scatter by moving the value onto x and the category onto y. A
+    ``datum: 0`` or ``datum: 1`` rule has no position on a categorical axis,
+    so it must not fire there.
+
+    Read off the RESOLVED chart, never ``spec.encoding``: a scatter with
+    authored ``layers`` has its encoding hoisted into the sub-layers by
+    ``render_cartesian_overlay``, leaving ``x`` alone on the outer spec — a
+    spec-side read answers False there and silently drops the rule from
+    exactly the charts that layer a target line onto a scatter.
+    ``ResolvedAxisStyle.is_quantitative`` is baked once at resolve time from
+    the same channel classification that already decides the axis type, so
+    this reads a fact fixed before the spec exists rather than
+    reverse-engineering it from how the emitter composed the layers.
+    """
+    if not isinstance(chart, ResolvedScatterChart):
+        return True
+    return chart.style.axis_y.is_quantitative
+
+
 def _domain_reaches(
-    chart: ResolvedLineChart | ResolvedAreaChart,
+    chart: ResolvedLineChart | ResolvedAreaChart | ResolvedScatterChart,
     data: list[dict[str, Any]],
     field: str,
     value: float,
@@ -200,12 +226,12 @@ class BaselineFeature:
     """Zero, top (normalize-stack), and unity (percent-format) baseline rules.
 
     Bar: zero rule always fires.
-    Line / area: zero rule fires when data straddles 0 (or scale.zero isn't
-    explicitly False).
+    Line / area / scatter: zero rule fires when data straddles 0 (or
+    scale.zero isn't explicitly False).
     Normalize-stacked bar/area: top rules fire at datum 0 and 1 instead of a
     zero rule — except normalize-stacked, percent-format area, which gets
     only the single unity rule at datum 1 (no duplicate y=1 reference line).
-    Line / area with percent format: unity rule fires at datum 1,
+    Line / area / scatter with percent format: unity rule fires at datum 1,
     independent of the zero/top rule above.
     """
 
@@ -216,6 +242,7 @@ class BaselineFeature:
                 ResolvedBarChart,
                 ResolvedLineChart,
                 ResolvedAreaChart,
+                ResolvedScatterChart,
             ),
         )
 
@@ -226,10 +253,12 @@ class BaselineFeature:
         box: RenderBox,
         datasets: dict[str | None, list[dict[str, Any]]],
     ) -> ChartSpec:
-        # Independent dual-axis: a `datum: 0` rule would get its own y scale
-        # (VL can't bind it to the base measure scale under independent resolve),
-        # so it floats to the wrong position. The base's own x-axis at 0 already
-        # marks the baseline; skip the free-floating rule.
+        # Independent dual-axis: a `datum: 0` rule added here would get its own
+        # degenerate y scale (VL can't bind it to the base measure scale under
+        # independent resolve). `render_cartesian_overlay` (emitters/_overlay.py)
+        # owns zero-rule insertion for this case instead, nesting each rule
+        # inside the specific layer entry that owns the scale it binds to;
+        # skip here so this feature never also adds one.
         resolve_scale = spec.resolve.get("scale")
         if resolve_scale is not None and resolve_scale.get("y") == "independent":
             return spec
@@ -241,11 +270,9 @@ class BaselineFeature:
         # every panel's rows; under independent scale each panel gets its own
         # y-domain, so a single chart-wide verdict can be wrong for any one
         # panel — skip it, same as the dual-axis case above.
-        if (
-            isinstance(chart, _CartesianResolvedChartFields)
-            and chart.multiples is not None
-            and chart.multiples.scale == "independent"
-        ):
+        if isinstance(
+            chart, _CartesianResolvedChartFields
+        ) and multiples_scale_independent(chart):
             return spec
         self._apply_zero_or_top(spec, chart, datasets)
         self._apply_unity(spec, chart, chart_rows(chart, datasets).all_rows())
@@ -282,80 +309,44 @@ class BaselineFeature:
         datasets: dict[str | None, list[dict[str, Any]]],
     ) -> None:
         assert isinstance(
-            chart, (ResolvedBarChart, ResolvedLineChart, ResolvedAreaChart)
+            chart,
+            (
+                ResolvedBarChart,
+                ResolvedLineChart,
+                ResolvedAreaChart,
+                ResolvedScatterChart,
+            ),
         )
-        # A log-typed measure axis can never carry this rule: its datum:0
-        # encoding pulls a literal 0 into the shared y-scale's domain, which a
-        # log domain cannot represent — Vega-Lite's entire axis rendering
-        # breaks (empirically: every tick label vanishes), not just this layer.
-        axis_y_scale = chart.style.axis_y.scale
-        _bsl_cont = axis_y_scale.continuous if axis_y_scale is not None else None
-        if _bsl_cont is not None and _bsl_cont.type == "log":
-            return
-        # Determine whether the rule should fire.
+        authored = authored_measure_domain(chart.style.axis_y)
+
+        # Determine whether the rule should fire. The log-scale, authored-domain,
+        # and grid.visible guards live once in build_zero_rule_if_applicable below
+        # — this branch only decides the family-specific straddle/always-fire
+        # verdict feeding its `should_fire`.
         if isinstance(chart, ResolvedBarChart):
             should_fire = True
-            # An explicit measure-axis domain that excludes 0 suppresses the rule.
-            _scale = chart.style.axis_y.scale
-            _bsl_cont2 = _scale.continuous if _scale is not None else None
-            if _bsl_cont2 is not None and _bsl_cont2.domain is not None:
-                _d = _bsl_cont2.domain
-                if all(isinstance(v, (int, float)) for v in _d) and not (
-                    float(_d[0]) <= 0.0 <= float(_d[-1])
-                ):
-                    should_fire = False
         else:
-            # Line / area: mirror V1 _domain_includes_zero. The rule's datum:0
-            # pulls 0 into the unified domain, so it fires whenever the measure
-            # axis isn't explicitly scale.zero=False. Only an explicit
-            # scale.zero=False requires a straddle check.
-            measure_field = _measure_field(chart, spec, "y")
-            if measure_field is False:
+            # Line / area / scatter: mirror V1 _domain_includes_zero. The
+            # rule's datum:0 pulls 0 into the unified domain, so it fires
+            # whenever the measure axis isn't explicitly scale.zero=False.
+            # Only an explicit scale.zero=False requires a straddle check.
+            non_bar_measure_field = _measure_field(chart, spec, "y")
+            if non_bar_measure_field is False:
+                return
+            if not _y_carries_the_measure(chart):
                 return
             scale = chart.style.axis_y.scale
             _bsl_cont3 = scale.continuous if scale is not None else None
             zero_setting = _bsl_cont3.zero if _bsl_cont3 is not None else None
-            if zero_setting is False:
-                # The straddle check must cover every mark sharing this SAME
-                # y scale, not just the base series' own values — apply()
-                # already bailed out above for an independent-y (dual-axis)
-                # layer, so every chart.layers entry reaching this point
-                # shares the base's scale. A base series that never
-                # approaches 0 (e.g. a target line sitting at 30-55) can
-                # still sit on an axis whose floor touches 0 because an
-                # overlay layer's own data (or a bar layer's unconditional
-                # zero-anchoring) puts 0 in the shared domain.
-                base_rows = chart_rows(chart, datasets).all_rows()
-                # Wide charts carry the authored measures in wide_measures; query
-                # rows have the real columns, not the synthetic WIDE_VALUE_FIELD.
-                if chart.wide_measures:
-                    should_fire = any(
-                        _values_straddle_zero(base_rows, field)
-                        for field in chart.wide_measures
-                    )
-                else:
-                    should_fire = _values_straddle_zero(base_rows, measure_field)
-                if not should_fire:
-                    for layer in chart.layers:
-                        if layer.type == "bar":
-                            # VL bars always extend to/from 0 regardless of
-                            # their own data range — 0 is unconditionally in
-                            # the shared domain once any bar layer exists.
-                            should_fire = True
-                            break
-                        if layer.y is None:
-                            continue
-                        layer_rows = rows_for_query(
-                            layer.query_name, datasets, base_rows
-                        )
-                        if _values_straddle_zero(layer_rows, layer.y):
-                            should_fire = True
-                            break
-            else:
-                should_fire = True
-
-        if not should_fire:
-            return
+            should_fire = non_bar_zero_rule_should_fire(
+                isinstance(chart, ResolvedScatterChart),
+                zero_setting,
+                zero_anchored=chart.style.axis_y.zero_anchored,
+                authored_domain=authored,
+                zero_in_domain=lambda: _zero_in_shared_domain(
+                    chart, non_bar_measure_field, datasets
+                ),
+            )
 
         # Determine measure_field for synthetic data row.
         rule_axis = (
@@ -369,20 +360,24 @@ class BaselineFeature:
             return
         # Read zero style from the chart's own baked axis cascade (style.axis_y),
         # not board-level style — a chart-local axis patch has to win.
-        if not chart.style.axis_y.grid.visible:
-            return
         zero_style = chart.style.axis_y.grid.zero
         assert zero_style is not None, (
             "zero grid style must be resolved before emitting the baseline rule"
         )
-        rule = _full_rule_at(
-            0,
-            axis=rule_axis,
-            measure_field=measure_field,
-            color=zero_style.color,
-            width=zero_style.width,
-            suppress_axis=False,
+        axis_y_scale = chart.style.axis_y.scale
+        continuous = axis_y_scale.continuous if axis_y_scale is not None else None
+        rule = build_zero_rule_if_applicable(
+            measure_field,
+            rule_axis,
+            log_scale=continuous is not None and continuous.type == "log",
+            authored_domain=authored,
+            grid_visible=chart.style.axis_y.grid.visible,
+            zero_color=zero_style.color,
+            zero_width=zero_style.width,
+            should_fire=should_fire,
         )
+        if rule is None:
+            return
         _insert_rule(spec, rule, chart)
 
     def _insert_top_rules(self, spec: ChartSpec, chart: ResolvedChart) -> None:
@@ -412,7 +407,7 @@ class BaselineFeature:
         for datum in (0, 1):
             _insert_rule(
                 spec,
-                _full_rule_at(
+                full_rule_at(
                     datum,
                     axis=rule_axis,
                     measure_field=measure_field,
@@ -428,10 +423,12 @@ class BaselineFeature:
         chart: ResolvedChart,
         data: list[dict[str, Any]],
     ) -> None:
-        if not isinstance(chart, (ResolvedLineChart, ResolvedAreaChart)):
+        if not isinstance(
+            chart, (ResolvedLineChart, ResolvedAreaChart, ResolvedScatterChart)
+        ):
             return
         # axis_y.labels.format is the D3 spec resolved from the board+theme cascade.
-        # Check it first — it converts Dataface aliases ("percent_whole") to
+        # Check it first — it converts dbt charts aliases ("percent_whole") to
         # their literal D3 form (".0%"), which always contains "%".
         ax_fmt = chart.style.axis_y.labels.format
         if not ((ax_fmt and "%" in ax_fmt) or _is_percent_format(chart.format)):
@@ -441,6 +438,8 @@ class BaselineFeature:
             return
         measure_field = _measure_field(chart, spec, "y")
         if measure_field is False:
+            return
+        if not _y_carries_the_measure(chart):
             return
         # A normalize-stacked area reroutes its definitional 1.0 ceiling through
         # this rule (see _apply_zero_or_top); its unity rule always fires. Every
@@ -459,7 +458,7 @@ class BaselineFeature:
         )
         _insert_rule(
             spec,
-            _full_rule_at(
+            full_rule_at(
                 1,
                 axis="y",
                 measure_field=measure_field,

@@ -134,7 +134,7 @@ class TestLegendLabelMaxWidth:
 class TestLegendLabelPadding:
     """Legend label padding is the gap between a legend symbol and its text.
 
-    Maps the Dataface ``legend.label.padding`` to Vega-Lite ``labelOffset``
+    Maps the dbt charts ``legend.label.padding`` to Vega-Lite ``labelOffset``
     (the offset of a legend label from its symbol). Regression: the value was
     declared in the theme model but never emitted, so wide stroke symbols
     (target lines in mixed bar+line legends) rendered flush against their text.

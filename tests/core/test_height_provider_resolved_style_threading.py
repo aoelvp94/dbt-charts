@@ -68,8 +68,8 @@ def test_height_provider_uses_nested_board_resolved_style() -> None:
     )
     from dbt_charts.core.render.sizing import calculate_layout_height
 
-    outer_rs = resolve_style(get_theme_style("cream"))
-    outer_ctx = resolve_chart_style_context(get_theme_style("cream"))
+    outer_rs = resolve_style(get_theme_style("paper"))
+    outer_ctx = resolve_chart_style_context(get_theme_style("paper"))
     nested_rs = resolve_style(get_theme_style("stark"))
     nested_ctx = resolve_chart_style_context(get_theme_style("stark"))
 
@@ -168,8 +168,8 @@ def test_sibling_nested_boards_different_themes_get_correct_resolved_styles() ->
     )
     from dbt_charts.core.render.sizing import calculate_layout_height
 
-    cream_rs = resolve_style(get_theme_style("cream"))
-    cream_ctx = resolve_chart_style_context(get_theme_style("cream"))
+    cream_rs = resolve_style(get_theme_style("paper"))
+    cream_ctx = resolve_chart_style_context(get_theme_style("paper"))
     stark_rs = resolve_style(get_theme_style("stark"))
     stark_ctx = resolve_chart_style_context(get_theme_style("stark"))
 
@@ -270,7 +270,7 @@ def test_sibling_nested_boards_different_themes_get_correct_resolved_styles() ->
     )
 
 
-@pytest.mark.parametrize("theme_name", ["cream", "stark"])
+@pytest.mark.parametrize("theme_name", ["paper", "stark"])
 def test_height_provider_resolved_style_param_propagated_to_render(
     theme_name: str,
 ) -> None:
@@ -292,8 +292,8 @@ def test_height_provider_resolved_style_param_propagated_to_render(
     )
     from dbt_charts.core.render.sizing import calculate_layout_height
 
-    outer_rs = resolve_style(get_theme_style("cream"))
-    outer_ctx = resolve_chart_style_context(get_theme_style("cream"))
+    outer_rs = resolve_style(get_theme_style("paper"))
+    outer_ctx = resolve_chart_style_context(get_theme_style("paper"))
     nested_rs = resolve_style(get_theme_style(theme_name))
     nested_ctx = resolve_chart_style_context(get_theme_style(theme_name))
 

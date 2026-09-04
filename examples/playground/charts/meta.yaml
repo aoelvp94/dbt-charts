@@ -4,4 +4,4 @@ source: examples_db
 
 style:
   frame:
-    width: 1200.0
+    max_width: 1200.0

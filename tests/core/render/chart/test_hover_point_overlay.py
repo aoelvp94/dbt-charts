@@ -31,6 +31,7 @@ import pytest
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
+from dbt_charts.core.render.chart.emitters._layers import HOVER_TARGET_SIZE
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
@@ -117,6 +118,17 @@ def _point_overlay_layers(layers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def test_hover_target_size_stays_under_x_step_ceiling() -> None:
+    """HOVER_TARGET_SIZE must not exceed the x-step ceiling its own comment
+    derives (18px spacing floor / 2, as radius): a radius past that lets one
+    datum's hover disc steal a neighbour's hit region. Hardcodes the same 18
+    the comment does rather than reading `chart_rendering.point.
+    min_px_per_point` (a different, safety-padded number for a different
+    purpose — see default_config.yml) — this only catches HOVER_TARGET_SIZE
+    drifting past a fixed ceiling, not that 18px ceiling itself going stale."""
+    assert HOVER_TARGET_SIZE <= 4 * (18.0 / 2) ** 2
+
+
 def _fg_line_layers(layers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Find foreground line layers (type=line, tooltip=True)."""
     return [
@@ -181,7 +193,10 @@ class TestLineSpecShape:
         )
 
     def test_line_point_overlay_has_exact_hit_size(self, make_chart):
-        """Point overlay size must be 300 (≈9.77 px radius = sqrt(300/π))."""
+        """Point overlay size must be the calibrated HOVER_TARGET_SIZE constant.
+
+        Vega's circle symbol radius is sqrt(size)/2, not sqrt(size/π) (measured
+        off vl-convert's emitted path — see HOVER_TARGET_SIZE in _layers.py)."""
         chart = make_chart("line", x="day", y="value")
         _rc = resolve(chart, _LINE_DATA, chart_style_context=_BOARD_STYLE)
         spec = generate_vega_lite_spec(chart, _LINE_DATA, width=400)
@@ -190,8 +205,8 @@ class TestLineSpecShape:
         overlays = _point_overlay_layers(layers)
         assert overlays, "Expected a point overlay layer"
         overlay_size = overlays[0]["mark"].get("size", 0)
-        assert overlay_size == 300, (
-            f"Point overlay size={overlay_size}, expected 300 (≈9.77 px radius)"
+        assert overlay_size == HOVER_TARGET_SIZE, (
+            f"Point overlay size={overlay_size}, expected {HOVER_TARGET_SIZE}"
         )
 
     def test_line_point_overlay_is_filled(self, make_chart):
@@ -309,7 +324,7 @@ class TestAreaSpecShape:
         )
 
     def test_area_point_overlay_has_exact_hit_size(self, make_chart):
-        """Point overlay size must be 300 (≈9.77 px radius)."""
+        """Point overlay size must be the calibrated HOVER_TARGET_SIZE constant."""
         chart = make_chart("area", x="month", y="revenue")
         _rc = resolve(chart, _AREA_DATA, chart_style_context=_BOARD_STYLE)
         spec = generate_vega_lite_spec(chart, _AREA_DATA, width=400)
@@ -318,7 +333,26 @@ class TestAreaSpecShape:
         overlays = _point_overlay_layers(layers)
         assert overlays, "Expected a point overlay layer"
         overlay_size = overlays[0]["mark"].get("size", 0)
-        assert overlay_size == 300, f"Point overlay size={overlay_size}, expected 300"
+        assert overlay_size == HOVER_TARGET_SIZE, (
+            f"Point overlay size={overlay_size}, expected {HOVER_TARGET_SIZE}"
+        )
+
+    def test_stacked_area_point_overlay_has_exact_hit_size(self, make_chart):
+        """The stacked path (``chart.stack`` set) shares ``_hover_target_point``
+        with overlap area and line, so the same calibrated constant applies
+        there too — single-series stacking alone is enough to reach the
+        stacked code path (``is_stacked = chart.stack not in (None, "none")``)."""
+        chart = make_chart("area", x="month", y="revenue", stack="zero")
+        _rc = resolve(chart, _AREA_DATA, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, _AREA_DATA, width=400)
+
+        layers = spec.get("layer", [])
+        overlays = _point_overlay_layers(layers)
+        assert overlays, "Expected a point overlay layer"
+        overlay_size = overlays[0]["mark"].get("size", 0)
+        assert overlay_size == HOVER_TARGET_SIZE, (
+            f"Point overlay size={overlay_size}, expected {HOVER_TARGET_SIZE}"
+        )
 
     def test_area_foreground_has_aria_false(self, make_chart):
         """Foreground area mark must have aria=False."""

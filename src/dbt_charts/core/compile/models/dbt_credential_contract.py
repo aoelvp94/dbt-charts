@@ -1,6 +1,6 @@
 """Checked-in dbt credential-contract snapshot support.
 
-The source Pydantic models are Dataface's authoring contract. This module reads
+The source Pydantic models are dbt charts' authoring contract. This module reads
 the installed dbt credential dataclasses only to make adapter upgrades reviewable:
 tests compare its output with the small checked-in JSON snapshot.
 """
@@ -98,7 +98,7 @@ def render_dbt_credential_contract_markdown(
         "<!-- Generated from the installed dbt credential dataclasses; do not edit manually. -->",
         "",
         "This snapshot is the review boundary for dbt-adapter upgrades. "
-        "Dataface's strict Pydantic source models remain the authoring contract.",
+        "dbt charts' strict Pydantic source models remain the authoring contract.",
         "",
     ]
     adapters = contract["adapters"]

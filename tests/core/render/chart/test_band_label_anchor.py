@@ -53,7 +53,7 @@ def _spec(
     rows: list[dict[str, Any]] = ROWS,
     width: float = 600.0,
 ) -> dict[str, Any]:
-    board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+    board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
     compiled = normalize_chart("c", chart_def, _QUERY_REGISTRY, sources={})
     resolved = resolve(compiled, rows, chart_style_context=board_ctx)
     session = BoardRenderSession.create(board_rs)
@@ -175,7 +175,7 @@ def _label_positions(svg: str) -> dict[str, float]:
     ):
         for text in re.finditer(r"<text ([^>]*)>", group.group(1)):
             attrs = text.group(1)
-            label = re.search(r'aria-label="Month: ([^;"]+)', attrs)
+            label = re.search(r'aria-label="month: ([^;"]+)', attrs)
             x = re.search(r'transform="translate\(([-\d.]+),', attrs)
             if label is not None and x is not None:
                 positions[label.group(1)] = float(x.group(1))
@@ -524,7 +524,7 @@ _EXTRA_ROWS = [{"month": m, "actual": 20 + i} for i, m in enumerate([*MONTHS, "M
 
 
 def _spec_with_extra_layer_query(chart: dict[str, Any]) -> dict[str, Any]:
-    board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+    board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
     registry: dict[str, Any] = {
         "q": SqlQuery(sql="SELECT 1", source="test"),
         "extra": SqlQuery(sql="SELECT 2", source="test"),
@@ -588,7 +588,7 @@ def test_layer_authoring_its_own_x_filters_on_the_positioning_column() -> None:
     layer = chart["layers"][0]
     layer["x"] = "phase"
     layer["query"] = "extra"
-    board_rs, board_ctx = resolve_style_and_context(get_theme_style("editorial"))
+    board_rs, board_ctx = resolve_style_and_context(get_theme_style("clarity"))
     registry: dict[str, Any] = {
         "q": SqlQuery(sql="SELECT 1", source="test"),
         "extra": SqlQuery(sql="SELECT 2", source="test"),
@@ -614,7 +614,7 @@ def test_band_split_composes_with_the_house_register_calculate() -> None:
     That routes through a ``calculate`` transform, which the band filters have
     to sit ahead of — the ordering ``_prepend_filter`` exists for.
     """
-    chart = _overlay("right", format="compact")
+    chart = _overlay("right", format="number")
     del chart["layers"][0]["style"]["marks"]["line"]["labels"]["field"]
     anchored, fallback = _text_layers(_spec(chart))
     for layer in (anchored, fallback):

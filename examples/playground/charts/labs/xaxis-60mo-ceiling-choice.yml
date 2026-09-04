@@ -1,0 +1,38 @@
+title: "60 monthly points at 658px: the two candidate answers"
+notes: >
+  This span has NO rung that fits flat inside the 90px window. Quarter labels
+  do not clear (the flushed first label carries a year row), and year labels
+  land 105px apart — 15px past the ceiling. Chart 1 is today's render.
+  Chart 2 is what taking the nearest flat rung anyway would look like.
+extends: clarity
+style:
+  frame:
+    width: 780
+rows:
+  - cols: [as_shipped]
+  - cols: [year_anyway]
+charts:
+  as_shipped:
+    type: line
+    title: "As shipped — quarter, flat: first pair overlaps by 4.8px"
+    x: month
+    y: v
+    query:
+      sql: >
+        SELECT CAST(d AS DATE) AS month, 60 + 30 * sin(row_number() OVER (ORDER BY d) / 2.0) AS v
+        FROM generate_series(DATE '2024-01-01', DATE '2028-12-01', INTERVAL 1 MONTH) AS t(d)
+      source: duckdb_local
+  year_anyway:
+    type: line
+    title: "Year anyway — 5 flat marks, 105px apart, 15px past the ceiling"
+    x: month
+    y: v
+    style:
+      axis_x:
+        labels:
+          time_unit: year
+    query:
+      sql: >
+        SELECT CAST(d AS DATE) AS month, 60 + 30 * sin(row_number() OVER (ORDER BY d) / 2.0) AS v
+        FROM generate_series(DATE '2024-01-01', DATE '2028-12-01', INTERVAL 1 MONTH) AS t(d)
+      source: duckdb_local

@@ -207,7 +207,11 @@ def build_patch_model_ext(
             patch_annotation = Annotated[tuple([patch_annotation] + forwarded_markers)]
         fields[name] = (
             patch_annotation,
-            Field(default=None, description=field_info.description),
+            Field(
+                default=None,
+                description=field_info.description,
+                alias=field_info.alias,
+            ),
         )
 
     actual_base = base_cls if base_cls is not None else _PatchBase

@@ -1,4 +1,4 @@
-"""Canonical tool definitions for Dataface AI interfaces.
+"""Canonical tool definitions for dbt charts AI interfaces.
 
 Single source of truth for tool names, descriptions, and input schemas.
 Consumed by both the MCP server and OpenAI function-calling wrappers.

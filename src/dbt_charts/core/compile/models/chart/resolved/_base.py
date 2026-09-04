@@ -18,8 +18,8 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.chart.authored import (
-    ChartDataTable,
     ChartSort,
+    ChartSupportTable,
     FieldConditionalFormatting,
     MultiplesConfig,
 )
@@ -33,14 +33,17 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedLegendStyle,
 )
 from dbt_charts.core.compile.models.style.theme.board import PaddingStyle, TitleStyle
-from dbt_charts.core.compile.models.style.theme.table import DataTableStyle
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    CategoryColorScale,
+)
+from dbt_charts.core.compile.models.style.theme.table import SupportTableStyle
 from dbt_charts.core.compile.models.vega_lite.contracts import Projection
 
 
 class _BaseResolvedChartFields(BaseModel):
     """Universal fields on every resolved chart (except the minimal CalloutChart).
 
-    Mirrors compiled._BaseCompiledChartFields: description, link,
+    Mirrors compiled._BaseCompiledChartFields: notes, link,
     conditional_formatting declared here once.
     """
 
@@ -75,9 +78,9 @@ class _BaseResolvedChartFields(BaseModel):
     variable_dependencies: frozenset[str] = Field(
         description="Variable names this chart depends on.",
     )
-    description: str = Field(
+    notes: str = Field(
         default="",
-        description="Human-readable chart description.",
+        description="Human-readable chart notes. Never rendered.",
     )
     link: str | None = Field(
         default=None,
@@ -105,10 +108,17 @@ class _BaseResolvedChartFields(BaseModel):
     requested_alias_substitute: str | None = Field(
         default=None,
         description=(
-            "Display name of the palette DFT substituted for "
+            "Display name of the palette dbt charts substituted for "
             "requested_alias_palette — baked alongside it so the "
             "WARN-PALETTE-UNSUPPORTED detector never calls "
             "compile.resolve.style.palette itself."
+        ),
+    )
+    category_colors: tuple[CategoryColorScale, ...] = Field(
+        default=(),
+        description=(
+            "Board-wide value→color scales for the categorical fields THIS "
+            "chart encodes. Empty when no field it draws is bound."
         ),
     )
     resolved_channels: dict[str, ResolvedStyleChannel] = Field(
@@ -193,10 +203,10 @@ class _CartesianResolvedChartFields(_SharedResolvedChartFields):
             "rather than re-deriving the partition from ``multiples`` itself."
         ),
     )
-    data_table: ChartDataTable | None = Field(
+    support_table: ChartSupportTable | None = Field(
         default=None,
         description=(
-            "Attached data-table config, final: entries reading a single "
+            "Attached support-table config, final: entries reading a single "
             "numeric string y column with no authored format already carry "
             "the theme's default number format stamped on."
         ),
@@ -211,16 +221,16 @@ class _CartesianResolvedChartFields(_SharedResolvedChartFields):
     min_height: float | None = Field(default=None, description="Minimum chart height.")
     max_height: float | None = Field(default=None, description="Maximum chart height.")
     # Baked at resolve time so render never re-runs the axis cascade to
-    # compute data_table strip geometry — see compile/data_table.py's
-    # axis_offset()/resolve_effective_data_table_style(), the per-chart
-    # cascade steps this projects. None when data_table is None.
-    data_table_axis_offset: float | None = Field(
+    # compute support_table strip geometry — see compile/support_table.py's
+    # axis_offset()/resolve_effective_support_table_style(), the per-chart
+    # cascade steps this projects. None when support_table is None.
+    support_table_axis_offset: float | None = Field(
         default=None,
-        description="Pixel offset from plot bottom to the x-axis block bottom, for data_table strip placement.",
+        description="Pixel offset from plot bottom to the x-axis block bottom, for support_table strip placement.",
     )
-    effective_data_table_style: DataTableStyle | None = Field(
+    effective_support_table_style: SupportTableStyle | None = Field(
         default=None,
-        description="Final per-chart data_table style (board theme merged with the family override).",
+        description="Final per-chart support_table style (board theme merged with the family override).",
     )
 
 

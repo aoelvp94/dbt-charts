@@ -1,4 +1,4 @@
-"""Variable utilities for Dataface.
+"""Variable utilities for dbt charts.
 
 Stage: COMPILE (utilities used by both execute and render)
 Purpose: Shared variable processing functions.
@@ -59,7 +59,8 @@ def parse_variable_json_strings(variables: VariableValues) -> VariableValues:
 _DATE_INPUTS = frozenset({"date", "datepicker"})
 _NUMBER_INPUTS = frozenset({"number", "slider", "range"})
 # Scalar typed inputs where an empty string means "unset" (→ None), like the
-# renderer's absent-check. daterange is excluded — it handles endpoints itself.
+# renderer's absent-check. daterange is excluded — its own branch handles both
+# a fully-empty container (variable_value_is_absent) and per-endpoint blanks.
 _SCALAR_TYPED_INPUTS = _DATE_INPUTS | _NUMBER_INPUTS | frozenset({"checkbox"})
 _BOOL_TRUE = frozenset({"true", "1", "yes", "on"})
 _BOOL_FALSE = frozenset({"false", "0", "no", "off"})
@@ -153,6 +154,9 @@ def coerce_variable_values(
         elif kind in _DATE_INPUTS:
             result[name] = _coerce_date(name, value)
         elif kind == "daterange":
+            if variable_value_is_absent(value):
+                result[name] = None
+                continue
             if not isinstance(value, (list, tuple)) or len(value) != 2:
                 raise ExecutionError(
                     f"Variable '{name}': daterange value must be [start, end], "

@@ -37,13 +37,11 @@ class TestChartStylePatchTitleFontNested:
         p = BarChartStylePatch()
         assert p.title is None
 
-    def test_bar_font_still_available(self) -> None:
-        """BarChartStylePatch.font is a FontStyle object (not a simple string)."""
-        from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
-
-        p = BarChartStylePatch.model_validate({"font": {"family": "Inter"}})
-        assert p.font is not None
-        assert p.font.family == "Inter"
+    # `BarChartStylePatch.font` is gone: bar has no per-chart card to paint a
+    # font onto. Its rejection is pinned by
+    # test_chart_discriminated_union.py::test_card_style_dead_family_rejects_style_font,
+    # and the "font is an object, not a string" shape by
+    # test_kpi_still_accepts_style_font in the same file.
 
 
 # ---------------------------------------------------------------------------

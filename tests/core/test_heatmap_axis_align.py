@@ -224,8 +224,8 @@ def _board_with_heatmap_color_gradient(
     )
 
 
-def test_heatmap_theme_gradient_dataface_named_palette_resolves_to_stops() -> None:
-    """A Dataface named palette set at the theme level (charts.heatmap.color.
+def test_heatmap_theme_gradient_dbt_charts_named_palette_resolves_to_stops() -> None:
+    """A dbt charts named palette set at the theme level (charts.heatmap.color.
     gradient), not at chart-local style, reaches ``_resolve_heatmap`` via the
     fully cascaded ``HeatmapChartStyle`` — a different construction path than
     a chart-local channel scale. Regression: before ``bake_scale_target_stops``
@@ -253,7 +253,7 @@ def test_heatmap_theme_gradient_dataface_named_palette_resolves_to_stops() -> No
 def test_heatmap_chart_local_gradient_override_does_not_crash_on_named_theme_palette() -> (
     None
 ):
-    """A board-level Dataface named palette (baked resolved_stops) combined
+    """A board-level dbt charts named palette (baked resolved_stops) combined
     with a chart-local gradient override to a *different* palette shape
     (Vega scheme, or an inline stop list) must resolve cleanly.
 

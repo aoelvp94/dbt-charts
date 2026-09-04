@@ -327,7 +327,7 @@ def test_reverted_example_board_migrates_to_the_current_shape() -> None:
     the identical structure via `dct migrate` end to end."""
     old_yaml_text = (
         "title: Bookings\n"
-        "extends: editorial\n"
+        "extends: clarity\n"
         "queries:\n"
         "  revenue:\n"
         "    sql: SELECT month, cumulative_won FROM x\n"

@@ -101,7 +101,7 @@ def test_multi_series_line_header_before_series_before_value():
     chart = LineChart(id="t", type="line", x="month", y="revenue", color="region")
     labels = _render(chart, _MULTI_SERIES_LINE_DATA)
     row = next(lb for lb in labels if f"{ROLE_SERIES}North" in lb and "Jan 2024" in lb)
-    assert row.index(ROLE_HEADER) < row.index(ROLE_SERIES) < row.index("Revenue")
+    assert row.index(ROLE_HEADER) < row.index(ROLE_SERIES) < row.index("revenue")
 
 
 _ENDPOINT_ORDER_LINE_DATA = [
@@ -154,7 +154,7 @@ def test_single_series_line_value_formatted():
     """No color channel at all: value must still be themed-formatted, not raw."""
     chart = LineChart(id="t", type="line", x="month", y="revenue")
     labels = _render(chart, _SINGLE_SERIES_LINE_DATA)
-    assert any("Revenue: 1,234.5" in lb for lb in labels), labels
+    assert any("revenue: 1,234.5" in lb for lb in labels), labels
 
 
 def test_single_series_line_header_is_bare_value_not_labeled():
@@ -221,7 +221,159 @@ def test_grouped_bar_header_before_series_before_value():
     chart = BarChart(id="t", type="bar", x="day_name", y="count", color="kind")
     labels = _render(chart, _GROUPED_BAR_DATA)
     row = next(lb for lb in labels if f"{ROLE_SERIES}task" in lb and "Mon" in lb)
-    assert row.index(ROLE_HEADER) < row.index(ROLE_SERIES) < row.index("Count")
+    assert row.index(ROLE_HEADER) < row.index(ROLE_SERIES) < row.index("count")
+
+
+def test_board_bound_grouped_bar_earns_a_rank_from_its_new_domain():
+    """Board-binding a grouped bar's color field gives it a rank it did not have.
+
+    Overriding which value gets which color requires an explicit
+    ``scale.domain``/``range`` pair -- there is no way to permute the range
+    alone -- so a bound grouped bar now carries a domain where an unbound one
+    carries none (see ``bar.py``'s ``category_scale_for`` gate). The rank
+    follows from the domain existing, and it is in
+    ``distinct_series_values``'s natural order, so nothing about display moves.
+
+    Suppressing the rank whenever the domain equals its own sorted order was
+    tried and reverted: it also stripped the rank from endpoint-labelled lines
+    that sort alphabetically by coincidence, and those render no legend for
+    the runtime to fall back to.
+    """
+    import dataclasses
+
+    from dbt_charts.core.compile.models.style.theme.category_colors import (
+        CategoryColorScale,
+    )
+
+    scale = CategoryColorScale(field="kind", slots={"pr": 0, "task": 1}, overrides={})
+    ctx = dataclasses.replace(_BOARD_CTX, category_colors=(scale,))
+    chart = BarChart(id="t", type="bar", x="day_name", y="count", color="kind")
+    resolved = resolve(chart, _GROUPED_BAR_DATA, chart_style_context=ctx)
+    assert resolved.category_colors, "fixture must actually board-bind `kind`"
+    spec = generate_vega_lite_spec(
+        chart,
+        _GROUPED_BAR_DATA,
+        width=400,
+        board_style=_BOARD_RS,
+        chart_style_context=ctx,
+    )
+    color_enc = spec.get("encoding", {}).get("color", {})
+    assert color_enc.get("scale", {}).get("domain") == ["pr", "task"], (
+        "fixture must actually carry an explicit (natural-order) domain"
+    )
+    labels = _svg_aria_labels(spec)
+    assert labels, "expected at least one mark aria-label"
+    rank_of = {"pr": 0, "task": 1}
+    for series_name, rank in rank_of.items():
+        row = next(lb for lb in labels if f"{ROLE_SERIES}{series_name}" in lb)
+        assert f"{ROLE_ORDER}{rank}" in row, (series_name, rank, row)
+
+
+_GROUPED_BAR_DATA_ABC = [
+    {"day_name": "Mon", "count": 1.0, "kind": "A"},
+    {"day_name": "Mon", "count": 2.0, "kind": "B"},
+    {"day_name": "Mon", "count": 3.0, "kind": "C"},
+]
+
+
+def test_grouped_bar_rank_follows_authored_legend_order_not_alphabetical():
+    """A board-bound grouped bar's tooltip rank must agree with its rendered
+    legend, not `distinct_series_values`'s alphabetical order.
+
+    `bar.py`'s grouped-bar branch deliberately skips
+    `pin_legend_display_order` (a stacked mark's legend needs it; a grouped
+    mark's legend already follows `scale.domain` on its own) -- but it still
+    built that `scale.domain` from plain alphabetical `distinct_series_values`
+    even when `style.legend.values` authored a different full order, so the
+    two disagreed: `apply_color_legend` bakes `style.legend.values` onto
+    `enc["legend"]["values"]` verbatim (the legend read "C, A, B"), while
+    `_series_order_role` bakes its rank from `scale.domain` (still "A, B, C"
+    alphabetical) -- a shared value ranks differently than where it visually
+    sits in the legend.
+    """
+    import dataclasses
+
+    from dbt_charts.core.compile.models.style.authored import LegendStylePatch
+    from dbt_charts.core.compile.models.style.theme.category_colors import (
+        CategoryColorScale,
+    )
+
+    scale = CategoryColorScale(
+        field="kind", slots={"A": 0, "B": 1, "C": 2}, overrides={}
+    )
+    ctx = dataclasses.replace(_BOARD_CTX, category_colors=(scale,))
+    chart = BarChart(
+        id="t",
+        type="bar",
+        x="day_name",
+        y="count",
+        color="kind",
+        style=BarChartStylePatch(
+            legend=LegendStylePatch(values=["C", "A", "B"], visible=True)
+        ),
+    )
+    resolved = resolve(chart, _GROUPED_BAR_DATA_ABC, chart_style_context=ctx)
+    assert resolved.category_colors, "fixture must actually board-bind `kind`"
+    spec = generate_vega_lite_spec(
+        chart,
+        _GROUPED_BAR_DATA_ABC,
+        width=400,
+        board_style=_BOARD_RS,
+        chart_style_context=ctx,
+    )
+    color_enc = spec.get("encoding", {}).get("color", {})
+    assert color_enc.get("legend", {}).get("values") == ["C", "A", "B"], (
+        "fixture must actually carry the authored legend order"
+    )
+    labels = _svg_aria_labels(spec)
+    assert labels, "expected at least one mark aria-label"
+    rank_of = {"C": 0, "A": 1, "B": 2}
+    for series_name, rank in rank_of.items():
+        row = next(lb for lb in labels if f"{ROLE_SERIES}{series_name}" in lb)
+        assert f"{ROLE_ORDER}{rank}" in row, (series_name, rank, row)
+
+
+def test_grouped_bar_ignores_an_authored_legend_order_that_repeats_a_value():
+    """A repeated `legend.values` entry must not reach `scale.domain`.
+
+    The same-set check that adopts an authored order compares sets, so
+    `["C", "C", "A", "B"]` matches `{A, B, C}` and would be taken verbatim --
+    duplicating a domain member, duplicating the legend entry, and baking a
+    rank expression over the duplicate. A list that is not a permutation of
+    the drawn series is not an order; fall back to alphabetical.
+    """
+    import dataclasses
+
+    from dbt_charts.core.compile.models.style.authored import LegendStylePatch
+    from dbt_charts.core.compile.models.style.theme.category_colors import (
+        CategoryColorScale,
+    )
+
+    scale = CategoryColorScale(
+        field="kind", slots={"A": 0, "B": 1, "C": 2}, overrides={}
+    )
+    ctx = dataclasses.replace(_BOARD_CTX, category_colors=(scale,))
+    chart = BarChart(
+        id="t",
+        type="bar",
+        x="day_name",
+        y="count",
+        color="kind",
+        style=BarChartStylePatch(
+            legend=LegendStylePatch(values=["C", "C", "A", "B"], visible=True)
+        ),
+    )
+    resolve(chart, _GROUPED_BAR_DATA_ABC, chart_style_context=ctx)
+    spec = generate_vega_lite_spec(
+        chart,
+        _GROUPED_BAR_DATA_ABC,
+        width=400,
+        board_style=_BOARD_RS,
+        chart_style_context=ctx,
+    )
+    domain = spec["encoding"]["color"]["scale"]["domain"]
+    assert len(domain) == len(set(domain)), domain
+    assert sorted(domain) == ["A", "B", "C"], domain
 
 
 _FACETED_MULTI_SERIES_DATA = [
@@ -293,7 +445,7 @@ def test_stacked_bar_zero_carries_total_but_no_percent():
     row = next(
         lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
     )
-    assert "Count: 5.5" in row, row
+    assert "count: 5.5" in row, row
     assert f"{ROLE_TOTAL}Total: 7.5" in row, row  # Mon: task 5.5 + pr 2.0
     assert "Share" not in row, row
 
@@ -307,7 +459,7 @@ _SINGLE_SERIES_BAR_DATA = [
 def test_single_series_bar_value_formatted_no_series_row():
     chart = BarChart(id="t", type="bar", x="day_name", y="count")
     labels = _render(chart, _SINGLE_SERIES_BAR_DATA)
-    assert any("Count: 5.5" in lb for lb in labels), labels
+    assert any("count: 5.5" in lb for lb in labels), labels
     assert not any(ROLE_SERIES in lb for lb in labels), labels
 
 
@@ -327,10 +479,10 @@ def test_normalize_stack_carries_percent_raw_and_total():
         lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
     )
     assert "Share: 73%" in row, row
-    assert "Count: 5.5" in row, row
+    assert "count: 5.5" in row, row
     assert f"{ROLE_TOTAL}Total: 7.5" in row, row
     # % leads, raw beneath, total last.
-    assert row.index("Share") < row.index("Count") < row.index(f"{ROLE_TOTAL}Total")
+    assert row.index("Share") < row.index("count") < row.index(f"{ROLE_TOTAL}Total")
 
 
 def test_stacked_area_total_is_not_nan():
@@ -338,7 +490,7 @@ def test_stacked_area_total_is_not_nan():
     + hover-point sub-layers) via `_translate_layered` -- a distinct assembly
     path from bar's `_translate_standard`. Regression: `_translate_layered`
     dropped `spec.transforms` entirely, so the group-total joinaggregate
-    feeding this footer never ran and `__dft_group_total` stayed undefined,
+    feeding this footer never ran and `__dct_group_total` stayed undefined,
     rendering the footer as "Total: NaN" instead of the true sum."""
     chart = AreaChart(
         id="t",
@@ -395,12 +547,12 @@ def test_combo_single_series_base_and_overlay_share_the_same_header():
     base_headers = {
         lb[lb.index(ROLE_HEADER) + 1 : lb.index(";")]
         for lb in labels
-        if ROLE_HEADER in lb and "Revenue" in lb
+        if ROLE_HEADER in lb and "revenue" in lb
     }
     overlay_headers = {
         lb[lb.index(ROLE_HEADER) + 1 : lb.index(";")]
         for lb in labels
-        if ROLE_HEADER in lb and "Target" in lb and "Revenue" not in lb
+        if ROLE_HEADER in lb and "Target" in lb and "revenue" not in lb
     }
     assert base_headers and overlay_headers, labels
     assert base_headers == overlay_headers, (base_headers, overlay_headers, labels)
@@ -549,7 +701,7 @@ def test_combo_mixed_unit_dual_axis_shows_both_values_no_total():
     )
     labels = _render(chart, _COMBO_MIXED_UNIT_DATA)
     assert not any(ROLE_TOTAL in lb for lb in labels), labels
-    assert any("Revenue: 100" in lb for lb in labels), labels
+    assert any("revenue: 100" in lb for lb in labels), labels
     assert any("Growth" in lb and "0.05" in lb for lb in labels), labels
 
 
@@ -560,7 +712,7 @@ _COMBO_OVERLAY_FORMAT_DATA = [
 
 
 def test_combo_overlay_honors_its_own_authored_number_format():
-    """An overlay layer's own axis_y.label.format (e.g. a percent d3-format)
+    """An overlay layer's own axis_y.labels.format (e.g. a percent d3-format)
     must flow into the combo tooltip's row for that layer -- not the base
     chart's tooltip_format. Regression: the overlay row previously always
     used the BASE chart's format, so an authored percent format on the
@@ -576,7 +728,7 @@ def test_combo_overlay_honors_its_own_authored_number_format():
                 "type": "line",
                 "y": "conversion",
                 "label": "Conversion %",
-                "axis_y": {"label": {"format": ".1%"}},
+                "axis_y": {"labels": {"format": ".1%"}},
             }
         ],
     )
@@ -609,7 +761,7 @@ def test_combo_normalized_stack_base_suppresses_percent_row():
     mon_task_row = next(
         lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
     )
-    assert "Count: 5.5" in mon_task_row, mon_task_row
+    assert "count: 5.5" in mon_task_row, mon_task_row
     assert f"{ROLE_TOTAL}Total: 7.5" in mon_task_row, mon_task_row
     overlay_rows = [lb for lb in labels if "Target" in lb and "20" in lb]
     assert overlay_rows, labels
@@ -635,8 +787,8 @@ def test_scatter_base_combo_stays_on_old_behavior_not_half_migrated():
 
 
 def test_combo_overlay_label_override_wins_in_tooltip():
-    """An authored layer `label:` wins over the slug_to_title(layer.y) fallback
-    in the overlay's own tooltip row, mirroring its legend/axis label."""
+    """An authored layer `label:` wins over the `default_axis_title(layer.y)`
+    fallback in the overlay's own tooltip row, mirroring its legend label."""
     chart = BarChart(
         id="t",
         type="bar",
@@ -649,9 +801,10 @@ def test_combo_overlay_label_override_wins_in_tooltip():
     assert not any("Target" in lb for lb in labels), labels
 
 
-def test_combo_overlay_label_falls_back_to_slug_title():
-    """No authored label: falls back to slug_to_title(layer.y), same as the
-    layer's own legend/axis label cascade."""
+def test_combo_overlay_label_falls_back_to_the_column_name():
+    """No authored label: falls back to ``default_axis_title(layer.y)``, the
+    same engine-derived name the layer gets in the legend and on the rail —
+    the column's own casing, not title case."""
     chart = BarChart(
         id="t",
         type="bar",
@@ -660,7 +813,8 @@ def test_combo_overlay_label_falls_back_to_slug_title():
         layers=[{"type": "line", "y": "target"}],
     )
     labels = _render(chart, _COMBO_SINGLE_BASE_DATA)
-    assert any("Target" in lb for lb in labels), labels
+    assert any("target" in lb for lb in labels), labels
+    assert not any("Target" in lb for lb in labels), labels
 
 
 _PIE_DATA = [
@@ -773,9 +927,9 @@ def test_plain_scatter_no_header_two_peer_value_rows():
         labels
     )
     assert not any(ROLE_SERIES in lb for lb in labels), labels
-    row = next(lb for lb in labels if "Revenue: 100" in lb)
-    assert "Cost: 10" in row, row
-    assert row.index("Revenue") < row.index("Cost"), row
+    row = next(lb for lb in labels if "revenue: 100" in lb)
+    assert "cost: 10" in row, row
+    assert row.index("revenue") < row.index("cost"), row
 
 
 _COLORED_SCATTER_DATA = [
@@ -791,9 +945,9 @@ def test_colored_scatter_series_leads_as_swatched_header():
     chart = ScatterChart(id="t", type="scatter", x="cost", y="revenue", color="region")
     labels = _render(chart, _COLORED_SCATTER_DATA)
     row = next(lb for lb in labels if f"{ROLE_HEADER_SWATCHED}North" in lb)
-    assert "Revenue: 100" in row, row
-    assert "Cost: 10" in row, row
-    assert row.index(ROLE_HEADER_SWATCHED) < row.index("Revenue") < row.index("Cost")
+    assert "revenue: 100" in row, row
+    assert "cost: 10" in row, row
+    assert row.index(ROLE_HEADER_SWATCHED) < row.index("revenue") < row.index("cost")
     assert not any(ROLE_SERIES in lb for lb in labels), labels
 
 
@@ -824,7 +978,7 @@ def test_normalize_stack_with_negative_value_falls_back_to_raw_only():
     row = next(
         lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
     )
-    assert "Count: 5.5" in row, row
+    assert "count: 5.5" in row, row
 
 
 def test_zero_stack_with_negative_value_drops_total():
@@ -844,7 +998,7 @@ def test_zero_stack_with_negative_value_drops_total():
     row = next(
         lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
     )
-    assert "Count: 5.5" in row, row
+    assert "count: 5.5" in row, row
 
 
 _SPARSE_SERIES_DATA = [
@@ -873,3 +1027,94 @@ def test_missing_series_at_x_is_omitted_not_a_placeholder_mark():
         f"{ROLE_HEADER}Tue" in lb and f"{ROLE_SERIES}pr" in lb for lb in data_labels
     ), data_labels
     assert not any("—" in lb for lb in data_labels), data_labels
+
+
+def test_bar_sub_dollar_tooltip_paints_plain_digits_not_si_milli():
+    """A bar with format: currency and sub-$1 values must not misread as SI
+    milli in its tooltip -- $0.42 painting "$420m" is a nine-orders-of-
+    magnitude misread, not a rounding nit (see resolve_format_for_values)."""
+    chart = BarChart(id="t", type="bar", x="day_name", y="cents", format="currency")
+    data = [
+        {"day_name": "Mon", "cents": 0.42},
+        {"day_name": "Tue", "cents": 0.25},
+    ]
+    labels = _render(chart, data)
+    assert any("$0.42" in lb for lb in labels), labels
+    assert not any("420m" in lb for lb in labels), labels
+
+
+def test_line_at_or_above_one_keeps_si_spec_not_widened_by_the_vote():
+    """A set with no sub-$1 member must keep its usual SI register -- the
+    per-set vote only pulls a slot down when a member actually needs it."""
+    chart = LineChart(id="t", type="line", x="day_name", y="amount", format="currency")
+    data = [
+        {"day_name": "Mon", "amount": 12.99},
+        {"day_name": "Tue", "amount": 100.0},
+    ]
+    labels = _render(chart, data)
+    assert any("$13" in lb for lb in labels), labels
+
+
+def test_multi_metric_line_wide_y_list_votes_as_one_set():
+    """A multi-metric line's y: [a, b] list must vote as one set -- a sub-$1
+    value in either field pulls the whole tooltip's register, exercising
+    quantitative_channel_values's wide-list branch (a single str y field is
+    covered by every other bar/line test here)."""
+    chart = LineChart(
+        id="t", type="line", x="day", y=["big", "cents"], format="currency"
+    )
+    data = [
+        {"day": "Mon", "big": 100.0, "cents": 0.42},
+        {"day": "Tue", "big": 200.0, "cents": 0.25},
+    ]
+    labels = _render(chart, data)
+    assert any("$0.42" in lb for lb in labels), labels
+    assert not any("420m" in lb for lb in labels), labels
+
+
+def test_scatter_x_measure_votes_too_not_just_y():
+    """_scatter_roles formats both x and y peer rows with style.tooltip_format
+    -- unlike every other cartesian family, scatter's x is a peer measure,
+    not a dimension. A sub-$1 x column must not misread as SI milli even
+    when y never dips below $1."""
+    chart = ScatterChart(
+        id="t", type="scatter", x="cpc", y="revenue", format="currency"
+    )
+    data = [
+        {"cpc": 0.42, "revenue": 100.0},
+        {"cpc": 0.25, "revenue": 200.0},
+    ]
+    labels = _render(chart, data)
+    assert any("$0.42" in lb for lb in labels), labels
+    assert not any("420m" in lb for lb in labels), labels
+
+
+def test_combo_dual_axis_base_carries_tooltip_order_through_nested_zero_rule():
+    """A bar base with a `color:` split, ALL-POSITIVE data (so the base
+    stays a bare mark and gains its own nested zero rule via
+    `nest_zero_rule`'s fresh-wrap branch, not the append branch -- a
+    straddling base would take a different code path), and a right-pinned
+    line layer: the base's own tooltip content must be wired onto the REAL
+    owner (`layer_encoding_owner` unwraps past the empty `mark="layered"`
+    wrapper `nest_zero_rule` produces), not the empty wrapper itself --
+    else `_series_order_role` reads no color scale domain there and the
+    ROLE_ORDER row/transform silently vanish from every base row."""
+    chart = BarChart(
+        id="t",
+        type="bar",
+        x="day_name",
+        y="count",
+        color="kind",
+        layers=[
+            {
+                "type": "line",
+                "y": "target",
+                "label": "Target",
+                "axis_y": {"position": "right"},
+            }
+        ],
+    )
+    labels = _render(chart, _COMBO_STACKED_BASE_DATA)
+    base_rows = [lb for lb in labels if ROLE_SERIES in lb and "Target" not in lb]
+    assert base_rows, labels
+    assert all(ROLE_ORDER in lb for lb in base_rows), base_rows

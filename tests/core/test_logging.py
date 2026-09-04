@@ -6,10 +6,10 @@ import pytest
 
 
 class TestLoggingConfiguration:
-    """Tests for dataface logging setup."""
+    """Tests for dbt charts logging setup."""
 
     def test_package_logger_exists(self) -> None:
-        """Test that the dataface package logger is configured."""
+        """Test that the dbt_charts package logger is configured."""
         import dbt_charts
 
         assert logging.getLogger("dbt_charts") is dbt_charts.logger

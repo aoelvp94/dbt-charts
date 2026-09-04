@@ -4,7 +4,7 @@ Vega-Lite paints axis ticks and mark-value labels by running its own,
 in-browser d3-format implementation directly on a raw d3 spec string.
 ``format_d3``'s analytic/narrative notation post-process is Python-side and
 never runs on those values, so a value Vega-Lite paints can show d3's raw
-SI suffix (``200M``) but never the house register a value Dataface formats
+SI suffix (``200M``) but never the house register a value dbt charts formats
 itself would (``200 M`` / ``200mn``).
 
 This module builds the Vega *expression* equivalent of that post-process: a

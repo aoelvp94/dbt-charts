@@ -2,7 +2,7 @@
 
 <!-- Generated from the installed dbt credential dataclasses; do not edit manually. -->
 
-This snapshot is the review boundary for dbt-adapter upgrades. Dataface's strict Pydantic source models remain the authoring contract.
+This snapshot is the review boundary for dbt-adapter upgrades. dbt charts' strict Pydantic source models remain the authoring contract.
 
 ## bigquery
 

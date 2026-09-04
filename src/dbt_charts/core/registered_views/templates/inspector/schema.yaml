@@ -3,6 +3,7 @@ title: [[ ("Inspector: " ~ path.source ~ "/" ~ path.schema) | tojson ]]
 queries:
   tables:
     type: schema
+    fields: [name]
     source: [[ path.source | tojson ]]
     schema: [[ path.schema | tojson ]]
 

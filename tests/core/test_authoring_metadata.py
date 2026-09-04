@@ -5,6 +5,7 @@ from __future__ import annotations
 import itertools
 import re
 from pathlib import Path
+from typing import NamedTuple
 from xml.etree import ElementTree
 
 import pytest
@@ -248,6 +249,110 @@ rows:
     boundary_rects = re.findall(r'<rect class="dbt-box-(?:outer|inner)"[^>]*>', svg)
     assert boundary_rects
     assert not any("data-authored" in rect for rect in boundary_rects)
+
+
+def test_axis_titles_carry_editable_label_kinds() -> None:
+    """The first X- and Y-axis title runs are tagged as `x_label`/`y_label`
+    leaves — the same double-click-to-edit vocabulary as `title`/`subtitle`.
+    `pointer-events` stays exactly as vl_convert painted it (Cloud re-enables
+    it in CSS), so stamped output normalizes identically for the goldens."""
+    svg = render_board_to_svg(
+        """
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue: 100}
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+    x_label: Month
+    y_label: Revenue
+rows:
+  - revenue
+"""
+    )
+
+    stamped = re.findall(
+        r'<g class="mark-text role-axis-title" pointer-events="none"'
+        r' data-authored-kind="([xy]_label)">',
+        svg,
+    )
+    assert sorted(stamped) == ["x_label", "y_label"]
+
+
+def _stamp_follows_axis(svg: str, kind: str) -> str:
+    """The aria axis name of the group the `kind` stamp sits under."""
+    at = svg.index(f'data-authored-kind="{kind}"')
+    x_at = svg.rfind('aria-label="X-axis', 0, at)
+    y_at = svg.rfind('aria-label="Y-axis', 0, at)
+    return "X" if x_at > y_at else "Y"
+
+
+def test_a_horizontal_chart_stamps_the_authored_key_not_the_layout_channel() -> None:
+    """A horizontal bar draws the authored `x` on the visual Y axis —
+    vl_convert's aria text names the layout channel, so trusting it wrote
+    `y_label` onto the authored `x_label` title: silent YAML corruption on
+    the exact double-click this exists to enable."""
+    svg = render_board_to_svg(
+        """
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue: 100}
+charts:
+  revenue:
+    query: q
+    type: bar
+    style:
+      orientation: horizontal
+    x: month
+    y: revenue
+    x_label: Month
+    y_label: Revenue
+rows:
+  - revenue
+"""
+    )
+
+    assert _stamp_follows_axis(svg, "x_label") == "Y"
+    assert _stamp_follows_axis(svg, "y_label") == "X"
+
+
+def test_faceted_charts_stamp_no_axis_labels() -> None:
+    """Faceting rearranges which axis carries what — with no confident
+    mapping, nothing is stamped: an axis title that is not editable beats
+    one that edits the wrong key."""
+    svg = render_board_to_svg(
+        """
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue: 100, region: East}
+      - {month: Jan, revenue: 90, region: West}
+charts:
+  revenue:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+    color: region
+    x_label: Month
+    y_label: Revenue
+    multiples:
+      columns: region
+rows:
+  - revenue
+"""
+    )
+
+    assert 'data-authored-kind="x_label"' not in svg
+    assert 'data-authored-kind="y_label"' not in svg
 
 
 def test_selection_boxes_cover_table_and_kpi_charts() -> None:
@@ -644,6 +749,20 @@ rows:
     }
     assert handles == {"scope": "variables.scope", "region": None}
 
+    # No path, no keys: the whole control is value surface. Tagging the label
+    # run anyway would offer an edit with nowhere to write, and would split a
+    # control's pointer behaviour on which file it came from.
+    labels = {
+        group.get("data-dbt-variable"): [
+            run.get("data-authored-kind")
+            for run in group
+            if run.get("data-authored-kind")
+        ]
+        for group in ElementTree.fromstring(svg).iter()
+        if group.get("data-dbt-variable")
+    }
+    assert labels == {"scope": ["label"], "region": []}
+
 
 # A board that names two of another file's items by reference. Both keys are
 # written in *this* file, which is what makes them the interesting case: the
@@ -852,3 +971,286 @@ def test_nested_inline_band_tags_the_title_not_the_variables_beside_it() -> None
         "a title-kinded group encloses the variables strip — a variable "
         "control would resolve to the title: key"
     )
+
+
+# A title carrying both an ascender-and-cap top edge and a real descender, so
+# the ink it measures is the tallest and deepest a heading gets.
+_TITLE_INK_BOARD = """
+title: Big Title Gypsy
+rows:
+  - text: Body copy.
+"""
+
+_INLINE_BAND_INK_BOARD = """
+title: Big Title Gypsy
+variables:
+  region:
+    input: text
+    default: East
+style:
+  variables:
+    position: title-inline
+rows:
+  - text: Body copy.
+"""
+
+
+class _InkAndBox(NamedTuple):
+    box_top: float
+    box_bottom: float
+    ink_top: float
+    ink_bottom: float
+    baseline: float
+    font_size: float
+
+
+def _title_ink_and_box(svg: str, kind: str = "title") -> _InkAndBox:
+    """``(box_top, box_bottom, ink_top, ink_bottom, font_size)`` for the title.
+
+    All five are in the boxed group's own frame. The heading's ``y`` is in the
+    content's frame, which the block's own top padding offsets from that one, so
+    the wrappers between the boundary rects and the text are walked and their
+    ``dy`` added — the same conversion ``selection_boxes`` does to the mark.
+
+    Ink is measured from the font's own glyph outlines rather than from the
+    formula that places the box — a test that recomputed the production
+    arithmetic would agree with a wrong answer.
+    """
+    from fontTools.pens.boundsPen import BoundsPen
+    from fontTools.ttLib import TTFont
+
+    from dbt_charts.core.font_measure import markdown_font_faces
+    from dbt_charts.core.render.sizing import (
+        get_compact_style,
+        get_theme_style,
+        resolve_style,
+        title_font_family,
+    )
+
+    group = leaf_kind_subtrees(svg, kind)
+    assert len(group) == 1, f"expected exactly one {kind} group, got {len(group)}"
+    subtree = group[0]
+
+    box = re.search(
+        r'<rect class="dbt-box-outer"[^>]*y="([-\d.]+)"[^>]*height="([\d.]+)"', subtree
+    )
+    assert box, "no outer selection box on the title group"
+    box_top = float(box.group(1))
+    box_bottom = box_top + float(box.group(2))
+
+    heading = re.search(r'<text[^>]*y="([\d.]+)"[^>]*font-size="([\d.]+)"', subtree)
+    assert heading, "no heading text in the title group"
+    baseline, font_size = float(heading.group(1)), float(heading.group(2))
+    between = subtree[box.end() : heading.start()]
+    baseline += sum(
+        float(dy) for dy in re.findall(r"translate\([-\d.]+,\s*([-\d.]+)\)", between)
+    )
+
+    resolved = resolve_style(get_theme_style())
+    family = title_font_family(resolved, False)
+    face = markdown_font_faces(family, get_compact_style(resolved)).regular
+    font = TTFont(face.path, fontNumber=face.font_number)
+    units = font["head"].unitsPerEm
+    glyphs, cmap = font.getGlyphSet(), font.getBestCmap()
+    tops, bottoms = [], []
+    for char in re.search(r"<tspan[^>]*>([^<]*)</tspan>", subtree).group(1):
+        name = cmap.get(ord(char))
+        if name is None:
+            continue
+        pen = BoundsPen(glyphs)
+        glyphs[name].draw(pen)
+        if pen.bounds:
+            bottoms.append(pen.bounds[1])
+            tops.append(pen.bounds[3])
+    assert tops, "measured no glyph outlines for the title"
+    return _InkAndBox(
+        box_top,
+        box_bottom,
+        baseline - max(tops) / units * font_size,
+        baseline - min(bottoms) / units * font_size,
+        baseline,
+        font_size,
+    )
+
+
+@pytest.mark.parametrize(
+    "board", [_TITLE_INK_BOARD, _INLINE_BAND_INK_BOARD], ids=["plain", "inline-band"]
+)
+def test_title_selection_box_sits_evenly_around_its_glyphs(board: str) -> None:
+    """The mark a host traces is centred on the words, not on the band.
+
+    A heading band is not centred on its own text — mdsvg reserves
+    ``heading_margin_top`` above the line box and a smaller
+    ``heading_margin_bottom`` below it — so a box drawn on the band extent
+    rides high above the glyphs by roughly the difference. Bounding the
+    asymmetry is what "looks seated on the title" reduces to, and it is the
+    axis-complete statement: growing either edge to fix the eye-line would
+    fail it just as growing the other did.
+    """
+    m = _title_ink_and_box(render_board_to_svg(board))
+
+    above, below = m.ink_top - m.box_top, m.box_bottom - m.ink_bottom
+    assert abs(above - below) <= 0.25 * m.font_size, (
+        f"selection box slack is lopsided: {above:.1f}px above the ink, "
+        f"{below:.1f}px below it (font size {m.font_size:g})"
+    )
+
+
+@pytest.mark.parametrize(
+    "board", [_TITLE_INK_BOARD, _INLINE_BAND_INK_BOARD], ids=["plain", "inline-band"]
+)
+def test_title_selection_box_never_clips_above_the_baseline(board: str) -> None:
+    """The mark is the line box, so descenders may hang out of it — nothing else may.
+
+    A line box is the space a line is allotted, not a bounding box of its ink: at
+    a heading line height tighter than the face's ascent-to-descender, the tails
+    of a ``g`` or ``y`` fall below it, exactly as they fall out of a browser's
+    selection highlight. Everything from the baseline up is the body of the word
+    and has to be inside, or the mark is seated too low — which is the failure
+    mode that trades one lopsided box for its mirror image.
+    """
+    m = _title_ink_and_box(render_board_to_svg(board))
+
+    assert m.box_top <= m.ink_top, (
+        f"box top {m.box_top:.1f} clips the tops of the glyphs at {m.ink_top:.1f}"
+    )
+    assert m.box_bottom >= m.baseline, (
+        f"box bottom {m.box_bottom:.1f} is above the baseline {m.baseline:.1f} — "
+        "the mark is cutting through the words, not just their descenders"
+    )
+    assert m.ink_bottom - m.box_bottom <= 0.1 * m.font_size, (
+        f"descenders hang {m.ink_bottom - m.box_bottom:.1f}px below the mark "
+        f"(font size {m.font_size:g}) — more overhang than a line box explains"
+    )
+
+
+# A nested board's ``title:`` and ``text:`` select as one handle over the header
+# band, so the box that has to sit on the words is the header's, not a title's.
+_NESTED_HEADER_INK_BOARD = """
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue: 100}
+charts:
+  c:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+rows:
+  - title: Section Heading Gypsy
+    text: Section body.
+    rows:
+      - c
+"""
+
+_NESTED_TITLE_ONLY_INK_BOARD = """
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue: 100}
+charts:
+  c:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+rows:
+  - title: Section Heading Gypsy
+    rows:
+      - c
+"""
+
+
+@pytest.mark.parametrize(
+    "board",
+    [_NESTED_HEADER_INK_BOARD, _NESTED_TITLE_ONLY_INK_BOARD],
+    ids=["with-text", "title-only"],
+)
+def test_nested_header_handle_is_seated_on_its_heading(board: str) -> None:
+    """The combined handle opens on a heading, so it gets seated like one.
+
+    Its bottom edge is a different question from the standalone title's: with
+    text under the heading the handle has to reach the end of that text, and the
+    heading's trailing margin is then the rhythm between the two rather than
+    slack. The top edge has no such excuse — a section heading and a board title
+    are the same heading geometry, so the two boxes must open the same distance
+    above their glyphs. Pinning them to each other says that without naming a
+    number that a theme is free to retune.
+    """
+    header = _title_ink_and_box(render_board_to_svg(board), "header")
+    title = _title_ink_and_box(render_board_to_svg(_TITLE_INK_BOARD))
+    opens, title_opens = (
+        header.ink_top - header.box_top,
+        title.ink_top - title.box_top,
+    )
+
+    assert opens == pytest.approx(title_opens, abs=1.0), (
+        f"header handle opens {opens:.1f}px above its first glyphs but a board "
+        f"title opens {title_opens:.1f}px above its own — the two are the same "
+        "heading and must be seated alike"
+    )
+    # An absolute ceiling as well as the pin: seating both handles on the band
+    # would satisfy the equality above, since the defect is common to both.
+    # The bound is the face's own ascent overshoot — the ink of a cap sits below
+    # the ascender line — and nothing like the 27.5px margin that used to be in.
+    assert opens <= 0.35 * header.font_size, (
+        f"header handle opens {opens:.1f}px above its first glyphs "
+        f"(font size {header.font_size:g}) — that is the reserved band, not the ink"
+    )
+
+
+def test_seating_the_mark_does_not_shrink_what_a_pointer_can_hit() -> None:
+    """The two rects are a mark and a hit target, and only the mark moved.
+
+    Cloud traces ``.dbt-box-outer`` for the hover indicator and hit-tests
+    ``.dbt-box-inner`` (``init.js`` — outer is ``pointer-events: none``). Seating
+    both on the line box would look right and quietly make the heading's trailing
+    margin unclickable, dropping the pointer through to whatever is behind it.
+    The mark is the only thing the ink span is allowed to move.
+
+    The two share a top edge: a heading opening its block collapses its leading
+    margin, so there is no reserved space above the ink for the target to keep.
+    All the slack is below, which is what makes the mark the shorter rect.
+    """
+    svg = render_board_to_svg(_TITLE_INK_BOARD)
+
+    marks = authored_boxes(svg, "dbt-box-outer")
+    targets = authored_boxes(svg, "dbt-box-inner")
+    _, mark_y, _, mark_h = marks["title"]
+    _, target_y, _, target_h = targets["title"]
+
+    assert mark_h < target_h, (
+        "the title's mark should be seated on its ink and so be shorter than "
+        f"the block: mark {mark_h:.1f}px, hit target {target_h:.1f}px"
+    )
+    assert target_y <= mark_y and target_y + target_h > mark_y + mark_h, (
+        f"hit target ({target_y:.1f}..{target_y + target_h:.1f}) no longer spans "
+        f"the mark ({mark_y:.1f}..{mark_y + mark_h:.1f}) — it followed the ink"
+    )
+
+
+def test_a_variable_label_is_the_leaf_that_names_its_label_key() -> None:
+    """The control is the block; its label run is the one key inside it.
+
+    A variable control is the only authored element whose primary gesture is
+    *using* it, so the block tag alone cannot carry the edit: an author aiming
+    at the value surface must get the filter, not the code panel. The label run
+    is the part of a control that is not a value, which is what makes it both
+    the handle and the editable key — ``variables.<name>.label``, composed by
+    ``resolveAuthored`` from these two tags exactly as a chart title is.
+    """
+    svg = render_board_to_svg(_ROOT_AND_NESTED_VARIABLES_BOARD)
+
+    labels = {
+        group.get("data-dbt-variable"): [
+            run.get("data-authored-kind")
+            for run in group
+            if run.get("data-authored-kind")
+        ]
+        for group in ElementTree.fromstring(svg).iter()
+        if group.get("data-dbt-variable")
+    }
+    assert labels == {"scope": ["label"], "region": ["label"], "segment": ["label"]}

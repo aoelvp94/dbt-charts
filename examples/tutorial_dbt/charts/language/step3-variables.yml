@@ -1,0 +1,26 @@
+title: Revenue by month
+source: dbt_charts_examples
+
+style:
+  background: '#FFFFFF'
+
+variables:
+  region:
+    options:
+      static: ["North", "South", "East", "West"]
+    default: "North"
+
+queries:
+  revenue: |
+    SELECT DATE_TRUNC('month', order_date) AS month,
+           SUM(revenue) AS revenue
+    FROM fct_orders
+    WHERE {{ filter('region', region) }}
+    GROUP BY 1 ORDER BY 1 LIMIT 6
+
+charts:
+  revenue:
+    query: queries.revenue
+    type: bar
+    x: month
+    y: revenue

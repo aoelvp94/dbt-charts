@@ -154,7 +154,15 @@ def measure_preferred_layout_width(
     """
 
     def item_width(item: LayoutItem) -> float | None:
-        explicit = parse_dimension(item.user_width, max_content_width)
+        explicit = None
+        if item.user_width is not None and not (
+            layout.type == "rows" and str(item.user_width).strip().endswith("%")
+        ):
+            # A percentage width on a rows item means a fraction of the row
+            # (rows_item_width resolves it at assignment); feeding it into
+            # the hug too would compound the two into a quarter-width slot.
+            # Tabs items cannot carry a width (TabItem has no such field).
+            explicit = parse_dimension(item.user_width, max_content_width)
         if explicit is not None:
             return explicit
         if item.chart is not None:
@@ -220,14 +228,21 @@ def measure_preferred_layout_width(
 
 
 def board_container_width(board: Board) -> float:
-    """Final board container width: theme board width, content-clamped.
+    """Final board container width: ``frame.width`` exactly, else the hug.
 
-    A board whose measured preferred content is narrower than the theme board
-    width hugs its content. Single source for the container computation shared
-    by the render sizing pass and chart_slot_width.
+    ``width`` set anywhere in the cascade (board, extends template, meta.yaml
+    — root ``width:`` sugar lands in the same slot) is the board's exact
+    width; the layout distributes it. Without one, the board hugs whatever
+    its charts prefer, bounded by ``frame.max_width``, so a lone KPI does not
+    sit in a full-width card.
+
+    Single source for the container computation shared by the render sizing
+    pass and chart_slot_width.
     """
     frame = board.resolved_style.frame
-    max_container_width = float(frame.width)
+    if frame.width is not None:
+        return float(frame.width)
+    max_container_width = float(frame.max_width)
     max_content_width = max(max_container_width - 2 * float(frame.margin), 0.0)
     preferred_content_width = measure_preferred_layout_width(
         board.layout,
@@ -286,16 +301,40 @@ def _chart_slot_in_layout(
     return None
 
 
+def rows_item_width(item: LayoutItem, available_width: float) -> float:
+    """A rows item's slot width: its authored width (capped at the row), else the row.
+
+    An authored ``width:`` — on the layout item or on the chart itself
+    (cartesian/pie/geo families, the same authored field
+    ``preferred_chart_width`` reads) — is honoured directly: an absolute
+    width is a fixed footprint, and a percentage is a fraction of the row,
+    the same meaning it has in cols. Percentages are excluded from the
+    content-hug measurement (see ``measure_preferred_layout_width``) so the
+    two never compound. Shared with the render sizing pass so the two
+    assignments cannot drift.
+    """
+    parsed = parse_dimension(item.user_width, available_width)
+    if parsed is None and item.chart is not None:
+        chart_width = item.chart.__dict__.get("width")
+        parsed = float(chart_width) if chart_width is not None else None
+    if parsed is not None and parsed > 0:
+        return min(parsed, available_width)
+    return available_width
+
+
 def _layout_item_widths(
     layout: Layout, available_width: float, gap: float, card_gap: float
 ) -> list[float]:
     """Slot width per item, mirroring the sizing pass's width assignment.
 
-    rows/tabs give every item the full available width; cols partition it via
-    resolve_cols_widths; grid uses equal tracks so an item's width depends only
-    on its col_span, not its position.
+    rows give an item its authored width (capped at the row) or the full
+    available width; tabs give every item the full available width; cols
+    partition it via resolve_cols_widths; grid uses equal tracks so an item's
+    width depends only on its col_span, not its position.
     """
     effective_gap = gap + card_gap
+    if layout.type == "rows":
+        return [rows_item_width(item, available_width) for item in layout.items]
     if layout.type == "cols":
         n = len(layout.items)
         content_width = available_width - effective_gap * (n - 1)

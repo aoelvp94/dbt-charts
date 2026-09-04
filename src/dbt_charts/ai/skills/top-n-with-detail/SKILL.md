@@ -57,6 +57,8 @@ charts:
     title: Product Detail
     style:
       columns:
+        product:
+          label: Product
         revenue:
           label: Revenue
           format: "$,.0f"

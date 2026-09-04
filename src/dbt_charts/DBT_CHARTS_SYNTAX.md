@@ -1,12 +1,12 @@
-# Dataface YAML Syntax
+# dbt charts YAML Syntax
 
-Authoring reference for Dataface board YAML. Every option in this file is enforced by the compiler (`extra="forbid"` is set on every model — unknown keys are schema errors).
+Authoring reference for dbt charts board YAML. Every option in this file is enforced by the compiler (`extra="forbid"` is set on every model — unknown keys are schema errors).
 
 Browse with `dct docs` (run with no args for the topic catalog, `dct docs <topic>` for one section, `dct docs all` for the whole file).
 
 ## Getting Started
 
-Dataface workflow — from a dbt project to a running dashboard.
+dbt charts workflow — from a dbt project to a running dashboard.
 
 ### Step 1 — Validate your YAML
 
@@ -103,7 +103,7 @@ rows:
 
 ### Top-level board fields
 
-- `title`, `description`, `tags`
+- `title`, `notes`, `tags`
 - `source` / `sources` — default and named data connections
 - `variables` — interactive filter controls
 - `queries` — named SQL / CSV / HTTP / dbt / inline queries
@@ -186,7 +186,7 @@ The top-level YAML mapping is a board. Exactly one layout key (`rows`, `cols`, `
 
 ```yaml-schema
 title: "Sales Overview"
-description: "Monthly KPIs and trend"
+notes: "Monthly KPIs and trend"
 tags: [sales, weekly]
 
 source: my_profile             # Default source (a name from dbt_charts.yml's sources: registry)
@@ -196,7 +196,7 @@ queries:                       # Named queries
 charts:                        # Named charts
 rows: [ ... ]                  # Or cols:, grid:, tabs: (pick one)
 
-theme: neon                    # Vega-Lite theme; inherited by nested boards
+theme: neon                    # Theme name — sugar for `extends: neon`; inherited by nested boards
 
 # Nesting / layout primitives (mostly for nested boards inside rows/cols)
 id: my_board                    # Auto-generated from filename if omitted
@@ -207,20 +207,29 @@ height: 300
 card_gap: false                # When true, adds gap between cards
 chart_focus: revenue_trend     # Render only one chart with its dependent variables
 
-details: "Click to expand"     # Collapsible section
-expanded_title: "Hide details"
-expanded: false
+details: "Click to expand"     # Collapsible section (string, or the object form below)
+# details:
+#   summary: "Click to expand"
+#   expanded_title: "Hide details"
+#   expanded: false
+
+cache: 1h                      # Result-cache policy for every query on this board
+extends: base_board            # Inherit from another board / theme (see below)
+auto_link: true                # Table charts auto-link rows to /data/ detail pages
 ```
 
-Top-level fields (22 total):
+Top-level fields:
 
 | Field | Type | Notes |
 |-------|------|-------|
 | `title` | string | Display title |
-| `description` | string | Description text |
+| `notes` | string | Prose about the board, carried to the host rather than drawn on the board. Cloud shows it in the dashboard-card hover overlay. |
 | `tags` | list[string] | Tags for categorization/search |
 | `text` | string | Markdown body for text-only boards |
+| `html_policy` | enum | HTML rendering policy for body text: `none` (default — HTML is escaped), `safe-subset` (reserved; currently renders as `none`), `trusted-raw` (raw HTML — trusted first-party content only; deployments may cap this). |
+| `aliases` | list[string] | Absolute URL paths that 302-redirect here (see [Aliases](#aliases)) |
 | `source` | string | Default source name for every query below (from `dbt_charts.yml`'s `sources:` registry), or an inline file path for a single colocated CSV/JSON/Parquet file. Inheritable via the `meta.yaml` cascade. |
+| `cache` | scalar \| object | Query-result cache policy for the board's queries (see [Caching](#caching)) |
 | `variables` | object | See [Variables](#variables) |
 | `queries` | object | See [Queries](#queries) |
 | `charts` | object | See [Charts](#charts) |
@@ -230,16 +239,52 @@ Top-level fields (22 total):
 | `tabs` | object | Tabbed layout (see [Layout](#layout)) |
 | `card_gap` | bool | Add visible gap between cards (default `false`) |
 | `chart_focus` | string | Render only this chart (with its variables) |
-| `details` | string | Collapsible-section summary text |
-| `expanded_title` | string | Header text when expanded |
-| `expanded` | bool | Default expanded state |
+| `details` | string \| object | Collapsible section: a bare summary string, or `{summary, expanded_title, expanded}` |
 | `id` | string | Explicit board ID (auto-generated from filename) |
 | `style` | object | Board-style block (see [Board style](#board-style)) |
 | `width` | string \| int | Width when nested (`"50%"` or pixels) |
 | `height` | string \| int | Height when nested |
-| `theme` | string | Vega-Lite theme name (e.g. `editorial`, `stark`, `neon`) — inherited by nested boards |
+| `visible` | bool \| string \| object | Render condition when nested as a layout item (see [Layout visibility](#layout-visibility-visible)) |
+| `theme` | string | Theme name (e.g. `clarity`, `paper`, `neon`) — sugar for `extends:`; inherited by nested boards |
+| `extends` | string \| list[string] | Board name(s)/path(s) or a built-in theme this board inherits from (see [Inheritance](#inheritance-extends-and-theme)) |
+| `auto_link` | bool | Auto-link table rows to their `/data/…/detail/` pages (default `false`). An explicit chart `link:` always wins; `link: false` on a chart suppresses its automatic link. |
 
 `board:` as a top-level key is rejected. Put board properties (title, rows, queries, …) directly at the YAML root.
+
+### Inheritance (`extends` and `theme`)
+
+A board can inherit from other boards or a built-in theme. `extends:` names one
+or more boards (by name or relative path) or a theme, low to high priority; the
+child's own keys win over everything it extends. A bare name is matched against
+the built-in themes first, then against a board at the *project root* — a path
+ref (`./_base.yaml`, anchored to the extending file's own directory) is the only
+form that reaches a board elsewhere, and the only form that resolves outside a
+project.
+
+```yaml-schema
+extends: [company_defaults, quarterly_base]
+title: "Q4 edition"
+```
+
+`theme: neon` is authoring sugar for `extends: neon` — setting both is an
+error; use one or the other.
+
+### Caching
+
+`cache:` sets the query-result cache policy. It is authorable at four scopes —
+project config → source → board → query — and the nearest scope wins
+field-by-field. Every scope but the project root takes any scalar below
+(the root must state a ttl — it has no parent to inherit one from):
+
+```yaml-schema
+cache: 1h        # on, expire after an hour (units: s m h d w — compound 1h30m OK)
+cache: forever   # on, never auto-expire
+cache: true      # on, inherit the parent scope's ttl
+cache: false     # off — the only opt-out
+```
+
+A query-level `cache: 5m` refines the board's policy for that query only. The
+block form `cache: {ttl: 5m}` means the same as the scalar.
 
 ### Aliases
 
@@ -360,7 +405,7 @@ queries:
 
   # SQL with metadata
   filtered:
-    description: Monthly revenue filtered by region
+    notes: Monthly revenue filtered by region
     sql: SELECT * FROM orders WHERE {{ filter('region', region) }}
     source: warehouse           # Override board-level source
     setup_sql: CREATE TEMP FUNCTION norm(x FLOAT64) AS (x / 100.0);
@@ -388,13 +433,6 @@ queries:
     sql: SELECT region, target FROM targets
     source: ./data/targets.csv   # path (contains "/" or a data extension) = inline file; table name = stem
 
-  # MetricFlow / dbt Semantic Layer
-  revenue_by_region:
-    type: metricflow             # Optional — also implied by `metrics:` presence
-    metrics: [revenue]
-    dimensions: [region]
-    time_grain: month            # day | week | month | quarter | year
-
   # Inline values (no database)
   sample:
     type: values                 # Optional — implied by `rows:`, `columns:`, or `values:`
@@ -404,25 +442,43 @@ queries:
       - [Bob, 87.1]
 ```
 
-Query types (`type:` literals): `sql`, `http`, `metricflow`, `values`. `schema_resolver` is internal-only and not part of the authored surface.
+Query types (`type:` literals): `sql`, `http`, `values`, `schema`.
+
+`type: schema` is a schema-metadata query — it returns metadata rather than
+table rows. Its fields form a strict prefix ladder (each level requires every
+level above it): no fields → list configured sources; `source:` → that
+source's schemas; `+ schema:` → tables; `+ table:` → column profile;
+`+ column:` → a single column. `table:` without `schema:` (or `column:`
+without `table:`) is rejected.
+
+```yaml
+queries:
+  orders_columns:
+    type: schema
+    source: warehouse       # ladder level 1 (omit everything to list sources)
+    schema: analytics       # level 2 — requires source
+    table: orders           # level 3 — requires schema
+    column: order_id        # level 4 — requires table
+```
 
 Common fields (all query types):
 
 | Field | Description |
 |-------|-------------|
-| `description` | Metadata sentence for AI search and tooltips |
+| `notes` | Metadata sentence about the query, for AI search and context. Never drawn on the board. |
 | `source` | Source name (from `dbt_charts.yml`'s `sources:` registry), or an inline file path (`./data/x.csv`) for a single colocated CSV/JSON/Parquet. An inline connection dict (`{type: postgres, ...}`) is rejected — reference a named source instead. Not accepted on `http` queries. |
 | `target` | dbt target name (defaults to `dev`) |
+| `cache` | Result-cache override for this query — `5m`, `forever`, `true`, `false` — refines the board/source/project policy (see [Caching](#caching)) |
 | `filters` | Post-execution result filters |
 | `limit` | Maximum rows returned |
 | `pivot` | Table-rendering cross-tab hint: `{column, value}` |
 | `ignore` | Diagnostic codes to suppress (e.g. `["WARN-FANOUT-RISK"]`) |
 
 SQL fields: `sql`, `setup_sql`.
-MetricFlow fields: `metrics`, `dimensions`, `time_grain`.
 HTTP fields: `url`, `method`, `headers`, `params`, `body`, `json_path`.
 dbt-model fields: `model`, `columns`.
 Inline-values fields: `columns`, `values` (or `rows` for record-shape).
+Schema fields: `schema`, `table`, `column`, `fields` (project result rows to exactly these keys, in this order).
 
 Connection source types (named in the project root `dbt_charts.yml`'s `sources:`
 registry — never inline in a board): `postgres`, `snowflake`, `bigquery`,
@@ -468,7 +524,7 @@ WHERE {{ filter('plan', plans) }}
 
 The `filter()` macro handles `select` (single value → `=`) and `multiselect` (list → `IN (...)`) automatically and quotes all string literals correctly.
 
-Select and multiselect controls render only the options the board author provides. Dataface does not add an "All" option; author a real sentinel option and matching SQL/Jinja explicitly if a dashboard needs one.
+Select and multiselect controls render only the options the board author provides. dbt charts does not add an "All" option; author a real sentinel option and matching SQL/Jinja explicitly if a dashboard needs one.
 
 ### Inline query in a chart
 
@@ -492,7 +548,7 @@ charts:
     y: revenue
 ```
 
-The bare-string shorthand works whenever the value contains a SQL keyword (`SELECT`, `WITH`, `INSERT`, etc.) and is not already a named query. Use `query: {sql: ...}` when you need additional query options (`source:`, `description:`, etc.).
+The bare-string shorthand works whenever the value contains a SQL keyword (`SELECT`, `WITH`, `INSERT`, etc.) and is not already a named query. Use `query: {sql: ...}` when you need additional query options (`source:`, `notes:`, etc.).
 
 Inline queries are not reusable. Prefer named queries when more than one chart consumes the data.
 
@@ -504,6 +560,10 @@ Inline queries are not reusable. Prefer named queries when more than one chart c
 
 Each chart binds a query to a chart type and an encoding. Unknown chart fields are rejected.
 
+A request for "a chart" still produces a board file: write the YAML to
+`charts/<name>.yml`, validate, and render it. A chart printed inline (or to
+the terminal) is not a deliverable — the board file is.
+
 ```yaml
 charts:
   revenue_trend:
@@ -511,7 +571,7 @@ charts:
     type: line                # See chart types below
     title: "Revenue"
     subtitle: "Last 30 days"
-    description: "AI/tooltip metadata about what this chart answers."
+    notes: "AI/tooltip metadata about what this chart answers."
 
     # Data mapping (the channels)
     x: month                  # column name
@@ -555,6 +615,41 @@ Note: `donut` is an internal alias for `pie` -- `donut` is accepted but normaliz
 
 Type aliases: `scatter` uses a circle mark, `heatmap` uses rect, `pie`/`donut` use arc, `histogram` uses bar with binning, `map` maps to geoshape.
 
+### Named shapes that have no `type:`
+
+Many chart shapes people ask for by name are compositions of the types above, not
+types of their own. There is no `type: bullet` — writing one is an error. Author the
+recipe instead. Spelling is tolerant: `bullet`, `bullet chart` and `bullet graph` all
+resolve to the same recipe, and the same error names the recipe if you guess a `type:`.
+
+| Shape | How to author it |
+|---|---|
+| streamgraph, stream chart | type: area with color: and style.stack: center |
+| stacked area | type: area with color: and style.stack: zero |
+| stacked bar | type: bar with color: and style.stack: zero |
+| grouped bar, clustered bar | type: bar with color: and style.stack: none |
+| horizontal bar, row chart | type: bar with style.orientation: horizontal |
+| column, vertical bar | type: bar with style.orientation: vertical |
+| 100% stacked | type: bar or type: area with color: and style.stack: normalize |
+| percent stacked bar, normalized bar | type: bar with color: and style.stack: normalize |
+| small multiples, trellis, faceted | multiples.rows: <column> (or multiples.columns:) on a cartesian chart |
+| dual axis, combo, bar and line | layers: on a cartesian chart, with axis_y.position: right on the added layer for its own y-axis |
+| stacked column | type: bar with style.orientation: vertical, color:, and style.stack: zero |
+| grouped column, clustered column | type: bar with style.orientation: vertical, color:, and style.stack: none |
+| lollipop | type: bar with style.marks.bar.band_width thinned to a stem, plus a layers: scatter on the same y (style.marks.bar.size is a separate fixed-pixel mode and does not thin the bar) |
+| bullet | type: bar with style.stack: zero, style.stack_order: data and color: on the qualitative range column — one row per (category, band) — plus a layers: bar on the value and a layers: line on the target, both reading their own one-row-per-category source via layers[].query (sharing the ranges' rows multiplies each by the band count). Thin the value bar with style.marks.bar.band_width so the ranges stay visible, give the target style.marks.line.curve: step with connect: false for the goal tick, and set style.orientation: vertical |
+| slope | type: line with a two-category x and color: on the series column (year-shaped x values resolve to a continuous temporal scale, which fills in the span between the pair) |
+| bump | type: line on a rank column with color: on the series column (the data is entity x period x rank, so without it the rows collide on the period key) and a descending style.axis_y.scale.continuous.domain (e.g. [6, 1]) so rank 1 is on top |
+| dot plot, cleveland dot plot | type: scatter with a categorical x and a measure y; for several dots per category use long-format rows with color: on the series column rather than layers:, which keeps the shape rotatable |
+
+Shapes dbt charts cannot draw at all — naming them is the half a recipe cannot cover:
+`alluvial`, `barbell`, `candlestick`, `chord`, `connected dot plot`, `dumbbell`, `funnel`, `gantt`, `gauge`, `marimekko`, `network`, `radar`, `ranged dot`, `sankey`, `spider`, `sunburst`, `treemap`, `violin`, `waterfall`, `word cloud`.
+
+`dumbbell` (and its synonyms `barbell` and `connected dot plot`) and `ranged dot` each
+need a single mark spanning two values, and no layerable mark takes a second positional
+channel. Spelling is tolerant here too: a trailing `chart`, `graph`, `plot` or `diagram`
+is ignored when the full spelling does not match, so `dumbbell chart` resolves.
+
 ### Shared chart fields
 
 All chart types accept the channels and style fields below — but each type rejects fields that don't belong to it (e.g. `theta` on a bar chart, `x` on a pie chart).
@@ -584,10 +679,12 @@ All chart types accept the channels and style fields below — but each type rej
 | `longitude` | string | Longitude field (point/bubble map) |
 | `background` | string \| object | Background channel — color, `{value}`, `{field, scale/when}`, or map layer |
 | `sort` | object | `{by, order}` — categorical sort. Horizontal bar charts default to value-descending order when omitted. |
-| `link` | string | Click-through URL template for drill-down links |
+| `link` | string \| false | Click-through URL template for drill-down links; `false` suppresses the chart's automatic link when the board sets `auto_link: true` (table column links are unaffected) |
+| `multiples` | object | Partition into small multiples: `{rows, columns, scale}` — cartesian charts (`bar`/`line`/`area`/`scatter`/`heatmap`) only (see [Small multiples](#small-multiples-multiples)) |
+| `warnings_ignore` | list[string] | Render-warning codes to suppress for this chart only (e.g. `[WARN-AXIS-TITLE-TRUNCATED]`; unknown codes are rejected — list codes with `dct docs warnings`) |
 | `layers` | list | Overlay layers on cartesian charts (`bar`/`line`/`area`/`scatter`) — see [Combo charts](#combo-charts-barlinearea-with-layers) |
 | `conditional_formatting` | object | Discrete style rules by column (see [Conditional formatting](#conditional-formatting)) |
-| `data_table` | list | Attached mini-table beneath bar/line/area charts (including those with `layers:`) — see [Composition](#composition) |
+| `support_table` | list | Attached mini-table beneath bar/line/area charts (including those with `layers:`) — see [Composition](#composition) |
 | `height` | int \| float | Exact pixel height. Wins over `aspect_ratio` and theme defaults. Bypasses `min_height`/`max_height`. Not valid on `kpi`, `table`, `callout`, `spark_bar`. |
 | `aspect_ratio` | float | Chart shape: `height = width / aspect_ratio`. Theme default is `1.5`. Not valid on `kpi`, `table`, `callout`, `spark_bar`. |
 | `min_height` | float | Height floor for this chart only; overrides `style.charts.min_height`. Ignored when `height` is set. |
@@ -595,18 +692,73 @@ All chart types accept the channels and style fields below — but each type rej
 
 `height` and `aspect_ratio` live at **chart root** — they are rejected under `style:`. `style:` is paint only (colors, fonts, marks).
 
-KPI-only fields: `value`, `label`, `support`. KPI uses `label:` for the header text — `title:` is rejected on KPI charts. Chart-root `format:` / `formatter:` is rejected on all chart types. Use the family slot instead:
+KPI-only fields: `value`, `label`, `support`. KPI uses `label:` for the header text — `title:` is rejected on KPI charts. Chart-root `format:` / `formatter:` is rejected on all chart types. Use the family slot instead.
+
+`axis_x`/`axis_y` name the channel, not the visual edge: on every cartesian family the measure is `axis_y`, including a horizontal bar that draws it along the bottom. A number preset belongs on the measure.
+
+Put a number preset on an axis whose ticks can't carry it and the engine raises `ERR-LABEL-FORMAT-AXIS-MISMATCH` — on `axis_x` or `axis_y`, the mirror ghost (`axis_y.mirror.format`), or heatmap's y, whichever axis the format actually lives on. Two cases raise:
+
+- The axis resolves to a **band** scale (nominal/ordinal) and its ticks are not already readable as numbers. Numeric categories (`stage_id: 1, 2, 3`), numeric strings and booleans format cleanly and stay legal — a bar over `stage_id` paints `$1 $2 $3` and never raises.
+- The axis resolves to a **temporal** scale at all — dates get no numeric-tick exemption, since there's no reading of `$,.0f` over a date the author wanted.
+
+| Shape | Dimension scale |
+|---|---|
+| `bar` over a category | band |
+| `bar` over `yearweek` / `yearmonthdate` buckets | band, always |
+| `bar` over `year` / `yearquarter` / `yearmonth` buckets | band, up to 60 distinct buckets (`max_ordinal_buckets`); temporal at 61+ |
+| `line` / `area` / `scatter` over a text category | band |
+| `line` / `area` / `scatter` over bucketed dates | temporal |
+| `line` / `area` with `curve: step` over bucketed dates | band — the step plateau needs a band scale |
+| `heatmap` x/y | band, always nominal |
+| `scatter` over a genuinely numeric x, or its usual numeric y | quantitative — applies normally |
+| `scatter` over a categorical y (a dot plot) | band |
+
+A temporal x — `line`/`area`/`scatter` over dates, or a bar past 60 buckets — raises the same code; use a time token (`"%b %Y"`) or `style.time_format` there instead. A `heatmap` has no measure axis at all: both axes are grid dimensions and the value lives on the color channel, which carries no label format of its own, so a number preset on either axis — including its `y` — raises too. `style.axis_y.mirror.format` follows the same rule whenever the mirrored edge is categorical — a dot plot's y, and also a default-orientation (horizontal) bar, where the rotation puts the category on that edge. Every one of these used to render something wrong instead — look at the render only if you're debugging the diagnostic itself.
+
+The family slots:
 
 | Family | Format slot |
 |--------|-------------|
-| `line`, `bar`, `area`, `scatter`, `heatmap` | `style.number_format` or `style.axis_y.format` |
+| `line`, `bar`, `area`, `scatter` — the measure | `style.number_format` or `style.axis_y.labels.format` |
+| same — the dimension, when it is a date | `style.time_format`, or a time token on `style.axis_x.labels.format` (e.g. `"%b %Y"`) |
+| same — the dimension, when it is a text category | no format applies |
+| same — the dimension, when its ticks are numbers | `style.axis_x.labels.format` — `number_format` never reaches the dimension axis |
+| `heatmap` | no axis format applies — the value is on the color channel |
 | `kpi` value | `style.value.format` |
 | `kpi` support | `support.format` |
 | `table` column | `style.columns.<col>.format` |
 
-`glyph` and `tone` at chart root are also rejected on KPI — use `style.glyph.character` for the glyph. `tone` has no style-level home: it lives only on `support.tone`, since the support row is the block it paints (the headline value stays neutral). Override the value/glyph color directly with `style.color` — it paints both the headline value and its glyph.
+#### Number format aliases
 
-Top-level chart fields shared by all types: `id`, `query`, `type`, `title`, `subtitle`, `description`, `height`, `aspect_ratio`, `style`, `link`, `conditional_formatting`.
+`number_format`, `style.value.format`, table column `format`, and
+`support.format` accept a D3 format string or a named alias (engine-owned
+specs shown). The three *native* aliases at the bottom are Python-formatted
+and valid only in KPI value/support and table-cell `format` slots —
+`number_format` (a Vega-painted slot) rejects them with
+`ERR-FORMAT-NATIVE-IN-VEGA-SLOT`:
+
+| Alias | Spec | Renders like |
+|-------|------|--------------|
+| `integer` | `,.0f` | `12,346` |
+| `number` | `.3~s` | Register depends on the slot: table cells render analytic `12.4 K`; KPI headline values and mark value labels render narrative `12.4k`; axis ticks compact only when the largest tick has ≥6 digits (below that the engine paints plain digits — `20,000`, no suffix). Also the engine fallback when no format is authored |
+| `number_full` | `,.2f` | `12,345.68` — every digit at every magnitude |
+| `currency` | `$.3~s` | `12400` → `$12.4 K` (analytic default; narrative slots render `$12.4k`) |
+| `currency_whole` | `$,.0f` | `$12,346` |
+| `currency_full` | `$,.2f` | `$12,345.68` — cents at every magnitude |
+| `percent` | `.1%` | `0.42` → `42.0%` — **multiplies by 100**; for a value that already IS a whole-number percent (`42`, `148.23`), use `percent_number` |
+| `percent_whole` | `.0%` | `0.42` → `42%` |
+| `percent_delta` | `+.1%` | `0.018` → `+1.8%` (ratio in, signed percent out) |
+| `percent_number` | native | `148.23` → `148.2%` (no multiplication; one decimal). Native — not valid in `number_format` |
+| `percent_number_delta` | native | `1.8` → `+1.8%`. Native — not valid in `number_format` |
+| `percentage_points_delta` | native | `1.8` → `+1.8 pts`. Native — not valid in `number_format` |
+| `delta` | `+,d` | `+1,234` |
+| `year` | `d` | `2026` |
+
+`time_format` takes D3 time specs or `date_short` (`%-d %b %Y` → `5 Mar 2026`).
+
+`glyph` and `tone` at chart root are also rejected on KPI — use `style.glyph.character` for the glyph. `tone` has no style-level home: it lives only on `support.tone`, since the support row is the block it paints (the headline value stays neutral). Override the value/glyph color with `style.value.font.color`, or the whole card's ink with `style.font.color`.
+
+Top-level chart fields shared by all types: `id`, `query`, `type`, `title`, `subtitle`, `notes`, `height`, `aspect_ratio`, `style`, `link`, `conditional_formatting`, `warnings_ignore`.
 
 ### Chart-type cheatsheet
 
@@ -667,12 +819,20 @@ total:
 type: kpi
 value: total_revenue    # column name (always a column reference)
 label: "Total Revenue"  # NOT `title:` — `title:` is rejected on KPI
+variant: stacked        # stacked (default) | inline (one baseline row) | compact (2-column)
 style:
   value:
     format: ",.0f"       # number format; `format:`/`formatter:` at chart root is rejected on KPI
+    font:
+      color: "#c2410c"   # optional; paints the headline value and its glyph
+  label:
+    font:
+      color: "#2563eb"   # optional; paints the label only
   glyph:
     character: "▲"       # glyph character; moved from chart root (ADR-001)
-# To override glyph or value color: style.color (paints both)
+  align: right           # left (default) | center | right — one field for the
+                          # whole card; value/label/support move together
+# style.font.color is the whole-card fallback under the two keys above.
 # The headline value has no tone field — it stays neutral by design (NYT/FT
 # convention). Tone lives on the block it paints: the support row.
 support:                # Optional support line (same shape: value/label/format/glyph/tone)
@@ -682,12 +842,15 @@ support:                # Optional support line (same shape: value/label/format/
   glyph: "▲"
   tone: positive         # positive | negative | warning — colors this row only
 
-# table — renders all query columns unless `style.columns` selects a subset
+# table — always renders every query column, in query order; `style.columns`
+# is styling-only (keyed by column name) and `visible: false` is the sole way
+# to hide a column
 type: table
 style:
   columns:
-    - column: order_id
-    - column: amount
+    order_id:
+      visible: false                     # hide; values stay usable in link: templates
+    amount:
       label: Amount
       format: currency_whole
       align: right                       # left | center | right
@@ -741,6 +904,10 @@ value: revenue
 type: point_map
 latitude: lat
 longitude: lng
+basemap:                # Optional styled background layer (point_map + bubble_map)
+  source: us-states     # named boundary source
+  fill: dbt-grays.surface-subtle
+  stroke: dbt-grays.border
 
 type: bubble_map
 latitude: lat
@@ -749,9 +916,12 @@ size: events
 color: severity
 
 # spark_bar — compact horizontal bars (used inline in profiler cards)
+# NOTE: spark_bar inverts the cartesian convention — x is the bar MAGNITUDE
+# (must be numeric) and y is the LABEL (the text). This is the opposite of
+# bar/line/area, where x is the dimension.
 type: spark_bar
-x: rank
-y: count
+x: count
+y: category
 
 # Pure marks (advanced use — not accepted as base chart types):
 # circle, square, tick, rule, trail, rect, arc, image
@@ -763,6 +933,28 @@ style:
   tone: warning  # optional; defaults to info
 
 ```
+
+### Small multiples (`multiples`)
+
+Partition one chart into a panel per distinct value of a column — a row stack,
+a column strip, or a grid when both are set. At least one of `rows`/`columns`
+is required.
+
+```yaml
+charts:
+  revenue_by_region:
+    type: line
+    query: monthly_by_region
+    x: month
+    y: revenue
+    multiples:
+      columns: region        # one panel per region, side by side
+      # rows: product        # and/or: one panel row per product (grid when both set)
+      scale: shared          # shared (default; panels comparable) | independent
+```
+
+Panels share one measure scale by default (`scale: shared`) so values are
+comparable across panels; `scale: independent` gives each panel its own.
 
 ### Combo charts (bar/line/area with layers)
 
@@ -811,13 +1003,78 @@ Style outputs (at least one per rule): `background`, `font` (color/weight/style/
 
 If `default: true` is set, it must be the last rule in the `when` list. Earlier rules win in order.
 
+### Common styling recipes
+
+The asks agents most often fumble, with the exact fields (all verified against
+the style models):
+
+```yaml
+queries:
+  monthly: SELECT month, total, region FROM rev GROUP BY 1, 3
+
+charts:
+  styled_bar:
+    query: monthly
+    type: bar
+    x: month
+    y: total
+    style:
+      number_format: number           # compacts axis ticks only when the top tick has >=6 digits
+      legend:
+        visible: false                # hide the legend
+      axis_x:
+        labels:
+          angle: -45                  # rotate crowded x labels
+      axis_y:
+        grid:
+          visible: false              # hide y gridlines
+        scale:
+          continuous:
+            domain: [0, 20000]        # pin the y range ([low, high]; both bounds)
+            # zero: true              # or just force a zero baseline
+      marks:
+        bar:
+          labels:
+            visible: true             # value labels on each bar
+            position: above           # above | top | middle | middle_aligned | bottom
+            format: number
+
+rows:
+  - styled_bar
+```
+
+Color recipes (see [Color](#color) for the token system):
+
+- **One series in a specific hue:** `style.color.static: dbt-seq-amber.4` — a
+  pinned stop from a sequential ramp (`static` takes one color, never a
+  palette name).
+- **Continuous color by a field** (heatmap cells, choropleth values, tables):
+  `style.color.gradient: {palette: dbt-seq-amber}` — `palette:` takes a ramp
+  name or an explicit stop list.
+- **Categorical series colors:** `style.color.categorical.palette` (list of
+  stops or a palette name); `style.color.categorical.single_series_palette`
+  sets the ink list used when the chart ends up with a single series.
+- Warm sequential ramp: `dbt-seq-amber`; diverging: `dbt-div-orange-teal`,
+  `dbt-div-blue-red`.
+
+**Orientation gotcha:** `x` is always the categorical axis and `y` always the
+measure on bar charts — *regardless of orientation*. On a horizontal bar,
+zero-baseline and range pins still belong on `axis_y` (the measure), never
+`axis_x`; `style.axis_quantitative` also targets the measure axis whichever
+side it renders on.
+
+**Explicit category order:** `sort:` takes only `{by: <column>, order:
+asc|desc}` — there is no explicit value-order list. A fixed stage order
+(sent → viewed → signed) belongs in the query (`ORDER BY CASE …`), because
+ordering is dataset meaning and the query layer owns it.
+
 ### Composition
 
-Dataface composes charts in three ways:
+dbt charts composes charts in three ways:
 
 1. **`layers:` on a base chart** — multiple marks share one x-axis and frame. The base chart (`type: bar`, `type: line`, `type: area`, or `type: scatter`) owns the x-axis, frame, title, legend container, and `sort`. Each layer defaults to the base `query:` but may declare its own `query:` — layer x-values extend the base x-scale rather than clip it. See [Combo charts](#combo-charts-barlinearea-with-layers) above.
 
-2. **`data_table:` attached to a chart** — a mini cross-tab strip rendered below the chart, columns aligned to the chart's x-axis ticks. Supported on `bar`, `line`, and `area` charts (including those with `layers:`).
+2. **`support_table:` attached to a chart** — a mini cross-tab strip rendered below the chart, columns aligned to the chart's x-axis ticks. Supported on `bar`, `line`, and `area` charts (including those with `layers:`).
 
    ```yaml
    charts:
@@ -826,7 +1083,8 @@ Dataface composes charts in three ways:
        query: monthly
        x: month
        y: revenue
-       data_table:
+       color: region              # `per_series:` below needs a color: channel
+       support_table:
          - source: revenue          # Read raw per-x value
            label: "Revenue"
            format: integer
@@ -846,9 +1104,9 @@ Dataface composes charts in three ways:
 
    Optional per-entry fields: `format` (D3 format string), `label` (left-stub row label; not allowed on `per_series:`).
 
-   Constraint: data_table requires a single chart-level `x:`. Layered charts with per-layer `x:` differing from the chart-level x are rejected.
+   Constraint: support_table requires a single chart-level `x:`. Layered charts with per-layer `x:` differing from the chart-level x are rejected.
 
-3. **Layout composition** — the `rows`, `cols`, `grid`, `tabs` structure in [Layout](#layout). Layout composes charts into a board; chart-level composition belongs to `layers:` (overlays) and `data_table:`.
+3. **Layout composition** — the `rows`, `cols`, `grid`, `tabs` structure in [Layout](#layout). Layout composes charts into a board; chart-level composition belongs to `layers:` (overlays) and `support_table:`.
 
 Non-goals (not part of the authored chart surface): Vega-Lite `encoding`, `mark`, `spec`, `config`, `transform`, `params`, `resolve`, `hconcat`, `vconcat`, `concat`, `repeat`. These keys are rejected at compile time. Use the typed channels (`x`, `y`, `color`, …) and `style:` instead; use the layout primitives for visual composition.
 
@@ -856,6 +1114,36 @@ Non-goals (not part of the authored chart surface): Vega-Lite `encoding`, `mark`
 `dct docs variables` (use `{{ var }}` in chart queries),
 `dct docs layout` (compose charts on the page),
 `dct docs cheatsheet` (one-page essentials).
+
+### Category colors (board-wide)
+
+A data value takes one palette **slot** board-wide, not a hex, so a category
+keeps the same color on every chart that draws it (and the same direct-label
+ink, table swatch, and nested-board coloring). A field binds automatically
+once two or more charts use it as their `color:` channel — a chart with
+`layers:` has no categorical channel of its own, so it neither binds nor
+counts toward the two. Author a pin to bind a field on a single chart too, or
+to choose the slot:
+
+```yaml
+style:
+  charts:
+    category_colors:
+      category:
+        values:
+          Electronics: category[1]      # a series slot — re-skins with the theme
+          Accessories: dbt-grays.muted  # chrome — text, grid, borders
+          Tools: negative.solid         # good / bad / attention
+```
+
+Pin keys are the exact data values from your query results, case-sensitive —
+not a display label. A literal hex is accepted too. A pin naming a value no
+chart on the render draws is skipped with `WARN-CATEGORY-COLOR-PIN-UNSEEN`
+rather than raising; two pins resolving to the same color is
+`ERR-CATEGORY-COLOR-PIN-DUPLICATE`; an authored field whose data has more
+distinct values than the palette has swatches raises
+`ERR-CATEGORY-COLOR-PALETTE-EXHAUSTED` (an unauthored field just declines to
+bind).
 
 ## Color
 
@@ -890,7 +1178,7 @@ variables:
   region:
     input: select
     label: "Region"
-    description: "Restrict every query to one region."
+    notes: "Restrict every query to one region."
     options:
       static: [US, EU, APAC]
     default: US
@@ -921,8 +1209,8 @@ Common variable fields:
 |-------|------|-------------|
 | `input` | enum | One of the input types above |
 | `label` | string | UI label |
-| `description` | string | Helper text below the input |
-| `default` | any | Default value when no URL param is set |
+| `notes` | string | Help text for this input, carried to the host rather than drawn on the board |
+| `default` | any | Value the variable takes when neither a URL param nor `--var` supplies one |
 | `placeholder` | string | Placeholder text |
 | `required` | bool | Block rendering until a value exists |
 | `allow_null` | bool | `null` is a valid selection |
@@ -952,7 +1240,7 @@ variables:
     column: orders.region                      # Auto-populate from a database column
 ```
 
-Top-level option-source binding (alternative to `options:`): `column`, `query`, `dimension` (MetricFlow), `measure` (MetricFlow), `model` (dbt).
+Top-level option-source binding (alternative to `options:`): `column`, `query`.
 
 Top-level `column` is `table.column`, and the table may be schema-qualified when it is not in the connection's default schema — `column: gis.fact_sales.property_type`. `filter()` accepts the same qualified form.
 
@@ -987,7 +1275,7 @@ WHERE plan IN ({{ plans | map('tojson') | join(', ') }})
 WHERE {{ filter('plan', plans) }}
 ```
 
-**Numeric arithmetic antipattern** — `{{ n | int }}` and `{{ n | float }}` raise an error on parameterized variables. Jinja's `| int` filter calls `int(value)` internally; on a parameterized variable this would silently return 0, so Dataface rejects it instead. Write SQL arithmetic directly on the variable:
+**Numeric arithmetic antipattern** — `{{ n | int }}` and `{{ n | float }}` raise an error on parameterized variables. Jinja's `| int` filter calls `int(value)` internally; on a parameterized variable this would silently return 0, so dbt charts rejects it instead. Write SQL arithmetic directly on the variable:
 
 ```sql
 -- WRONG: raises ERR-JINJA-ERROR at render time
@@ -1018,7 +1306,11 @@ Choose exactly one of `rows`, `cols`, `grid`, `tabs` at the board top level (or 
 # rows — vertical stack
 rows:
   - cols: [kpi_1, kpi_2, kpi_3]         # Equal-width row of charts
-  - cols: [big_chart, 2]                # big_chart takes 2 fractional columns
+  - cols:                                # Uneven split — width on a nested wrapper
+      - width: "70%"                     #   ("70%", "300px"; a bare number is px)
+        rows: [big_chart]
+      - width: "30%"
+        rows: [sidebar_table]
   - text: |                              # Markdown block as a row
       ## Trends
       Revenue has been increasing since Q2.
@@ -1033,11 +1325,7 @@ cols:
 
 # grid — CSS-grid placement with explicit positioning
 grid:
-  columns: 24
-  default_width: 8
-  default_height: 1
-  row_height: "120px"
-  gap: md                                # sm | md | lg | xl
+  columns: 24                            # spacing comes from style.layout.grid.gap
   items:
     - item: kpi_revenue
       col: 0
@@ -1057,7 +1345,7 @@ tabs:
   items:
     - title: Overview
       icon: 📊
-      description: "KPIs and trend"
+      notes: "KPIs and trend"
       rows: [kpi_revenue, trend_chart]
     - title: Details
       rows: [detail_table]
@@ -1072,7 +1360,7 @@ tabs:
 ```yaml
 rows:
   - title: "Revenue overview"      # Section heading
-    description: "AI/tooltip context for the section."
+    notes: "AI/tooltip context for the section."
     text: "Monthly trend data."    # Markdown narrative above charts
     details:                       # Collapsible
       summary: "Click to expand"
@@ -1163,7 +1451,7 @@ rows:
 
 ## Errors
 
-Dataface errors carry a machine-readable code in the form `ERR-<SLUG>`. The error message includes the code and a pointer to docs; a separate `domain` field on the error records where it originated (the code string itself has no domain segment).
+dbt charts errors carry a machine-readable code in the form `ERR-<SLUG>`. The error message includes the code and a pointer to docs; a separate `domain` field on the error records where it originated (the code string itself has no domain segment).
 
 ```
 DbtChartsError [ERR-KPI-MULTIROW]: KPI chart 'revenue' returned 12 rows but `value` is a column reference.

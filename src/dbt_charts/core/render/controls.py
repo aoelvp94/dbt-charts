@@ -24,7 +24,7 @@ from dbt_charts.core.render.template_loader import render_template
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-_INTERACTIVE: ContextVar[bool] = ContextVar("dft_interactive_controls", default=False)
+_INTERACTIVE: ContextVar[bool] = ContextVar("dct_interactive_controls", default=False)
 
 
 @contextmanager

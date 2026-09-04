@@ -48,7 +48,7 @@ def build_embedded_server(
         # it ships `mcp` alone and cannot supply uvicorn.
         raise ImportError(
             "Embedded preview server requires uvicorn, which ships as a "
-            f"Dataface runtime dependency. Reinstall Dataface: {install_hint()}"
+            f"dbt charts runtime dependency. Reinstall dbt charts: {install_hint()}"
         ) from e
 
     resolved = find_available_port(port_hint, host=host, max_attempts=max_attempts)

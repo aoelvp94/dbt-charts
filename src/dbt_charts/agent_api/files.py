@@ -12,7 +12,7 @@ refused — these tools never touch the wider filesystem.
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Iterator
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -380,36 +380,66 @@ def delete_file(path: str, project: Project) -> DeleteFileResult:
     return DeleteFileResult(success=True, path=path)
 
 
+def glob_files_paths(pattern: str | None, project: Project) -> Iterator[str]:
+    """Yield relpath for every file matching *pattern*; uncapped.
+
+    ``None`` lists the whole charts subtree (the documented tool default).
+    Hosts with per-principal access control call this directly, filter to
+    visible paths, and only then truncate — filtering an already-capped
+    ``glob_files`` result would produce false empty sets when invisible
+    boards fill the cap.
+    """
+    for pf in project.files.glob(
+        pattern if pattern is not None else DEFAULT_FILES_GLOB
+    ):
+        yield pf.relpath
+
+
 def glob_files(pattern: str | None, project: Project) -> GlobResult:
     """List files matching *pattern*; ``None`` (the documented tool default)
-    lists the charts subtree."""
+    lists the charts subtree. Hosts with per-principal access control must not
+    truncate before filtering — see ``glob_files_paths``."""
     matches: list[str] = []
+    truncated = False
     try:
-        for pf in project.files.glob(
-            pattern if pattern is not None else DEFAULT_FILES_GLOB
-        ):
-            matches.append(pf.relpath)
-            if len(matches) >= MAX_GLOB_MATCHES:
-                return GlobResult(success=True, matches=matches, truncated=True)
+        for path in glob_files_paths(pattern, project):
+            if len(matches) < MAX_GLOB_MATCHES:
+                matches.append(path)
+            else:
+                truncated = True
+                break
     except ValueError as exc:
         return GlobResult(success=False, error=str(exc))
-    return GlobResult(success=True, matches=matches)
+    return GlobResult(success=True, matches=matches, truncated=truncated)
+
+
+def grep_files_hits(
+    pattern: str, project: Project, glob: str | None = None
+) -> Iterator[GrepMatch]:
+    """Yield every content match for *pattern*; uncapped.
+
+    ``glob=None`` searches only the charts subtree (same default as
+    ``grep_files``). Hosts with per-principal access control call this
+    directly, filter to visible paths, and only then truncate.
+    """
+    resolved_glob = glob if glob is not None else DEFAULT_FILES_GLOB
+    for hit in project.files.grep(pattern, glob=resolved_glob):
+        yield GrepMatch(path=hit.relpath, line_number=hit.line_number, line=hit.line)
 
 
 def grep_files(pattern: str, project: Project, glob: str | None = None) -> GrepResult:
     """Search file contents for *pattern*; ``glob=None`` (the documented tool
-    default) searches only the charts subtree."""
+    default) searches only the charts subtree. Hosts with per-principal access
+    control must not truncate before filtering — see ``grep_files_hits``."""
     matches: list[GrepMatch] = []
+    truncated = False
     try:
-        hits = project.files.grep(
-            pattern, glob=glob if glob is not None else DEFAULT_FILES_GLOB
-        )
-        for hit in hits:
-            matches.append(
-                GrepMatch(path=hit.relpath, line_number=hit.line_number, line=hit.line)
-            )
-            if len(matches) >= MAX_GREP_MATCHES:
-                return GrepResult(success=True, matches=matches, truncated=True)
+        for match in grep_files_hits(pattern, project, glob=glob):
+            if len(matches) < MAX_GREP_MATCHES:
+                matches.append(match)
+            else:
+                truncated = True
+                break
     except ValueError as exc:
         return GrepResult(success=False, error=str(exc))
-    return GrepResult(success=True, matches=matches)
+    return GrepResult(success=True, matches=matches, truncated=truncated)

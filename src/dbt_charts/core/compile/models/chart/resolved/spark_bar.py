@@ -20,11 +20,11 @@ class ResolvedSparkBarChart(_SharedResolvedChartFields):
     )
     x: str | None = Field(
         default=None,
-        description="X-axis (time / category) column.",
+        description="Bar-magnitude (numeric) column.",
     )
     y: str | None = Field(
         default=None,
-        description="Y-axis (value) column.",
+        description="Bar-label (category) column.",
     )
     color: str | None = Field(
         default=None,

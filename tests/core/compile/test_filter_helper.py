@@ -1,5 +1,5 @@
 """Tests for the filter() Jinja macro helper — the parameterized path
-(_make_filter_helper closure in parameterized.py).
+(the make_filter_helper closure in parameterized.py, over a collector emitter).
 
 The legacy unparameterized _filter_helper from jinja.py raises CompilationError
 on any call — it uses string interpolation and is no longer supported.
@@ -13,8 +13,9 @@ from dbt_charts.core.compile.template.jinja import (
     _filter_helper,
 )
 from dbt_charts.core.compile.template.parameterized import (
-    _make_filter_helper,
     _NullValue,
+    _ParameterCollector,
+    make_filter_helper,
 )
 from dbt_charts.core.dialects.postgres import PostgresDialect
 
@@ -23,18 +24,14 @@ from dbt_charts.core.dialects.postgres import PostgresDialect
 # ---------------------------------------------------------------------------
 
 
-class _SimpleCollector:
-    """Minimal stand-in for _ParameterCollector used in unit tests."""
-
-    def __init__(self) -> None:
-        self._param_index = 0
-        self.params: list = []
+def _collector() -> _ParameterCollector:
+    return _ParameterCollector(variables={}, dialect=PostgresDialect())
 
 
-def _make_helper(collector: _SimpleCollector | None = None):
+def _make_helper(collector: _ParameterCollector | None = None):
     if collector is None:
-        collector = _SimpleCollector()
-    return _make_filter_helper(collector, PostgresDialect())
+        collector = _collector()
+    return make_filter_helper(collector.add_param)
 
 
 # ===========================================================================

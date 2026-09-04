@@ -70,7 +70,7 @@ def test_served_stylesheet_is_generated_from_the_registry() -> None:
     """The committed stylesheet matches what the registry would emit.
 
     It is committed because three apps serve it as a static asset, and generated
-    because the files it names must stay in lockstep with the files Dataface measures.
+    because the files it names must stay in lockstep with the files dbt charts measures.
     """
     committed = (get_fonts_dir() / "_font_face.css").read_text(encoding="utf-8")
     assert committed == FONT_FACE_CSS_HEADER + render_font_face_css(served_faces()), (
@@ -91,12 +91,12 @@ def test_families_without_a_webfont_are_the_known_set() -> None:
     assert unserved == _UNSERVED_FAMILIES
 
 
-@pytest.mark.parametrize("theme", ["editorial", "cream", "stark"])
+@pytest.mark.parametrize("theme", ["clarity", "paper", "stark"])
 def test_body_prose_measures_every_run_against_a_real_face(theme: str) -> None:
     """No board falls through to mdsvg's ratio estimate for bold or italic.
 
     mdsvg keeps a constant-ratio fallback for callers who supply a single font file.
-    Dataface must never land there: those constants assume bold is ~21% wider and
+    dbt charts must never land there: those constants assume bold is ~21% wider and
     italic ~8% wider, while the real faces measure bold at ~3% wider and Source Serif
     italic ~14% *narrower*. If a future change drops a face from the registry, prose
     would quietly revert to wrapping against invented numbers — so fail loudly here

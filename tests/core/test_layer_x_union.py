@@ -130,14 +130,16 @@ def test_layer_x_categories_not_subset_appear_in_union_domain() -> None:
     assert set(domain) == {"Jan", "Feb", "Q1", "Q2"}
 
 
-def test_reconcile_x_domain_preserves_base_row_order_not_reordered() -> None:
-    """_reconcile_x_domain must preserve the base's OWN row order —
+def test_reconcile_x_domain_places_layer_only_value_in_the_base_direction() -> None:
+    """_reconcile_x_domain must preserve the base's OWN relative row order —
     reflecting the base query's ORDER BY (or an authored chart.sort already
-    applied upstream) — never silently re-sort it, even when every value
-    happens to be date-shaped. Regression: a prior fix sorted a uniformly
-    date-shaped union domain ascending, which is exactly wrong for a base
-    ordered most-recent-first (DESC) — it silently flipped the axis order
-    and overrode any authored chart.sort with a data-driven guess.
+    applied upstream) — never re-sorting it against its own grain. A base
+    ordered most-recent-first (DESC) therefore stays DESC, and a layer-only
+    date lands where DESC puts it: at the FRONT. Sorting the whole union
+    ascending, as a prior fix did, silently flipped such an axis; appending
+    layer-only values at the end instead, as the fix after it did, put
+    2024-02 after 2023-12 and made the axis read as a chronology it is not.
+    Extending the direction the base already states guesses nothing.
 
     Exercises _reconcile_x_domain directly rather than through the full bar
     emitter pipeline, since the emitter's own (separate, legitimate)
@@ -153,8 +155,8 @@ def test_reconcile_x_domain_preserves_base_row_order_not_reordered() -> None:
     layer_x_columns: list[tuple[str, list[VLDict]]] = [
         ("period", [{"period": "2024-02-01"}])
     ]
-    _reconcile_x_domain(x_enc, base_data, layer_x_columns)
-    assert x_enc["scale"]["domain"] == ["2024-01-01", "2023-12-01", "2024-02-01"]
+    _reconcile_x_domain(x_enc, base_data, layer_x_columns, "c1")
+    assert x_enc["scale"]["domain"] == ["2024-02-01", "2024-01-01", "2023-12-01"]
 
 
 def test_layer_own_date_x_reconciles_against_bucket_gated_ordinal_base() -> None:
@@ -165,10 +167,11 @@ def test_layer_own_date_x_reconciles_against_bucket_gated_ordinal_base() -> None
     "ordinal". Both the outer encoding's type AND the overlay sublayer's own
     x encoding must be repinned to "ordinal" (else Vega-Lite parses the
     layer's values as a real Date against a string-label domain). The
-    unioned domain preserves the base's own row order first, then appends
-    any layer-only categories in the layer's own first-seen order — never
-    re-sorted, which would silently override the base query's ordering or
-    an authored chart.sort.
+    unioned domain keeps the base's own values in the base's own relative
+    order — never re-sorted, which would silently override the base query's
+    ordering or an authored chart.sort — and places each layer-only category
+    where the base's own (here ascending) date order says it belongs, rather
+    than at the end where it would read as a later bucket than it is.
     """
     data = [
         {"month": "2025-08-01", "revenue": 100.0},
@@ -192,7 +195,7 @@ def test_layer_own_date_x_reconciles_against_bucket_gated_ordinal_base() -> None
     )
     assert vl["encoding"]["x"]["type"] == "ordinal"
     domain = vl["encoding"]["x"]["scale"]["domain"]
-    assert domain == ["2025-08-01", "2025-09-01", "2024-01-01"]
+    assert domain == ["2024-01-01", "2025-08-01", "2025-09-01"]
 
     wrapper = _line_layer_wrapper(vl, "target")
     assert wrapper["encoding"]["x"]["type"] == "ordinal"
@@ -300,7 +303,7 @@ def test_layer_own_date_x_union_domain_is_json_safe() -> None:
     )
     domain = vl["encoding"]["x"]["scale"]["domain"]
     assert all(isinstance(v, str) for v in domain)
-    assert domain == ["2025-08-01", "2025-09-01", "2024-01-01"]
+    assert domain == ["2024-01-01", "2025-08-01", "2025-09-01"]
 
 
 def test_step_band_layer_with_own_x_unions_full_category_grid() -> None:

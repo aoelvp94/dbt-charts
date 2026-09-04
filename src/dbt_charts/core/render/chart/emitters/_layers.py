@@ -21,6 +21,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     bar_corner_props,
     bar_data_signs,
     bar_mark_to_vl,
+    continuous_bar_size_prop,
     line_mark_to_vl,
     scatter_mark_to_vl,
 )
@@ -28,10 +29,11 @@ from dbt_charts.core.render.chart.vl_field_maps import (
 # Vega's ``autosize: fit`` sizes the plot to fit everything the scenegraph draws,
 # so a mark spilling past the plot rect pushes the plot box inward — and on line
 # and area charts most of that spill is ink nobody can see: the invisible hover
-# hit-target (8.66px of radius at opacity 0) and the background-coloured halo.
-# Paying layout for it left the grid ~9px inside the card padding the title sits
-# on. Spread this into the mark props of a layer whose paint nobody can see: a
-# clip cuts a stroke in half wherever it runs along the plot boundary (a series
+# hit-target disc (opacity 0, sized by ``HOVER_TARGET_SIZE`` below) and the
+# background-coloured halo. Paying layout for it left the grid ~9px inside the
+# card padding the title sits on. Spread this into the mark props of a layer
+# whose paint nobody can see: a clip cuts a stroke in half wherever it runs
+# along the plot boundary (a series
 # resting on a zero floor, the baseline rule) and takes the radius off a marker
 # sitting on the domain edge, so the data line, the stacked band's perimeter, the
 # baseline rule and every point overlay keep their reservation instead. Two
@@ -40,6 +42,18 @@ from dbt_charts.core.render.chart.vl_field_maps import (
 # unclipped despite being invisible — clipping it would let the line show through
 # the outer half of a marker on the domain edge.
 CLIP_TO_PLOT: VLDict = {"clip": True}
+
+# Radius of the invisible hover-target disc `_hover_target_point` draws at
+# every line/area datum: r = sqrt(size)/2 (Vega's circle symbol — NOT
+# sqrt(size/pi)). Ceiling: discs paint in data order and SVG hit-testing picks
+# the topmost shape, so a radius past half the smallest on-screen x-step lets
+# a later datum's disc steal its neighbour's hit region. Reuses the ~18px
+# empirical "points still read as discrete, not a caterpillar" spacing floor
+# that `chart_rendering.point.min_px_per_point` (default_config.yml) is
+# itself calibrated against, since no finer-grained signal is available here:
+# ceiling = 18/2 = 9.0px, so size <= 4 * 9.0**2 = 324 —
+# test_hover_target_size_stays_under_x_step_ceiling pins this.
+HOVER_TARGET_SIZE: float = 320.0
 
 
 def pin_categorical_domain_order(cat_enc: VLDict, data: list[VLDict]) -> None:
@@ -115,7 +129,7 @@ def _hover_target_point(
     mark_props: VLDict = {
         **CLIP_TO_PLOT,
         "filled": True,
-        "size": 300,
+        "size": HOVER_TARGET_SIZE,
         "opacity": 0,
         "tooltip": True,
     }
@@ -321,7 +335,11 @@ def emit_line_layer(
     for a band-aware ``step`` curve (see ``step_band.apply_step_band``) — force
     the VL interpolate to ``step-after`` so the stroke lands on the band
     boundary the doubled rows expect, overriding whatever the curve's plain
-    passthrough interpolate would otherwise be.
+    passthrough interpolate would otherwise be. Also forces ``order: False``
+    on every line sub-layer (halo included): Vega-Lite sorts line vertices by
+    x, and the band-doubled edges tie in float x at some widths, so without
+    this a tied pair can transpose and draw a zero-width spike instead of
+    the plateau — see ``step_band.py``'s module docstring.
 
     Band mode is the only place ``connect`` means anything, and it is only
     known here (it needs the resolved VL x-type), so it is also where the
@@ -365,6 +383,12 @@ def emit_line_layer(
         inherit_parent_color,
         series_encoding,
     )
+    if band_step:
+        # order:False must travel with BAND_STEP_INTERPOLATE on every line
+        # sub-layer (halo included) — see step_band.py's module docstring.
+        for sub in layers:
+            if sub.mark == "line":
+                sub.mark_props["order"] = False
     layers.append(
         _hover_target_point(
             tooltip, single_series_color, has_color_encoding, pin_child_colors
@@ -387,17 +411,29 @@ def emit_bar_layer(
     measure_field: str | None,
     config: VLDict,
     transforms: list[VLDict],
+    x_is_banded: bool,
+    cat_field: str | None,
 ) -> ChartSpec:
     """Assemble mark_props and emit one bar series as a ChartSpec.
 
     Shared by BarEmitter (base series) and overlay layer rendering (chart.layers).
     Handles single-sign corner rounding and mixed-sign layer split internally;
     callers pass radius=None only when no corner radius is configured at all.
+
+    ``x_is_banded`` and ``cat_field`` describe the category channel this bar's
+    OWN encoding resolves to (the base's own x, or an overlay layer's own
+    authored x) — not necessarily the outer chart's. ``x_is_banded=False``
+    routes width/height through ``continuous_bar_size_prop`` instead of
+    ``bar_mark_to_vl``'s band-fraction shorthand; see both docstrings.
     """
     has_pos, has_neg = (
         bar_data_signs(data, measure_field) if measure_field else (True, False)
     )
-    mark_props = {**bar_mark_to_vl(bar_mark, orientation), "tooltip": True}
+    mark_props = {**bar_mark_to_vl(bar_mark, orientation, x_is_banded), "tooltip": True}
+    if not x_is_banded and bar_mark.size is None:
+        mark_props.update(
+            continuous_bar_size_prop(bar_mark, cat_field, data, orientation)
+        )
     if radius is not None:
         corner = bar_corner_props(radius, orientation, has_pos, has_neg)
         if corner is not None:
@@ -872,6 +908,11 @@ def emit_area_layer(
     for a band-aware ``step`` curve (see ``step_band.apply_step_band``) — force
     the VL interpolate to ``step-after`` on every sub-layer, overriding
     whatever the curve's plain passthrough interpolate would otherwise be.
+    Also forces ``order: False`` on every area/line sub-layer (halo
+    included): Vega-Lite sorts vertices by x, and the band-doubled edges tie
+    in float x at some widths, so without this a tied pair can transpose and
+    draw a zero-width spike instead of the plateau — see ``step_band.py``'s
+    module docstring.
     """
     (
         area_opacity,
@@ -939,6 +980,12 @@ def emit_area_layer(
         for sub in layers:
             if sub.mark in ("area", "line"):
                 sub.mark_props["interpolate"] = area_interp
+                if band_step:
+                    # order:False must travel with BAND_STEP_INTERPOLATE on every
+                    # area/line sub-layer (halo included) — see step_band.py's
+                    # module docstring for why a synthetic order ENCODING was
+                    # tried instead and rejected.
+                    sub.mark_props["order"] = False
     if band_transforms:
         # Fill/edge only: the hover overlay must not gain tooltip targets at
         # columns the series never reported.

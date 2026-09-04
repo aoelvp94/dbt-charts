@@ -1,5 +1,5 @@
 title: "Simple Example"
-description: "Minimal example showing SQL data source usage"
+notes: "Minimal example showing SQL data source usage"
 source: examples_db
 
 queries:

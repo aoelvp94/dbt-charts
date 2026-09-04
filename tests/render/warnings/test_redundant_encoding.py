@@ -76,3 +76,49 @@ def test_list_y_multiseries_not_flagged() -> None:
     """Multi-series y fields are not flagged as redundant encoding."""
     chart = _make_chart(type="line", x="month", y=["a", "b"])
     assert detector.detect(_make_ctx(chart)) == []
+
+
+def test_fires_when_multiples_columns_equals_y() -> None:
+    """A heatmap faceted by the same field carried on y: every panel's y-axis
+    repeats a single value that its own panel header already names.
+    """
+    chart = _make_chart(
+        type="heatmap",
+        x="month",
+        y="region",
+        color="value",
+        multiples={"columns": "region"},
+    )
+    warnings = detector.detect(_make_ctx(chart))
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert w.code == WARN_REDUNDANT_ENCODING.code
+    assert w.field == "region"
+    assert "y" in w.message and "multiples.columns" in w.message
+
+
+def test_fires_when_multiples_rows_equals_x() -> None:
+    """Same defect, row-direction facet against x instead of column against y."""
+    chart = _make_chart(type="bar", x="region", y="val", multiples={"rows": "region"})
+    warnings = detector.detect(_make_ctx(chart))
+    assert len(warnings) == 1
+    assert warnings[0].field == "region"
+
+
+def test_no_fire_when_multiples_equals_color() -> None:
+    """color's legend is computed once, board-wide, and is never duplicated
+    per panel — unlike x/y, which each panel draws its own copy of. Binding
+    color to the facet field is a useful pattern (a consistent per-series hue
+    across every panel), the same way bar's x==color carve-out is: what
+    naive channel counting calls a collision, the renderer does not actually
+    duplicate.
+    """
+    chart = _make_chart(
+        type="bar", x="month", y="val", color="region", multiples={"rows": "region"}
+    )
+    assert detector.detect(_make_ctx(chart)) == []
+
+
+def test_no_fire_when_multiples_field_is_distinct() -> None:
+    chart = _make_chart(type="bar", x="month", y="val", multiples={"rows": "region"})
+    assert detector.detect(_make_ctx(chart)) == []

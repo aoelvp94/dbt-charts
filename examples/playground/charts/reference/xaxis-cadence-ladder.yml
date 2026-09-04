@@ -1,6 +1,6 @@
-theme: editorial
+theme: clarity
 title: X-axis label cadence ladder
-description: |
+notes: |
   Verification specimen for native temporal label formats with render-local
   visibility thinning. Width may change which labels show and their angle,
   never the encoding or label-format time unit.

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from typing import Any, Literal
 
+from pydantic import BaseModel, ConfigDict
+
 from dbt_charts.core.compile.merge import merge_onto_base, to_padding_style
-from dbt_charts.core.compile.models.chart.authored import ChartDataTable
+from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
 from dbt_charts.core.compile.models.chart.normalized import (
     Chart,
     KpiChart,
@@ -27,9 +29,16 @@ from dbt_charts.core.compile.models.style.authored import (
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedChartDefaults
 from dbt_charts.core.compile.models.style.theme import (
-    DataTableStyle,
+    LegendPosition,
     LegendStyle,
     PaddingStyle,
+    SupportTableStyle,
+)
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    CategoryColorScale,
+)
+from dbt_charts.core.compile.resolve.style.category_colors import (
+    categorical_channel_fields,
 )
 from dbt_charts.core.compile.resolve.style.palette import substitute_for_alias
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
@@ -58,6 +67,56 @@ __all__ = [
 AutomaticLinkCandidate = str | None
 
 
+class _LegendPositionOverridePatch(BaseModel):
+    """All-Optional carrier for ``ResolvedLegendStyle.position_overridden_by_width``
+    -- the one legend fold below with no ``LegendStylePatch`` to ride: that
+    field is resolved-only (declared on ``ResolvedLegendStyle``, not on
+    ``LegendStyle``/``LegendStylePatch``, the authored surface), so an author
+    can never set it even through this carrier. Exists purely so
+    ``_base_kwargs`` can fold it in through the same construction-final
+    ``merge_onto_base`` path as every other legend decision below, instead of
+    a post-hoc ``model_copy(update=...)`` on the already-built
+    ``ResolvedLegendStyle`` (banned -- see ``compile/models/AGENTS.md`` and
+    ``tests/test_no_replace_on_resolved.py``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    position_overridden_by_width: LegendPosition | None = None
+
+
+def _bound_scales(
+    normalized: _BaseChartFields,
+    chart_style_context: ChartStyleContext,
+    palette: Sequence[str],
+) -> tuple[CategoryColorScale, ...]:
+    """Narrow the board's scales to the fields THIS chart actually encodes.
+
+    Every chart carries the board context, but a chart that never draws
+    `category` has no business emitting a `category` scale — Vega-Lite would
+    reserve legend entries for values the chart does not contain.
+
+    A scale is planned against the BOARD palette, but ``palette`` here is
+    this chart's own EFFECTIVE palette — a chart-local ``style.color.
+    categorical.palette`` override, or a nested board's shorter theme, can be
+    shorter than that. A scale whose highest slot this chart's palette can't
+    seat is dropped rather than handed through: `category_colors._slot_for`
+    would raise the moment the chart tried to paint that value, turning a board
+    that rendered fine before this feature existed into an error just
+    because a sibling happens to share the field. Declining here is the same
+    "keep the coloring it had today" policy `plan_category_colors` already
+    applies to palette exhaustion and the two-chart threshold.
+    """
+    if not chart_style_context.category_colors:
+        return ()
+    drawn = categorical_channel_fields(normalized)
+    return tuple(
+        s
+        for s in chart_style_context.category_colors
+        if s.field in drawn and max(s.slots.values(), default=-1) < len(palette)
+    )
+
+
 def _base_kwargs(
     normalized: _BaseChartFields,
     chart_style_context: ChartStyleContext,
@@ -70,6 +129,8 @@ def _base_kwargs(
     layout_padding: PaddingStyle | PaddingStylePatch,
     suppress_legend: bool = False,
     top_legend: Literal["compact", "row", "off"] = "off",
+    force_legend_visible: bool = False,
+    legend_position_overridden_by_width: LegendPosition | None = None,
 ) -> dict[str, Any]:
     """Common kwargs for all _BaseResolvedChartFields subclasses.
 
@@ -96,8 +157,36 @@ def _base_kwargs(
     top_legend: force the legend above the plot, reading left to right like the
     marks it names. "compact" wraps at compact_columns for cards too narrow to
     hold a row; "row" leaves the entry count to the renderer.
+    force_legend_visible: True when the chart's own style named a legend
+    position, OR the chart's shape itself wants a legend (SeriesNaming's
+    top_legend_series was not None) regardless of whether that legend landed
+    at the top or fell back to the theme's own position. A theme that hides
+    this family's legend by default (line and area do) would otherwise leave
+    either case with a legend that never renders -- an authored position with
+    nothing to show it, or a top-legend fit rule whose "off" outcome means
+    "not at the top", not "not at all". It is folded with the cascade, ahead
+    of suppress_legend, so it outranks the theme but never the caller's
+    suppression -- bar's suppress_legend carries _stack_legend_should_yield,
+    a plot-collapse guard the author does not get to overrule (the chart
+    would raise ERR-CHART-PAINTED-NO-MARKS).
+    legend_position_overridden_by_width: the author's own position when the
+    tiny-width tier forced this legend back to top over it
+    (SeriesNaming.legend_position_overridden_by_width), None otherwise. Folded
+    in with _LegendPositionOverridePatch rather than LegendStylePatch like the
+    others above -- the field is resolved-only (LegendStyle/LegendStylePatch,
+    the authored surface, declare no such field), but it still goes through
+    the same merge_onto_base construction as every other legend decision here,
+    not a post-hoc patch on the finished ResolvedLegendStyle.
     """
     legend = merge_onto_base(chart_style_context.legend, legend_patch)
+    if force_legend_visible:
+        shown = LegendStylePatch.model_validate({"visible": True})
+        legend = merge_onto_base(legend, shown)
+    if legend_position_overridden_by_width is not None:
+        overridden = _LegendPositionOverridePatch(
+            position_overridden_by_width=legend_position_overridden_by_width
+        )
+        legend = merge_onto_base(legend, overridden)
     if top_legend != "off":
         top = LegendStylePatch.model_validate(
             {
@@ -118,9 +207,11 @@ def _base_kwargs(
     ):
         no_title = LegendStylePatch.model_validate({"title": {"visible": False}})
         legend = merge_onto_base(legend, no_title)
-    link = normalized.link
-    if link is None:
+    # link: false = authored auto_link opt-out — resolves to no link at all.
+    link = None if normalized.link is False else normalized.link
+    if normalized.link is None:
         link = automatic_link_candidate
+    effective_palette = palette if palette is not None else chart_style_context.palette
     return {
         "id": normalized.id,
         "source_path": normalized.source_path,
@@ -128,17 +219,18 @@ def _base_kwargs(
         "query": normalized.query,
         "query_name": normalized.query_name,
         "variable_dependencies": normalized.variable_dependencies,
-        "description": normalized.description,
+        "notes": normalized.notes,
         "link": link,
         "conditional_formatting": normalized.conditional_formatting,
-        "palette": tuple(
-            palette if palette is not None else chart_style_context.palette
-        ),
+        "palette": tuple(effective_palette),
         "requested_alias_palette": requested_alias_palette,
         "requested_alias_substitute": (
             substitute_for_alias(requested_alias_palette)
             if requested_alias_palette is not None
             else None
+        ),
+        "category_colors": _bound_scales(
+            normalized, chart_style_context, effective_palette
         ),
         "resolved_channels": channels,
         "legend": legend,
@@ -291,12 +383,12 @@ def _column_is_numeric(data: list[dict[str, Any]], field: str) -> bool:
     return seen
 
 
-def _resolved_data_table(
-    data_table: ChartDataTable | None,
+def _resolved_support_table(
+    support_table: ChartSupportTable | None,
     y: str | list[str] | None,
     data: list[dict[str, Any]],
-) -> ChartDataTable | None:
-    """Bake the final data_table: stamp the theme's default number format
+) -> ChartSupportTable | None:
+    """Bake the final support_table: stamp the theme's default number format
     onto entries reading a single *numeric* string y column that carry no
     authored format.
 
@@ -305,52 +397,71 @@ def _resolved_data_table(
     (a string y column must keep format=None so the raw label renders
     rather than a formatted "-") is decidable here instead of at render.
     """
-    if data_table is None or not isinstance(y, str) or not _column_is_numeric(data, y):
-        return data_table
+    if (
+        support_table is None
+        or not isinstance(y, str)
+        or not _column_is_numeric(data, y)
+    ):
+        return support_table
     # Use the predefined name, not the resolved spec, so downstream callers
-    # (apply_measure_format_to_data_table) preserve the house-notation signal.
-    number_default = str(PredefinedNumberFormat.number_default)
-    # Deferred like the one in _data_table_geometry below: data_table.py imports
+    # (apply_measure_format_to_support_table) preserve the house-notation signal.
+    engine_default = str(PredefinedNumberFormat.number)
+    # Deferred like the one in _support_table_geometry below: support_table.py imports
     # resolve.style.axis_cascade, so a module-level import here closes a
-    # data_table ↔ resolve cycle that only stays quiet while some other module
+    # support_table ↔ resolve cycle that only stays quiet while some other module
     # happens to import resolve first.
-    from dbt_charts.core.compile.data_table import (  # noqa: PLC0415
-        apply_measure_format_to_data_table,
+    from dbt_charts.core.compile.support_table import (  # noqa: PLC0415
+        apply_measure_format_to_support_table,
     )
 
-    return apply_measure_format_to_data_table(data_table, number_default, y)
+    return apply_measure_format_to_support_table(support_table, engine_default, y)
 
 
-def _data_table_geometry(
-    data_table: ChartDataTable | None,
+def _support_table_geometry(
+    support_table: ChartSupportTable | None,
     chart_style_context: ChartStyleContext,
     chart_type: str,
     x_label_authored: bool,
-) -> tuple[DataTableStyle | None, float | None]:
-    """Bake the data_table strip's compile-owned geometry: the chart's
-    effective DataTableStyle and the axis-offset pixel gap the strip
-    reserves below the plot.
+    chart_id: str,
+    category_axis_vertical: bool,
+    axis_y_orient: Literal["left", "right"],
+) -> tuple[SupportTableStyle | None, float | None]:
+    """Bake the support_table strip's compile-owned geometry: the chart's
+    effective SupportTableStyle (with ``position`` resolved to a concrete
+    side) and the axis-offset pixel gap the strip reserves below the plot.
 
     Both are pure functions of the per-chart-cascaded ``chart_style_context``
     plus ``x_label_authored`` (the caller's own ``bool(normalized.x_label)``,
     truthy not ``is not None``, driving the axis cascade's Layer-5
     title-forcing default) —
-    the same values ``render/chart/data_table_attachment.py`` used to
-    recompute at render time by reaching into ``compile/data_table.py`` with
+    the same values ``render/chart/support_table_attachment.py`` used to
+    recompute at render time by reaching into ``compile/support_table.py`` with
     a full ``ChartStyleContext``. Baking them here closes that reach-back:
-    render reads ``resolved.effective_data_table_style``/
-    ``.data_table_axis_offset`` directly, never the cascade context.
+    render reads ``resolved.effective_support_table_style``/
+    ``.support_table_axis_offset`` directly, never the cascade context.
+
+    ``category_axis_vertical``/``axis_y_orient`` are the caller's own already-
+    resolved orientation facts (a horizontal bar's category axis is vertical;
+    ``axis_y_orient`` is that chart's baked ``axis_y.position``) — resolving
+    ``position`` here, once, means the ``Resolved*`` contract always carries a
+    concrete ``"top"``/``"bottom"``/``"left"``/``"right"``, and a mismatched
+    `position:` is a compile-time error rather than a render-time surprise.
     """
-    if data_table is None:
+    if support_table is None:
         return None, None
-    from dbt_charts.core.compile.data_table import (  # noqa: PLC0415
+    from dbt_charts.core.compile.support_table import (  # noqa: PLC0415
         axis_offset,
-        resolve_effective_data_table_style,
+        resolve_effective_support_table_style,
+        resolve_support_table_position,
     )
 
-    effective_style = resolve_effective_data_table_style(
+    effective_style = resolve_effective_support_table_style(
         chart_style_context, chart_type
     )
+    resolved_position = resolve_support_table_position(
+        effective_style.position, category_axis_vertical, axis_y_orient, chart_id
+    )
+    effective_style = effective_style.model_copy(update={"position": resolved_position})
     return effective_style, axis_offset(
         chart_style_context,
         effective_style,
@@ -366,6 +477,8 @@ def _cartesian_kwargs(
     data: list[dict[str, Any]],
     chart_type: str,
     panel_axes: tuple[PartitionAxis, ...],
+    category_axis_vertical: bool = False,
+    axis_y_orient: Literal["left", "right"] = "left",
 ) -> dict[str, Any]:
     """Extra kwargs for _CartesianResolvedChartFields subclasses.
 
@@ -376,15 +489,24 @@ def _cartesian_kwargs(
     baked once by ``partition()`` at the top of the caller's resolver — every
     cartesian family bakes it here so the field can never be forgotten on a
     new resolver.
+
+    ``category_axis_vertical``/``axis_y_orient`` feed ``support_table.position``
+    resolution. Every family but bar has a horizontal category axis
+    unconditionally, so they take the defaults (``False``/unused); bar passes
+    its own already-resolved ``orientation == "horizontal"`` and baked
+    ``axis_y.position``.
     """
-    resolved_data_table = _resolved_data_table(
-        normalized.data_table, normalized.y, data
+    resolved_support_table = _resolved_support_table(
+        normalized.support_table, normalized.y, data
     )
-    effective_data_table_style, data_table_axis_offset = _data_table_geometry(
-        resolved_data_table,
+    effective_support_table_style, support_table_axis_offset = _support_table_geometry(
+        resolved_support_table,
         chart_style_context,
         chart_type,
         bool(normalized.x_label),
+        normalized.id,
+        category_axis_vertical,
+        axis_y_orient,
     )
     return {
         **_shared_kwargs(normalized, variables, chart_style_context),
@@ -396,9 +518,9 @@ def _cartesian_kwargs(
         "sort": normalized.sort,
         "multiples": normalized.multiples,
         "panel_axes": panel_axes,
-        "data_table": resolved_data_table,
-        "effective_data_table_style": effective_data_table_style,
-        "data_table_axis_offset": data_table_axis_offset,
+        "support_table": resolved_support_table,
+        "effective_support_table_style": effective_support_table_style,
+        "support_table_axis_offset": support_table_axis_offset,
         "aspect_ratio": normalized.aspect_ratio,
         "min_height": normalized.min_height,
         "max_height": normalized.max_height,

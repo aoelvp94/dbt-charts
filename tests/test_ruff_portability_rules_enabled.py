@@ -48,7 +48,7 @@ def _ruff_codes_for() -> set[str]:
 
 # Fails today because: dbt-charts/ruff.toml has no `extend-select`, so PLW1514
 # and the PTH family are inactive — the probe snippet lints clean.
-def test_dataface_ruff_flags_missing_encoding_and_os_path() -> None:
+def test_dbt_charts_ruff_flags_missing_encoding_and_os_path() -> None:
     codes = _ruff_codes_for()
     assert "PLW1514" in codes, f"expected PLW1514 in {codes}"
     assert any(c.startswith("PTH") for c in codes), f"expected a PTH code in {codes}"

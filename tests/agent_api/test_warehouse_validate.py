@@ -128,6 +128,7 @@ class TestWarehouseValidateDuckDB:
                 "    type: bar\n"
                 "    query: queries.my_query\n"
                 "    x: id\n"
+                "    y: revenue\n"
                 "    layers:\n"
                 "      - type: line\n"
                 "        y: missing_col\n"
@@ -351,10 +352,12 @@ class TestWarehouseValidateUnresolvableSource:
                 "    type: bar\n"
                 "    query: queries.a_broken\n"
                 "    x: nonexistent_col\n"
+                "    y: id\n"
                 "  other_chart:\n"
                 "    type: bar\n"
                 "    query: queries.z_unresolvable\n"
                 "    x: id\n"
+                "    y: id\n"
             ),
         )
         real_resolve = registry.resolve_query_source
@@ -370,6 +373,47 @@ class TestWarehouseValidateUnresolvableSource:
         codes = {e.code for e in r.errors}
         assert "ERR-WAREHOUSE-QUERY-INVALID" in codes, codes
         assert "ERR-NO-DEFAULT-SOURCE" in codes, codes
+
+
+def _postgres_registry() -> MagicMock:
+    """A registry whose mechanism is EXPLAIN: validity only, no result schema."""
+    from dbt_charts.core.compile.models.source import parse_source_config
+    from dbt_charts.core.execute.adapters.base import QueryResult
+
+    registry = MagicMock()
+    registry.resolve_query_source.return_value = parse_source_config(
+        {
+            "type": "postgres",
+            "host": "h",
+            "dbname": "d",
+            "user": "u",
+            "password": "p",
+        }
+    )
+    registry.execute.return_value = QueryResult(data=[{"QUERY PLAN": "Result"}])
+    return registry
+
+
+class TestWarehouseValidateExplainAdapter:
+    """A validity-only mechanism (EXPLAIN) warns about columns, not the query."""
+
+    def test_explain_valid_query_warns_column_check_unavailable(self, tmp_path):
+        """The query was ruled valid, so the shortfall is columns-only —
+        WARN-COLUMN-CHECK-UNAVAILABLE (as for BigQuery's schemaless
+        multi-statement dry run), not the nothing-looked-at-it warning."""
+        project, _ = _setup_duckdb_project(tmp_path, with_data=False)
+        r = _validate(tmp_path, project, _postgres_registry())
+        assert not r.errors, [e.model_dump() for e in r.errors]
+        warn_codes = {w.code for w in r.warnings}
+        assert "WARN-COLUMN-CHECK-UNAVAILABLE" in warn_codes
+        assert "WARN-WAREHOUSE-CHECK-UNAVAILABLE" not in warn_codes
+
+    def test_chart_column_refs_are_not_checked_without_a_schema(self, tmp_path):
+        """A chart naming a column EXPLAIN cannot see must not error — the
+        warning above is the whole answer, never a guessed mismatch."""
+        project, _ = _setup_duckdb_project(tmp_path, with_data=False)
+        r = _validate(tmp_path, project, _postgres_registry())
+        assert "ERR-CHART-COLUMN-NOT-IN-RESULT" not in {e.code for e in r.errors}
 
 
 class TestWarehouseValidateUncheckedAdapter:

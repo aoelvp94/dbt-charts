@@ -58,6 +58,22 @@ class TestFormatVariableDisplayValue:
         assert format_variable_display_value(var, None) == "All dates"
         assert format_variable_display_value(var, ["", ""]) == "All dates"
 
+    def test_daterange_empty_list_is_unset(self) -> None:
+        # A cleared date picker publishes [], the same wire form multiselect
+        # uses for unset — it must caption as unset, not raise while
+        # formatting the control's label.
+        var = Variable(input="daterange")
+        assert format_variable_display_value(var, []) == "All dates"
+
+    def test_daterange_blank_string_is_unset(self) -> None:
+        # Pins the other half of variable_value_is_absent: a hand-written
+        # `?date_range=` arrives as a bare "", not a list. Before this fix it
+        # raised ValueError("expects a 2-element list, got str") while
+        # captioning the control, killing the whole render. A narrowing that
+        # only checks container emptiness would restore that crash.
+        var = Variable(input="daterange")
+        assert format_variable_display_value(var, "") == "All dates"
+
     def test_daterange_unset_placeholder(self) -> None:
         var = Variable(input="daterange", placeholder="Any time")
         assert format_variable_display_value(var, ["", ""]) == "Any time"

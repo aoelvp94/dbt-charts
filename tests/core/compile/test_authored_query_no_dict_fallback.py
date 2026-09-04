@@ -61,14 +61,6 @@ def test_typo_values_query_rejects_at_parse_time() -> None:
     assert "rowss" in errors
 
 
-def test_typo_metricflow_query_rejects_at_parse_time() -> None:
-    """metricss: is not a known field on metricflow queries."""
-    result = compile(_board("    type: metricflow\n    metricss:\n      - revenue\n"))
-    assert not result.success
-    errors = " ".join(e.message for e in result.errors)
-    assert "metricss" in errors
-
-
 # ---------------------------------------------------------------------------
 # Valid subtype-specific fields that were missing from AuthoredQuery
 # (these were rejected before the fix due to missing fields in AuthoredQuery)

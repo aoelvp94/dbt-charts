@@ -599,6 +599,325 @@ class TestBarAutoMax:
         fracs = _bar_fractions(svg)
         assert fracs == [pytest.approx(0.1), pytest.approx(0.25), pytest.approx(1.0)]
 
+    def test_nan_cell_renders_nothing_and_does_not_corrupt_the_column(self) -> None:
+        """A NaN value must follow the same null rule as None: no spark rect,
+        and no contribution to the column's auto-max or has_negative scan —
+        not a full-extent bar painted as the column's most-negative value."""
+        chart = _make_chart(
+            style={
+                "columns": {
+                    "name": {},
+                    "val": {"spark": {"type": "bar"}},
+                }
+            }
+        )
+        data = [
+            {"name": "A", "val": float("nan")},
+            {"name": "B", "val": 20},
+            {"name": "C", "val": 40},
+        ]
+        svg = render_table_svg(
+            chart,
+            data,
+            board_style=resolve_style(get_theme_style()),
+        )
+        rects = _spark_group_rects(svg)
+        # NaN row renders no spark group; the two real rows scale normally
+        # against each other, unaffected by the NaN.
+        assert len(rects) == 2
+        assert rects[1]["width"] == pytest.approx(2 * rects[0]["width"], rel=0.01)
+
+
+def _spark_group_rects(svg: str) -> list[dict[str, float]]:
+    """First `<rect>` inside each spark `<g translate>` group, in row order."""
+    rects: list[dict[str, float]] = []
+    for g in re.findall(r'<g transform="translate[^"]+">.*?</g>', svg, re.DOTALL):
+        m = re.search(r"<rect[^/]*/>", g)
+        if m is None:
+            continue
+        attrs = dict(re.findall(r'(\w+)="(-?[\d.]+)"', m.group(0)))
+        rects.append({k: float(v) for k, v in attrs.items()})
+    return rects
+
+
+class TestBarSignedMidline:
+    """`type: bar` / `type: column` render negatives from a midline once the
+    table column actually contains one."""
+
+    def test_negative_value_falls_through_to_a_bar_not_text(self) -> None:
+        """The bug this fixes: -0.184 used to clamp to an empty bar and fall
+        through to the default text cell ('-184m'). It must render a rect
+        for every row, including the negative one."""
+        chart = _make_chart(
+            style={"columns": {"name": {}, "val": {"spark": {"type": "bar"}}}}
+        )
+        data = [{"name": "A", "val": -0.184}, {"name": "B", "val": 0.2}]
+        svg = render_table_svg(
+            chart, data, board_style=resolve_style(get_theme_style())
+        )
+        rects = _spark_group_rects(svg)
+        assert len(rects) == 2, (
+            f"expected a rect for every row including the negative one, got {rects}"
+        )
+
+    def test_negative_column_scales_by_magnitude_not_signed_max(self) -> None:
+        """auto-max must use the largest magnitude, not the largest signed
+        value — otherwise -100 would clamp against a smaller positive max
+        and lose its true extent."""
+        chart = _make_chart(
+            style={"columns": {"name": {}, "val": {"spark": {"type": "bar"}}}}
+        )
+        data = [{"name": "A", "val": -100}, {"name": "B", "val": 50}]
+        svg = render_table_svg(
+            chart, data, board_style=resolve_style(get_theme_style())
+        )
+        rects = _spark_group_rects(svg)
+        assert len(rects) == 2
+        # -100 is the largest magnitude: full half-width, twice the 50 row.
+        assert rects[0]["width"] == pytest.approx(2 * rects[1]["width"], rel=0.01)
+
+    def test_positive_and_negative_bars_anchor_at_the_same_midline(self) -> None:
+        chart = _make_chart(
+            style={"columns": {"name": {}, "val": {"spark": {"type": "bar"}}}}
+        )
+        data = [{"name": "A", "val": -10}, {"name": "B", "val": 10}]
+        svg = render_table_svg(
+            chart, data, board_style=resolve_style(get_theme_style())
+        )
+        rects = _spark_group_rects(svg)
+        assert len(rects) == 2
+        negative_row, positive_row = rects
+        # Negative bar ends where the positive bar starts: same midline.
+        assert negative_row["x"] + negative_row["width"] == pytest.approx(
+            positive_row["x"], abs=0.2
+        )
+
+    def test_all_positive_column_keeps_full_width_no_midline_halving(self) -> None:
+        """Regression: an all-positive `bar` column must not silently lose
+        half its width to a midline layout it never needed."""
+        chart = _make_chart(
+            style={"columns": {"name": {}, "val": {"spark": {"type": "bar"}}}}
+        )
+        data = [{"name": "A", "val": 10}, {"name": "B", "val": 100}]
+        svg = render_table_svg(
+            chart, data, board_style=resolve_style(get_theme_style())
+        )
+        fracs = _bar_fractions(svg)
+        assert fracs == [pytest.approx(0.1), pytest.approx(1.0)]
+        rects = _spark_group_rects(svg)
+        assert all(r["x"] == 0.0 for r in rects)
+
+    def test_column_type_negative_grows_downward_positive_grows_upward(self) -> None:
+        chart = _make_chart(
+            style={
+                "columns": {
+                    "name": {},
+                    "val": {"spark": {"type": "column", "max": 100}},
+                }
+            }
+        )
+        data = [{"name": "A", "val": -50}, {"name": "B", "val": 50}]
+        svg = render_table_svg(
+            chart, data, board_style=resolve_style(get_theme_style())
+        )
+        rects = _spark_group_rects(svg)
+        assert len(rects) == 2
+        negative_row, positive_row = rects
+        assert negative_row["y"] > positive_row["y"]
+
+    def test_single_negative_row_scales_to_full_half_width(self) -> None:
+        # Explicit width small enough to never get capped by the column-layout
+        # pass (which sizes the cell from the rendered text, so "-42" vs "42"
+        # would otherwise widen/narrow the two renders' columns differently
+        # and confound a cross-render width comparison).
+        chart = _make_chart(
+            style={
+                "columns": {"name": {}, "val": {"spark": {"type": "bar", "width": 40}}}
+            }
+        )
+        svg_negative = render_table_svg(
+            chart,
+            [{"name": "A", "val": -42}],
+            board_style=resolve_style(get_theme_style()),
+        )
+        svg_positive = render_table_svg(
+            chart,
+            [{"name": "A", "val": 42}],
+            board_style=resolve_style(get_theme_style()),
+        )
+        negative_rects = _spark_group_rects(svg_negative)
+        positive_rects = _spark_group_rects(svg_positive)
+        assert len(negative_rects) == 1
+        assert len(positive_rects) == 1
+        # -42 is the sole (and thus largest-magnitude) value: full half-width
+        # — exactly half the same value's all-positive, unsigned full-width bar.
+        assert negative_rects[0]["width"] == pytest.approx(
+            positive_rects[0]["width"] / 2, rel=0.02
+        )
+
+    def test_mixed_null_and_negative_uses_non_null_magnitude_max(self) -> None:
+        chart = _make_chart(
+            style={"columns": {"name": {}, "val": {"spark": {"type": "bar"}}}}
+        )
+        data = [
+            {"name": "A", "val": None},
+            {"name": "B", "val": -20},
+            {"name": "C", "val": 40},
+        ]
+        svg = render_table_svg(
+            chart, data, board_style=resolve_style(get_theme_style())
+        )
+        rects = _spark_group_rects(svg)
+        # Null row renders no spark group at all (existing contract).
+        assert len(rects) == 2
+        negative_row, positive_row = rects
+        # 40 is the largest magnitude: full half-width, twice the -20 row.
+        assert positive_row["width"] == pytest.approx(
+            2 * negative_row["width"], rel=0.01
+        )
+
+    def test_all_zero_column_no_bars_even_with_signed_support(self) -> None:
+        """Zero is not negative — stays on the existing all-zero no-bars
+        contract (`bar` draws no track)."""
+        chart = _make_chart(
+            style={"columns": {"name": {}, "val": {"spark": {"type": "bar"}}}}
+        )
+        data = [{"name": "A", "val": 0}, {"name": "B", "val": 0}]
+        svg = render_table_svg(
+            chart, data, board_style=resolve_style(get_theme_style())
+        )
+        assert _spark_group_rects(svg) == []
+
+    def test_authored_negative_color_paints_the_theme_negative_token(self) -> None:
+        """HIGH-5: negative_color has no test through the authored `spark:`
+        path — every existing test passes it as a direct renderer kwarg."""
+        board_style = resolve_style(get_theme_style())
+        chart = _make_chart(
+            style={
+                "columns": {
+                    "name": {},
+                    "val": {"spark": {"type": "bar", "negative_color": True}},
+                }
+            }
+        )
+        data = [{"name": "A", "val": -30}, {"name": "B", "val": 30}]
+        svg = render_table_svg(chart, data, board_style=board_style)
+        assert board_style.chart_defaults.tones.negative in svg
+
+
+class TestBarNormalizeExcludedFromSignedLayout:
+    """HIGH-3: `bar-normalize`'s background track is a fixed "% of max"
+    ruler — giving it signed/midline layout would halve the fill against an
+    unchanged track (50% would silently read as 25%). It must keep the
+    original clamp-to-zero behavior for negatives, table-wide."""
+
+    def test_negative_value_clamps_to_zero_not_a_midline_bar(self) -> None:
+        chart = _make_chart(
+            style={
+                "columns": {
+                    "name": {},
+                    "val": {"spark": {"type": "bar-normalize", "max": 100}},
+                }
+            }
+        )
+        data = [{"name": "A", "val": -30}, {"name": "B", "val": 50}]
+        svg = render_table_svg(
+            chart, data, board_style=resolve_style(get_theme_style())
+        )
+        widths = _bar_normalize_fractions(svg)
+        # -30 clamps to 0% (background track only, no fill) — not a
+        # midline-anchored fill at 15% (30/100 of the half-width).
+        assert widths == [0.0, pytest.approx(0.5)]
+
+
+class TestSignedLayoutScopedToFullDataset:
+    """HIGH-1: bar/column spark layout must come from the FULL dataset, not
+    whichever page is currently rendering, or the same value's bar anchor
+    and width flip between pages of one static-paginated table."""
+
+    def test_same_value_renders_identically_on_every_page(self) -> None:
+        chart = _make_chart(
+            style={
+                "columns": {"name": {}, "val": {"spark": {"type": "bar"}}},
+                "pagination": {"page_rows": 3},
+            }
+        )
+        # Page 1 (rows 0-2) is all-positive on its own; the negative only
+        # shows up on page 2. A per-page scan would render page 1's 30s at
+        # full (unsigned) width and page 2's 30 at half (signed) width.
+        data = [{"name": f"R{i}", "val": 30} for i in range(5)] + [
+            {"name": "R5", "val": -5}
+        ]
+        svg = render_table_svg(
+            chart, data, board_style=resolve_style(get_theme_style())
+        )
+        chunks = re.split(r'(?=<g class="dbt-table-page")', svg)
+        page1 = next(
+            c
+            for c in chunks
+            if c.startswith(
+                '<g class="dbt-table-page" data-dbt-table-page="_test" data-page="1"'
+            )
+        )
+        page2 = next(
+            c
+            for c in chunks
+            if c.startswith(
+                '<g class="dbt-table-page" data-dbt-table-page="_test" data-page="2"'
+            )
+        )
+        page1_rects = _spark_group_rects(page1)
+        page2_rects = _spark_group_rects(page2)
+        assert len(page1_rects) == 3
+        assert len(page2_rects) == 3
+        # Row 0 (page 1, val=30) and row 3 (page 2, val=30) must render the
+        # exact same width and x — both scaled/anchored against the full
+        # dataset's negative, not just their own page's rows.
+        assert page1_rects[0]["width"] == pytest.approx(page2_rects[0]["width"])
+        assert page1_rects[0]["x"] == pytest.approx(page2_rects[0]["x"])
+
+
+class TestSparkColumnLayoutExcludesSummaryRows:
+    """`_spark_column_layout`'s has_negative/auto-max scan must skip
+    summary/total rows, exactly like the sibling column-wide scan in
+    `_render_data_rows` (scale_rows) — a grand-total row's sign or
+    magnitude must never re-anchor or rescale the detail rows above it."""
+
+    def test_negative_total_row_does_not_flip_detail_rows_to_midline(self) -> None:
+        chart = _make_chart(
+            style={
+                "row": {"role": "r"},
+                "columns": {
+                    "name": {},
+                    "val": {"spark": {"type": "bar"}},
+                    "r": {"visible": False},
+                },
+            }
+        )
+        detail_only = [
+            {"name": "A", "val": 50, "r": "value"},
+            {"name": "B", "val": 100, "r": "value"},
+        ]
+        with_negative_total = detail_only + [{"name": "Total", "val": -5, "r": "total"}]
+
+        svg_baseline = render_table_svg(
+            chart, detail_only, board_style=resolve_style(get_theme_style())
+        )
+        svg_with_total = render_table_svg(
+            chart, with_negative_total, board_style=resolve_style(get_theme_style())
+        )
+
+        baseline_rects = _spark_group_rects(svg_baseline)
+        with_total_rects = _spark_group_rects(svg_with_total)
+
+        # The two detail rows must render identically whether or not a
+        # negative total row follows them — edge-anchored, full magnitude
+        # width — not midline-anchored/halved by a total row's sign.
+        assert with_total_rects[0] == baseline_rects[0]
+        assert with_total_rects[1] == baseline_rects[1]
+        assert with_total_rects[0]["x"] == 0.0
+        assert with_total_rects[1]["x"] == 0.0
+
 
 class TestBarSparkDashboard842Style:
     """Regression: dashboard 842 emits spark on 3 columns in a 12-column table

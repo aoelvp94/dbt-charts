@@ -62,7 +62,7 @@ WARN_PARSE_ERROR = REGISTRY.register(
         ),
         doc=(
             "Fires when a SQL query cannot be parsed as a structured AST. The "
-            "query may still execute against the warehouse — this warning "
+            "query may still execute against the warehouse; this warning "
             "surfaces that semantic validation (fanout, reaggregation) cannot "
             "run on unparseable SQL. Emitted by `compile()` for authored "
             "queries whose dialect resolves and whose failure carries a "
@@ -91,7 +91,7 @@ WARN_REAGGREGATION = REGISTRY.register(
             "Looker's symmetric aggregate is exempt. Migrated Looker queries read a "
             "measure across a fan-out join by packing it with a hash of the dedup "
             "key, `SUM(DISTINCT ...)`-ing so duplicate keys collapse, then "
-            "subtracting a second `SUM(DISTINCT hash-only)` — an identity over a "
+            "subtracting a second `SUM(DISTINCT hash-only)`: an identity over a "
             "per-key value, not a second aggregation. Both halves of that "
             "subtraction must be present for the exemption to apply, so a plain "
             "`SUM(DISTINCT already_summed_column)` still warns."

@@ -7,7 +7,7 @@
 # zero unresolved tokens appear in the HTML output.
 
 title: "Palette Reference (Token Resolution Showcase)"
-description: |
+notes: |
   Live dbt charts palette reference using cell-background conditional formatting.
   Each swatch is painted by a palette token (e.g. dbt-creams.canvas)
   resolved at compile time — demonstrating and regression-testing the

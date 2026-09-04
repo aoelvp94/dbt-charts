@@ -27,15 +27,23 @@ from dbt_charts.core.compile import compile_file
 from dbt_charts.core.compile.config import (
     get_default_theme_name,
     get_theme_style,
-    list_built_in_themes,
+    user_facing_theme_names,
 )
 
 
 def _non_default_themes() -> list[str]:
-    """Return complete (loadable) built-in themes that are not the default."""
+    """Return complete (loadable), author-facing built-in themes that are not
+    the default.
+
+    Uses ``user_facing_theme_names()``, not ``list_built_in_themes()`` — the
+    latter includes ``_base`` and the diagnostics-only fixtures, which
+    extend the structural root without overriding fields like
+    ``background``, so two of them can collide on every field this test
+    diffs on.
+    """
     default = get_default_theme_name()
     result = []
-    for t in list_built_in_themes():
+    for t in user_facing_theme_names():
         if t == default:
             continue
         try:

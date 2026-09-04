@@ -86,8 +86,6 @@ def _style_with(**overrides):
                 summary_updates["font"] = tc.row.roles.summary.font.model_copy(
                     update={"weight": value}
                 )
-        elif key == "border_color":
-            table_updates["border"] = tc.border.model_copy(update={"color": value})
         elif key == "background":
             table_updates["background"] = value
         elif key == "color":

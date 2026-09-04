@@ -24,6 +24,7 @@ from dbt_charts.core.compile.models.primitives import (
 )
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _CartesianChartStyle,
+    _QuantitativeAxisChartStyleMixin,
 )
 from dbt_charts.core.compile.models.style.theme.marks import (
     BarMarkStyle,
@@ -54,7 +55,7 @@ class BarLayerStyle(BaseModel):
     marks: BarChartMarksStyle = Field(description="Mark overrides for this bar layer.")
 
 
-class BarChartStyle(_CartesianChartStyle):
+class BarChartStyle(_CartesianChartStyle, _QuantitativeAxisChartStyleMixin):
     """Bar chart style: chart-level fields + marks sub-block."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -62,7 +63,10 @@ class BarChartStyle(_CartesianChartStyle):
     # Cascade-managed sentinels — None means "not overridden at this tier".
     orientation: Literal["horizontal", "vertical", "auto"] | None = Field(
         default=None,
-        description="Preferred bar orientation; None uses the renderer default (vertical).",
+        description=(
+            "Preferred bar orientation; None uses the renderer default "
+            "(vertical). Never remaps x/y."
+        ),
     )
     # Stack default for the bar family. ``"none"`` renders grouped (side-by-side)
     # columns when a color channel is present; other modes are passed through to VL.
@@ -80,7 +84,7 @@ class BarChartStyle(_CartesianChartStyle):
             "(bars touch), 'partial' (25% overlap), 'full' (bars coincide). Or a "
             "number as a fraction of bar width: >0 overlaps, 0 touches, <0 gaps; "
             "1 is the maximum (bars fully coincide, same as 'full') and values "
-            "above 1 are clamped to 1 — bars never cross past each other. None "
+            "above 1 are clamped to 1; bars never cross past each other. None "
             "uses the renderer default ('auto'). Only applies to grouped bars; "
             "setting it together with an active stack mode is an error."
         ),

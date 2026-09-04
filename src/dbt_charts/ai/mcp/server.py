@@ -41,25 +41,25 @@ _BASE_RESOURCES = [
     (
         "dct://docs/all",
         "text/markdown",
-        "Dataface YAML Reference (full)",
+        "dbt charts YAML Reference (full)",
         "Complete YAML syntax reference — same content as `dct docs all`",
     ),
     (
         "dct://docs/reference",
         "text/markdown",
-        "Dataface YAML Field Reference (generated)",
+        "dbt charts YAML Field Reference (generated)",
         "Auto-generated field-level spec for every YAML field. Regenerate with the repo's `gen-references`/`gen-yaml-reference` recipe.",
     ),
     (
         "dct://docs/error-reference",
         "text/markdown",
-        "Dataface Error Reference (generated)",
+        "dbt charts Error Reference (generated)",
         "Auto-generated reference of every ERR-* error code.",
     ),
     (
         "dct://docs/warning-reference",
         "text/markdown",
-        "Dataface Warning Reference (generated)",
+        "dbt charts Warning Reference (generated)",
         "Auto-generated reference of every WARN-* warning code.",
     ),
     (
@@ -84,7 +84,7 @@ _BASE_RESOURCES = [
         "dct://guide/board-review",
         "text/markdown",
         "Dashboard Review",
-        "Primary review skill for a Dataface board — runs structural review (YAML + dct validate) and visual review (PNG + vision-model evaluation), synthesizes a ranked findings list.",
+        "Primary review skill for a dbt charts board — runs structural review (YAML + dct validate) and visual review (PNG + vision-model evaluation), synthesizes a ranked findings list.",
     ),
 ]
 
@@ -97,7 +97,7 @@ def _docs_topic_resources() -> list[tuple[str, str, str, str]]:
         (
             f"dct://docs/{entry.id}",
             "text/markdown",
-            f"Dataface YAML Reference — {entry.title}",
+            f"dbt charts YAML Reference — {entry.title}",
             entry.description or f"`dct docs {entry.id}` section",
         )
         for entry in docs_verb().topics
@@ -205,7 +205,7 @@ def create_server(context: DbtChartsAIContext) -> Any:
             ),
             ResourceTemplate(
                 uriTemplate="dct://docs/{topic}",
-                name="Dataface YAML Reference Section",
+                name="dbt charts YAML Reference Section",
                 description="One H2 section of DBT_CHARTS_SYNTAX.md (e.g. board, charts, cheatsheet, all)",
                 mimeType="text/markdown",
             ),

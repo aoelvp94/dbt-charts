@@ -105,37 +105,50 @@ def test_all_built_in_themes_resolve_tooltip_shadow(compiled_themes):
     assert not errors, "Themes missing tooltip.shadow.visible:\n" + "\n".join(errors)
 
 
-def test_stark_resolves_triangle_marker_other_themes_resolve_fill(compiled_themes):
-    """stark's tooltip active_marker is 'triangle'; every other production theme 'fill'.
+def test_structural_root_resolves_triangle_marker_other_themes_resolve_fill(
+    compiled_themes,
+):
+    """stark's tooltip active_marker is 'triangle'; every descendant theme 'fill'.
 
-    stark is the structural root every other built-in theme extends transitively,
+    stark is the structural root every built-in theme extends transitively,
     so this also guards the leak: descendants must override, not inherit, the
-    'triangle' stark sets for itself.
+    'triangle' stark sets for itself. stark itself is excluded from the
+    comparison loop below -- it is the baseline being compared against, not
+    a descendant expected to override it.
     """
+    from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
+
+    stark_marker = resolve_chart_style_context(
+        get_theme_style("stark")
+    ).tooltip.active_marker
+    assert stark_marker == "triangle"
 
     errors: list[str] = []
     for name, style in compiled_themes.items():
-        expected = "triangle" if name == "stark" else "fill"
+        if name == "stark":
+            continue
         actual = resolve_chart_style_context(style).tooltip.active_marker
-        if actual != expected:
-            errors.append(
-                f"{name}: expected active_marker={expected!r}, got {actual!r}"
-            )
+        if actual != "fill":
+            errors.append(f"{name}: expected active_marker='fill', got {actual!r}")
     assert not errors, "\n".join(errors)
 
 
-def test_descendant_themes_do_not_leak_stark_tooltip_box_overrides(compiled_themes):
-    """editorial/cream/vivid/neon/plain must not inherit stark's sharp/thin-shadow-off box.
+def test_descendant_themes_do_not_leak_structural_root_tooltip_box_overrides(
+    compiled_themes,
+):
+    """clarity/paper/vivid/neon must not inherit stark's sharp/thin-shadow-off box.
 
-    stark (the structural root) sets border.width=1.5, shadow.visible=False, and
-    swatch.radius=0 for its own utilitarian look. Every descendant that keeps a
-    soft tooltip must explicitly reset these -- otherwise they leak down the
-    cascade silently.
+    stark sets border.width=1.5, shadow.visible=False, and swatch.radius=0
+    for its own utilitarian look (and is excluded from the comparison loop
+    below -- it is the baseline, not a descendant). Every descendant that
+    keeps a soft tooltip must explicitly reset these -- otherwise they leak
+    down the cascade silently.
     """
+    from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
-    stark_tooltip = resolve_chart_style_context(compiled_themes["stark"]).tooltip
+    stark_tooltip = resolve_chart_style_context(get_theme_style("stark")).tooltip
     errors: list[str] = []
     for name, style in compiled_themes.items():
         if name == "stark":

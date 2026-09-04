@@ -30,17 +30,23 @@ from dbt_charts.core.diagnostics.diagnostic import Diagnostic
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.project import InMemoryBoard
 
+# `segment` exists so a rows+columns test can build a real 2-D grid. Facing the
+# same field on both axes only fills the diagonal and is refused at compile, and
+# facing a field that is also an encoding is reported as redundant — neither is
+# the shape these tests are about.
 _ROWS = [
-    {"month": "2025-01", "region": "North", "revenue": 100},
-    {"month": "2025-02", "region": "North", "revenue": 140},
-    {"month": "2025-01", "region": "South", "revenue": 80},
-    {"month": "2025-02", "region": "South", "revenue": 120},
+    {"month": "2025-01", "region": "North", "segment": "SMB", "revenue": 100},
+    {"month": "2025-02", "region": "North", "segment": "Ent", "revenue": 140},
+    {"month": "2025-01", "region": "South", "segment": "SMB", "revenue": 80},
+    {"month": "2025-02", "region": "South", "segment": "Ent", "revenue": 120},
 ]
 
 
 def _values_query() -> str:
-    columns = json.dumps(["month", "region", "revenue"])
-    values = json.dumps([[r["month"], r["region"], r["revenue"]] for r in _ROWS])
+    columns = json.dumps(["month", "region", "segment", "revenue"])
+    values = json.dumps(
+        [[r["month"], r["region"], r["segment"], r["revenue"]] for r in _ROWS]
+    )
     return f"columns: {columns}\n    values: {values}"
 
 
@@ -112,7 +118,7 @@ class TestAuthoredEndpointLabelsCollision:
         self, tmp_path: Path
     ) -> None:
         result = self._render_multiples(
-            tmp_path, "line", {"rows": "region", "columns": "region"}
+            tmp_path, "line", {"rows": "region", "columns": "segment"}
         )
         diagnostic = _diagnostic(result)
         assert diagnostic.code == "ERR-MULTIPLES-ENDPOINT-LABELS"
@@ -169,17 +175,19 @@ class TestSiblingRestrictionsAlsoTyped:
     touch had the identical defect (a bare raise stamping ERR-INTERNAL) — same
     fix, same test shape."""
 
-    def test_multiples_plus_data_table_raises_typed_code(self, tmp_path: Path) -> None:
+    def test_multiples_plus_support_table_raises_typed_code(
+        self, tmp_path: Path
+    ) -> None:
         result = _render(
             tmp_path,
             "bar",
             {
                 "multiples": {"rows": "region"},
-                "data_table": {"entries": [{"source": "revenue"}]},
+                "support_table": {"entries": [{"source": "revenue"}]},
             },
         )
         diagnostic = _diagnostic(result)
-        assert diagnostic.code == "ERR-MULTIPLES-DATA-TABLE"
+        assert diagnostic.code == "ERR-MULTIPLES-SUPPORT-TABLE"
 
     def test_multiples_independent_scale_plus_mirror_raises_typed_code(
         self, tmp_path: Path

@@ -41,10 +41,10 @@ body:
   - type: textarea
     id: repro
     attributes:
-      label: Standalone reproduction (face YAML)
+      label: Standalone reproduction (board YAML)
       description: |
         dbt-charts is a visual, YAML-driven tool — we can't reproduce a
-        rendering bug without seeing the actual face. Use inline `values:`
+        rendering bug without seeing the actual board. Use inline `values:`
         data instead of a live database connection so this runs with
         `dct render` on its own, no warehouse access needed. Replace the
         data/chart below with whatever reproduces the bug.

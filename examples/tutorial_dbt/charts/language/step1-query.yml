@@ -1,0 +1,17 @@
+title: Revenue by month
+source: dbt_charts_examples
+
+style:
+  background: '#FFFFFF'
+
+queries:
+  revenue: |
+    SELECT DATE_TRUNC('month', order_date) AS month,
+           SUM(revenue) AS revenue
+    FROM fct_orders
+    GROUP BY 1 ORDER BY 1 LIMIT 6
+
+charts:
+  revenue:
+    query: queries.revenue
+    type: table

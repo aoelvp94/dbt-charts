@@ -28,22 +28,22 @@ _MONO_QUOTED = f"'{NOTO_EMOJI_FONT_FAMILY}'"
 
 
 class TestDefaultIsMonochrome:
-    def test_dataface_default_compiled_emoji_mode(self) -> None:
-        compiled = get_theme_style("editorial")
+    def test_dbt_charts_default_compiled_emoji_mode(self) -> None:
+        compiled = get_theme_style("clarity")
         assert compiled.font.emoji == "monochrome"
 
-    def test_dataface_default_resolved_root_font_has_noto_emoji(self) -> None:
-        compiled = get_theme_style("editorial")
+    def test_dbt_charts_default_resolved_root_font_has_noto_emoji(self) -> None:
+        compiled = get_theme_style("clarity")
         resolved = resolve_style(compiled)
         assert _MONO_QUOTED in resolved.font.family
 
     def test_editorial_cream_resolved_title_font_has_noto_emoji(self) -> None:
-        compiled = get_theme_style("cream")
+        compiled = get_theme_style("paper")
         resolved = resolve_style(compiled)
         assert _MONO_QUOTED in resolved.title.font.family
 
     def test_editorial_cream_source_serif_4_is_primary(self) -> None:
-        compiled = get_theme_style("cream")
+        compiled = get_theme_style("paper")
         resolved = resolve_style(compiled)
         family = resolved.title.font.family
         serif_pos = family.find("Source Serif 4")
@@ -55,7 +55,7 @@ class TestDefaultIsMonochrome:
 
 class TestSystemDefaultMode:
     def _with_emoji(self, mode: str):
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         return compiled.model_copy(
             deep=True,
             update={"font": compiled.font.model_copy(update={"emoji": mode})},
@@ -67,7 +67,7 @@ class TestSystemDefaultMode:
         assert NOTO_EMOJI_FONT_FAMILY not in resolved.font.family
 
     def test_system_default_removes_bundled_emoji_from_title(self) -> None:
-        compiled = get_theme_style("cream")
+        compiled = get_theme_style("paper")
         with_sd = compiled.model_copy(
             deep=True,
             update={
@@ -80,7 +80,7 @@ class TestSystemDefaultMode:
 
 class TestDisabledMode:
     def _with_emoji(self, mode: str):
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         return compiled.model_copy(
             deep=True,
             update={"font": compiled.font.model_copy(update={"emoji": mode})},
@@ -99,7 +99,7 @@ class TestHelpersModeAware:
         import sys
 
         _cfg_mod = sys.modules["dbt_charts.core.compile.config"]
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         patched_compiled = compiled.model_copy(
             deep=True,
             update={"font": compiled.font.model_copy(update={"emoji": mode})},
@@ -115,7 +115,7 @@ class TestHelpersModeAware:
         )
 
     def _resolved_charts(self, mode: str):
-        compiled = get_theme_style("editorial")
+        compiled = get_theme_style("clarity")
         patched = compiled.model_copy(
             deep=True,
             update={"font": compiled.font.model_copy(update={"emoji": mode})},

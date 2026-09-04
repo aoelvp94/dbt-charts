@@ -1,4 +1,4 @@
-"""SQL statement-type guard for dft-core.
+"""SQL statement-type guard for dbt_charts.core.
 
 Two public validators (plus `build_skeleton`, the Jinja skeletonizer they
 share with `core/inspect/relations.py`):
@@ -42,9 +42,14 @@ from dbt_charts.core.diagnostics.execution import (
     UnparseableSqlError,
 )
 
+# The identifier prefix build_skeleton splices in place of `{{ expr }}`.
+# Consumers detecting templated identifiers must match on this constant — a
+# hand-copied spelling silently disables their guards when this changes.
+SKELETON_PLACEHOLDER_PREFIX = "__dct_j"
+
 
 def sqlglot_dialect(dialect: str | None) -> str | None:
-    """Translate a Dataface dialect name to the sqlglot equivalent.
+    """Translate a dbt charts dialect name to the sqlglot equivalent.
 
     sqlglot knows 'tsql' (not 'sqlserver'/'mssql') and 'mysql' (not 'mariadb').
     Returns None unchanged (sqlglot default dialect).
@@ -175,7 +180,7 @@ def _walk_jinja(
             if isinstance(child, jinja2.nodes.TemplateData):
                 out.append(child.data)
             else:
-                out.append(f"__dft_j{counter[0]}__")
+                out.append(f"{SKELETON_PLACEHOLDER_PREFIX}{counter[0]}__")
                 counter[0] += 1
 
     elif isinstance(node, jinja2.nodes.If):

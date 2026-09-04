@@ -745,12 +745,12 @@ def test_hconcat_title_limit_loses_both_root_paddings(
 
 def test_render_chart_png_respects_requested_dimensions() -> None:
     """Direct chart PNG export should match the requested width and height."""
-    from dbt_charts import compile as compile_dataface
+    from dbt_charts import compile as compile_dbt_charts
     from dbt_charts.core.compile.config import reset_config
     from dbt_charts.core.render.chart.vega_lite import render_chart
 
     reset_config()
-    result = compile_dataface(
+    result = compile_dbt_charts(
         """
 queries:
   q:
@@ -806,3 +806,134 @@ rows:
     assert 'height="320"' in svg
     image = Image.open(io.BytesIO(png))
     assert image.size == (600, 320)
+
+
+# panel_cols and panel_rows are deliberately different so that swapping the two
+# divisors in _correct_facet_overshoot fails this test in either direction.
+_FACET_COLS = 3
+_FACET_ROWS = 4
+
+
+@pytest.mark.parametrize(
+    (
+        "target_width",
+        "target_height",
+        "probe_width",
+        "probe_height",
+        "want_width",
+        "want_height",
+    ),
+    [
+        # Width only: overshoot 90 over 3 columns -> 30px off each panel.
+        pytest.param(600.0, None, 690.0, 200.0, 130.0, 200.0, id="width"),
+        # Height only: overshoot 80 over 4 rows -> 20px off each panel.
+        pytest.param(None, 400.0, 600.0, 480.0, 160.0, 180.0, id="height"),
+        # Both axes correct independently in a single probe.
+        pytest.param(600.0, 400.0, 690.0, 480.0, 130.0, 180.0, id="both"),
+    ],
+)
+def test_correct_facet_overshoot_shrinks_panels_per_axis(
+    target_width: float | None,
+    target_height: float | None,
+    probe_width: float,
+    probe_height: float,
+    want_width: float,
+    want_height: float,
+) -> None:
+    """Each axis divides its own overshoot by its own panel count.
+
+    vl-convert never reflows facet panels under autosize:fit, so decorations —
+    a legend, a mirrored ghost axis, a facet header title — paint at their real
+    measured size regardless of the declared per-panel size. The probe measures
+    the true composite extent and every panel gives up an equal share of the
+    overshoot: width over ``panel_cols``, height over ``panel_rows``.
+    """
+    from dbt_charts.core.render.converters import chart as chart_converter
+
+    unit = {"width": 160.0, "height": 200.0}
+    spec = {"facet": {"column": {"field": "series"}}, "spec": unit}
+
+    def fake_vegalite_to_scenegraph(s: object) -> dict:
+        return {"width": probe_width, "height": probe_height, "origin": [0, 0]}
+
+    fake_vlc = types.SimpleNamespace(vegalite_to_scenegraph=fake_vegalite_to_scenegraph)
+
+    chart_converter._correct_facet_overshoot(
+        spec, target_width, target_height, fake_vlc, _FACET_COLS, _FACET_ROWS
+    )
+
+    assert unit["width"] == pytest.approx(want_width)
+    assert unit["height"] == pytest.approx(want_height)
+
+
+def test_correct_facet_overshoot_runs_through_render_vega_spec(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """render_vega_spec reads the facet sentinels and applies the correction.
+
+    Pins the wiring, not just the helper: the sentinels must survive the pop in
+    render_vega_spec and reach _correct_facet_overshoot with their values intact.
+    """
+    from dbt_charts.core.render.converters import chart as chart_converter
+
+    unit = {"width": 160.0, "height": 200.0}
+    spec = {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "$df_target_width": 600.0,
+        "$df_facet_panel_cols": _FACET_COLS,
+        "$df_facet_panel_rows": _FACET_ROWS,
+        "facet": {"column": {"field": "series"}},
+        "spec": unit,
+    }
+    real_svg = '<svg width="600.0" height="200"></svg>'
+    probe_calls = 0
+
+    def fake_vegalite_to_scenegraph(s: object) -> dict:
+        nonlocal probe_calls
+        probe_calls += 1
+        return {"width": 690.0, "height": 200.0, "origin": [0, 0]}
+
+    fake_vlc = types.SimpleNamespace(
+        vegalite_to_scenegraph=fake_vegalite_to_scenegraph,
+        vegalite_to_svg=mock.Mock(return_value=real_svg),
+    )
+    monkeypatch.setitem(sys.modules, "vl_convert", fake_vlc)
+    monkeypatch.setattr(
+        chart_converter, "register_vl_convert_fonts", _noop_register_fonts
+    )
+
+    result = chart_converter.render_vega_spec(
+        spec, "svg", resolve_style(get_theme_style()), 600.0, 200, False, "chart"
+    )
+
+    assert probe_calls == 1
+    assert unit["width"] == pytest.approx(130.0)
+    # The sentinels must not survive into the spec handed to vl-convert.
+    assert not [k for k in spec if k.startswith("$df_")]
+    assert real_svg in result
+
+
+def test_correct_facet_overshoot_skips_nonpositive_shrink() -> None:
+    """A shrink that would zero out a panel is skipped, not raised.
+
+    Unlike concat's fixed-width label pane, a facet panel can legitimately run
+    out of room for a very large decoration — WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM
+    already advises on that, so the card boundary still wins and the panel keeps
+    its declared width rather than going non-positive.
+    """
+    from dbt_charts.core.render.converters import chart as chart_converter
+
+    unit = {"width": 50.0, "height": 200.0}
+    spec = {"facet": {"column": {"field": "series"}}, "spec": unit}
+
+    def fake_vegalite_to_scenegraph(s: object) -> dict:
+        # per-column share (1200/3 = 400) far exceeds the 50px panel width
+        return {"width": 1800.0, "height": 200.0, "origin": [0, 0]}
+
+    fake_vlc = types.SimpleNamespace(vegalite_to_scenegraph=fake_vegalite_to_scenegraph)
+
+    chart_converter._correct_facet_overshoot(
+        spec, 600.0, None, fake_vlc, _FACET_COLS, _FACET_ROWS
+    )
+
+    assert unit["width"] == 50.0

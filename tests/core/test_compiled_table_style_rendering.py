@@ -27,8 +27,6 @@ def test_resolved_charts_table_has_nested_fields():
     assert tc.font.size is not None
     assert tc.header.font.size is not None
     assert tc.row.height is not None
-    # border.color comes from chart_defaults.yml, None when using bare get_theme_style().model_copy(deep=True)
-    assert isinstance(tc.border.color, (str, type(None)))
 
 
 def test_render_table_svg_uses_compiled_table_style_font_size():
@@ -161,7 +159,7 @@ def test_calculate_data_aware_layout_uses_board_width_without_charts():
             board, executor, {}, render_first=False, pre_resolved={}
         )
 
-    assert result_board.layout.width == resolved.frame.width
+    assert result_board.layout.width == resolved.frame.max_width
 
 
 def _make_chart(style=None):

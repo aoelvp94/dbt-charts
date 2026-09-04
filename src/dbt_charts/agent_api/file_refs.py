@@ -1,4 +1,4 @@
-"""File-ref expansion for Dataface agent surfaces.
+"""File-ref expansion for dbt charts agent surfaces.
 
 Scans a prompt for @<path> tokens and inlines matching file contents.
 Reusable from any surface: CLI, Cloud chat, AI tools, IDE clients.

@@ -18,6 +18,13 @@ Time-format slots (axis ticks, table columns — anywhere a date-typed column
 value might render) additionally accept a strftime-style spec (``%b %Y``):
 an author may write the strftime form directly rather than through a predefined
 alias (``date_short``).
+
+A slot that knows its own kind — ``number_format`` feeds a quantitative axis,
+``time_format`` a temporal one — accepts only that half of the predefined
+vocabulary; the other half raises ``ERR-FORMAT-KIND-MISMATCH``. The kind is read
+off the field's ``Format`` facet rather than its name, so it travels with the
+field. User ``style.formats`` aliases are exempt: the engine cannot know which
+kind a user's alias targets, so they stay legal in every slot.
 """
 
 from __future__ import annotations
@@ -30,9 +37,11 @@ from d3_format import parse as _d3_parse
 from d3_format.errors import D3FormatError
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.board.normalized import Board
+from dbt_charts.core.compile.models.markers import Format
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_INVALID,
+    ERR_FORMAT_KIND_MISMATCH,
     ERR_FORMAT_NATIVE_IN_VEGA_SLOT,
     ERR_FORMAT_PREDEFINED_SHADOW,
 )
@@ -40,6 +49,8 @@ from dbt_charts.core.text.format_d3 import is_time_format
 from dbt_charts.core.text.predefined_formats import (
     ALL_PREDEFINED_NAMES,
     PREDEFINED_NATIVE_NAMES,
+    PREDEFINED_NUMBER_NAMES,
+    PREDEFINED_TIME_NAMES,
 )
 
 # Field names that hold an authored format spec. Every current format field is
@@ -71,6 +82,27 @@ _TIME_CAPABLE_FIELDS = frozenset(
     }
 )
 
+# Per slot kind: the predefined names it accepts, and the sentence naming what
+# else is legal there. "any" is absent on purpose -- a missing entry means no
+# narrowing, which is what a kind-agnostic `format:` slot wants.
+#
+# The escape-hatch sentence is kind-specific because the generic one was wrong
+# half the time: a raw d3 *number* spec is exactly what must not reach a
+# temporal axis, so telling a `time_format` author "a raw d3 spec works too"
+# reproduces the defect this error exists to reject.
+_KIND_RULES: dict[str, tuple[frozenset[str], str]] = {
+    "number": (
+        PREDEFINED_NUMBER_NAMES,
+        "A raw d3 number spec (e.g. ',.0f') or a `style.formats` alias of your "
+        "own works here too.",
+    ),
+    "time": (
+        PREDEFINED_TIME_NAMES,
+        "A strftime spec (e.g. '%b %Y') or a `style.formats` alias of your own "
+        "works here too.",
+    ),
+}
+
 # Field names whose child format slots are rendered by Vega (not Python).
 # PREDEFINED_NATIVE members bypass d3 and have no Vega equivalent; they are
 # rejected here so the author gets a compile error rather than a Vega crash.
@@ -88,15 +120,29 @@ _VEGA_PAINTED_PARENTS = frozenset(
         "total_label",  # BarTotalLabelStyle: bar stack total label
         "total",  # ChartTotal: donut center total (pie.py → Vega text-mark encoding)
         "tooltip",  # TooltipStyle: Vega-Lite tooltip format across all chart families
-        "data_table",  # ChartDataTableSource/Aggregate/PerSeries: _vl_format_calc emits into Vega calculate transform
+        "support_table",  # ChartSupportTableSource/Aggregate/PerSeries: _vl_format_calc emits into Vega calculate transform
     }
 )
 
 
+def _slot_kind(model: type[BaseModel], name: str) -> str:
+    """The declared kind of one format slot: "number", "time", or "any".
+
+    Read from the field's ``Format`` facet, which ``build_patch_model_ext``
+    forwards onto every generated patch model — so a chart's authored
+    ``BarChartStylePatch.time_format`` answers the same as the theme field it
+    was generated from.
+    """
+    for meta in model.model_fields[name].metadata:
+        if isinstance(meta, Format):
+            return meta.kind
+    return "any"
+
+
 def _iter_format_slots(
     node: object, path: str, time_capable: bool, vega_painted: bool = False
-) -> Iterator[tuple[str, str | FormatConfig, bool, bool]]:
-    """Yield (field_path, spec, time_capable, vega_painted) for every format slot under ``node``."""
+) -> Iterator[tuple[str, str | FormatConfig, bool, bool, str]]:
+    """Yield (field_path, spec, time_capable, vega_painted, kind) per format slot."""
     if isinstance(node, BaseModel):
         for name in type(node).model_fields:
             if name == "query":  # SQL text and source/cache config, no format slots
@@ -112,7 +158,7 @@ def _iter_format_slots(
                 # into axis.labels.format via the Layer-10 merge in axis_cascade.py
                 # and are rendered by Vega, never by Python renderers.
                 slot_vega = child_vega or name in ("number_format", "time_format")
-                yield child, value, child_time, slot_vega
+                yield child, value, child_time, slot_vega, _slot_kind(type(node), name)
             else:
                 yield from _iter_format_slots(value, child, child_time, child_vega)
     elif isinstance(node, dict):
@@ -134,13 +180,14 @@ def _validate_spec(
     time_format: bool,
     allow_predefined: bool = True,
     vega_painted: bool = False,
+    kind: str = "any",
 ) -> None:
     """Raise if ``value`` resolves to an unusable spec.
 
     Also called from ``_validate_board`` on the four global theme-resolved
     axis slots (``charts.axis``/``axis_x``/``axis_y``/``axis_quantitative``)
     to catch a theme-baked default (e.g.
-    ``axis_quantitative.labels.format == "number_default"``) whose alias no
+    ``axis_quantitative.labels.format == "number"``) whose alias no
     longer resolves -- a board that clears ``style.formats`` to ``null`` is
     valid, compile()-accepted authoring (``formats`` merges key-wise;
     explicitly nulling it is the one way to drop an inherited key), but it
@@ -153,14 +200,22 @@ def _validate_spec(
     render with ERR-INTERNAL.
 
     ``vega_painted=True`` is passed for slots rendered by Vega (axis labels,
-    mark value labels, ``number_format``, ``time_format``, ``data_table``).
+    mark value labels, ``number_format``, ``time_format``, ``support_table``).
     PREDEFINED_NATIVE members bypass d3 entirely and have no Vega equivalent;
     they are rejected here so the author gets ERR-FORMAT-NATIVE-IN-VEGA-SLOT
     rather than a Vega runtime crash.
+
+    ``kind`` is the slot's own half of the vocabulary (``"number"`` for
+    ``number_format``, ``"time"`` for ``time_format``, ``"any"`` everywhere
+    else). A predefined name from the other half raises
+    ERR-FORMAT-KIND-MISMATCH: ``time_format: currency`` resolves to ``$,.2f``,
+    which Vega bakes onto a temporal axis as garbage tick labels rather than
+    failing.
     """
     spec = value.spec if isinstance(value, FormatConfig) else value
     if not spec:
         return
+    rule = _KIND_RULES.get(kind)
     if allow_predefined and spec in ALL_PREDEFINED_NAMES:
         if vega_painted and spec in PREDEFINED_NATIVE_NAMES:
             raise CompilationError.from_code(
@@ -168,6 +223,15 @@ def _validate_spec(
                 spec=spec,
                 field_path=field_path,
                 available=sorted(ALL_PREDEFINED_NAMES - PREDEFINED_NATIVE_NAMES),
+            )
+        if rule is not None and spec not in rule[0]:
+            raise CompilationError.from_code(
+                ERR_FORMAT_KIND_MISMATCH,
+                spec=spec,
+                field_path=field_path,
+                kind=kind,
+                available=sorted(rule[0] - PREDEFINED_NATIVE_NAMES),
+                escape_hatch=rule[1],
             )
         return
     if spec in formats:
@@ -180,10 +244,13 @@ def _validate_spec(
         # Alias targets must be valid d3 specs; predefined names are not valid
         # d3 specs and are already excluded. Including them in available would
         # produce "Did you mean 'currency'?" when rejecting "currency" as a target.
+        # Scoped to the slot's own half: suggesting `currency` for `currencyy`
+        # in a `time_format` would hand the author the very value the kind check
+        # rejects one compile later.
         available = (
             sorted(formats)
             if not allow_predefined
-            else sorted({*formats, *ALL_PREDEFINED_NAMES})
+            else sorted({*formats, *(rule[0] if rule else ALL_PREDEFINED_NAMES)})
         )
         raise CompilationError.from_code(
             ERR_FORMAT_INVALID,
@@ -236,7 +303,7 @@ def _validate_board(board: Board, validated: set[int]) -> None:
             target, {}, f"style.formats.{alias}", True, allow_predefined=False
         )
     # Theme-baked axis format defaults (e.g. axis_quantitative.labels.format
-    # == "number_default") are never *authored* format strings, so the
+    # == "number") are never *authored* format strings, so the
     # per-chart walk below never reaches them -- but `style.formats: null`
     # is valid, compile()-accepted authoring that drops an inherited alias,
     # and it leaves that default unresolvable. Both facts
@@ -266,15 +333,19 @@ def _validate_board(board: Board, validated: set[int]) -> None:
     # authored patch, not resolved_style -- the latter carries theme content
     # this pass has no business rejecting.
     if board.authored_style is not None:
-        for field_path, spec, timed, is_vega in _iter_format_slots(
+        for field_path, spec, timed, is_vega, kind in _iter_format_slots(
             board.authored_style, "style", False
         ):
-            _validate_spec(spec, formats, field_path, timed, vega_painted=is_vega)
+            _validate_spec(
+                spec, formats, field_path, timed, vega_painted=is_vega, kind=kind
+            )
     for chart_id, chart in board.charts.items():
         if id(chart) in validated:
             continue
         validated.add(id(chart))
-        for field_path, spec, timed, is_vega in _iter_format_slots(
+        for field_path, spec, timed, is_vega, kind in _iter_format_slots(
             chart, f"charts.{chart_id}", False
         ):
-            _validate_spec(spec, formats, field_path, timed, vega_painted=is_vega)
+            _validate_spec(
+                spec, formats, field_path, timed, vega_painted=is_vega, kind=kind
+            )

@@ -6,13 +6,20 @@ from dataclasses import dataclass
 from typing import Any
 
 from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    category_scale_for,
+)
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset
 from dbt_charts.core.render.chart.emitters._cartesian import (
     apply_domain_headroom_bounds,
     build_palette_config,
     canonicalize_cartesian_x_data,
     chart_sort_to_vl,
+    distinct_series_values,
+    multiples_scale_independent,
     resolve_cartesian_x,
+    resolve_xy_titles,
+    spatial_color_scale,
 )
 from dbt_charts.core.render.chart.emitters._channels import (
     apply_color_legend,
@@ -21,10 +28,12 @@ from dbt_charts.core.render.chart.emitters._channels import (
     infer_vega_type_from_data,
 )
 from dbt_charts.core.render.chart.emitters._layers import emit_scatter_layer
+from dbt_charts.core.render.chart.emitters._overlay import overlay_x_domain_values
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.type_inference import (
     _utc_time_label_expr,
     apply_x_tick_cadence,
+    gate_label_format,
 )
 from dbt_charts.core.render.chart.vl_field_maps import (
     axis_to_vl,
@@ -50,6 +59,9 @@ class ScatterEmitter:
         data = dataset.all_rows()
         ax = chart.style.axis_x
         ay = chart.style.axis_y
+        xy = resolve_xy_titles(
+            chart.x, chart.y, chart.x_label, chart.y_label, ax, ay, box, chart.id
+        )
         encoding: dict[str, Any] = {}
 
         x_transformed = False
@@ -90,6 +102,28 @@ class ScatterEmitter:
                 data, x_transformed = canonicalize_cartesian_x_data(
                     data, chart.x, ax.time_unit
                 )
+                # Overlay layers may carry x buckets the base series doesn't
+                # (a forward goal ramp against actuals). Vega-Lite unions the
+                # sub-layer domains, so the axis must be built against that
+                # union — both its tick values and its crowding measurement
+                # — not against the base's own rows. Mirrors bar.py's
+                # identical computation ahead of its own x encoding.
+                # base_x_authored_temporal=False: scatter canonicalizes x
+                # unconditionally (see render_cartesian_overlay call below),
+                # never consulting gap_fill_ordinal_time's escape hatch.
+                x_domain = (
+                    overlay_x_domain_values(
+                        chart.layers,
+                        data,
+                        chart.x,
+                        ax,
+                        False,
+                        datasets,
+                        chart.query_name,
+                    )
+                    if chart.layers
+                    else None
+                )
                 # resolve_cartesian_x is the shared bar/line/area resolver
                 # (overlap → axis_to_vl → build_cartesian_x_encoding);
                 # mark_type "scatter" joins line/area's always-continuous-
@@ -106,20 +140,14 @@ class ScatterEmitter:
                     box.width,
                     chart.id,
                     "scatter",
+                    domain_values=x_domain,
                 )
                 x_type, x_axis, x_time_unit = x_res.vl_type, x_res.axis, x_res.time_unit
             x_scale = emit_resolved_scale_vl(ax.scale, include_x_only=True)
-            # Use axis title font to match oracle (effective.axis_x.title.font).
             x_enc: dict[str, Any] = {
                 "field": chart.x,
                 "type": x_type,
-                "title": (
-                    chart.x_label
-                    if chart.x_label
-                    else format_display_text(
-                        chart.x, from_slug=True, font=ax.title.font
-                    )
-                ),
+                "title": xy.x_title,
             }
             if x_time_unit:
                 x_enc["timeUnit"] = x_time_unit
@@ -129,22 +157,53 @@ class ScatterEmitter:
                 x_enc["scale"] = x_scale
             encoding["x"] = x_enc
 
-        y_plain: str | None = None
         if chart.y:
             y_type = infer_vega_type_from_data(data, chart.y)
             y_axis = measure_axis_to_vl(ay, data, (chart.y,))
             y_axis = compose_axis_label_expr(y_axis, ay.ruler, ay)
             # A d3 axis format applied to categorical tick labels makes Vega
-            # coerce every category string to NaN. For a nominal/ordinal y a
-            # time-format routes through a UTC labelExpr (mirrors the x-axis path
-            # in build_cartesian_x_encoding); every other format is simply
-            # dropped so categories render as their string values.
+            # coerce every category string to NaN, and one over dates paints
+            # the literal spec — gate_label_format raises for both rather
+            # than silently dropping the authored format. A nominal/ordinal y
+            # with a genuine time spec still routes through a UTC labelExpr
+            # (mirrors the x-axis path in build_cartesian_x_encoding) instead
+            # of raising: is_time_format exempts it inside the gate too, but
+            # only this branch knows to compose the label expression.
             y_fmt = y_axis.get("format")
-            if y_type in ("nominal", "ordinal") and isinstance(y_fmt, str):
-                if is_time_format(y_fmt) and "labelExpr" not in y_axis:
+            if (
+                y_type in ("nominal", "ordinal")
+                and isinstance(y_fmt, str)
+                and is_time_format(y_fmt)
+            ):
+                if "labelExpr" not in y_axis:
                     y_axis["labelExpr"] = _utc_time_label_expr(y_fmt)
-                y_axis.pop("format", None)
-                y_axis.pop("formatType", None)
+                # Vega validates "format" independently of labelExpr — a time
+                # spec left there (not a valid d3 NUMBER format) raises
+                # "invalid format" at render, even though labelExpr is what
+                # actually paints the tick. Must go, unlike the elif branch's
+                # legal-numeric-category case below, where the format is a
+                # real number spec and stays.
+                del y_axis["format"]
+            elif isinstance(y_fmt, str):
+                # A band-scale y (dot plot) has axis_x as its measure sibling,
+                # the opposite of the gate's own axis_x-authored default — a
+                # temporal y has no such sibling to point at, so it falls
+                # through to the gate's own time-spec remedy instead.
+                gate_label_format(
+                    y_fmt,
+                    chart.y,
+                    data,
+                    y_type,
+                    setting="axis_y.labels.format",
+                    remedy=(
+                        "A categorical y (dot plot) has no measure ticks to "
+                        "format — the measure is axis_x here. Author the "
+                        "number format on style.axis_x.labels.format, or "
+                        "remove it."
+                    )
+                    if y_type in ("nominal", "ordinal")
+                    else None,
+                )
             # orient is baked at resolve time (ay.position is concrete, never "auto")
 
             bake_tick_ladder(y_axis, ay.tick_values)
@@ -156,18 +215,10 @@ class ScatterEmitter:
                 y_scale = apply_domain_headroom_bounds(
                     y_scale, ay.domain_max, ay.domain_min
                 )
-            # Held as plain text: the overlay uses it as the base series' legend
-            # label, which must stay a primitive even once this family's axis
-            # title gets display-wrapped like the cartesian ones.
-            y_plain = (
-                chart.y_label
-                if chart.y_label
-                else format_display_text(chart.y, from_slug=True, font=ay.title.font)
-            )
             y_enc: dict[str, Any] = {
                 "field": chart.y,
                 "type": y_type,
-                "title": y_plain,
+                "title": xy.y_title,
             }
             if y_axis:
                 y_enc["axis"] = y_axis
@@ -193,7 +244,7 @@ class ScatterEmitter:
         if color_ch is not None:
             color_title = (
                 format_display_text(
-                    color_ch.data_field, from_slug=True, font=ay.title.font
+                    color_ch.data_field, from_slug=True, font=chart.legend.title.font
                 )
                 if color_ch.data_field
                 else None
@@ -201,12 +252,31 @@ class ScatterEmitter:
             enc = channel_to_encoding(color_ch, data, title=color_title)
             if enc is not None:
                 apply_color_legend(enc, chart.legend)
+                # A bound field still owes every value its board slot's
+                # color — VL's own alphabetical default range would
+                # otherwise paint this chart from its own local position,
+                # not the board's (mirrors bar/line's grouped-series path).
+                if (
+                    color_ch.mode == "series"
+                    and enc.get("type") == "nominal"
+                    and color_ch.data_field
+                    and chart.palette
+                ):
+                    scale = category_scale_for(
+                        chart.category_colors, color_ch.data_field
+                    )
+                    if scale is not None:
+                        series = distinct_series_values(data, color_ch.data_field)
+                        if series:
+                            enc["scale"] = spatial_color_scale(
+                                series, chart.palette, series, scale
+                            )
                 encoding["color"] = enc
 
         if chart.size:
             size_enc = field_encoding(chart.size, "quantitative")
             size_enc["title"] = format_display_text(
-                chart.size, from_slug=True, font=ay.title.font
+                chart.size, from_slug=True, font=chart.legend.title.font
             )
             apply_color_legend(size_enc, chart.legend)
             encoding["size"] = size_enc
@@ -249,9 +319,10 @@ class ScatterEmitter:
                 chart_id=chart.id,
                 axis_x=chart.style.axis_x,
                 axis_y=chart.style.axis_y,
-                base_y_title_suppressed=(
+                base_measure_title_suppressed=(
                     bool(chart.y_label) and chart.style.axis_y.title.visible is False
                 ),
+                base_orientation="vertical",
                 # Scatter's own base (above) canonicalizes x unconditionally,
                 # regardless of an authored axis_x.type: temporal — it never
                 # consults gap_fill_ordinal_time's escape hatch the way
@@ -270,8 +341,11 @@ class ScatterEmitter:
                 layered_rail_may_fire=False,
                 base_query_name=chart.query_name,
                 base_mark_type="scatter",
-                base_label=y_plain,
+                base_label=xy.y_plain,
                 datasets=datasets,
+                base_stack_normalize=False,
+                base_stack_center=False,
+                multiples_scale_independent=multiples_scale_independent(chart),
             )
 
         return spec

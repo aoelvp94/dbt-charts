@@ -193,6 +193,43 @@ charts:
 class TestComposedQueryValidate:
     """--validate must render the SQL template before handing it to sqlglot."""
 
+    def test_lookup_board_query_sql_reports_unknown_query_reference(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        """lookup_board_query_sql (the --validate/--describe path) must return a
+        clean error result when a query references an unknown {{ queries.X }}
+        name, not raise JinjaError uncaught.
+
+        Unlike a bare undefined variable (caught earlier, at compile time, as
+        an unknown-variable ReferenceError), `{{ queries.X }}` is resolved via
+        `_QueryNamespace.__getattr__` at render time, so a bad reference here
+        only surfaces once `render_parameterized_with_queries` runs.
+        """
+        board_yaml = """\
+source: mem
+queries:
+  base:
+    sql: SELECT 1 AS one
+  bad:
+    sql: SELECT * FROM {{ queries.doesnotexist }}
+charts:
+  c:
+    query: bad
+    type: kpi
+    value: one
+"""
+        path = tmp_path / "bad.yaml"
+        path.write_text(board_yaml)
+        (tmp_path / "dbt_charts.yml").write_text(_DBT_CHARTS_YML)
+
+        from dbt_charts.agent_api.query import lookup_board_query_sql
+
+        lr = lookup_board_query_sql("bad", path, project=local_project(tmp_path))
+        assert lr.success is False
+        assert any("doesnotexist" in e for e in lr.errors), lr.errors
+
     def test_validate_on_composed_query_reports_no_parse_error(
         self,
         tmp_path: Path,

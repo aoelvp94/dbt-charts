@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import PurePosixPath
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -21,6 +22,17 @@ class MigrateError(BaseModel):
     message: str = Field(description="User-ready explanation of the migration failure.")
 
 
+class MigrateNote(BaseModel):
+    """One reason a field was removed while migrating a file."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    path: PurePosixPath = Field(
+        description="Project-relative path the note applies to."
+    )
+    message: str = Field(description="Why the field was removed during migration.")
+
+
 class MigrateSummary(BaseModel):
     """Results of a migration run, separated by outcome."""
 
@@ -28,15 +40,24 @@ class MigrateSummary(BaseModel):
 
     updated: list[PurePosixPath] = Field(
         default_factory=list,
-        description="Files that were migrated, or would be migrated during a dry run.",
+        description="Files rewritten with a real structural change, stamped "
+        "with _schema_version alongside it, or would be during a dry run. "
+        "_schema_version is never the sole reason a file is rewritten.",
     )
     current: list[PurePosixPath] = Field(
         default_factory=list,
-        description="Files that already satisfy the current YAML grammar.",
+        description="Files that already match the latest frozen YAML grammar "
+        "-- left byte-identical, _schema_version stamp included, since "
+        "nothing about them actually changed.",
     )
     errors: list[MigrateError] = Field(
         default_factory=list,
         description="Files that require manual migration.",
+    )
+    notes: list[MigrateNote] = Field(
+        default_factory=list,
+        description="Reasons surfaced for fields the migration removed, across "
+        "every updated file.",
     )
 
     @property
@@ -54,19 +75,46 @@ def migrate_paths(
     updated: list[PurePosixPath] = []
     current: list[PurePosixPath] = []
     errors: list[MigrateError] = []
+    notes: list[MigrateNote] = []
     from dbt_charts.core.compile.errors import ParseError
-    from dbt_charts.core.compile.migrations import migrate_board_yaml_text
+    from dbt_charts.core.compile.migrations import (
+        SchemaMigrationWarning,
+        migrate_board_yaml_text,
+    )
     from dbt_charts.core.compile.parse.parser import parse_yaml
 
     for board_path in _migration_paths(paths, project):
         path = PurePosixPath(board_path.relpath)
         try:
             original = board_path.read_text()
-            migrated = migrate_board_yaml_text(original)
+            # migrate_board_yaml_text reports why a field was dropped (when its
+            # Deletion carries a reason) as a SchemaMigrationWarning -- the same
+            # mechanism the in-memory migration path uses -- caught here so it
+            # reaches MigrateSummary instead of leaking to stderr.
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", SchemaMigrationWarning)
+                migrated = migrate_board_yaml_text(original)
+            notes.extend(
+                MigrateNote(path=path, message=str(w.message))
+                for w in caught
+                if issubclass(w.category, SchemaMigrationWarning)
+            )
             if migrated == original:
                 current.append(path)
                 continue
-            parse_yaml(migrated)
+            # Verification only: confirms the migrated text still parses
+            # before it's written. The frozen-capped result can still carry a
+            # construct only the pending (unreleased) boundary would fix, so
+            # this re-parse legitimately re-triggers the in-memory migration
+            # path -- caught in a *separate* block and discarded, never
+            # merged into notes above. Those describe fields the writer
+            # actually removed from this file; this re-parse's warnings
+            # describe fields it deliberately left untouched, and reporting
+            # them as removed would be a straight lie about the file just
+            # written.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SchemaMigrationWarning)
+                parse_yaml(migrated)
             if not dry_run:
                 project.write_text(board_path.relpath, migrated)
             updated.append(path)
@@ -76,6 +124,7 @@ def migrate_paths(
         updated=updated,
         current=current,
         errors=errors,
+        notes=notes,
     )
 
 

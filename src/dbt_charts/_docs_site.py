@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-DEFAULT_DOCS_SITE_URL = "https://docs.dataface.com"
+DEFAULT_DOCS_SITE_URL = "https://docs.dbtcharts.com"
 
 
 def docs_site_url() -> str:

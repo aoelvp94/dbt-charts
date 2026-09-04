@@ -3,14 +3,17 @@ in core/diagnostics/codes_render.py for what this fires on.
 
 Detection rule:
   chart has typed overlay ``layers`` (bar/line/area/scatter with layers: [...])
-  AND at least 2 distinct y columns across the base chart + its layers
-  AND no layer carries its own query: (cross-query scale comparison is out of
-    scope for v1 — per-layer queries produce separate result sets that are
-    only keyed by chart id, so there is no clean way to attribute column
-    ownership across layers)
+  AND at least 2 distinct y series across the base chart + its layers
   AND ratio of largest absolute-median to smallest absolute-median ≥ 100×
-  AND neither of the two extreme-ratio columns has axis_y set (either one
+  AND neither of the two extreme-ratio series has axis_y set (either one
     having axis_y means the user has already opted into split scales)
+
+A layer carrying its own ``query:`` is compared like any other — its rows come
+from ``ctx.layer_results`` rather than the chart's own result set. That shape
+(one query per layer) is what the deterministic migrator emits, so excluding it
+would blind the detector to the corpus it helps most. A series is therefore
+identified by (query, column), not column alone: two queries both selecting
+``value`` are two series on one axis, not one shared scale.
 
 Diagnostic.field is None — the issue is cross-column, not column-scoped.
 The message names the two columns with the widest ratio, and the diagnostic
@@ -45,41 +48,51 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
         if chart_id not in ctx.chart_results:
             continue
 
-        # Skip if any layer overrides the base chart's own query — cross-query
-        # scale comparison is out of scope: chart_results is keyed by chart id
-        # only. A layer with no authored override bakes query_name to the
-        # base chart's own (see _resolve_one_layer), so "differs from the
-        # base" — not "is not None" — is the real override signal.
-        if any(layer.query_name != chart.query_name for layer in chart.layers):
-            continue
+        base_rows = ctx.chart_results[chart_id]
+        layer_rows = ctx.layer_results.get(
+            chart_id, {}
+        )  # type-state: silent_fallback — sparse: no per-layer query, no entry
 
-        rows = ctx.chart_results[chart_id]
-        if not rows:
-            continue
-
-        # Collect (column_name, absolute_median, axis_y_set) for the base
-        # chart's own y column plus every layer's y column. The authored path
-        # each column came from rides along so the two extremes can be marked
-        # where they were actually written.
-        column_axis_y: list[tuple[str, bool]] = []
-        column_paths: dict[str, str] = {}
+        # One entry per authored y series: (query, column, authored path,
+        # axis_y_set). A layer with no authored override bakes query_name to
+        # the base chart's own (see _resolve_one_layer), so comparing against
+        # chart.query_name — not "is not None" — is what tells a real override
+        # from an inherited one. The authored path rides along so the two
+        # extremes can be marked where they were actually written.
+        series: list[tuple[str | None, str, str, bool]] = []
         base_y = chart.y
         if isinstance(base_y, str):
-            column_axis_y.append((base_y, False))
-            column_paths[base_y] = f"charts.{chart_id}.y"
+            series.append((chart.query_name, base_y, f"charts.{chart_id}.y", False))
         for idx, layer in enumerate(chart.layers):
             if layer.y is not None:
-                column_axis_y.append((layer.y, layer.axis_y.position is not None))
-                column_paths.setdefault(layer.y, f"charts.{chart_id}.layers.{idx}.y")
+                series.append(
+                    (
+                        layer.query_name,
+                        layer.y,
+                        f"charts.{chart_id}.layers.{idx}.y",
+                        layer.axis_y.position is not None,
+                    )
+                )
 
-        layer_stats: list[tuple[str, float, bool]] = []
-        seen_columns: set[str] = set()
+        layer_stats: list[tuple[str, str, float, bool]] = []
+        seen_series: set[tuple[str | None, str]] = set()
 
-        for col, axis_y_set in column_axis_y:
-            # Columns sharing the same name share a scale by design — skip.
-            if col in seen_columns:
+        for query_name, col, path, axis_y_set in series:
+            # Same query and same column name is literally the same values —
+            # one scale, nothing to compare.
+            if (query_name, col) in seen_series:
                 continue
-            seen_columns.add(col)
+            seen_series.add((query_name, col))
+
+            # An override reads its own result set; a layer that inherited the
+            # base chart's query reads the chart's own rows.
+            if query_name == chart.query_name:
+                rows = base_rows
+            elif query_name in layer_rows:
+                rows = layer_rows[query_name]
+            else:
+                # The layer's own query failed to execute — nothing to judge.
+                continue
 
             # Use abs of each value so symmetric distributions (e.g. P&L deltas)
             # don't cancel to a zero median and get incorrectly dropped.
@@ -92,14 +105,14 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             if abs_median == 0.0:
                 continue
 
-            layer_stats.append((col, abs_median, axis_y_set))
+            layer_stats.append((path, col, abs_median, axis_y_set))
 
         if len(layer_stats) < 2:
             continue
 
         # Find the pair with the largest ratio.
-        max_col, max_median, max_axis_y = max(layer_stats, key=lambda t: t[1])
-        min_col, min_median, min_axis_y = min(layer_stats, key=lambda t: t[1])
+        max_path, max_col, max_median, max_axis_y = max(layer_stats, key=lambda t: t[2])
+        min_path, min_col, min_median, min_axis_y = min(layer_stats, key=lambda t: t[2])
 
         ratio = max_median / min_median
         if ratio < _RATIO_THRESHOLD:
@@ -119,10 +132,10 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
                 WARN_LAYERED_CHART_SHARED_Y_AXIS_SCALE_MISMATCH,
                 chart=chart_id,
                 field=None,
-                path=column_paths[max_col],
+                path=max_path,
                 related=(
                     RelatedLocation(
-                        path=column_paths[min_col],
+                        path=min_path,
                         message=(
                             f"{min_col!r} is ~{ratio:.0f}x smaller — this is the "
                             "series that flattens"

@@ -21,12 +21,15 @@ class LineChart(_CartesianChartFields, _ConditionalFormattingField):
 
     model_config = ConfigDict(extra="forbid")
 
-    type: Annotated[Literal["line"], Field(description="Line chart type.")]
+    type: Annotated[Literal["line"], Field(description="Selects the chart family.")]
     style: Annotated[
         LineChartStylePatch | None,
-        Field(default=None, description="Chart-local style overrides."),
+        Field(default=None, description="Appearance overrides for this chart alone."),
     ]
     layers: Annotated[
         list[CartesianLayer] | None,
-        Field(default=None, description="Typed overlay layers on this chart."),
+        Field(
+            default=None,
+            description="Extra marks drawn over this chart, each with its own type and columns.",
+        ),
     ]

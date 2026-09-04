@@ -1,8 +1,8 @@
-"""dbt_charts.agent_api — typed Python API for Dataface agent surfaces.
+"""dbt_charts.agent_api — typed Python API for dbt charts agent surfaces.
 
 This package is the canonical home for every function exposed to AI agents
-via CLI commands (``dataface/cli/commands/``) or MCP server modules
-(``dataface/ai/mcp/``).
+via CLI commands (``dbt_charts/cli/commands/``) or MCP server modules
+(``dbt_charts/ai/mcp/``).
 
 Contract
 --------
@@ -25,7 +25,7 @@ Every function in this package must satisfy all three rules:
 
 Thin-wrapper rule
 -----------------
-``dataface/cli/commands/`` and ``dataface/ai/mcp/`` are *thin wrappers* over
+``dbt_charts/cli/commands/`` and ``dbt_charts/ai/mcp/`` are *thin wrappers* over
 this package. They are permitted to contain only:
 
 - Argument parsing and output formatting
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     # Import-time-only: PEP 562 __getattr__ below resolves these lazily at
     # runtime. Kept here so mypy/pyright still see concrete types instead of
     # falling back to Any on every re-export.
-    from dbt_charts.agent_api import skills as skills
+    from dbt_charts.agent_api import examples as examples, skills as skills
     from dbt_charts.agent_api._paths import (
         project_sources_for_board as project_sources_for_board,
     )
@@ -67,12 +67,16 @@ if TYPE_CHECKING:
         DocsSearchHit as DocsSearchHit,
         Topic as Topic,
     )
+    from dbt_charts.agent_api.import_closure import (
+        board_import_closure as board_import_closure,
+    )
     from dbt_charts.agent_api.init import (
         InitResult as InitResult,
         init_project as init_project,
     )
     from dbt_charts.agent_api.migrate import (
         MigrateError as MigrateError,
+        MigrateNote as MigrateNote,
         MigrateSummary as MigrateSummary,
         migrate_paths as migrate_paths,
     )
@@ -143,6 +147,7 @@ __all__ = [
     "InitResult",
     "LinkContext",
     "MigrateError",
+    "MigrateNote",
     "MigrateSummary",
     "Project",
     "ProjectSession",
@@ -178,6 +183,8 @@ __all__ = [
     "QueryRefCalls",
     "extract_ref_calls",
     "render_dashboard",
+    "board_import_closure",
+    "project_sources_for_board",
 ]
 
 # `schema_hints` and `validate_query` (the functions) are deliberately NOT
@@ -196,6 +203,11 @@ __all__ = [
 # instead of importing every submodule (and the compile/execute/dbt_common
 # stack several of them drag in) eagerly at `import dbt_charts.agent_api` time.
 _LAZY_ATTRS: dict[str, tuple[str, str]] = {
+    "board_import_closure": (
+        "dbt_charts.agent_api.import_closure",
+        "board_import_closure",
+    ),
+    "examples": ("dbt_charts.agent_api.examples", ""),
     "skills": ("dbt_charts.agent_api.skills", ""),
     "project_sources_for_board": (
         "dbt_charts.agent_api._paths",
@@ -216,6 +228,7 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "InitResult": ("dbt_charts.agent_api.init", "InitResult"),
     "init_project": ("dbt_charts.agent_api.init", "init_project"),
     "MigrateError": ("dbt_charts.agent_api.migrate", "MigrateError"),
+    "MigrateNote": ("dbt_charts.agent_api.migrate", "MigrateNote"),
     "MigrateSummary": ("dbt_charts.agent_api.migrate", "MigrateSummary"),
     "migrate_paths": ("dbt_charts.agent_api.migrate", "migrate_paths"),
     "ProjectSession": ("dbt_charts.agent_api.project_session", "ProjectSession"),

@@ -192,11 +192,11 @@ Content.
 
 
 class TestIsMarkdownBoard:
-    """Tests for detecting whether a .md file is a Dataface markdown report,
+    """Tests for detecting whether a .md file is a dbt charts markdown report,
     via the ``ProjectPath.is_markdown`` (suffix) + ``is_markdown_board_content``
     (content) twin the compiler uses."""
 
-    def test_md_with_dataface_frontmatter(
+    def test_md_with_dbt_charts_frontmatter(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ):
         p = tmp_path / "charts" / "report.md"
@@ -276,7 +276,7 @@ class TestIsMarkdownBoard:
     def test_plain_md_outside_boards(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ):
-        """A plain .md file without Dataface keys outside charts/ is not detected."""
+        """A plain .md file without dbt charts keys outside charts/ is not detected."""
         p = tmp_path / "README.md"
         p.write_text("---\nauthor: me\n---\n# README\n")
         project = local_project(tmp_path)
@@ -406,7 +406,7 @@ Closing.
     def test_plain_md_compile_error_is_not_board_file(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ):
-        """Plain .md (no frontmatter) must error with 'not a Dataface board file', not 'missing opening ---'.
+        """Plain .md (no frontmatter) must error with 'not a dbt charts board file', not 'missing opening ---'.
 
         Regression: compiler called markdown_to_yaml unconditionally on all .md files,
         exposing an internal parse error to users who pass a README.md.
@@ -420,8 +420,8 @@ Closing.
         result = compile_file(project.path("README.md").read_board())
         assert not result.success
         error_text = " ".join(str(e) for e in result.errors).lower()
-        assert "not a dataface board file" in error_text, (
-            f"Expected 'not a Dataface board file' but got: {result.errors}"
+        assert "not a dbt charts board file" in error_text, (
+            f"Expected 'not a dbt charts board file' but got: {result.errors}"
         )
         # Must NOT bubble up the internal parse error
         assert "missing opening ---" not in error_text
@@ -429,7 +429,7 @@ Closing.
     def test_plain_md_with_frontmatter_outside_boards_is_not_board(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ):
-        """A plain .md with frontmatter but no Dataface keys outside charts/ is not a board."""
+        """A plain .md with frontmatter but no dbt charts keys outside charts/ is not a board."""
         from dbt_charts.core.compile.compiler import compile_file
 
         p = tmp_path / "notes.md"
@@ -439,19 +439,19 @@ Closing.
         result = compile_file(project.path("notes.md").read_board())
         assert not result.success
         error_text = " ".join(str(e) for e in result.errors).lower()
-        assert "not a dataface board file" in error_text
+        assert "not a dbt charts board file" in error_text
 
 
 class TestBoardApiMarkdownGuard:
     """Regression: rendering a plain .md board must raise ValueError with clear message."""
 
     def test_plain_md_raises_clear_valueerror(self, tmp_path: Path):
-        """Rendering a plain .md must raise ValueError mentioning 'not a Dataface board file'."""
+        """Rendering a plain .md must raise ValueError mentioning 'not a dbt charts board file'."""
 
         from ..._svg_render import render_board_file
 
         p = tmp_path / "README.md"
         p.write_text("# README\n\nNot a board.\n")
 
-        with pytest.raises(ValueError, match="(?i)not a dataface board file"):
+        with pytest.raises(ValueError, match="(?i)not a dbt charts board file"):
             render_board_file(p)

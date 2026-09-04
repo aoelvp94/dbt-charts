@@ -1,7 +1,7 @@
-"""Dataface Core Engine.
+"""dbt charts Core Engine.
 
 This module provides the core compilation, execution, and rendering
-functionality for Dataface dashboards.
+functionality for dbt charts dashboards.
 
 Submodules:
     - compile/: Transform YAML → Board

@@ -22,7 +22,7 @@ from dbt_charts.core.compile.models.markers import (
     InheritSlot,
 )
 from dbt_charts.core.compile.models.primitives import (
-    BorderStyle,
+    CornerStyle,
     FontStyle,
     RuleStyle,
     SpacingValues,
@@ -30,6 +30,7 @@ from dbt_charts.core.compile.models.primitives import (
     StrokeStyle,
 )
 from dbt_charts.core.compile.models.style.theme._chart_base import (
+    _ChartCardStyleMixinAllOptional,
     _ChartStyleBaseAllOptional,
 )
 
@@ -92,7 +93,7 @@ class TableHeaderStyle(BaseModel):
         description="Header background color; None means no fill (rule alone separates header from body).",
     )
     overflow: Literal["clip", "truncate", "wrap-two", "wrap"] = Field(
-        description="Header text overflow mode (clip, truncate, wrap-two, wrap)."
+        description="What happens to header text too wide for its column (clip, truncate, wrap-two, wrap)."
     )
     rule: RuleStyle = Field(description="Header bottom rule style.")
 
@@ -226,7 +227,7 @@ class SparkColumnsStyle(BaseModel):
         description="Horizontal outer padding of the columns sparkline in pixels."
     )
     min_bar_height: float = Field(description="Minimum rendered bar height in pixels.")
-    border: BorderStyle = Field(description="Column bar border style.")
+    border: CornerStyle = Field(description="Column bar corner rounding.")
 
 
 class SparkBarLabelStyle(BaseModel):
@@ -263,7 +264,7 @@ class SparkBarCellStyle(BaseModel):
     default_max: float = Field(
         description="Default maximum value for bar scale when no explicit max is authored."
     )
-    border: BorderStyle = Field(description="Spark bar border style.")
+    border: CornerStyle = Field(description="Corner rounding for spark bar cells.")
     # InheritSlot: table.spark.bar.font fills from charts.font (not table.font).
     font: Annotated[FontStyle, InheritSlot(from_path="Style.charts.font")] = Field(
         default_factory=FontStyle,
@@ -396,17 +397,23 @@ class TableRuleStyle(BaseModel):
     )
 
 
-class TableChartStyle(_ChartStyleBaseAllOptional):
+class TableChartStyle(_ChartCardStyleMixinAllOptional, _ChartStyleBaseAllOptional):
     """Table chart style overrides layered on top of shared chart defaults.
 
     Table uses a fixed sizing contract and paints no legend — ``aspect_ratio``,
     ``min_height``, ``max_height``, and ``legend`` are absent by construction
     (``_ChartStyleBaseAllOptional``, not ``_PaintedChartStyleBaseAllOptional``).
+
+    ``_ChartCardStyleMixinAllOptional`` supplies ``border``: table draws its own
+    card, so unlike the Vega-Lite families it keeps the slot. It stopped
+    declaring its own ``border`` when that field was found to be inert on the
+    table and secretly styling markdown (now ``style.text.rule``), and inherits
+    the shared card border instead — None when unauthored.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # Override _ChartStyleBaseAllOptional.font to declare the inherit link.
+    # Override the mixin's font to declare the inherit link.
     # InheritSlot: table.font fills from charts.font.
     font: Annotated[FontStyle, InheritSlot(from_path="Style.charts.font")] = Field(
         default_factory=FontStyle,
@@ -417,8 +424,11 @@ class TableChartStyle(_ChartStyleBaseAllOptional):
     background: Annotated[str | None, Color()] = Field(
         default=None, description="Table background color; None inherits from theme."
     )
-    # Override: tables have no series axis (extra_forbidden via StaticGradientColorStyle).
-    color: StaticGradientColorStyle | None = Field(  # type: ignore[assignment]
+    # Tables have no series axis — extra_forbidden via StaticGradientColorStyle
+    # (no categorical arm). Not an override: _ChartStyleBaseAllOptional carries
+    # no color field (it lives on _PaintedChartStyleBase, which table does not
+    # inherit), so this is a fresh field declaration.
+    color: StaticGradientColorStyle | None = Field(
         default=None,
         description="Table color: static text paint or gradient scale only (no categorical arm).",
     )
@@ -443,8 +453,9 @@ class TableChartStyle(_ChartStyleBaseAllOptional):
         default_factory=TableRowNumbersStyle,
         description="Leading row-number column configuration.",
     )
-    title_row: TableTitleStyle = Field(description="Table title row style.")
-    border: BorderStyle = Field(description="Table outer border style.")
+    title_row: TableTitleStyle = Field(
+        description="Title block rendered above the header row."
+    )
     wrap: bool = Field(
         description="Allow cell text wrapping; false clips to single line."
     )
@@ -490,7 +501,7 @@ class TableChartStyle(_ChartStyleBaseAllOptional):
     transpose: bool = Field(
         default=False,
         description=(
-            "When True, render a single wide data row as N (label, value) rows — "
+            "When True, render a single wide data row as N (label, value) rows, "
             "one per column. Raises ChartDataError when data has more than one row. "
             "Used for Looker single-value summary tiles with multiple measures."
         ),
@@ -507,36 +518,36 @@ class TableChartStyle(_ChartStyleBaseAllOptional):
     title_subtitle_gap: float = Field(
         description=(
             "Pure whitespace between the title's descent and the subtitle's "
-            "ascent, in pixels — not a baseline-to-baseline distance. Combined "
+            "ascent, in pixels, not a baseline-to-baseline distance. Combined "
             "with the title and subtitle font sizes to reproduce Vega-Lite's "
             "title->subtitle spacing at any font size, not one calibrated "
             "pair. Font size and "
-            "colour for the subtitle itself come from style.title.subtitle — "
-            "the same source chart-family titles use — not a table-local "
+            "colour for the subtitle itself come from style.title.subtitle "
+            "(the same source chart-family titles use), not a table-local "
             "constant."
         )
     )
 
 
-class DataTableRowPaddingStyle(BaseModel):
+class SupportTableRowPaddingStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     vertical: float = Field(
-        description="Vertical (top/bottom) padding inside data_table rows in pixels."
+        description="Vertical (top/bottom) padding inside support_table rows in pixels."
     )
     horizontal: float = Field(
-        description="Horizontal (left/right) padding inside data_table rows in pixels."
+        description="Horizontal (left/right) padding inside support_table rows in pixels."
     )
 
 
-class DataTableRowStyle(BaseModel):
+class SupportTableRowStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    padding: DataTableRowPaddingStyle = Field(description="Row padding style.")
+    padding: SupportTableRowPaddingStyle = Field(description="Row padding style.")
     rule: RuleStyle = Field(description="Row bottom rule style.")
 
 
-class DataTableLabelStyle(BaseModel):
+class SupportTableLabelStyle(BaseModel):
     """Row label styling.
 
     The row label's side (left-gutter or right-gutter) is a pure function of
@@ -555,24 +566,24 @@ class DataTableLabelStyle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # InheritSlot: data_table.label.font fills from data_table.font.
+    # InheritSlot: support_table.label.font fills from support_table.font.
     font: Annotated[
-        FontStyle, InheritSlot(from_path="Style.charts.data_table.font")
+        FontStyle, InheritSlot(from_path="Style.charts.support_table.font")
     ] = Field(default_factory=FontStyle, description="Row label font style overrides.")
 
 
-class DataTableStyle(BaseModel):
-    """Attached data_table style. Lives at style.charts.data_table.*.
+class SupportTableStyle(BaseModel):
+    """Attached support_table style. Lives at style.charts.support_table.*.
 
-    Also nestable under per-chart-type blocks (bar.data_table, line.data_table,
-    area.data_table) for per-chart-type overrides.
+    Also nestable under per-chart-type blocks (bar.support_table, line.support_table,
+    area.support_table) for per-chart-type overrides.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # InheritSlot: data_table.font fills from charts.font.
+    # InheritSlot: support_table.font fills from charts.font.
     font: Annotated[FontStyle, InheritSlot(from_path="Style.charts.font")] = Field(
-        default_factory=FontStyle, description="Data_table font style overrides."
+        default_factory=FontStyle, description="Support_table font style overrides."
     )
     divider: RuleStyle = Field(
         description=(
@@ -581,8 +592,10 @@ class DataTableStyle(BaseModel):
             "For position='top': rule sits below the strip rows (above the plot top)."
         )
     )
-    row: DataTableRowStyle = Field(description="Data_table row padding and rule style.")
-    label: DataTableLabelStyle = Field(description="Row label (series name) style.")
+    row: SupportTableRowStyle = Field(
+        description="Support_table row padding and rule style."
+    )
+    label: SupportTableLabelStyle = Field(description="Row label (series name) style.")
     padding_top: float = Field(
         description=(
             "Padding above the topmost strip row in pixels. "
@@ -609,10 +622,23 @@ class DataTableStyle(BaseModel):
             "Typically 1 or 2."
         )
     )
-    position: Literal["top", "bottom"] = Field(
+    # Cascade-managed sentinel: None means "not authored" — the effective
+    # placement then depends on the chart's category-axis orientation, a fact
+    # only known once the chart resolves (vertical bar vs. vertical/line/area),
+    # so no theme YAML supplies a literal default here. An explicit author
+    # value is validated against that orientation at render time and always
+    # wins over the orientation-derived default; see
+    # render/chart/support_table_attachment.py's position resolution.
+    position: Literal["top", "bottom", "left", "right"] | None = Field(
+        default=None,
         description=(
-            "Strip placement relative to the chart plot. "
-            "'top' places the strip above the plot (no x-axis gap needed); "
-            "'bottom' places it below with the x-axis between plot and strip."
-        )
+            "Strip placement relative to the chart plot. 'top'/'bottom' apply "
+            "when the chart's category axis is horizontal (vertical bar, line, "
+            "area): 'top' places the strip above the plot, 'bottom' places it "
+            "below with the x-axis between plot and strip. 'left'/'right' apply "
+            "when the category axis is vertical (a horizontal bar): the strip "
+            "renders as value columns beside the plot instead of rows above or "
+            "below it. Left unset, 'top' is used on a horizontal category axis "
+            "and the side the category labels are on is used on a vertical one."
+        ),
     )

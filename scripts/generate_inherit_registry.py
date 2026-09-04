@@ -17,8 +17,8 @@ from pathlib import Path
 import yaml
 
 # In the monorepo this script lives at dbt-charts/scripts/; in the standalone
-# export it lands at scripts/ (Copybara core.move("dataface", "")). Either way
-# parents[1] is the dataface package root / standalone repo root — where src/ lives.
+# export it lands at scripts/ (Copybara core.move("dbt-charts", "")). Either way
+# parents[1] is the dbt-charts package root / standalone repo root — where src/ lives.
 _DBT_CHARTS_DIR = Path(__file__).resolve().parents[1]
 _SRC = _DBT_CHARTS_DIR / "src"
 _OUT = (

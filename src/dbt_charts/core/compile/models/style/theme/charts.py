@@ -14,6 +14,7 @@ from dbt_charts.core.compile.models.markers import (
     Strategy,
 )
 from dbt_charts.core.compile.models.primitives import (
+    BorderStyle,
     FontStyle,
 )
 from dbt_charts.core.compile.models.style.theme._chart_base import (
@@ -37,6 +38,9 @@ from dbt_charts.core.compile.models.style.theme.board import (
 )
 from dbt_charts.core.compile.models.style.theme.callout import (
     CalloutChartStyle,
+)
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    CategoryColorBinding,
 )
 from dbt_charts.core.compile.models.style.theme.geoshape import (
     GeoshapeChartStyle,
@@ -73,7 +77,7 @@ from dbt_charts.core.compile.models.style.theme.spark_bar import (
     SparkBarChartStyle,
 )
 from dbt_charts.core.compile.models.style.theme.table import (
-    DataTableStyle,
+    SupportTableStyle,
     TableChartStyle,
 )
 
@@ -81,11 +85,16 @@ from dbt_charts.core.compile.models.style.theme.table import (
 class ChartsStyle(_PaintedChartStyleBase):
     """Registry of all chart-type styles plus shared chart configuration.
 
-    Inherits ``_PaintedChartStyleBase`` — all shared chart fields (font, padding,
-    border, aspect_ratio, min_height, max_height, legend) are
-    populated by theme YAML at the global ``charts:`` level and serve as the cascade
-    source for per-family defaults.  ``tooltip`` lives here as the sole authoritative
-    slot — no per-family class declares it, matching how every real consumer reads it
+    Inherits ``_PaintedChartStyleBase`` — most shared chart fields (padding,
+    aspect_ratio, min_height, max_height, legend) are populated by theme YAML
+    at the global ``charts:`` level and serve as the cascade source for
+    per-family defaults.  ``font``/``border`` are declared directly on this
+    class rather than inherited — ``_ChartStyleBase`` deliberately does not
+    carry them (see its docstring): only families with a hand-drawn per-chart
+    card render surface consume a per-family font/border, so bar/line/area/
+    scatter/histogram/heatmap/pie/donut never get them back.  ``tooltip``
+    lives here as the sole authoritative slot — no per-family class declares
+    it, matching how every real consumer reads it
     (``chart_style_context.tooltip``, ``chart_interactivity.py``'s board-wide JS
     tooltip runtime).  ``height`` and ``width`` are NOT in the style cascade —
     they live only at chart root in the authored YAML.
@@ -103,11 +112,15 @@ class ChartsStyle(_PaintedChartStyleBase):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # Override to declare: charts.font.* ← font.*
+    # Declared here, not on _ChartStyleBase (see that class's docstring):
+    # charts.font.* ← font.*
     font: Annotated[FontStyle, InheritSlot(from_path="Style.font")] = Field(
         default_factory=FontStyle,
         description="Chart-level font overrides.",
     )
+    # Declared here, not on _ChartStyleBase (see that class's docstring): the
+    # board-level authoritative default. No InheritSlot — themes must set it.
+    border: BorderStyle = Field(description="Chart card border style.")
 
     # Override _ChartStyleBase.padding to break the self-loop the InheritSlot
     # would otherwise create on the board-level slot (Style.charts.padding cannot
@@ -125,6 +138,22 @@ class ChartsStyle(_PaintedChartStyleBase):
     background: Annotated[str | None, Inherit(from_path="Style.background")] = Field(
         default=None,
         description="Chart canvas background; None inherits from the board background via apply_inherit.",
+    )
+
+    # Not theme-populated; per-board value→color pins for categorical fields.
+    # Empty is a real state, not a missing one: "no pins authored". The engine
+    # still resolves a board-wide binding from the executed data — pins only
+    # override which swatch a value lands on. So this is a fully-defaulted
+    # container (models/AGENTS.md), not a defaulted-theme-populated field.
+    # Charts-specific (not board-level Style): pinned category colors are a
+    # chart-drawing concern, so they live in the same global-charts scope as
+    # every other chart-color default.
+    category_colors: dict[str, CategoryColorBinding] = Field(
+        default_factory=dict,
+        description=(
+            "Board-wide category→color bindings, keyed by data field name. "
+            "Pins a category to one swatch across every chart on the board."
+        ),
     )
 
     @model_validator(mode="before")
@@ -208,7 +237,9 @@ class ChartsStyle(_PaintedChartStyleBase):
     )
 
     # Primary chart families
-    bar: BarChartStyle = Field(description="Bar chart style.")
+    bar: BarChartStyle = Field(
+        description="Bar chart style; histogram has its own block."
+    )
     line: LineChartStyle = Field(description="Line chart style.")
     area: AreaChartStyle = Field(description="Area chart style.")
     scatter: ScatterChartStyle = Field(description="Scatter chart style.")
@@ -233,8 +264,10 @@ class ChartsStyle(_PaintedChartStyleBase):
         description="Spark_bar (full-chart horizontal bar) style."
     )
 
-    # Attached data_table primitive (per-chart strip; populated by the theme cascade).
-    data_table: DataTableStyle = Field(description="Attached data_table strip style.")
+    # Attached support_table primitive (per-chart strip; populated by the theme cascade).
+    support_table: SupportTableStyle = Field(
+        description="Attached support_table strip style."
+    )
 
     # Callout chart-family style (type: callout and runtime chart-error fallback)
     callout: CalloutChartStyle = Field(

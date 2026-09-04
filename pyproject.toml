@@ -3,10 +3,10 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 # Duplicates a subset of the root [dependency-groups].dev: the root group
-# covers running the whole monorepo from the workspace root, but dataface/
+# covers running the whole monorepo from the workspace root, but dbt-charts/
 # also ships standalone (exported as its own repo root by
 # dbt-charts/oss/copy.bara.sky), where there is no root to inherit from.
-# Keep this scoped to exactly what dataface/tests and mod.just use.
+# Keep this scoped to exactly what dbt-charts/tests and mod.just use.
 [dependency-groups]
 dev = [
     "pytest>=7.0.0",
@@ -14,7 +14,7 @@ dev = [
     "pytest-timeout>=2.2.0",  # Kill hung tests
     "filelock>=3.0",  # FileLock for xdist fixture TOCTOU guard (tests/integration/conftest.py)
     "packaging>=22",  # PEP 440 parsing (tests/core/test_packaging_metadata.py)
-    "dbt-core==1.11.8",  # Match the monorepo lock for manifest canaries
+    "dbt-core==1.11.8",  # Match the monorepo lock for the dbt-internal-API canaries
     "dbt-adapters==1.22.10",  # Match the monorepo adapter API surface
     "dbt-duckdb==1.10.0",  # Match the monorepo DuckDB adapter
     "dbt-databricks==1.12.0",  # Databricks credential-isolation tests
@@ -30,7 +30,6 @@ dev = [
     "openai>=1.0.0",  # OpenAI client construction tests
     "ruff>=0.16.2",  # Static-rule tests invoke Ruff directly
     "pymdown-extensions>=10.0",  # Markdown superfence integration tests
-    "metricflow>=0.211.0,<0.212.0",  # MetricFlow normalization tests
     # >=1.17: earlier releases silently drop extra_checks, disable_error_code,
     # and several enable_error_code entries below (exhaustive-match needs
     # 1.17+ specifically) rather than erroring, so a looser floor would pass
@@ -45,7 +44,7 @@ dev = [
 [project]
 name = "dbt-charts"
 dynamic = ["version"]
-description = "Dataface - dbt-native dashboard and visualization layer"
+description = "dbt charts - dbt-native dashboard and visualization layer"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 license = "Apache-2.0"
@@ -89,7 +88,15 @@ dependencies = [
     # PIL.ImageFont.getlength is used during compile-time title-width
     # measurement (core/compile/sizing._measure_title_single_line_width).
     "pillow>=9.0.0",
-    "plotext>=5.0.0",
+    # plotext 6.0.0 reshaped its API and dropped the module-level functions
+    # core/render/terminal_charts.py calls (clear_data, clear_figure, plotsize,
+    # theme, title, bar, plot, scatter, xticks, build — not a rename, several
+    # have no 6.x module-level equivalent). The import is unguarded, so
+    # `dct render --format terminal` raises AttributeError under 6.x — a runtime
+    # break for wheel consumers, not just a type-checker complaint, which is why
+    # this cap is a published bound (unlike the type-only openai/sqlglot caps in
+    # [tool.uv] below).
+    "plotext>=5.0.0,<6",
     "rich>=13.0.0",
     "sqlglot>=28.0.0",
     "duckdb>=1.0.0",  # SET file_search_path (duckdb_adapter relative-path resolution)
@@ -105,11 +112,10 @@ dependencies = [
     # dbt_macro_loader.py and dbt_adapter_factory.py reach into dbt-internal
     # API (MacroParser, MacroManifest, FACTORY internals,
     # generate_runtime_macro_context) to bootstrap dbt manifests/macro
-    # contexts. dbt_manifest.py uses WritableManifest.is_compatible_version
-    # for schema-version gating — all are capped below the next major since
-    # that API can be reshaped without warning.
-    # Canaries: test_dbt_macro_loader.py, test_dbt_adapter_factory.py,
-    #           test_dbt_manifest.py.
+    # contexts — capped below the next major since that API can be reshaped
+    # without warning. dbt_manifest.py imports nothing from dbt: it reads the
+    # manifest as plain JSON.
+    # Canaries: test_dbt_macro_loader.py, test_dbt_adapter_factory.py.
     "dbt-core>=1.8,<2",
     "dbt-adapters>=1.20,<2",
     "dbt-common>=1.0",
@@ -139,12 +145,6 @@ dependencies = [
 [project.optional-dependencies]
 # `dbt-adapters` provides the generic adapter interface only; each warehouse
 # adapter ships in its own package.
-metricflow = [
-    # normalize/queries.py lowers metricflow queries to SqlQuery at compile time
-    # (no MetricFlowAdapter, no execute-side code) by calling MetricFlow's own
-    # compiler (MetricFlowEngine.explain) against the dbt semantic manifest.
-    "metricflow>=0.211.0,<0.212.0",
-]
 bigquery = [
     "dbt-bigquery>=1.10,<2.0",
     "google-cloud-bigquery>=3.33.0",
@@ -178,7 +178,7 @@ mcp = [
     # Capped at 1.x: `ai/mcp/server.py` uses the low-level decorator API
     # (`@server.list_resources()`, `@server.call_tool()`, ...), which mcp 2.0
     # removed from `mcp.server.Server`. Under 2.x the import still succeeds and
-    # `dft mcp serve` dies at startup before it can speak the protocol, so the
+    # `dct mcp serve` dies at startup before it can speak the protocol, so the
     # client only ever sees an opaque -32000. Lift the cap with the port.
     "mcp>=1.0.0,<2",
 ]
@@ -206,17 +206,17 @@ dct = "dbt_charts.cli.main:app"
 # Duplicates a subset of the root [tool.pytest.ini_options]: the root config
 # covers running the whole monorepo (testpaths across every package, Django
 # settings for apps/cloud, namespace-package handling to avoid module-name
-# collisions between different packages' tests/ directories). dataface/ also
+# collisions between different packages' tests/ directories). dbt-charts/ also
 # ships standalone, where there is no root to inherit from — and pytest
 # resolves ini options from the nearest pyproject.toml to the invoked path,
 # so a [tool.pytest.ini_options] here fully shadows the root's for any
-# dataface-scoped run rather than layering on top of it. Keep this
-# self-sufficient, not partial: everything dataface/tests actually needs to
-# collect and pass, whether run from here, standalone, or dataface-scoped
+# dbt-charts-scoped run rather than layering on top of it. Keep this
+# self-sufficient, not partial: everything dbt-charts/tests actually needs to
+# collect and pass, whether run from here, standalone, or dbt-charts-scoped
 # inside the monorepo.
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# importlib mode: dataface/tests/ has no __init__.py (AGENTS.md forbids
+# importlib mode: dbt-charts/tests/ has no __init__.py (AGENTS.md forbids
 # adding one), so conftest.py's relative imports (`from ._paths import ...`)
 # need importlib's namespace-package-aware resolution instead of prepend
 # mode's __init__.py walk. loadgroup: xdist_group markers
@@ -229,6 +229,7 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "network: marks tests as requiring network access (deselect with '-m \"not network\"')",
     "windows: opt-in — test asserted Windows-safe; the release-gating Windows subset is exactly `-m windows`",
+    "docs_derived: computed from apps/docs/** content (e.g. DOCS_DIR); selected by docs.yml's docs lane, whose path filter — unlike the main test matrix — includes apps/docs/**",
 ]
 
 # uv's default rebuild cache keys (pyproject.toml/setup.py/setup.cfg) don't
@@ -240,13 +241,13 @@ markers = [
 # stale site-packages copy. Declaring their source globs here makes plain
 # `uv sync` pick up edits too.
 [tool.uv]
-# Dev/type-checking resolution only, not a declared dependency bound (see
-# the pyarrow entry in [project] dependencies above for why a published
-# upper bound is the wrong lever) — uv only honors constraint-dependencies
-# from the workspace root, so these two entries protect the standalone
-# export (where dbt-charts is its own root); the root pyproject.toml
-# carries identical entries for what protects the monorepo's own shared
-# lock.
+# Dev/type-checking resolution only (type-only breaks — a *runtime* API break
+# is a published [project] bound instead, see plotext above). uv only honors
+# constraint-dependencies from the workspace root, so these entries protect
+# the standalone export, where dbt-charts is its own root. The root
+# pyproject.toml carries the same numpy/pyarrow/openai ceilings for the
+# monorepo's shared lock; sqlglot appears only here because libs/asql already
+# bounds it for the monorepo but isn't in the export.
 constraint-dependencies = [
     # Transitive only (duckdb's stub surface pulls it in) — no direct
     # import in src/dbt_charts needs it. numpy>=2.5 ships __init__.pyi with
@@ -266,11 +267,31 @@ constraint-dependencies = [
     # instead of a per-import suppression that would silently swallow the
     # next unrelated typing regression too.
     "pyarrow<25",
+    # openai>=3 swapped its HTTP transport from httpx to the separate httpx2
+    # fork, so its exception constructors (APITimeoutError, RateLimitError, …)
+    # now type their request/response params as httpx2.Request/Response. The
+    # ai tests build those exceptions from plain httpx.Request/Response for
+    # error-classification coverage, which then fails pyright ("httpx._models
+    # is not assignable to httpx2._models"). oss/uv.lock holds the export on
+    # the 2.x line today; this ceiling is what keeps the next re-lock from
+    # walking into 3.x before those mocks are ported off httpx.
+    "openai<3",
+    # sqlglot 30.x reshaped its expression type surface (Expr vs Expression,
+    # Query no longer assignable where an Expression is expected) and breaks
+    # core/column_refs.py under pyright. libs/asql already bounds the monorepo
+    # to sqlglot 28.x (>=28.0.0,<29.0.0) but isn't in the OSS export, so this
+    # entry is what keeps a re-lock of oss/uv.lock on that same 28.x line the
+    # monorepo type-checks against.
+    "sqlglot<29",
 ]
 cache-keys = [
     { file = "pyproject.toml" },
-    { file = "libs/d3-format/src/d3_format/**/*.py" },
-    { file = "libs/markdown-svg/src/mdsvg/**/*.py" },
+    # `**/*` not `**/*.py`: force-include copies the whole tree, so a non-Python
+    # file moves the render without moving a .py-globbed key -- and the visual
+    # suite's freshness guard would then fire in CI with a remedy no runner can
+    # act on. See dbt-charts/tests/visual/freshness.py.
+    { file = "libs/d3-format/src/d3_format/**/*" },
+    { file = "libs/markdown-svg/src/mdsvg/**/*" },
 ]
 
 # Duplicates a subset of the root [tool.vulture]: the root config scans the
@@ -380,6 +401,10 @@ exclude = [
 # entries above extend uv's rebuild cache to those two source trees; uv's
 # default cache keys only cover this project's own files, so without that
 # declaration a plain `uv sync` would silently keep serving a stale copy.
+# An environment driven without `uv run` (a venv interpreter invoked directly,
+# an IDE test runner) never consults those cache keys at all, so the visual
+# suite additionally refuses to render from a copy that does not match the
+# checkout -- see `dbt-charts/tests/visual/freshness.py`.
 [tool.hatch.build.targets.wheel.force-include]
 # Runtime-loaded docs (read at runtime via importlib.resources / Path.read_text).
 "src/dbt_charts/DBT_CHARTS_SYNTAX.md" = "dbt_charts/DBT_CHARTS_SYNTAX.md"
@@ -473,14 +498,16 @@ forbidden_module_paths = [
 # `databricks` (databricks-sql-connector) is imported by the lazily-loaded
 # databricks_connection_manager.py behind the databricks adapter gate; it is a
 # transitive dep of the optional `databricks` extra, not a runtime dep.
-# `openai` is the lazy import inside ai/llm.py's OpenAIClient. No `dct` verb
-# reaches it — the client exists for in-repo hosts (Cloud, Playground, evals),
-# each of which declares openai itself. (A lIe does not use it; it carries its
-# own client, which is why the follow-up folds in that consolidation.)
-# Deferred, not undecided: extracting ai/llm.py was priced against what removing
-# this one entry buys and judged not worth it on that basis alone. The reasons
-# that do stand alone — core ships an importable-but-unrunnable surface, and the
-# repo has three OpenAI client wrappers — are tracked in a follow-up.
+# `openai` is the lazy import inside ai/openai_gateway.py's OpenAIGateway. No
+# `dct` verb reaches it — the gateway exists for in-repo hosts (Cloud,
+# Playground, evals), each of which declares openai itself. (A lIe does not
+# use it; it carries its own client, which is why the follow-up folds in that
+# consolidation.)
+# Deferred, not undecided: extracting ai/openai_gateway.py was priced against
+# what removing this one entry buys and judged not worth it on that basis
+# alone. The reasons that do stand alone — core ships an importable-but-
+# unrunnable surface, and the repo has three OpenAI client wrappers — are
+# tracked in a follow-up.
 allowed_external_imports = [
     "dbt_charts_super_schema",
     "google",

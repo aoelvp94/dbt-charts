@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
+
+from dbt_charts.ai.failures import AITurnFailure
 
 # -- Stream events (yielded by LLM provider adapters) -----------------------
 
@@ -48,11 +50,22 @@ StreamEvent = ContentDelta | ThinkingStatus | ToolCallEvent
 
 @dataclass(slots=True)
 class ToolResultEvent:
-    """Result of executing a tool call."""
+    """Result of executing a tool call.
+
+    ``duration_s`` is measured around ``dispatch_tool_call`` in the agent
+    loop, not derived by pairing this event to its ``ToolCallEvent`` — batch
+    dispatch runs tool calls sequentially in a loop after the model's stream
+    drains, so a call-to-result gap would bill call N for every call before
+    it. ``outcome`` is the tri-state read off the handler's return envelope
+    by ``dbt_charts.ai.tools.tool_call_outcome`` — a bool can't carry
+    ``partial`` (a render that produced output but has chart errors).
+    """
 
     id: str
     name: str
     result: Any
+    duration_s: float
+    outcome: Literal["ok", "partial", "error"]
 
 
 @dataclass(slots=True)
@@ -72,9 +85,15 @@ class AgentError:
     ``message`` is always safe to show a user. ``details`` carries the
     underlying third-party text for logs and single-user tools, and is None
     when the message is the whole story (an authored, actionable failure).
+
+    ``reason`` is required and deliberately undefaulted: a fourth terminal
+    added later must fail to construct rather than quietly report ``internal``,
+    which is how a real failure mode goes uncounted. It is a typed member, never
+    parsed back out of ``details`` — that text is third-party prose.
     """
 
     message: str
+    reason: AITurnFailure
     details: str | None = None
 
 

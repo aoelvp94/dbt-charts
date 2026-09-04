@@ -388,7 +388,7 @@ def test_cli_describe_command_uses_project_session_with_block(tmp_path: Path) ->
             charts=[],
             variables=[],
             layout=None,
-            description=None,
+            notes=None,
         )
     ]
 

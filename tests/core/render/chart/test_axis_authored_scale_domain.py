@@ -15,6 +15,14 @@ _BAND_DATA = [
     {"cat": "B", "val": 580.0},
 ]
 
+# Scatter's canonical shape is a quantitative x — the same one `scatter_style`
+# bakes its axis_x for. Pairing that axis with a category column is a
+# combination resolve() never produces, and the emitter now says so.
+_SCATTER_BAND_DATA = [
+    {"x_val": 1.0, "val": 520.0},
+    {"x_val": 2.0, "val": 580.0},
+]
+
 # Authored domain that is wider than the data extent above.
 _AUTHORED_DOMAIN = [400.0, 600.0]
 
@@ -370,6 +378,8 @@ def test_v2_scatter_authored_domain_emitted_in_vl_scale(scatter_style) -> None:
         chart_id="test",
         format_authored=True,
         format_is_alias=False,
+        is_quantitative=True,
+        zero_anchored=True,
     )
     ay = dataclasses.replace(
         ay_base,
@@ -380,13 +390,13 @@ def test_v2_scatter_authored_domain_emitted_in_vl_scale(scatter_style) -> None:
     chart = ResolvedScatterChart(
         panel_axes=(),
         chart_type="scatter",
-        x="cat",
+        x="x_val",
         y="val",
         style=scatter_style.model_copy(update={"axis_y": ay}),
         **_C,
     )
 
-    spec = ScatterEmitter().emit(chart, _DEFAULT_BOX, regroup((), _BAND_DATA))
+    spec = ScatterEmitter().emit(chart, _DEFAULT_BOX, regroup((), _SCATTER_BAND_DATA))
     y_scale = spec.encoding["y"].get("scale", {})
     assert y_scale.get("domain") == _AUTHORED_DOMAIN, (
         f"VL scale.domain should be {_AUTHORED_DOMAIN}, got {y_scale}"
@@ -429,6 +439,8 @@ def test_v2_scatter_authored_domain_drives_tick_span(scatter_style) -> None:
         chart_id="test",
         format_authored=True,
         format_is_alias=False,
+        is_quantitative=True,
+        zero_anchored=True,
     )
     ay = dataclasses.replace(
         ay_base,
@@ -443,13 +455,13 @@ def test_v2_scatter_authored_domain_drives_tick_span(scatter_style) -> None:
     chart = ResolvedScatterChart(
         panel_axes=(),
         chart_type="scatter",
-        x="cat",
+        x="x_val",
         y="val",
         style=scatter_style.model_copy(update={"axis_y": ay}),
         **_C,
     )
 
-    spec = ScatterEmitter().emit(chart, _DEFAULT_BOX, regroup((), _BAND_DATA))
+    spec = ScatterEmitter().emit(chart, _DEFAULT_BOX, regroup((), _SCATTER_BAND_DATA))
     y_axis = spec.encoding["y"].get("axis", {})
     values = y_axis.get("values") if isinstance(y_axis, dict) else None
     assert values is not None, (

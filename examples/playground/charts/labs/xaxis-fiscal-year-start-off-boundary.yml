@@ -1,0 +1,31 @@
+title: "X-axis cadence: domain opening off the fiscal-year boundary"
+notes: >
+  Regression specimen for _pair_clears's year-row check. 30 monthly points
+  opening October (not January) put the anchor tick and an interior January
+  tick — the fiscal-year start — in the SAME clearance pair, and neither is
+  the domain's trailing edge. Every other cadence specimen in this repo opens
+  on January 1st, so a bug that only shows up when the anchor and the
+  fiscal-year-start tick are both interior (never the domain's own last
+  tick) went undetected until this one. EXPECT flat, non-overlapping "20xx"
+  year labels — no stray "Q1"/"Jan" text and no rotation. If a future change
+  regresses the year-row clearance check, this is the shape that catches it.
+extends: clarity
+style:
+  frame:
+    width: 300
+rows:
+  - cols: [october_open]
+charts:
+  october_open:
+    type: line
+    x: month
+    y: total
+    query:
+      sql: >
+        SELECT month, total FROM (
+          SELECT
+            CAST(d AS DATE) AS month,
+            pow(1.02, row_number() OVER (ORDER BY d)) * 1000000 AS total
+          FROM generate_series(DATE '2023-10-01', DATE '2026-03-01', INTERVAL 1 MONTH) AS t(d)
+        )
+      source: duckdb_local

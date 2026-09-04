@@ -246,8 +246,11 @@ rows:
         assert mock_registry.execute.call_count == 1
         assert data1 == data2
 
-    def test_cache_bypass_option(self):
-        """Test that cache can be bypassed."""
+    def test_call_level_use_cache_false_keeps_the_render_memo(self):
+        """Call-level `use_cache=False` is no-store, not re-execute.
+
+        Why the memo is unconditional: `execute_query`'s Step 3 comment.
+        """
         yaml_content = """
 title: Test
 queries:
@@ -278,12 +281,9 @@ rows:
             query_registry=result.query_registry,
         )
 
-        # Execute with cache bypass
         executor.execute_query("data", use_cache=False)
         executor.execute_query("data", use_cache=False)
-
-        # Should call adapter twice
-        assert mock_registry.execute.call_count == 2
+        assert mock_registry.execute.call_count == 1
 
 
 class TestExecutorErrors:
@@ -761,3 +761,92 @@ rows:
 
         with pytest.raises(Exception, match="[Cc]ircular"):
             executor.execute_query("a")
+
+
+class TestExecutionIdentityMemo:
+    """One Executor = one execution per query, regardless of cache settings."""
+
+    _YAML = """
+title: Test
+queries:
+  q:
+    sql: SELECT industry, count(*) AS n FROM accounts GROUP BY 1 ORDER BY 2 DESC
+    source: test_profile
+charts:
+  c:
+    query: q
+    type: table
+rows:
+  - c
+"""
+
+    def test_execute_query_is_one_execution_per_render_even_with_cache_off(self):
+        """Regression: the in-memory memo is the render's identity guarantee.
+
+        `use_cache=False` disables the persistent store, not the per-render
+        memo. Without the memo, the resolve pass and the render pass execute
+        the same query separately, and a query whose ORDER BY has ties can
+        legally return a different row order each time — flaking pie renders
+        with ERR-RESOLVED-PIE-DATA-MISMATCH.
+        """
+        result = compile(self._YAML)
+        assert result.success, result.errors
+
+        order_a = [{"industry": "Tech", "n": 2}, {"industry": "Media", "n": 2}]
+        order_b = [{"industry": "Media", "n": 2}, {"industry": "Tech", "n": 2}]
+        results = iter([order_a, order_b])
+
+        def _execute(*args, **kwargs):
+            ok = Mock()
+            ok.is_success = True
+            ok.data = [dict(row) for row in next(results)]
+            ok.column_descriptions = None
+            ok.resolved_relations = None
+            ok.truncated_reason = None
+            return ok
+
+        mock_registry = Mock()
+        mock_registry.execute.side_effect = _execute
+
+        executor = Executor(
+            result.board,
+            adapter_registry=mock_registry,
+            query_registry=result.query_registry,
+            use_cache=False,
+        )
+
+        first = executor.execute_query("q")
+        second = executor.execute_query("q")
+
+        assert second == first
+        assert mock_registry.execute.call_count == 1
+
+    def test_force_refresh_still_re_executes_with_cache_off(self):
+        """`force_refresh` remains the sanctioned way to get fresh rows."""
+        result = compile(self._YAML)
+        assert result.success, result.errors
+
+        rows_by_call = iter([[{"n": 1}], [{"n": 2}]])
+
+        def _execute(*args, **kwargs):
+            ok = Mock()
+            ok.is_success = True
+            ok.data = next(rows_by_call)
+            ok.column_descriptions = None
+            ok.resolved_relations = None
+            ok.truncated_reason = None
+            return ok
+
+        mock_registry = Mock()
+        mock_registry.execute.side_effect = _execute
+
+        executor = Executor(
+            result.board,
+            adapter_registry=mock_registry,
+            query_registry=result.query_registry,
+            use_cache=False,
+        )
+
+        assert executor.execute_query("q") == [{"n": 1}]
+        assert executor.execute_query("q", force_refresh=True) == [{"n": 2}]
+        assert mock_registry.execute.call_count == 2

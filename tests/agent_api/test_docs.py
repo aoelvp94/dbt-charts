@@ -25,7 +25,7 @@ def patch_syntax_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     fake = tmp_path / "DBT_CHARTS_SYNTAX.md"
     fake.write_text(
-        "# Dataface YAML Syntax\n\n"
+        "# dbt charts YAML Syntax\n\n"
         "## Cheatsheet\nOne screen of essentials. Each topic below has a dedicated H2.\n\n"
         "## Board\nThe board is the root dashboard object.\nContains charts and layout.\n\n"
         "## Conditional formatting\nRule-driven style overrides applied per column.\n\n"
@@ -89,7 +89,7 @@ def test_docs_all_returns_whole_file() -> None:
     assert result.mode == "topic"
     assert result.topic is not None
     assert result.topic.id == "all"
-    assert "Dataface YAML Syntax" in result.topic.content
+    assert "dbt charts YAML Syntax" in result.topic.content
     assert "## Cheatsheet" in result.topic.content
     assert "## Layout" in result.topic.content
 
@@ -132,7 +132,9 @@ def test_docs_error_reference_returns_generated_spec(tmp_path: Path) -> None:
     import dbt_charts.agent_api.docs._loader as _loader
 
     fake_ref = tmp_path / "error-reference.md"
-    fake_ref.write_text("# Dataface Error Reference\n\n| Code | Domain |\n|---|---|\n")
+    fake_ref.write_text(
+        "# dbt charts Error Reference\n\n| Code | Domain |\n|---|---|\n"
+    )
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(_loader, "_ERROR_REFERENCE_FILE", fake_ref)
     result = docs(topic="error-reference")
@@ -141,7 +143,7 @@ def test_docs_error_reference_returns_generated_spec(tmp_path: Path) -> None:
     assert result.mode == "topic"
     assert result.topic is not None
     assert result.topic.id == "error-reference"
-    assert "Dataface Error Reference" in result.topic.content
+    assert "dbt charts Error Reference" in result.topic.content
 
 
 def test_docs_error_reference_missing_file_returns_error(tmp_path: Path) -> None:
@@ -159,7 +161,7 @@ def test_docs_warning_reference_returns_generated_spec(tmp_path: Path) -> None:
     import dbt_charts.agent_api.docs._loader as _loader
 
     fake_ref = tmp_path / "warning-reference.md"
-    fake_ref.write_text("# Dataface Warning Reference\n\n### WARN-FOO\n")
+    fake_ref.write_text("# dbt charts Warning Reference\n\n### WARN-FOO\n")
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(_loader, "_WARNING_REFERENCE_FILE", fake_ref)
     result = docs(topic="warning-reference")
@@ -168,7 +170,7 @@ def test_docs_warning_reference_returns_generated_spec(tmp_path: Path) -> None:
     assert result.mode == "topic"
     assert result.topic is not None
     assert result.topic.id == "warning-reference"
-    assert "Dataface Warning Reference" in result.topic.content
+    assert "dbt charts Warning Reference" in result.topic.content
 
 
 def test_docs_warning_reference_missing_file_returns_error(tmp_path: Path) -> None:

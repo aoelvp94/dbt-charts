@@ -121,7 +121,7 @@ def _resolve_layout_item_static(
         details_variable=item.details_variable,
         details_summary=item.details_summary,
         details_expanded_summary=item.details_expanded_summary,
-        description=item.description,
+        notes=item.notes,
         visible=item.visible,
     )
 
@@ -174,7 +174,7 @@ def build_resolved_nested_board_static(board: Board) -> ResolvedBoard:
     return ResolvedBoard(
         id=board.id,
         title=board.title,
-        description=board.description,
+        notes=board.notes,
         tags=tuple(board.tags),
         text=board.text,
         html_policy=board.html_policy,
@@ -215,20 +215,20 @@ def build_resolved_board_static(board: Board) -> ResolvedBoard:
         ResolvedBoard with baked board constants, charts (empty data),
         and static layout estimates.
     """
-    from dbt_charts.core.compile.sizing import get_board_gap
+    from dbt_charts.core.compile.sizing import board_container_width, get_board_gap
 
     frame = board.resolved_style.frame
     page_padding = float(frame.margin)
     card_padding = float(frame.card_padding)
     card_gap = float(frame.card_gap) if board.card_gap else 0.0
     layout_gap = get_board_gap(board)
-    width = float(board.layout.width or frame.width)
+    width = float(board.layout.width or board_container_width(board))
     height = float(board.layout.height)
 
     return ResolvedBoard(
         id=board.id,
         title=board.title,
-        description=board.description,
+        notes=board.notes,
         tags=tuple(board.tags),
         text=board.text,
         html_policy=board.html_policy,
@@ -298,8 +298,18 @@ def build_resolved_board(
          RenderCache mapping (chart_id, width, height) to (svg, height) for
          Vega charts rendered during sizing)
     """
-    from dbt_charts.core.compile.sizing import get_board_gap
+    from dbt_charts.core.compile.sizing import board_container_width, get_board_gap
+    from dbt_charts.core.execute.category_colors import (
+        plan_board_category_colors,
+        with_category_colors,
+    )
     from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
+
+    # Board-wide category colors, before anything resolves: a value's swatch is
+    # decided once for the whole board, so every chart must see the same plan.
+    board = with_category_colors(
+        board, plan_board_category_colors(board, executor, variables)
+    )
 
     # Each layout placement is resolved at its own final width. One authored
     # chart may appear in several slots whose finalized presentation differs.
@@ -328,7 +338,7 @@ def build_resolved_board(
     card_padding = float(frame.card_padding)
     card_gap = float(frame.card_gap) if board.card_gap else 0.0
     layout_gap = get_board_gap(board)
-    width = float(board.layout.width or frame.width)
+    width = float(board.layout.width or board_container_width(board))
     height = float(board.layout.height)
 
     resolved_layout = _build_resolved_layout(
@@ -348,7 +358,7 @@ def build_resolved_board(
         ResolvedBoard(
             id=board.id,
             title=board.title,
-            description=board.description,
+            notes=board.notes,
             tags=tuple(board.tags),
             text=board.text,
             html_policy=board.html_policy,
@@ -510,7 +520,7 @@ def _resolve_layout_item(
         details_variable=item.details_variable,
         details_summary=item.details_summary,
         details_expanded_summary=item.details_expanded_summary,
-        description=item.description,
+        notes=item.notes,
         visible=item.visible,
     )
 
@@ -549,7 +559,7 @@ def _resolve_nested(
     return ResolvedBoard(
         id=board.id,
         title=board.title,
-        description=board.description,
+        notes=board.notes,
         tags=tuple(board.tags),
         text=board.text,
         html_policy=board.html_policy,

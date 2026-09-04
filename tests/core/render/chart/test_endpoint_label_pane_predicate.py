@@ -329,33 +329,33 @@ def test_layered_line_absent_y_does_not_fire_pane_or_flip_axis():
 # --------------------------------------------------------------------------
 
 
-def test_editorial_line_endpoint_labels_on_by_default():
-    """editorial enables line endpoint labels by default (editorial voice)."""
+def test_clarity_line_endpoint_labels_on_by_default():
+    """clarity enables line endpoint labels by default (editorial voice)."""
     from dbt_charts.core.compile.config import get_theme_style
 
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     assert compiled.charts.line.endpoint_labels.visible is True, (
-        "editorial.charts.line.endpoint_labels.visible should be True after "
-        "editorial theme sets line.endpoint_labels.visible: true"
+        "clarity.charts.line.endpoint_labels.visible should be True after "
+        "clarity theme sets line.endpoint_labels.visible: true"
     )
 
 
-def test_cream_line_endpoint_labels_on_by_default():
-    """`cream` extends editorial; inherits `line.endpoint_labels.visible: true`."""
+def test_paper_line_endpoint_labels_on_by_default():
+    """`paper` extends clarity; inherits `line.endpoint_labels.visible: true`."""
     from dbt_charts.core.compile.config import get_theme_style
 
-    compiled = get_theme_style("cream")
+    compiled = get_theme_style("paper")
     assert compiled.charts.line.endpoint_labels.visible is True, (
-        f"cream.charts.line.endpoint_labels.visible is "
-        f"{compiled.charts.line.endpoint_labels.visible!r}; expected True (inherited from editorial)."
+        f"paper.charts.line.endpoint_labels.visible is "
+        f"{compiled.charts.line.endpoint_labels.visible!r}; expected True (inherited from clarity)."
     )
 
 
-def test_default_and_cream_bar_endpoint_labels_on_by_default():
-    """`default` and `cream` inherit `bar.endpoint_labels.visible: true` from stark."""
+def test_clarity_and_paper_bar_endpoint_labels_on_by_default():
+    """`clarity` and `paper` inherit `bar.endpoint_labels.visible: true` from stark."""
     from dbt_charts.core.compile.config import get_theme_style
 
-    for theme_name in ("editorial", "cream"):
+    for theme_name in ("clarity", "paper"):
         compiled = get_theme_style(theme_name)
         assert compiled.charts.bar.endpoint_labels.visible is True, (
             f"{theme_name}.charts.bar.endpoint_labels.visible is "
@@ -363,8 +363,8 @@ def test_default_and_cream_bar_endpoint_labels_on_by_default():
         )
 
 
-def test_stark_bar_endpoint_labels_on_by_default():
-    """Stark (the structural root) turns bar endpoint labels on by default.
+def test_structural_root_bar_endpoint_labels_on_by_default():
+    """stark (the structural root) turns bar endpoint labels on by default.
 
     Whether a given bar actually renders them depends on stack mode — see
     ``_bar_endpoint_labels_for_stack`` — this only pins the theme value.
@@ -378,8 +378,8 @@ def test_stark_bar_endpoint_labels_on_by_default():
     )
 
 
-def test_single_series_editorial_bar_pane_does_not_fire():
-    """Single-series bar in cream: pane does NOT fire.
+def test_single_series_paper_bar_pane_does_not_fire():
+    """Single-series bar in paper: pane does NOT fire.
 
     Theme defaults `bar.endpoint_labels.visible: true`, but the color-channel
     gate in endpoint_label_pane_will_fire() suppresses the pane when there is
@@ -390,7 +390,7 @@ def test_single_series_editorial_bar_pane_does_not_fire():
     from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
     reset_config()
-    rs, ctx = resolve_style_and_context(get_theme_style("cream"))
+    rs, ctx = resolve_style_and_context(get_theme_style("paper"))
     chart = BarChart(
         id="t",
         type="bar",
@@ -404,13 +404,13 @@ def test_single_series_editorial_bar_pane_does_not_fire():
         chart, _single_series_data(), width=400, board_style=rs, chart_style_context=ctx
     )
     assert "hconcat" not in spec, (
-        "Endpoint-label pane fired on a single-series cream bar — "
+        "Endpoint-label pane fired on a single-series paper bar — "
         "the color-channel gate should suppress it when no color is encoded."
     )
 
 
 def test_multi_series_grouped_bar_pane_does_not_fire_by_default():
-    """Multi-series bar in cream, no explicit stack: pane does NOT fire.
+    """Multi-series bar in paper, no explicit stack: pane does NOT fire.
 
     bar.endpoint_labels.visible is True by theme default, but an unstacked
     chart resolves to grouped (`stack: none`), which never carries endpoint
@@ -422,7 +422,7 @@ def test_multi_series_grouped_bar_pane_does_not_fire_by_default():
     from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
     reset_config()
-    rs, ctx = resolve_style_and_context(get_theme_style("cream"))
+    rs, ctx = resolve_style_and_context(get_theme_style("paper"))
     chart = BarChart(
         id="t",
         type="bar",
@@ -436,6 +436,6 @@ def test_multi_series_grouped_bar_pane_does_not_fire_by_default():
         chart, _multi_series_data(), width=400, board_style=rs, chart_style_context=ctx
     )
     assert "hconcat" not in spec, (
-        "Endpoint-label pane fired on a multi-series cream bar "
+        "Endpoint-label pane fired on a multi-series paper bar "
         "without explicit authoring — theme default is False."
     )

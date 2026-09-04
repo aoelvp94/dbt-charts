@@ -1,5 +1,5 @@
 title: Support operations
-description: |
+notes: |
   Triage board for the support lead. Above-the-fold answers: what's in the
   queue right now, how old is it, are we keeping up with intake, and which
   issues dominate. Authored against the Dundersign silver layer — tickets
@@ -18,7 +18,7 @@ description: |
   encodings to force VL nominal-scale ordering; the value+spark column
   split via SQL aliasing for the age_bar column).
 
-theme: cream
+theme: paper
 source: dundersign_db
 
 style:
@@ -327,8 +327,8 @@ charts:
     style:
       # No palette override — lets the theme's editorial-10 categorical
       # default fan out across the four priorities. The first four stops
-      # (denim / sky / sand / gray) give urgent the saturated dark cool
-      # and fade through to a quiet neutral.
+      # (blue / sky / green / purple) keep adjacent priority bands muted
+      # while remaining distinguishable.
       # Force vertical columns. Without this, dct's auto-orientation flips
       # to horizontal whenever x is a short categorical (5 age bands here),
       # and the chart renders as bars instead of columns.
@@ -445,16 +445,16 @@ charts:
         when:
         - eq: urgent
           glyph: "■"
-          glyph_color: "#a8423a"     # editorial-10 crimson
+          glyph_color: "#a8423a"     # urgent crimson
         - eq: high
           glyph: "■"
-          glyph_color: "#d49656"     # editorial-10 gold
+          glyph_color: "#d49656"     # editorial gold
         - eq: normal
           glyph: "■"
-          glyph_color: "#7a8a9a"     # editorial-10 slate
+          glyph_color: "#7a8a9a"     # cool slate
         - eq: low
           glyph: "■"
-          glyph_color: "#a8b4a8"     # editorial-10 sage-mute
+          glyph_color: "#a8b4a8"     # muted sage
       ticket_type:
         when:
         - eq: problem
@@ -477,7 +477,7 @@ charts:
         when:
         - lte: 7
           glyph: "●"
-          glyph_color: "#5c7b5c"
+          glyph_color: "#608470"
         - gt: 90
           glyph: "◐"
           glyph_color: "#d49656"

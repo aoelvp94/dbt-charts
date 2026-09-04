@@ -45,6 +45,7 @@ charts:
       columns:
         ticket_id:
           label: Ticket
+          visible: true   # styling-only: unlisted query columns still render
         priority:
           label: Priority
         status:
@@ -97,6 +98,7 @@ See `examples/table-heavy-ops-dashboard.yml` for the inline-data worked example.
 | Formatting strings not D3/Excel format | Wrong output | Use D3 format specs: `"$,.0f"`, `".1%"` |
 | Conditional rule with no style override | `ConditionalRule` validation error | Set `background:`, `font.color`, `font.weight`, or `glyph:` on each rule |
 | Sorting expectation mismatch | Default sort is query order | Add `ORDER BY priority` in SQL for triage queues |
+| Reordering `style.columns` keys to move a column | Column order is styling-only there; a non-pivot table follows the query's `SELECT` order (zero rows excepted) | Reorder the `SELECT` list, not `style.columns` |
 
 Conditional predicates are `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `between`,
 `in`, `is_null`, and `default`. Use `in:` in YAML, not `in_:`. `default: true`

@@ -1,7 +1,5 @@
 Style.charts.area.aspect_ratio:
 - Style.charts.aspect_ratio
-Style.charts.area.data_table:
-- Style.charts.data_table
 Style.charts.area.legend.label.font:
 - Style.charts.font
 - Style.font
@@ -18,6 +16,8 @@ Style.charts.area.padding:
 - Style.charts.padding
 Style.charts.area.preferred_width:
 - Style.charts.preferred_width
+Style.charts.area.support_table:
+- Style.charts.support_table
 Style.charts.axis.labels.font:
 - Style.charts.font
 - Style.font
@@ -28,8 +28,6 @@ Style.charts.background:
 - Style.background
 Style.charts.bar.aspect_ratio:
 - Style.charts.aspect_ratio
-Style.charts.bar.data_table:
-- Style.charts.data_table
 Style.charts.bar.legend.label.font:
 - Style.charts.font
 - Style.font
@@ -46,19 +44,14 @@ Style.charts.bar.padding:
 - Style.charts.padding
 Style.charts.bar.preferred_width:
 - Style.charts.preferred_width
+Style.charts.bar.support_table:
+- Style.charts.support_table
 Style.charts.callout.message.font:
 - Style.charts.font
 - Style.font
 Style.charts.callout.padding:
 - Style.charts.padding
 Style.charts.callout.title.font:
-- Style.charts.font
-- Style.font
-Style.charts.data_table.font:
-- Style.charts.font
-- Style.font
-Style.charts.data_table.label.font:
-- Style.charts.data_table.font
 - Style.charts.font
 - Style.font
 Style.charts.font:
@@ -83,8 +76,6 @@ Style.charts.geoshape.preferred_width:
 - Style.charts.preferred_width
 Style.charts.heatmap.aspect_ratio:
 - Style.charts.aspect_ratio
-Style.charts.heatmap.data_table:
-- Style.charts.data_table
 Style.charts.heatmap.legend.label.font:
 - Style.charts.font
 - Style.font
@@ -101,10 +92,10 @@ Style.charts.heatmap.padding:
 - Style.charts.padding
 Style.charts.heatmap.preferred_width:
 - Style.charts.preferred_width
+Style.charts.heatmap.support_table:
+- Style.charts.support_table
 Style.charts.histogram.aspect_ratio:
 - Style.charts.aspect_ratio
-Style.charts.histogram.data_table:
-- Style.charts.data_table
 Style.charts.histogram.legend.label.font:
 - Style.charts.font
 - Style.font
@@ -121,6 +112,8 @@ Style.charts.histogram.padding:
 - Style.charts.padding
 Style.charts.histogram.preferred_width:
 - Style.charts.preferred_width
+Style.charts.histogram.support_table:
+- Style.charts.support_table
 Style.charts.kpi.affix.font:
 - Style.charts.kpi.font
 - Style.charts.font
@@ -152,8 +145,6 @@ Style.charts.legend.title.font:
 - Style.font
 Style.charts.line.aspect_ratio:
 - Style.charts.aspect_ratio
-Style.charts.line.data_table:
-- Style.charts.data_table
 Style.charts.line.legend.label.font:
 - Style.charts.font
 - Style.font
@@ -170,6 +161,8 @@ Style.charts.line.padding:
 - Style.charts.padding
 Style.charts.line.preferred_width:
 - Style.charts.preferred_width
+Style.charts.line.support_table:
+- Style.charts.support_table
 Style.charts.marks.rule.stroke.color:
 - Style.font.color
 Style.charts.marks.text.font:
@@ -217,8 +210,6 @@ Style.charts.point_map.preferred_width:
 - Style.charts.preferred_width
 Style.charts.scatter.aspect_ratio:
 - Style.charts.aspect_ratio
-Style.charts.scatter.data_table:
-- Style.charts.data_table
 Style.charts.scatter.legend.label.font:
 - Style.charts.font
 - Style.font
@@ -235,6 +226,8 @@ Style.charts.scatter.padding:
 - Style.charts.padding
 Style.charts.scatter.preferred_width:
 - Style.charts.preferred_width
+Style.charts.scatter.support_table:
+- Style.charts.support_table
 Style.charts.series_label.font:
 - Style.charts.font
 - Style.font
@@ -243,6 +236,13 @@ Style.charts.spark_bar.font:
 - Style.font
 Style.charts.spark_bar.padding:
 - Style.charts.padding
+Style.charts.support_table.font:
+- Style.charts.font
+- Style.font
+Style.charts.support_table.label.font:
+- Style.charts.support_table.font
+- Style.charts.font
+- Style.font
 Style.charts.table.empty_state.font:
 - Style.charts.table.font
 - Style.charts.font

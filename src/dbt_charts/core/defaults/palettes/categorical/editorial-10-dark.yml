@@ -1,40 +1,23 @@
-# Categorical palette — editorial-10-dark
+# Categorical palette: editorial-10-dark
 #
-# Dark companion to editorial-10. Each stop is the darker counterpart of the
-# same slot in `editorial-10.yml` — used for direct labels that need higher
-# contrast against light backgrounds (e.g. right-pane endpoint labels on
-# multi-series lines, segment names on stacked bars).
-#
-# Pairing is positional: stop N here is the dark companion of stop N in
-# editorial-10. When the editorial palette changes, edit this file in
-# lock-step with `editorial-10.yml`, `editorial-10-light.yml`, and
-# `editorial-10-ghost.yml`.
-#
-# Construction: each stop drops L by ~0.10 in OKLCH, with a small chroma
-# bump so the darker tone keeps perceptual punch. Same hue as the paired
-# editorial-10 stop.
-#
-# Slot 10 (charcoal) is the exception: it equals its base stop (#232f3a)
-# rather than dropping darker. Charcoal-base already sits at the ink-band
-# floor (L≈0.30), so there is no meaningful darker twin to ink a label with
-# — the near-black base reads as authored ink on a light canvas on its own.
-# Charcoal base / dark / ink are deliberately the same near-black.
+# Direct-label companion. Every stop keeps its base hue identity, sits clearly
+# below the base in OKLCH lightness, and clears 4.5:1 on #fff, #fafafa, and
+# cream #faf7f0. Aliases inherit from editorial-10 and resolve by position.
 
 name: editorial-10-dark
 extends: editorial-10
 description: |
-  Dark companion to editorial-10 for direct-label inking. Each stop is the
-  same hue as the paired editorial-10 slot, shifted ~0.10 darker in OKLCH L*
-  so labels sit a notch darker than the line / bar they ink.
+  Dark companion to editorial-10 for small direct labels on light canvases.
+  Each stop is positionally paired with the same base hue.
 
 colors:
-  - "#0e4786"    # 1  — denim     (companion to #3164a3)
-  - "#557daf"    # 2  — sky       (companion to #779bc9)
-  - "#917d5a"    # 3  — sand      (companion to #ad9c7f)
-  - "#5b6b7a"    # 4  — gray      (companion to #7a8895)
-  - "#6f3854"    # 5  — plum      (companion to #8a576f)
-  - "#3a603b"    # 6  — green     (companion to #5c7b5c)
-  - "#b46e0f"    # 7  — gold      (companion to #d49656)
-  - "#944123"    # 8  — rust      (companion to #ae6349)
-  - "#2a807f"    # 9  — teal      (companion to #609f9e)
-  - "#232f3a"    # 10 — charcoal  (= base #232f3a; no darker twin, see header)
+  - "#23467f"    # 1  blue
+  - "#476b98"    # 2  sky
+  - "#3d614e"    # 3  green
+  - "#5b3b55"    # 4  purple
+  - "#955902"    # 5  gold
+  - "#8a3f24"    # 6  rust
+  - "#586e6f"    # 7  teal
+  - "#77664a"    # 8  brown
+  - "#54626f"    # 9  gray
+  - "#424c4e"    # 10 graphite

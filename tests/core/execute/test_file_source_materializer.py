@@ -588,12 +588,12 @@ class TestProjectLevelFileSources:
         failed with "csv SQL execution failed: Unknown dialect 'csv'".
         """
         csv_content = "name,value\nalpha,10\nbeta,20\n"
-        dataface_yml = "sources:\n  kpi_data:\n    type: csv\n    files:\n      kpi_data: data/kpi.csv\n"
+        dbt_charts_yml = "sources:\n  kpi_data:\n    type: csv\n    files:\n      kpi_data: data/kpi.csv\n"
         project = _make_project(
             tmp_path,
             {
                 "data/kpi.csv": csv_content,
-                "dbt_charts.yml": dataface_yml,
+                "dbt_charts.yml": dbt_charts_yml,
             },
             local_project,
         )

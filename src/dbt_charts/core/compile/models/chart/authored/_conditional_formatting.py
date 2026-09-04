@@ -176,7 +176,7 @@ class ConditionalRule(_PredicateBase):
     )
     glyph: str | None = Field(
         default=None,
-        description="Glyph character prepended to the cell value when the rule matches.",
+        description="Text shown before the cell value when the rule matches.",
     )
     glyph_color: str | None = Field(
         default=None,
@@ -184,7 +184,7 @@ class ConditionalRule(_PredicateBase):
     )
     tone: ToneLiteral | None = Field(
         default=None,
-        description="Semantic tone (positive|negative|warning|info) that colors the glyph via the theme's tone palette — the preferred, theme-adaptive alternative to a raw glyph_color. Requires glyph. Explicit glyph_color wins.",
+        description="Semantic tone (positive|negative|warning|info) that colors the glyph via the theme's tone palette; the preferred, theme-adaptive alternative to a raw glyph_color. Requires glyph. Explicit glyph_color wins.",
     )
 
     @model_validator(mode="after")

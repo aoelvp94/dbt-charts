@@ -45,7 +45,7 @@ class TestBuildSkeleton:
         validate_select_only("SELECT 1")  # should not raise
 
     def test_output_expression_becomes_placeholder(self) -> None:
-        # {{ ref('orders') }} is an Output node; becomes __dft_j0__ identifier.
+        # {{ ref('orders') }} is an Output node; becomes __dct_j0__ identifier.
         # That placeholder is a valid SQL identifier so SELECT stays valid.
         validate_select_only(
             "SELECT * FROM {{ ref('orders') }} WHERE id = {{ user_id }}"

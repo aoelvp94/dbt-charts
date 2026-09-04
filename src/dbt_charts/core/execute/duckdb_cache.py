@@ -1,7 +1,7 @@
 """DuckDB caching layer for persistent query result storage.
 
 Stage: EXECUTE (Cache)
-Purpose: Persist query results in DuckDB for fast dataface loads
+Purpose: Persist query results in DuckDB for fast board loads
 and cross-database queries.
 
 Cache Key: (source_hash, query_hash, variables_hash)
@@ -142,6 +142,14 @@ def compute_cache_key(
         content = query.sql
         if query.setup_sql:
             content += "\n" + query.setup_sql
+        # Fold only when incremental is active (a watermark column name) so a
+        # non-incremental query — the common case — hashes exactly as it did
+        # before this feature existed. Folding unconditionally would bust
+        # every existing cache entry on upgrade. Inactive contributes nothing
+        # to the content, so a column literally named "None" can't collide
+        # with the inactive state either.
+        if isinstance(query.incremental, str):
+            content += f"\n__incremental:{query.incremental}"
         source_hash = compute_source_hash(query.source, board_sources=board_sources)
         if source_version:
             source_hash = compute_query_hash(f"{source_hash}:{source_version}")

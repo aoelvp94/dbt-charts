@@ -147,8 +147,12 @@ class LayoutItem(BaseModel):
         default=None,
         description="Summary text shown when expanded (collapsible sections).",
     )
-    description: str | None = Field(
-        default=None, description="Optional metadata for AI/context tooltips."
+    notes: str | None = Field(
+        default=None,
+        description=(
+            "Optional metadata for AI search. Emitted into the SVG DOM as a "
+            "data-layout-notes attribute; never painted as visible pixels."
+        ),
     )
 
     # Render-ready sizing (calculated during normalization/sizing)
@@ -184,7 +188,6 @@ class Layout(BaseModel):
 
     Grid-specific:
         columns: Number of columns in grid
-        gap: Gap between items
 
     Tabs-specific:
         tab_titles: Titles for each tab
@@ -210,12 +213,6 @@ class Layout(BaseModel):
     # Grid-specific
     columns: int | None = Field(
         default=None, description="Number of columns for grid layouts."
-    )
-    gap: str | None = Field(
-        default=None, description="Gap between items for grid layouts (CSS value)."
-    )
-    row_height: str | None = Field(
-        default=None, description="Default row height for grid layouts (CSS value)."
     )
 
     # Tabs-specific
@@ -285,7 +282,8 @@ class Board(BaseModel):
     Attributes:
         id: Unique identifier for this board
         title: Display title
-        description: Description text
+        notes: Optional metadata for AI search (not painted; Cloud shows it
+            in the dashboard-card hover overlay)
         variables: Variable definitions (Dict[str, Variable])
         queries: Compiled queries (Dict[str, AnyQuery])
         charts: Compiled charts (Dict[str, Chart])
@@ -307,8 +305,13 @@ class Board(BaseModel):
     title: str = Field(
         default="", description="Display title. Empty string if not provided."
     )
-    description: str = Field(
-        default="", description="Description text. Empty string if not provided."
+    notes: str = Field(
+        default="",
+        description=(
+            "Optional metadata for AI search/context. Empty string if not provided. "
+            "Never appears in the rendered board, but Cloud shows it in the "
+            "dashboard-card hover overlay on the project/home listing."
+        ),
     )
     tags: list[str] = Field(
         default_factory=list, description="Tags for categorization and search."
@@ -369,10 +372,10 @@ class Board(BaseModel):
         description="All variables from the entire board tree; only set on root board.",
     )
 
-    # Vega-Lite theme (e.g., "editorial", "stark", "neon")
+    # Vega-Lite theme (e.g., "clarity", "stark", "neon")
     theme: str | None = Field(
         default=None,
-        description="Theme name (e.g., 'editorial', 'cream', 'stark'). Inherited by nested boards.",
+        description="Theme name (e.g., 'clarity', 'paper', 'vivid'). Inherited by nested boards.",
     )
     # Authored style patch — None when the board has no style: block.
     authored_style: StylePatch | None = Field(
@@ -387,7 +390,7 @@ class Board(BaseModel):
     # (sparse axis overlays, patch sentinels, palette/role token bindings, the
     # pre-inherit tree), produced alongside resolved_style by the same
     # cascade. Used only by runtime chart resolution (execute orchestration,
-    # sizing, the data_table-attachment axis-offset step) — never by
+    # sizing, the support_table-attachment axis-offset step) — never by
     # ResolvedBoard or any mechanical render API.
     chart_style_context: ChartStyleContext = Field(
         description="Board-scoped chart style cascade context for runtime chart resolution.",

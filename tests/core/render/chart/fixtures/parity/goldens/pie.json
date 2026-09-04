@@ -5,7 +5,7 @@
     "resize": true,
     "type": "fit"
   },
-  "background": "#FAFAFA",
+  "background": "#FFFFFF",
   "config": {
     "circle": {
       "opacity": 1.0
@@ -13,16 +13,16 @@
     "font": "'Inter Variable', 'Noto Emoji', Inter, system-ui, sans-serif",
     "range": {
       "category": [
-        "#3164a3",
+        "#40639c",
         "#779bc9",
-        "#ad9c7f",
-        "#7a8895",
-        "#8a576f",
-        "#5c7b5c",
+        "#608470",
+        "#775770",
         "#d49656",
         "#ae6349",
-        "#609f9e",
-        "#232f3a"
+        "#a0b6b7",
+        "#ad9c7f",
+        "#7a8895",
+        "#5c6668"
       ]
     },
     "rule": {
@@ -59,47 +59,47 @@
   "data": {
     "values": [
       {
-        "__dft_label": [
+        "__dbt_label": [
           "50% Widgets",
           "300"
         ],
-        "__dft_label_lines": 2,
-        "__dft_mid": 1.5707963267948966,
-        "__dft_pct": 0.5,
-        "__dft_right": true,
-        "__dft_row_idx": 0,
-        "__dft_top": true,
-        "__dft_total": 600.0,
+        "__dbt_label_lines": 2,
+        "__dbt_mid": 1.5707963267948966,
+        "__dbt_pct": 0.5,
+        "__dbt_right": true,
+        "__dbt_row_idx": 0,
+        "__dbt_top": true,
+        "__dbt_total": 600.0,
         "revenue": 300,
         "segment": "Widgets"
       },
       {
-        "__dft_label": [
+        "__dbt_label": [
           "33% Gizmos",
           "200"
         ],
-        "__dft_label_lines": 2,
-        "__dft_mid": 4.188790204786391,
-        "__dft_pct": 0.3333333333333333,
-        "__dft_right": false,
-        "__dft_row_idx": 1,
-        "__dft_top": false,
-        "__dft_total": 600.0,
+        "__dbt_label_lines": 2,
+        "__dbt_mid": 4.188790204786391,
+        "__dbt_pct": 0.3333333333333333,
+        "__dbt_right": false,
+        "__dbt_row_idx": 1,
+        "__dbt_top": false,
+        "__dbt_total": 600.0,
         "revenue": 200,
         "segment": "Gizmos"
       },
       {
-        "__dft_label": [
+        "__dbt_label": [
           "17% Thingies",
           "100"
         ],
-        "__dft_label_lines": 2,
-        "__dft_mid": 5.759586531581288,
-        "__dft_pct": 0.16666666666666666,
-        "__dft_right": false,
-        "__dft_row_idx": 2,
-        "__dft_top": true,
-        "__dft_total": 600.0,
+        "__dbt_label_lines": 2,
+        "__dbt_mid": 5.759586531581288,
+        "__dbt_pct": 0.16666666666666666,
+        "__dbt_right": false,
+        "__dbt_row_idx": 2,
+        "__dbt_top": true,
+        "__dbt_total": 600.0,
         "revenue": 100,
         "segment": "Thingies"
       }
@@ -108,7 +108,7 @@
   "encoding": {
     "description": {
       "value": {
-        "expr": "\"\\u2064\" + (datum[\"segment\"]) + '; ' + \"Share: \" + (format(datum[\"__dft_pct\"], \".0%\")) + '; ' + \"\\u2060Revenue: \" + (format(datum[\"revenue\"], \",.2~f\")) + '; ' + \"\\u2060\\u2063Total: \" + (format(datum[\"__dft_total\"], \",.2~f\"))"
+        "expr": "\"\\u2064\" + (datum[\"segment\"]) + '; ' + \"Share: \" + (format(datum[\"__dbt_pct\"], \".0%\")) + '; ' + \"\\u2060Revenue: \" + (format(datum[\"revenue\"], \",.2~f\")) + '; ' + \"\\u2060\\u2063Total: \" + (format(datum[\"__dbt_total\"], \",.2~f\"))"
       }
     }
   },
@@ -123,7 +123,7 @@
           "type": "nominal"
         },
         "order": {
-          "field": "__dft_row_idx",
+          "field": "__dbt_row_idx",
           "type": "quantitative"
         },
         "theta": {
@@ -140,7 +140,7 @@
           "expr": "min(width, height) / 2 * 0.9"
         },
         "padAngle": 0.0,
-        "stroke": "#FAFAFA",
+        "stroke": "#FFFFFF",
         "strokeJoin": "round",
         "strokeWidth": 3.0,
         "tooltip": true,
@@ -159,38 +159,39 @@
               "Thingies"
             ],
             "range": [
-              "#0e4786",
-              "#557daf",
-              "#917d5a"
+              "#23467f",
+              "#476b98",
+              "#3d614e"
             ]
           },
           "sort": false,
           "type": "nominal"
         },
         "text": {
-          "field": "__dft_label",
+          "field": "__dbt_label",
           "type": "nominal"
         },
         "x": {
           "axis": null,
-          "field": "__dft_x",
+          "field": "__dbt_x",
           "scale": null,
           "type": "quantitative"
         },
         "y": {
           "axis": null,
-          "field": "__dft_y_anchored",
+          "field": "__dbt_y_anchored",
           "scale": null,
           "type": "quantitative"
         }
       },
       "mark": {
         "align": {
-          "expr": "datum.__dft_right ? 'left' : 'right'"
+          "expr": "datum.__dbt_right ? 'left' : 'right'"
         },
         "baseline": "top",
         "font": "'Inter Variable', 'Noto Emoji', Inter, system-ui, sans-serif",
         "fontSize": 14.0,
+        "fontStyle": "normal",
         "fontWeight": "500",
         "lineHeight": 14.0,
         "tooltip": false,
@@ -198,19 +199,19 @@
       },
       "transform": [
         {
-          "filter": "datum.__dft_label != null"
+          "filter": "datum.__dbt_label != null"
         },
         {
-          "as": "__dft_x",
-          "calculate": "width / 2 + sin(datum.__dft_mid) * (min(width, height) / 2 * 0.9 + 6.0)"
+          "as": "__dbt_x",
+          "calculate": "width / 2 + sin(datum.__dbt_mid) * (min(width, height) / 2 * 0.9 + 6.0)"
         },
         {
-          "as": "__dft_y",
-          "calculate": "height / 2 - cos(datum.__dft_mid) * (min(width, height) / 2 * 0.9 + 6.0)"
+          "as": "__dbt_y",
+          "calculate": "height / 2 - cos(datum.__dbt_mid) * (min(width, height) / 2 * 0.9 + 6.0)"
         },
         {
-          "as": "__dft_y_anchored",
-          "calculate": "datum.__dft_y + (datum.__dft_top ? -(datum.__dft_label_lines * 14.0) : 0)"
+          "as": "__dbt_y_anchored",
+          "calculate": "datum.__dbt_y + (datum.__dbt_top ? -(datum.__dbt_label_lines * 14.0) : 0)"
         }
       ]
     }

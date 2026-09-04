@@ -62,6 +62,22 @@ class TestQueryParityJson:
         _assert_parity(result.output, QueryBoardResult)
 
 
+class TestImpactParityJson:
+    def test_parity(self, tmp_path: Path) -> None:
+        from dbt_charts.agent_api.impact import ColumnImpactResult
+
+        (tmp_path / "dbt_charts.yml").write_text(_SOURCES_YAML)
+        charts = tmp_path / "charts"
+        charts.mkdir()
+        (charts / "test.yaml").write_text(_SIMPLE_BOARD)
+        result = runner.invoke(
+            app,
+            ["impact", "value", "--project-dir", str(tmp_path), "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        _assert_parity(result.output, ColumnImpactResult)
+
+
 class TestDocsParityJson:
     def test_parity(self) -> None:
         from dbt_charts.agent_api.docs import DocsResult

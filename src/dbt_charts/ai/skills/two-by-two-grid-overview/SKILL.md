@@ -18,7 +18,7 @@ metadata:
 
 Four charts arranged in a 2×2 grid, each with equal column width, giving users
 a balanced multi-metric overview before diving into detail. Implemented as two
-`rows:` of `cols:` with two items each — Dataface splits the width evenly by
+`rows:` of `cols:` with two items each — dbt charts splits the width evenly by
 default.
 
 ## When to reach for this

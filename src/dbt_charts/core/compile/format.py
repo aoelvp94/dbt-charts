@@ -21,6 +21,7 @@ remain universal regardless of resolution path.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from d3_format import parse as _d3_parse
@@ -32,8 +33,10 @@ from dbt_charts.core.text.numeral_scale import build_decimal_pad_table
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_NUMBER_NAMES,
     PREDEFINED_SPECS,
+    PREDEFINED_SUB_UNIT_FALLBACK,
     PREDEFINED_TIME_NAMES,
     PREDEFINED_TIME_SPECS,
+    si_sub_unit_floor,
 )
 
 
@@ -90,6 +93,83 @@ def resolve_format(
 
     # Path 3: inline d3 string — native d3, no trim.
     return format_str
+
+
+def get_format_prefix_suffix(
+    format_input: str
+    | FormatConfig
+    | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
+    | None,
+) -> tuple[str, str]:
+    """Extract prefix and suffix from format configuration.
+
+    Lives here (not render/format_utils.py) because resolve_format_for_values
+    needs it internally; render still imports it from here, same as
+    resolve_format.
+    """
+    if format_input is None:
+        return "", ""
+    if isinstance(format_input, FormatConfig):
+        prefix = format_input.prefix or ""  # type-state: silent_fallback — no prefix
+        suffix = format_input.suffix or ""  # type-state: silent_fallback — no suffix
+        return prefix, suffix
+    if isinstance(format_input, dict):
+        prefix = format_input.get("prefix", "")  # type-state: silent_fallback — unset
+        suffix = format_input.get("suffix", "")  # type-state: silent_fallback — unset
+        return prefix, suffix
+    # String format has no prefix/suffix
+    return "", ""
+
+
+def resolve_format_for_values(
+    format_input: str
+    | FormatConfig
+    | dict[str, Any]  # type-state: explicit_any — validator/JSON boundary input
+    | None,
+    formats: dict[str, str] | None,
+    values: Iterable[float | None],
+) -> str:
+    """Resolve a format spec once for a whole Vega-painted slot, voting from its data.
+
+    ``format_value``/``format_kpi_parts`` (render/format_utils.py) apply
+    ``si_sub_unit_floor`` per value because Python paints each KPI/table cell
+    individually. Vega paints per-datum inside its own runtime, so no Python
+    code runs per value there — the floor has to be decided once, at
+    resolve, from the values the slot will actually paint, and baked into a
+    plain spec string. This is the same shape as
+    ``finalize_kpi_value_format`` (data-aware, decided once, baked before
+    render).
+
+    Per-set semantics: **any** value in ``values`` that falls in the sub-$1
+    band pulls the *whole* slot to the plain-digit fallback, even members
+    that are >= $1 — a donut's centre total and its slice tooltips vote on
+    one set (pass both) so they never disagree about the same 67 cents. A
+    mixed set ($0.42 next to $3.00) paints every value in the two-decimal
+    register rather than misreading the sub-$1 member as SI milli.
+
+    Args:
+        format_input: Format specification, as passed to resolve_format.
+        formats: Theme format alias dict (compiled_style.formats).
+        values: Every value this slot will paint (e.g. a donut's theta
+            column plus its sum, or a cartesian family's quantitative
+            channel values). Non-numeric callers filter before calling; a
+            None entry is skipped, matching format_value's own null guard.
+    """
+    resolved = resolve_format(format_input, formats)
+    raw = (
+        format_input.spec
+        if isinstance(format_input, FormatConfig)
+        else format_input
+        if isinstance(format_input, str)
+        else None
+    )
+    if raw not in PREDEFINED_SUB_UNIT_FALLBACK:
+        return resolved
+    prefix, suffix = get_format_prefix_suffix(format_input)
+    floor = si_sub_unit_floor(resolved, prefix, suffix)
+    if any(v is not None and floor < abs(v) < 1.0 for v in values):
+        return PREDEFINED_SPECS[PREDEFINED_SUB_UNIT_FALLBACK[raw]]
+    return resolved
 
 
 def resolve_label_format(
@@ -153,8 +233,9 @@ def finalize_kpi_value_format(
         notation = "narrative"
     if spec is None and notation in ("narrative", "analytic") and compact_eligible:
         # 2 sig figs (the KPI precision) with trim. Not a predefined name: the
-        # predefined "compact" is 6 sig figs (for chart axes). FormatConfig.notation
-        # above carries "narrative" so the inline spec still gets narrative register.
+        # predefined "compact" is 3 sig figs, one more than a tile wants.
+        # FormatConfig.notation above carries "narrative" so the inline spec still
+        # gets narrative register.
         spec = ".2~s"
     if format_input is None and spec is None:
         return None
@@ -174,12 +255,18 @@ def decimal_pad_table_for(
     Returns a tuple of length ``precision + 2`` (indices 0..precision+1) where
     index ``i`` is the trailing pad for ``missing_len == i``.
 
-    Compute missing_len from the trimmed string::
+    Compute missing_len from the trimmed string via
+    ``fractional_digit_count`` (``core/text/numeral_scale.py`` -- DIGIT
+    characters only, never a raw ``len(num_str.partition(".")[2])`` count,
+    which a trailing non-digit like a magnitude suffix letter or an
+    accounting-sign format's closing ")" would corrupt)::
 
-        frac = len(num_str.partition(".")[2])
+        frac = fractional_digit_count(num_str)
         missing_len = precision - frac if frac else precision + 1
 
-    Then ``num_str += decimal_pad_table[missing_len]``.
+    Then ``num_str += decimal_pad_table[missing_len]`` -- ``decimal_pad_for``
+    (``core/text/numeral_scale.py``) is the canonical selector doing exactly
+    this.
 
     Returns ``()`` for non-trim-enabled or non-fixed-point specs (SI, no-spec,
     PREDEFINED_NATIVE, percent, or any d3 spec whose type is not ``"f"`` or

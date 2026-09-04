@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.models.query.normalized import SchemaQuery, SqlQuery
@@ -298,3 +299,59 @@ class TestSchemaAdapterWrongType:
         result = adapter._execute(query)
         assert result.error is not None
         assert result.data == []
+
+
+class TestFieldsProjection:
+    """`fields:` projects (and orders) the returned row keys — the schema-query
+    counterpart of a SQL SELECT list. Metadata key sets vary with profiling
+    depth, so a listing view declares the columns it wants at the query."""
+
+    def test_fields_projects_and_orders_rows(self, adapter: SchemaAdapter) -> None:
+        resolver = _mock_resolver(list_tables=FAKE_TABLES_ENVELOPE)
+        query = SchemaQuery(
+            source="warehouse", schema="analytics", fields=["name", "row_count"]
+        )
+        with patch(
+            "dbt_charts.core.inspect.cache_factory.build_resolver",
+            return_value=resolver,
+        ):
+            result = adapter._execute(query)
+        assert result.error is None
+        assert all(list(r.keys()) == ["name", "row_count"] for r in result.data)
+        orders_row = next(r for r in result.data if r["name"] == "orders")
+        assert orders_row["row_count"] == 1000
+        assert "description" not in orders_row
+
+    def test_fields_absent_key_projects_none(self, adapter: SchemaAdapter) -> None:
+        """A projected field a row lacks yields None — a stable column set even
+        when profiling depth varies row to row, never a silently absent key."""
+        resolver = _mock_resolver(list_tables=FAKE_TABLES_ENVELOPE)
+        query = SchemaQuery(
+            source="warehouse", schema="analytics", fields=["name", "grain"]
+        )
+        with patch(
+            "dbt_charts.core.inspect.cache_factory.build_resolver",
+            return_value=resolver,
+        ):
+            result = adapter._execute(query)
+        assert result.error is None
+        assert all(r["grain"] is None for r in result.data)
+
+    def test_fields_applies_to_source_listing(self, adapter: SchemaAdapter) -> None:
+        registry = MagicMock()
+        registry.list_sql_sources.return_value = [
+            {"name": "wh", "type": "duckdb", "path": "/tmp/x.db"}
+        ]
+        local = SchemaAdapter(registry)
+        result = local._execute(SchemaQuery(fields=["name"]))
+        assert result.error is None
+        assert result.data == [{"name": "wh"}]
+
+    def test_empty_fields_list_is_rejected(self) -> None:
+        """An empty projection is meaningless — reject it at the model."""
+        with pytest.raises(PydanticValidationError):
+            SchemaQuery(source="warehouse", schema="analytics", fields=[])
+
+    def test_jinja_in_fields_is_rejected(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            SchemaQuery(source="warehouse", fields=["name", "{{ col }}"])

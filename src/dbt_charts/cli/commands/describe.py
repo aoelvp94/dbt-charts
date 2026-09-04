@@ -57,8 +57,8 @@ def _emit(results: list[DescribeBoardResult], *, json_output: bool) -> None:
 
         if r.title:
             console.print(f"\n[bold]{r.title}[/bold]")
-        if r.description:
-            console.print(f"[dim]{r.description}[/dim]")
+        if r.notes:
+            console.print(f"[dim]{r.notes}[/dim]")
         console.print()
 
         if r.queries:

@@ -75,8 +75,8 @@ def test_stacked_area_imputes_missing_rows_to_zero(make_chart):
     assert step["value"] == 0
 
 
-def test_impute_groups_by_the_series_field_alone(make_chart):
-    """groupby must be exactly the color field.
+def test_impute_groups_by_series_and_stack_order(make_chart):
+    """groupby must retain both fields that identify a stacked band.
 
     Vega-Lite folds every encoded nominal channel into a line/area impute's
     groupby. A per-row-distinct channel there explodes it to one group per row and
@@ -86,7 +86,7 @@ def test_impute_groups_by_the_series_field_alone(make_chart):
     spec = _render(make_chart, _SPARSE, stack="zero")
     step = _impute(_area_layer(spec))
     assert step is not None
-    assert step["groupby"] == ["series"]
+    assert step["groupby"] == ["series", "__df_series_order"]
 
 
 def test_null_measures_are_dropped_before_imputing(make_chart):
@@ -173,12 +173,10 @@ _MULTI = [
 
 
 def test_multi_metric_impute_groups_by_every_channel_vega_lite_facets_on(make_chart):
-    """`y: [a, b]` folds to a synthetic series channel (color) — area never emits a
-    separate order channel (unlike bar, its native VL stack reads color's own
-    domain directly, see `_area_spatial_order`), so color is the only channel
-    Vega-Lite facets the mark by. The impute's groupby has to name it, or an
-    imputed row carrying only the label reads as a further distinct group and
-    paints a phantom zero-height band beside the real ones.
+    """`y: [a, b]` folds to synthetic color and order channels.
+
+    The impute's groupby has to retain both, or an imputed row missing one of
+    the fields Vega-Lite stacks by becomes a phantom band.
     """
     chart = make_chart("area", x="date", y=["revenue", "costs"], stack="zero")
     resolved = resolve(chart, _MULTI, chart_style_context=_CHART_STYLE_CONTEXT)
@@ -186,10 +184,8 @@ def test_multi_metric_impute_groups_by_every_channel_vega_lite_facets_on(make_ch
     spec = artifact.payload
     pane = spec["hconcat"][0] if "hconcat" in spec else spec
 
-    assert "order" not in pane.get("encoding", {}), (
-        "area is not expected to carry an order channel — its native VL stack "
-        "reads color.scale.domain directly"
-    )
+    order_field = pane.get("encoding", {}).get("order", {}).get("field")
+    assert order_field
     color_field = pane.get("encoding", {}).get("color", {}).get("field")
     assert color_field, (
         "multi-metric area is expected to carry a color (series) channel"
@@ -201,3 +197,4 @@ def test_multi_metric_impute_groups_by_every_channel_vega_lite_facets_on(make_ch
         f"impute groupby {step['groupby']} omits the color channel {color_field!r} — "
         "Vega-Lite will facet on it and the imputed rows become a phantom band"
     )
+    assert order_field in step["groupby"]

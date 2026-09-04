@@ -43,6 +43,17 @@ def test_every_all_entry_resolves() -> None:
     )
 
 
+def test_every_lazy_attr_function_is_in_all() -> None:
+    """Every lazy-loaded function/class name is re-exported via `__all__`.
+
+    `examples` and `skills` are submodules bound onto the package, not
+    function/class re-exports, so they're excluded from this check.
+    """
+    lazy_names = set(agent_api._LAZY_ATTRS) - {"examples", "skills"}
+    missing = lazy_names - set(agent_api.__all__)
+    assert not missing, f"lazy attrs missing from __all__: {missing}"
+
+
 def test_execution_seams_are_reexported() -> None:
     """The execution extension seams are reachable through `dbt_charts.agent_api`.
 

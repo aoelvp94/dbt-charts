@@ -52,7 +52,7 @@ def test_http_image_in_columned_text_does_not_call_urlopen() -> None:
     from dbt_charts.core.compile.config import get_theme_style
 
     markdown = (
-        "## Dataface Port\n\n"
+        "## dbt charts Port\n\n"
         "![Rendered board](http://127.0.0.1:9893/preview/evals/runs/20260424-064324/renders/1328.png)\n"
     )
 

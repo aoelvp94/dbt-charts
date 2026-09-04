@@ -35,7 +35,9 @@ See also:
 from collections.abc import Mapping
 from typing import Any
 
+from dbt_charts.core.compile.config import user_facing_theme_names
 from dbt_charts.core.compile.errors import ValidationError
+from dbt_charts.core.compile.merge import get_theme_names, is_path_ref
 from dbt_charts.core.compile.models.board.authored import (
     AuthoredBoard,
     TabItem,
@@ -50,6 +52,7 @@ from dbt_charts.core.compile.models.refs import ChartRef, QueryRef
 from dbt_charts.core.compile.parse.parser import looks_like_sql
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_UNKNOWN_QUERY,
+    ERR_UNKNOWN_THEME,
     ERR_UNRESOLVED_REFERENCE,
 )
 
@@ -128,6 +131,47 @@ def validate_board(board: AuthoredBoard) -> list[ValidationError]:
     # Validate layout → chart references
     errors.extend(_validate_layout_references(board, chart_names, query_names))
 
+    # Validate theme names (`theme:` desugars into `extends:` before we see it)
+    errors.extend(validate_theme_names(board))
+
+    return errors
+
+
+def validate_theme_names(board: AuthoredBoard) -> list[ValidationError]:
+    """Every plain-name ``extends`` entry must be a built-in theme.
+
+    ``theme:`` is sugar for ``extends:`` — by validation time the two are the
+    same field. Only ``merged_patch`` resolves an entry as a board, and it runs
+    on one node: the root board of a ``compile_file``, whose chain it folds and
+    replaces with the selected theme name. Everywhere else — an in-memory
+    ``compile()``, and every nested board in either lane — the entry reaches
+    here untouched and nothing downstream will resolve it, so a plain name can
+    only have meant a theme. Hence the message claims nothing about board
+    lookup: none was attempted.
+
+    Path refs are skipped because they are unambiguously board references, not
+    because something resolves them at these positions (nothing does — see the
+    path-ref follow-up); flagging them as unknown themes would just be wrong.
+    """
+    # Accept every shipped theme (diagnostic-only boards extend the internal
+    # ones); list only the ones an author is meant to pick from.
+    theme_names = get_theme_names()
+    available = user_facing_theme_names()
+    errors: list[ValidationError] = []
+    stack: list[LayoutNode] = [board]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, AuthoredBoard) and node.extends is not None:
+            raw = node.extends
+            entries = [raw] if isinstance(raw, str) else raw
+            errors.extend(
+                ValidationError.from_code(
+                    ERR_UNKNOWN_THEME, theme=entry, available=available
+                )
+                for entry in entries
+                if not is_path_ref(entry) and entry not in theme_names
+            )
+        stack.extend(_layout_children(node))
     return errors
 
 

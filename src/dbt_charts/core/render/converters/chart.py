@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import html
 import json
 import re
 from collections.abc import Iterable
@@ -12,6 +13,11 @@ from dbt_charts.core.compile.models.style.theme import TitleStyle
 from dbt_charts.core.render.board_links import get_link_context, resolve_href
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import RenderArtifact
+from dbt_charts.core.render.chart.emitters._tooltip import (
+    MUTED,
+    ROLE_ORDER,
+    ROLE_SERIES,
+)
 from dbt_charts.core.render.chart.endpoint_label_overflow import (
     EndpointLabelGapOverflow,
     record_endpoint_label_gap_overflow,
@@ -106,6 +112,223 @@ def _stamp_chart_title_kind(svg: str) -> str:
     return _SUBTITLE_KIND_RE.sub(rf"\1{authored_kind_attr('subtitle')}", svg)
 
 
+_AXIS_TITLE_GROUP = '<g class="mark-text role-axis-title" pointer-events="none">'
+
+
+def _stamp_axis_title_kinds(svg: str, kind_by_axis: dict[str, str] | None) -> str:
+    """Tag the first X- and Y-axis title runs with the authored label key
+    each axis actually carries.
+
+    ``kind_by_axis`` maps vl_convert's aria axis name ("X"/"Y") to the
+    authored key ("x_label"/"y_label") and is decided where the resolved
+    chart is in hand (`$df_axis_label_kinds` in vega_lite.py) — the aria
+    text names the Vega layout channel, which a horizontal orientation or a
+    facet decouples from the authored key. No mapping, no stamping: an axis
+    title that is not editable beats one that edits the wrong key. First
+    per axis only, so a dual-scale layer's secondary title never points an
+    edit at the chart's own key. ``pointer-events`` is left exactly as
+    painted — Cloud re-enables it in CSS — so stamped and unstamped output
+    normalize identically for the visual goldens.
+    """
+    if not kind_by_axis:
+        return svg
+    out: list[str] = []
+    pos = 0
+    done: set[str] = set()
+    while (hit := svg.find(_AXIS_TITLE_GROUP, pos)) != -1:
+        x_at = svg.rfind('aria-label="X-axis', 0, hit)
+        y_at = svg.rfind('aria-label="Y-axis', 0, hit)
+        axis = "X" if x_at > y_at else "Y" if y_at != -1 else None
+        end = hit + len(_AXIS_TITLE_GROUP)
+        kind = kind_by_axis.get(axis) if axis is not None else None
+        if kind is None or kind in done:
+            out.append(svg[pos:end])
+        else:
+            done.add(kind)
+            out.append(svg[pos:hit])
+            out.append(
+                '<g class="mark-text role-axis-title" pointer-events="none"'
+                f"{authored_kind_attr(kind)}>"
+            )
+        pos = end
+    out.append(svg[pos:])
+    return "".join(out)
+
+
+# Joins a mark to its legend entry on the raw series value baked into the
+# structured tooltip's ROLE_SERIES row, never on rendered/truncated text.
+# Marks already resolve their own series value correctly today via
+# chart_interactivity.js's parseAriaLabel/markSeriesEntry (the mark's own
+# aria-label is never truncated) -- only a rendered legend LABEL is
+# unreliable, since Vega ellipsizes it past labelLimit. So only
+# .role-legend-label groups get stamped here.
+_ARIA_LABEL_RE = re.compile(r'aria-label="([^"]*)"')
+_LEGEND_LABEL_GROUP_RE = re.compile(r'<g class="[^"]*role-legend-label[^"]*"[^>]*>')
+
+
+def _role_marker_present(svg: str, marker: str) -> bool:
+    """True when ``marker`` genuinely acts as a ROLE_* role marker inside
+    some aria-label on ``svg`` -- not merely present anywhere in the document.
+
+    ROLE_SERIES/ROLE_ORDER are zero-width Unicode codepoints reserved for
+    this role-tagging scheme, but the codepoints themselves are not reserved
+    to us: ROLE_ORDER is U+200C ZERO WIDTH NON-JOINER, which occurs natively
+    in real text (Persian/Indic scripts). Mirrors chart_interactivity.js's
+    parseAriaLabel.
+    """
+    for aria_label in _ARIA_LABEL_RE.findall(svg):
+        for raw in aria_label.split(";"):
+            pair = raw.strip()
+            if not pair:
+                continue
+            if pair[0] == MUTED:
+                pair = pair[1:]
+            if pair[:1] == marker:
+                return True
+    return False
+
+
+def _legend_label_texts(
+    scenegraph: Any,  # type-state: explicit_any — untyped vl-convert scenegraph JSON
+) -> list[str] | None:
+    """Collect each discrete legend entry's full text, in scenegraph order.
+
+    A discrete (nominal) legend gives each series its own ``legend-label``
+    node with exactly one ``items`` entry. A continuous/gradient COLOUR
+    legend (numeric or boolean colour field) instead renders ONE
+    ``legend-label`` node whose ``items`` holds every tick label as a
+    separate instance -- there is no per-series text to extract there, and
+    no series identity to join a mark to. Returns None on encountering that
+    shape, signalling the caller to skip stamping entirely rather than
+    mis-stamp a tick label as a series value. A continuous *size* legend
+    renders one node per tick with one item each -- the same shape as a
+    discrete entry -- so it is indistinguishable from the discrete case at
+    this gate and would be (wrongly) treated as one.
+    """
+    texts: list[str] = []
+    gradient_legend = False
+
+    def _collect(
+        node: Any,  # type-state: explicit_any — untyped vl-convert scenegraph JSON
+    ) -> None:
+        nonlocal gradient_legend
+        if gradient_legend:
+            return
+        if isinstance(node, dict):
+            if node.get("role") == "legend-label":
+                items = node.get(
+                    "items", []
+                )  # type-state: silent_fallback — a legend-label node always carries items; defensive read against untyped foreign JSON, not masked bad input
+                if len(items) != 1:
+                    gradient_legend = True
+                    return
+                texts.append(items[0]["text"])
+            for value in node.values():
+                _collect(value)
+        elif isinstance(node, list):
+            for value in node:
+                _collect(value)
+
+    _collect(scenegraph)
+    return None if gradient_legend else texts
+
+
+def _escape_attr_value(text: str) -> str:
+    """Escape ``text`` for a double-quoted XML attribute, byte-exact.
+
+    ``html.escape`` covers ``& < > "`` but leaves a literal newline/CR/tab
+    as-is. Under strict XML attribute-value normalization (an SVG parsed
+    with ``xml.etree.ElementTree``, Cloud's nh3 sanitizer, or the PNG/PDF
+    conversion path) every one of those three folds to a plain space; the
+    HTML tokenizer a browser uses when the SVG is inlined directly is more
+    lenient (it only folds CR, not LF/tab), but this module's output feeds
+    every one of those XML-strict consumers too, so all three still need
+    escaping. Vega's own ``aria-label`` already writes these characters as
+    numeric character references (not subject to any of that folding), so a
+    series value containing one would decode differently on the two sides
+    of the join without this. Order matters: escape ``&<>"`` first, then
+    replace whitespace, so the character references' own ``&`` isn't
+    re-escaped.
+    """
+    escaped = html.escape(text, quote=True)
+    return escaped.replace("\n", "&#10;").replace("\r", "&#13;").replace("\t", "&#9;")
+
+
+def _stamp_legend_series_key(
+    svg: str,
+    spec: dict[str, Any],  # type-state: explicit_any — foreign VL JSON spec
+    vlc: Any,  # type-state: explicit_any — vl_convert has no type stubs
+    chart_id: str,
+) -> str:
+    """Stamp ``data-dbt-series`` on every ``.role-legend-label`` group with
+    its full, untruncated text -- unobtainable from the SVG string alone
+    once Vega has ellipsized it past ``labelLimit``. ``vegalite_to_scenegraph``
+    on this SAME spec returns the pre-truncation text for each legend-label
+    node's own ``items[0].text``; scenegraph/SVG element order match 1:1
+    since vl-convert serializes the SVG from this same scenegraph.
+
+    A no-op (unstamped legend labels) when the scenegraph call throws, or
+    when the legend turns out to be continuous/gradient rather than discrete
+    (see ``_legend_label_texts``) -- chart_interactivity.js's
+    legendSeriesOrder() falls back to trimmed textContent for any element it
+    finds with no stamped attribute, so this only degrades ordering back to
+    the pre-fix behavior for those cases, never breaks it outright.
+    """
+    try:
+        scenegraph = vlc.vegalite_to_scenegraph(spec)
+    except Exception:  # noqa: BLE001, S110 — vl-convert throws untyped JS errors
+        return svg
+
+    texts = _legend_label_texts(scenegraph)
+    if texts is None:
+        return svg
+
+    matches = list(_LEGEND_LABEL_GROUP_RE.finditer(svg))
+    if len(matches) != len(texts):
+        # vl-convert serializes the SVG from this exact scenegraph, so a
+        # length mismatch means this module's own assumption about their
+        # 1:1 correspondence broke.
+        raise ChartDataError(
+            f"legend-label scenegraph node count ({len(texts)}) does not match "
+            f"role-legend-label SVG element count ({len(matches)})",
+            chart_id=chart_id,
+        )
+
+    out: list[str] = []
+    pos = 0
+    for match, text in zip(matches, texts, strict=True):
+        out.append(svg[pos : match.start()])
+        escaped = _escape_attr_value(text.strip())
+        out.append(f'{match.group(0)[:-1]} data-dbt-series="{escaped}">')
+        pos = match.end()
+    out.append(svg[pos:])
+    return "".join(out)
+
+
+def _stamp_series_keys(
+    svg: str,
+    spec: dict[str, Any],  # type-state: explicit_any — foreign VL JSON spec
+    vlc: Any,  # type-state: explicit_any — vl_convert has no type stubs
+    chart_id: str,
+) -> str:
+    """Stamp a stable ``data-dbt-series`` join key on legend labels.
+
+    Scoped to the fallback path: families that bake a ``ROLE_ORDER`` rank
+    (see ``features/structured_tooltip.py``) already sort by that rank and
+    never reach the legend join at all, so the gate no-ops for them,
+    producing byte-identical SVG. Likewise a no-op when no series row
+    exists, or when no legend actually rendered (e.g. a line using
+    endpoint labels instead).
+    """
+    if (
+        "role-legend-label" not in svg
+        or not _role_marker_present(svg, ROLE_SERIES)
+        or _role_marker_present(svg, ROLE_ORDER)
+    ):
+        return svg
+    return _stamp_legend_series_key(svg, spec, vlc, chart_id)
+
+
 def _spec_has_encoding(spec: dict[str, Any], channels: Iterable[str]) -> bool:
     """True when ``spec`` carries any of ``channels`` in an encoding.
 
@@ -188,7 +411,7 @@ def _recascade_endpoint_label_pane(
     data, it does not compute it.
 
     Runs when the spec carries the ``$df_endpoint_label_cascade`` sentinel *and*
-    a probe was obtained. A spec with an attached ``data_table`` strip (no
+    a probe was obtained. A spec with an attached ``support_table`` strip (no
     ``$df_target_height``) still qualifies — it re-cascades off this same probe
     with ``height_correction_ratio == 1.0``, since nothing shrank.
 
@@ -221,15 +444,23 @@ def _recascade_endpoint_label_pane(
     pane["data"]["values"] = [
         {series_field: s, value_alias: y} for s, y in result.positions
     ]
-    if result.outcome != "fit":
-        record_endpoint_label_gap_overflow(
-            chart_id,
-            EndpointLabelGapOverflow(
-                series_count=len(anchors),
-                gap_px=cascade["gap_px"],
-                cause=result.outcome,
-            ),
-        )
+    # Recorded unconditionally, including a `fit` outcome as None: a chart
+    # can be recascaded more than once while a sink is open (render-first
+    # sizing retrying at a taller cols-aligned height, say), and only the
+    # last call here corresponds to what actually shipped. A `fit` here must
+    # clear any overflow an earlier, discarded trial recorded — see
+    # endpoint_label_overflow.py's module docstring.
+    record_endpoint_label_gap_overflow(
+        chart_id,
+        None
+        if result.outcome == "fit"
+        else EndpointLabelGapOverflow(
+            series_count=len(anchors),
+            gap_px=cascade["gap_px"],
+            cause=result.outcome,
+            dropped_series=tuple(result.dropped),
+        ),
+    )
 
 
 def _correct_concat_overshoot(
@@ -256,12 +487,12 @@ def _correct_concat_overshoot(
     chrome, so only the chart pane absorbs the overshoot; shrinking the rail
     would clip the series labels.
 
-    A spec carrying an attached ``data_table`` strip opts out of the height pass
+    A spec carrying an attached ``support_table`` strip opts out of the height pass
     by arriving without ``$df_target_height`` at all (dropped in
-    ``vega_lite._apply_data_table_strip``): the strip's layers are pixel literals
+    ``vega_lite._apply_support_table_strip``): the strip's layers are pixel literals
     anchored to ``spec.height``, so resizing the pane here would detach them.
     Don't reinstate a height target for those specs — their fit is handled by a
-    pre-shrunk re-render (``layout_sizing._correct_data_table_height``).
+    pre-shrunk re-render (``layout_sizing._correct_support_table_height``).
 
     ``endpoint_label_cascade`` (right_pane endpoint-label charts only — see
     ``vega_lite.py``'s ``$df_endpoint_label_cascade`` sentinel) re-cascades the
@@ -342,6 +573,84 @@ def _correct_concat_overshoot(
         )
 
 
+def _correct_facet_overshoot(
+    spec: dict[str, Any],  # type-state: explicit_any — foreign VL JSON spec
+    target_width: float | None,
+    target_height: float | None,
+    vlc: Any,  # type-state: explicit_any — vl_convert has no type stubs
+    panel_cols: int | None,
+    panel_rows: int | None,
+) -> None:
+    """Shrink small-multiples panels to absorb decoration overshoot vl-convert won't reflow.
+
+    ``facet_panel_width()`` (compile/resolve/chart/adaptive_stroke.py) budgets
+    a flat chrome gutter for the row-header/left axis and, when mirrored, the
+    far-edge axis — but vl-convert never reflows facet panels under
+    ``autosize: fit`` (see ``vega_lite.py``'s ``_apply_facet_layout``), so
+    whatever chrome a real render actually needs — a nominal/gradient legend,
+    a mirrored ghost axis, or a facet header title on the last panel — paints
+    at its true measured size regardless of the declared per-panel width. One
+    probe render measures the real composite extent; the overshoot, divided
+    evenly across panel columns/rows, comes off every panel's own width/
+    height before the real render. Single-pass, not iterative — mirrors
+    ``_correct_concat_overshoot``'s own single-pass shrink, generalized from
+    concat's per-pane geometry to facet's per-panel geometry (shrinking N
+    identical panels by ``overshoot / N`` reduces the composite's total width
+    by exactly ``overshoot``, since the decorations driving the overshoot
+    don't scale with a few pixels of panel width).
+
+    No-op when ``spec`` is not a facet spec, when neither target is set, or
+    when the panel counts weren't stamped (``$df_facet_panel_cols/rows`` are
+    only present on a facet spec — see ``_apply_facet_layout``).
+
+    A shrink that would leave a panel non-positive is skipped rather than
+    raised: unlike concat's fixed-width label pane (where a non-positive pane
+    is always a bug), a facet panel legitimately can run out of the room a
+    huge decoration wants, and ``WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM``
+    already advises on that — the card boundary still wins, this correction
+    just gets it closer.
+
+    The probe keeps the root title, and both axes depend on that: the title
+    sits on the facet root (unlike hconcat, which moves it into ``pane[0]``
+    before probing) and occupies real vertical extent, so a title-blind probe
+    under-measures the height overshoot by the whole title band. It is safe to
+    keep only because ``_apply_facet_layout``'s caller now bounds it — a facet
+    composite carries no top-level ``width``, so ``apply_title_overflow_to_spec``
+    is passed the card width explicitly (``available_width``) rather than
+    bailing and letting an unwrapped subtitle report its full natural width
+    into the scenegraph.
+
+    ``unit["width"]`` / ``unit["height"]`` are indexed directly, not defaulted:
+    the caller stamps ``$df_target_width`` under the same ``width > 0`` guard
+    that sets ``unit["width"]`` (and ``$df_target_height`` under the same guard
+    as ``unit["height"]``), so reaching a branch here means the matching key is
+    present. Same contract as ``_correct_concat_overshoot``'s ``pane[1]``.
+    """
+    if target_width is None and target_height is None:
+        return
+    if "facet" not in spec or panel_cols is None or panel_rows is None:
+        return
+    try:
+        probe = vlc.vegalite_to_scenegraph(spec)
+    except Exception:  # noqa: BLE001, S110 — vl-convert throws untyped JS errors
+        return
+    unit = spec["spec"]
+    if target_width is not None:
+        overshoot = float(probe["width"]) - float(target_width)
+        if overshoot > 0:
+            orig_w = float(unit["width"])
+            new_w = orig_w - overshoot / panel_cols
+            if new_w > 0:
+                unit["width"] = new_w
+    if target_height is not None:
+        overshoot = float(probe["height"]) - float(target_height)
+        if overshoot > 0:
+            orig_h = float(unit["height"])
+            new_h = orig_h - overshoot / panel_rows
+            if new_h > 0:
+                unit["height"] = new_h
+
+
 def render_svg_content(svg_content: str, format: str, *, scale: float = 1.0) -> str:
     """Convert SVG content to the requested encoded output."""
     if format == "svg":
@@ -398,7 +707,7 @@ def render_vega_spec(
     # Two-pass width/height correction for hconcat endpoint-label specs.
     # vl-convert ignores autosize:fit on concat children, so the first render
     # measures the actual outer dimensions; the overshoots are subtracted from
-    # the resizable pane(s) before the real render. All three sentinels are
+    # the resizable pane(s) before the real render. Every $df_* sentinel is
     # stamped in vega_lite.py's _render_vl_artifact and must be popped before
     # rendering. $df_title_style carries the chart's own resolved title style
     # (chart-local overflow mode / font-size fallback) as a plain dict — see
@@ -407,8 +716,11 @@ def render_vega_spec(
     # instead of re-deriving it from the board-level resolved_style.chart_defaults.title.
     target_width = spec.pop("$df_target_width", None)
     target_height = spec.pop("$df_target_height", None)
+    facet_panel_cols = spec.pop("$df_facet_panel_cols", None)
+    facet_panel_rows = spec.pop("$df_facet_panel_rows", None)
     endpoint_label_cascade = spec.pop("$df_endpoint_label_cascade", None)
     title_style_dict = spec.pop("$df_title_style", None)
+    axis_label_kinds = spec.pop("$df_axis_label_kinds", None)
     title_style = (
         TitleStyle.model_validate(title_style_dict)
         if title_style_dict is not None
@@ -438,6 +750,9 @@ def render_vega_spec(
             apply_title_overflow_to_spec(spec["hconcat"][0], title_style)
         _correct_concat_overshoot(
             spec, target_width, target_height, vlc, endpoint_label_cascade, chart_id
+        )
+        _correct_facet_overshoot(
+            spec, target_width, target_height, vlc, facet_panel_cols, facet_panel_rows
         )
         if isinstance(title_block, dict):
             # Restore the raw strings so this pass re-wraps from source at the
@@ -492,6 +807,8 @@ def render_vega_spec(
         raise ChartDataError(str(exc)) from exc
     svg_result = _fix_chart_click_hrefs(svg_result)
     svg_result = _stamp_chart_title_kind(svg_result)
+    svg_result = _stamp_axis_title_kinds(svg_result, axis_label_kinds)
+    svg_result = _stamp_series_keys(svg_result, spec, vlc, chart_id)
     if _spec_has_encoding(spec, ["strokeDash"]):
         svg_result = _fix_legend_symbol_linecap(svg_result)
 

@@ -604,11 +604,11 @@ tabs:
         assert "__dfVariablesInitialized" in page
 
 
-class TestLayoutDescriptions:
-    """Tests for layout-level description metadata."""
+class TestLayoutNotes:
+    """Tests for layout-level notes metadata."""
 
-    def test_layout_item_description_from_chart_wrapper(self):
-        """rows/cols chart wrappers should preserve description on LayoutItem."""
+    def test_layout_item_notes_from_chart_wrapper(self):
+        """rows/cols chart wrappers should preserve notes on LayoutItem."""
         yaml_content = """
 title: Test
 queries:
@@ -621,7 +621,7 @@ charts:
     query: q
     type: table
 rows:
-  - description: "Primary table used for quick QA checks"
+  - notes: "Primary table used for quick QA checks"
     rows:
       - c
 """
@@ -629,10 +629,10 @@ rows:
         assert result.success, f"Compile failed: {result.errors}"
 
         item = result.board.layout.items[0]
-        assert item.description == "Primary table used for quick QA checks"
+        assert item.notes == "Primary table used for quick QA checks"
 
-    def test_layout_item_description_from_grid_item(self):
-        """grid.items[].description should be copied to LayoutItem."""
+    def test_layout_item_notes_from_grid_item(self):
+        """grid.items[].notes should be copied to LayoutItem."""
         yaml_content = """
 title: Test
 queries:
@@ -648,30 +648,30 @@ grid:
   columns: 24
   items:
     - item: c
-      description: "Grid cell for executive summary table"
+      notes: "Grid cell for executive summary table"
 """
         result = compile(yaml_content)
         assert result.success, f"Compile failed: {result.errors}"
 
         item = result.board.layout.items[0]
-        assert item.description == "Grid cell for executive summary table"
+        assert item.notes == "Grid cell for executive summary table"
 
-    def test_layout_item_description_from_tab_item(self):
-        """tabs.items[].description should be copied to LayoutItem and tab board."""
+    def test_layout_item_notes_from_tab_item(self):
+        """tabs.items[].notes should be copied to LayoutItem and tab board."""
         yaml_content = """
 title: Test
 tabs:
   items:
     - title: Overview
-      description: "High-level KPI overview"
+      notes: "High-level KPI overview"
       text: "Hello"
 """
         result = compile(yaml_content)
         assert result.success, f"Compile failed: {result.errors}"
 
         item = result.board.layout.items[0]
-        assert item.description == "High-level KPI overview"
-        assert item.board.description == "High-level KPI overview"
+        assert item.notes == "High-level KPI overview"
+        assert item.board.notes == "High-level KPI overview"
 
 
 class TestDetailsRendering:
@@ -1352,8 +1352,8 @@ class TestInactiveTabDataAwareResolution:
         A data-free resolve bakes ``presentation_fingerprint = sha256("[]")``,
         which ``record_board``'s real query rows then contradict —
         ``board_replay`` raised ``ERR-RESOLVED-PIE-DATA-MISMATCH`` for the
-        WHOLE board: ``dft artifact emit`` reported success, but
-        ``dft artifact render`` produced no SVG at all.
+        WHOLE board: ``dct artifact emit`` reported success, but
+        ``dct artifact render`` produced no SVG at all.
         """
         from dbt_charts.core.execute.recording import record_board
         from dbt_charts.core.render.board_replay import render_board_from_artifact

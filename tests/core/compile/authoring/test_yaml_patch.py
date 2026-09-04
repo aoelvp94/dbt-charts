@@ -29,9 +29,9 @@ class TestSetTopLevelScalar:
         assert result == 'title: "New Title"\n# a comment\nrows: []\n'
 
     def test_unrelated_lines_stay_byte_identical(self) -> None:
-        original = "title: Old\n# keep me\n\ndescription: A dashboard\nrows: []\n"
-        result = set_board_values(original, {"description": "New description"})
-        expected = 'title: Old\n# keep me\n\ndescription: "New description"\nrows: []\n'
+        original = "title: Old\n# keep me\n\nnotes: A dashboard\nrows: []\n"
+        result = set_board_values(original, {"notes": "New notes"})
+        expected = 'title: Old\n# keep me\n\nnotes: "New notes"\nrows: []\n'
         assert result == expected
 
     def test_inserts_new_key_at_front_of_document(self) -> None:
@@ -491,6 +491,67 @@ class TestRenameKeyAtPath:
             rename_key_at_path("title: Old\n", "", "labels")
 
 
+class TestRenameKeyAtPathThroughSequences:
+    """A numeric segment descends into a sequence item on the way to the key
+    being renamed (`rows.0.description`) -- the same shape `set_board_values`
+    supports, and it must resolve through both styles a sequence value can be
+    written in: indented under its key, or column-aligned with it (what
+    `yaml.dump` emits and what a hand-authored `rows:` at column 0 looks
+    like)."""
+
+    def test_renames_a_key_inside_an_indented_sequence_item(self) -> None:
+        original = "rows:\n  - title: A\n    description: hi\n"
+        result = rename_key_at_path(original, "rows.0.description", "notes")
+        assert yaml.safe_load(result)["rows"][0] == {"title": "A", "notes": "hi"}
+
+    def test_renames_a_key_inside_a_column_aligned_sequence_item(self) -> None:
+        """The block extent from `rows:` alone stops before every item at
+        the key's own column, so a naive descent reports '0' not found."""
+        original = "rows:\n- title: A\n  description: hi\n"
+        result = rename_key_at_path(original, "rows.0.description", "notes")
+        assert yaml.safe_load(result)["rows"][0] == {"title": "A", "notes": "hi"}
+
+    def test_renames_a_key_that_is_the_sequence_item_head(self) -> None:
+        """The renamed key sits on the `- ` line itself, so the token to
+        rewrite follows the dash rather than starting the line. Only a
+        sequence descent can reach this shape, so nothing else covers it."""
+        original = "rows:\n  - description: Section notes\n    cols: [c]\n"
+        result = rename_key_at_path(original, "rows.0.description", "notes")
+        assert yaml.safe_load(result)["rows"][0] == {
+            "notes": "Section notes",
+            "cols": ["c"],
+        }
+
+    def test_renames_a_key_at_a_nested_sequence_position(self) -> None:
+        original = (
+            "rows:\n"
+            "  - cols:\n"
+            "      - title: A\n"
+            "        description: hi\n"
+            "      - title: B\n"
+            "        description: bye\n"
+        )
+        result = rename_key_at_path(original, "rows.0.cols.1.description", "notes")
+        parsed = yaml.safe_load(result)
+        assert parsed["rows"][0]["cols"][0] == {"title": "A", "description": "hi"}
+        assert parsed["rows"][0]["cols"][1] == {"title": "B", "notes": "bye"}
+
+    def test_renames_a_key_whose_value_is_a_block_scalar(self) -> None:
+        original = "rows:\n  - title: A\n    description: |\n      Multi\n      line\n"
+        result = rename_key_at_path(original, "rows.0.description", "notes")
+        parsed = yaml.safe_load(result)
+        assert parsed["rows"][0]["notes"] == "Multi\nline\n"
+
+    def test_leaf_numeric_segment_addressing_a_sequence_item_raises(self) -> None:
+        """A leaf numeric segment names the whole sequence item (`rows.0`),
+        not a key within it -- there is no key token on that line to rename.
+        Must fail loud rather than rename the item's own first key by
+        accident."""
+        original = "rows:\n  - title: A\n    description: hi\n"
+        with pytest.raises(ValueError, match="not a key"):
+            rename_key_at_path(original, "rows.0", "notes")
+
+
 class TestSequenceItemPaths:
     """A numeric segment addresses the Nth item of a sequence.
 
@@ -858,14 +919,14 @@ class TestBlockScalarHashBodyLines:
             "description: |\n"
             "  Intro\n"
             "# a comment about theme\n"
-            "theme: cream\n"
+            "theme: paper\n"
         )
         result = set_board_values(original, {"description": "Short"})
         assert result == (
-            'title: Board\ndescription: "Short"\n# a comment about theme\ntheme: cream\n'
+            'title: Board\ndescription: "Short"\n# a comment about theme\ntheme: paper\n'
         )
         deleted = set_board_values(original, {"description": None})
-        assert deleted == "title: Board\n# a comment about theme\ntheme: cream\n"
+        assert deleted == "title: Board\n# a comment about theme\ntheme: paper\n"
 
     def test_a_comment_shallower_than_a_deep_body_survives(self) -> None:
         # The body/comment boundary is the block BODY's indent, not the key's:

@@ -152,6 +152,39 @@ class TestSingleLayerNoColor:
         assert labels["annual"] == 5.0  # last row's annual value
         assert labels["cumulative"] == 35.0  # last row's cumulative value
 
+    def test_label_font_style_reaches_mark(self, make_chart):
+        """font.style authored on charts.series_label.font reaches the
+        layered (chart.layers, no colour channel) endpoint-label mark as VL's
+        fontStyle — the second endpoint_labels.py call site, distinct from
+        the multi-series right_pane path covered in test_render_features.py."""
+        compiled = get_theme_style()
+        italic_series_label = compiled.charts.series_label.model_copy(
+            update={
+                "font": compiled.charts.series_label.font.model_copy(
+                    update={"style": "italic"}
+                )
+            }
+        )
+        charts = compiled.charts.model_copy(
+            update={"series_label": italic_series_label}
+        )
+        board_style, board_ctx = resolve_style_and_context(
+            compiled.model_copy(update={"charts": charts})
+        )
+
+        chart = make_chart(
+            "bar",
+            x="month",
+            y="annual",
+            layers=[LineLayer(type="line", y="cumulative", label="Cumulative")],
+            style={"endpoint_labels": {"visible": True}},
+        )
+        spec = _resolve_and_render(
+            chart, _bar_with_layers_data(), chart_style_context=board_ctx
+        )
+        assert "hconcat" in spec, "endpoint-label pane did not fire"
+        assert spec["hconcat"][1]["mark"]["fontStyle"] == "italic"
+
     @pytest.mark.parametrize("width", [400.0, 700.0, 1200.0])
     def test_fires_at_multiple_widths(self, make_chart, width):
         chart = make_chart(
@@ -236,6 +269,47 @@ def test_layered_chart_with_color_encoding_still_fires_base_rail(make_chart):
     )
     spec = _resolve_and_render(chart, data)
     assert "hconcat" in spec
+
+
+def test_layered_stacked_bar_endpoint_ink_matches_base_stack_palette(make_chart):
+    data = [
+        {"month": "Jan", "annual": 1.0, "series": "A", "cumulative": 1.0},
+        {"month": "Feb", "annual": 1.0, "series": "A", "cumulative": 2.0},
+        {"month": "Jan", "annual": 5.0, "series": "B", "cumulative": 5.0},
+        {"month": "Feb", "annual": 5.0, "series": "B", "cumulative": 10.0},
+    ]
+    chart = make_chart(
+        "bar",
+        x="month",
+        y="annual",
+        color="series",
+        stack="zero",
+        layers=[LineLayer(type="line", y="cumulative")],
+        style={"endpoint_labels": {"visible": True}},
+    )
+
+    resolved = resolve(chart, data, chart_style_context=_BOARD_CTX, width=400.0)
+    artifact = render_resolved_chart(resolved, data, _BOARD_STYLE, width=400.0)
+    assert artifact.kind == "vega_spec"
+    spec = artifact.payload
+    chart_pane = spec["hconcat"][0]
+    base_scale = next(
+        layer["encoding"]["color"]["scale"]
+        for layer in chart_pane["layer"]
+        if isinstance(layer.get("encoding", {}).get("color"), dict)
+        and isinstance(layer["encoding"]["color"].get("scale"), dict)
+        and set(layer["encoding"]["color"]["scale"].get("domain", [])) >= {"A", "B"}
+    )
+    rail_scale = spec["hconcat"][1]["encoding"]["color"]["scale"]
+
+    base_fill = dict(zip(base_scale["domain"], base_scale["range"], strict=True))
+    rail_ink = dict(zip(rail_scale["domain"], rail_scale["range"], strict=True))
+    assert base_fill["B"] == resolved.palette[0]
+    assert base_fill["A"] == resolved.palette[1]
+    assert rail_ink == {
+        "B": resolved.style.series_label.dark_companion_palette[0],
+        "A": resolved.style.series_label.dark_companion_palette[1],
+    }
 
 
 # --------------------------------------------------------------------------
@@ -551,7 +625,7 @@ class TestLegendNotOverSuppressed:
         assert domain is not None, "legend must stay on to name every series"
         assert {"X", "Y"} <= set(domain)
         counts = _named_series_counts(spec)
-        assert counts["Annual"] == 1, (
+        assert counts["annual"] == 1, (
             f"the base series must be named exactly once (by the legend, "
             f"since the rail never fired) — got {counts!r}"
         )

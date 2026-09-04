@@ -81,6 +81,11 @@ class BoardRenderSession:
                     chart, data, width, height, board_style=self.board_style
                 )
             case ResolvedTableChart():
+                # No variables= here: render_table_svg reads the board's
+                # current variable values from current_board_variables()
+                # itself when the caller omits the param, so pagination
+                # works for every caller, not just this one. See
+                # board_variables.py.
                 return render_table_svg(
                     chart, data, width, height, board_style=self.board_style
                 )

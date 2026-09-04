@@ -8,7 +8,6 @@ from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.query.authored import (
     AuthoredCompactValuesQuery,
     AuthoredHttpQuery,
-    AuthoredMetricflowQuery,
     AuthoredQuery,
     AuthoredValuesQuery,
 )
@@ -27,13 +26,6 @@ def _validate(query: dict[str, object]) -> AuthoredQuery:
 def test_http_query_requires_url() -> None:
     with pytest.raises(ValidationError, match="url"):
         _validate({"type": "http"})
-
-
-def test_metricflow_query_metrics_stays_optional_for_model_sugar() -> None:
-    query = _validate({"type": "metricflow", "source": "analytics"})
-
-    assert isinstance(query, AuthoredMetricflowQuery)
-    assert query.metrics is None
 
 
 def test_values_query_requires_rows_or_columns_and_values() -> None:
@@ -122,7 +114,6 @@ _REPRESENTATIVE_VALID_QUERIES = [
     {"sql": "select 1 as value"},
     {"columns": ["value"], "values": [[1]]},
     {"rows": [{"value": 1}]},
-    {"metrics": ["revenue"]},
     {"url": "https://api.example.com/data"},
 ]
 

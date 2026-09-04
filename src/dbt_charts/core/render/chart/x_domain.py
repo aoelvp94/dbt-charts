@@ -1,71 +1,97 @@
 """The categorical x scale's rendered value order.
 
-A band scale's domain order is not the query's row order: an authored
-``sort:`` reorders it, and an overlay layer can widen it. Two consumers need
+A band scale starts in query row order; an authored ``sort:`` can reorder it,
+and an overlay layer can widen it. Three consumers need
 that final order — ``emitters/_overlay.py``, which pins it onto the shared x
-encoding, and ``features/value_labels.py``, whose band-edge labels have to know
-which category actually renders at each end. Both read it from here so there is
-one definition of "the order Vega-Lite will draw".
+encoding; ``features/value_labels.py``, whose band-edge labels have to know
+which category actually renders at each end; and
+``features/endpoint_labels.py``, whose rail anchors each series on the category
+drawn last. All three read it from here so there is one definition of "the
+order Vega-Lite will draw".
 """
 
 from __future__ import annotations
 
 from dbt_charts.core.render.chart._types import VLDict
+from dbt_charts.core.render.chart.type_inference import is_lex_sortable_date_like
+from dbt_charts.core.render.chart.x_domain_paint_order import (
+    XDomainPaintOrder,
+    record_x_domain_paint_order,
+)
 from dbt_charts.core.render.utils import (
     DomainValue,
     normalize_scalar_for_json,
     ordered_distinct_values,
 )
-from dbt_charts.core.utils import Rows, domain_sort_aggregates
+from dbt_charts.core.utils import Rows, coerce_numeric_cell, stacked_x_domain_order
 
 
-def _sort_domain_by_field(
-    domain: list[DomainValue],
-    base_data: Rows,
-    x_field: str,
-    sort: VLDict,
-) -> list[DomainValue]:
-    """Reorder domain values by sort["field"] aggregated from base_data.
+def defined_domain_order(values: list[DomainValue]) -> list[DomainValue] | None:
+    """``values`` in their one defined ascending order, or None if they have none.
 
-    ``sort`` is the already-translated Vega-Lite sort dict (``{"field": ...,
-    "order": "ascending" | "descending"}``, from ``chart_sort_to_vl``), not
-    the authored ``ChartSort`` model — this reads it directly off the shared
-    x encoding, the same place ``rendered_x_domain`` reads it, so there is only one
-    shape to handle.
-
-    Always uses ``sum`` — Vega-Lite's own ``EncodingSortField.op`` default.
-    This function only ever runs against a categorical (nominal/ordinal) base
-    x (``rendered_x_domain`` no-ops otherwise), and the bar emitter's
-    unstacked ``y.stack: null`` (added to suppress VL's implicit auto-stack
-    on a grouped bar) is only emitted for a genuinely continuous x — so
-    ``min`` never matches what Vega-Lite actually does for any chart shape
-    this function pins a domain for.
-
-    ``domain_sort_aggregates`` handles numeric strings via ``coerce_numeric_cell``
-    (some warehouse adapters return measure columns as strings). Keys are
-    remapped through ``normalize_scalar_for_json`` to match ``domain``'s key
-    space — ``ordered_distinct_values`` normalizes x-values (e.g.
-    ``datetime.date`` → ISO string) while the raw query rows still carry the
-    original type. Values absent from base_data (layer-only categories) are
-    appended after in first-seen order so they never vanish.
+    Two rules count as defined, and only two: every value is a number (numeric
+    strings included — some adapters return a bucket column as text), or every
+    value is a date-like bucket whose lexicographic order IS its chronological
+    order (``is_lex_sortable_date_like``). Everything else — month
+    abbreviations, ``low/medium/high``, region names — carries an order the
+    data does not state, so this returns None and the caller must not invent
+    one. Booleans are excluded rather than treated as 0/1: a two-value domain
+    has no reading order worth imposing. ``date``/``datetime`` objects never
+    reach here — ``DomainValue`` is what a domain value is *after*
+    ``normalize_scalar_for_json``, which stringifies them.
     """
-    sort_field = sort.get("field")
-    if not isinstance(sort_field, str):
-        return list(domain)
-    sort_aggs_raw = domain_sort_aggregates(base_data, x_field, sort_field)
-    sort_aggs = {normalize_scalar_for_json(k): v for k, v in sort_aggs_raw.items()}
-    in_base = [v for v in domain if v in sort_aggs]
-    layer_only = [v for v in domain if v not in sort_aggs]
-    in_base.sort(
-        key=lambda v: sort_aggs[v], reverse=(sort.get("order") == "descending")
-    )
-    return in_base + layer_only
+    if not values:
+        return None
+    if any(isinstance(v, bool) for v in values):
+        return None
+    if all(isinstance(v, str) and is_lex_sortable_date_like(v) for v in values):
+        return sorted(values)
+    numeric: dict[DomainValue, float] = {}
+    for value in values:
+        coerced = coerce_numeric_cell(value)
+        if coerced is None:
+            return None
+        numeric[value] = coerced
+    return sorted(values, key=numeric.__getitem__)
+
+
+def extend_domain_in_base_order(
+    base: list[DomainValue], extra: list[DomainValue]
+) -> list[DomainValue] | None:
+    """``base + extra`` in the order ``base`` itself states, or None if it states none.
+
+    The base query's row order is authoritative — it reflects that query's
+    ``ORDER BY`` — so this never re-sorts the base against its own grain. It
+    only asks which direction of ``defined_domain_order`` the base already
+    follows, ascending or descending, and puts ``extra`` where that same rule
+    says they go. A base ordered most-recent-first therefore keeps taking new
+    dates at the front, not at the end.
+
+    Returns None — meaning the caller must leave paint order alone and warn —
+    when the base's values have no defined order at all, when the base does not
+    follow it in either direction (a genuinely unordered base states nothing to
+    extend), or when ``extra`` is not orderable against them.
+    """
+    ordered_base = defined_domain_order(base)
+    if ordered_base is None:
+        return None
+    if base == ordered_base:
+        ascending = True
+    elif base == ordered_base[::-1]:
+        ascending = False
+    else:
+        return None
+    merged = defined_domain_order(base + extra)
+    if merged is None:
+        return None
+    return merged if ascending else merged[::-1]
 
 
 def rendered_x_domain(
     x_enc: VLDict,
     base_data: Rows,
     layer_x_columns: list[tuple[str, Rows]],
+    chart_id: str | None,
 ) -> list[DomainValue]:
     """The categorical x scale's value order as Vega-Lite actually renders it.
 
@@ -76,6 +102,32 @@ def rendered_x_domain(
     and when it declines to pin, Vega-Lite's own native sort-by-field produces
     the same order.
 
+    Order of appearance is only meaningful while the domain comes from ONE
+    dataset — there the query owns the order and this function must not touch
+    it. The moment a layer contributes a category the base query never
+    returned, "first seen" is paint order across two independently-ordered
+    result sets, which is not an ordering at all: complementary month buckets
+    split over two layer queries render ``2024-01, 2024-03, 2024-05, 2024-02,
+    2024-04, 2024-06`` and read as a chronology they are not. So layer-only
+    values are placed into the order the BASE already states, by
+    ``extend_domain_in_base_order`` — the base's own relative order is never
+    disturbed, and a base ordered most-recent-first keeps taking new values at
+    the front. When the base states no order the values follow (month
+    abbreviations, region names), nothing is guessed: the union keeps paint
+    order and earns WARN-LAYER-X-DOMAIN-PAINT-ORDER.
+
+    Declining is recorded against ``chart_id`` (see
+    ``x_domain_paint_order.py``) so WARN-LAYER-X-DOMAIN-PAINT-ORDER reports the
+    decision this function made rather than re-deriving it from the raw rows.
+    It is required rather than defaulted so a caller reading the order without
+    owning the chart — ``_layer_band_anchor``, which reads the same domain the
+    overlay reconciler is about to pin and record — has to say so.
+
+    An empty base fed by a single contributing dataset is not paint order: the
+    union is that one query's row order, and its ``ORDER BY`` is an ordering.
+    Two layer columns reading the same diverging query count once between them
+    — the second adds no value the first did not.
+
     The one caller-side thing this does not model is a pinned
     ``scale.domain`` — an explicit domain always wins in Vega-Lite, so a caller
     holding one should read that instead of calling this.
@@ -83,13 +135,42 @@ def rendered_x_domain(
     base_field = x_enc.get("field")
     if not isinstance(base_field, str):
         return []
-    union: dict[DomainValue, None] = dict.fromkeys(
-        ordered_distinct_values(base_data, base_field)
-    )
-    for layer_field, layer_rows in layer_x_columns:
-        for value in ordered_distinct_values(layer_rows, layer_field):
-            union.setdefault(value, None)
     sort = x_enc.get("sort")
+    sort_field = sort.get("field") if isinstance(sort, dict) else None
+    raw_base_domain = stacked_x_domain_order(
+        base_data,
+        base_field,
+        sort_field if isinstance(sort_field, str) else "",
+        bool(isinstance(sort, dict) and sort.get("order") == "descending"),
+    )
+    base_domain = list(
+        dict.fromkeys(normalize_scalar_for_json(value) for value in raw_base_domain)
+    )
+    union: dict[DomainValue, None] = dict.fromkeys(base_domain)
+    layer_only: list[DomainValue] = []
+    # Datasets that actually put a value on the axis. Two layers reading the
+    # same diverging query contribute one order between them, not two — the
+    # union is that query's ORDER BY and there is no paint order to report.
+    contributors = 1 if base_domain else 0
+    for layer_field, layer_rows in layer_x_columns:
+        added = False
+        for value in ordered_distinct_values(layer_rows, layer_field):
+            if value not in union:
+                union[value] = None
+                layer_only.append(value)
+                added = True
+        if added:
+            contributors += 1
     if isinstance(sort, dict):
-        return _sort_domain_by_field(list(union), base_data, base_field, sort)
+        return list(union)
+    if not layer_only:
+        return list(union)
+    extended = extend_domain_in_base_order(base_domain, layer_only)
+    if extended is not None:
+        return extended
+    if chart_id is not None and contributors > 1:
+        record_x_domain_paint_order(
+            chart_id,
+            XDomainPaintOrder(x_field=base_field, layer_only=tuple(layer_only)),
+        )
     return list(union)

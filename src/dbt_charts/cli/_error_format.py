@@ -50,6 +50,27 @@ def print_error(message: str) -> None:
         console.print(f"[bold red]Error:[/] {message}")
 
 
+def print_warning(message: str) -> None:
+    """Print a plain top-level CLI warning to stderr — non-fatal, no Diagnostic.
+
+    For advisory conditions detected outside any compile/render pass (e.g. a
+    workspace/build mismatch) that must never affect the subcommand's exit
+    code. `soft_wrap=True` keeps it to one line rather than wrapping at the
+    console width, so a machine reading stderr (e.g. `--diagnostics-json`)
+    sees one stray line instead of several.
+    """
+    console = dct_console(stderr=True)
+    # `message` is caller-supplied prose carrying filesystem paths; a bracketed
+    # directory name is markup to Rich either way (`no_color` suppresses ANSI,
+    # not parsing), so an unescaped `[old]` segment vanishes from the path and
+    # a `[/]` raises MarkupError — turning a non-fatal advisory into a crash.
+    body = escape(message)
+    if console.no_color:
+        console.print(f"Warning: {body}", soft_wrap=True)
+    else:
+        console.print(f"[bold yellow]Warning:[/] {body}", soft_wrap=True)
+
+
 def emit_diagnostics_jsonl(diags: list[Diagnostic]) -> None:
     """Write diagnostics as JSON Lines to stderr — one compact JSON object per line.
 

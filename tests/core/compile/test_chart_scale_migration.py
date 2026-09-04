@@ -26,9 +26,9 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from dbt_charts.core.compile.migrations import (
+    IncompleteMigrationError,
     MigrationConflictError,
     SchemaMigrationWarning,
-    UnsupportedSchemaError,
     migrate_mapping,
     migrate_yaml_text,
 )
@@ -295,10 +295,15 @@ def test_theme_level_scatter_scale_fails_loud(
 def test_migrate_yaml_text_raises_for_bar_with_chart_level_scale_zero(
     catalog: YamlSchemaCatalog,
 ) -> None:
-    """migrate_yaml_text has no ConditionalMove support; raises UnsupportedSchemaError.
+    """migrate_yaml_text has no ConditionalMove support; raises IncompleteMigrationError.
 
     This mirrors test_migrate_yaml_text_raises_for_kpi_with_style_tone: the
     load-time and file-rewrite migration paths diverge for ConditionalMove cases.
+
+    Not ``UnsupportedSchemaError``: the grammar was recognized and its other
+    transitions did run — what failed is finishing. The two are siblings so a
+    caller can tell "this was never old" from "this was old and could not be
+    fully modernized"; only the second is worth announcing.
     """
     _, registry = _board_migration_context()
     yaml_text = (
@@ -315,7 +320,7 @@ def test_migrate_yaml_text_raises_for_bar_with_chart_level_scale_zero(
         "rows: [revenue_bar]\n"
     )
 
-    with pytest.raises(UnsupportedSchemaError):
+    with pytest.raises(IncompleteMigrationError):
         migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
 
 
@@ -323,12 +328,13 @@ def test_migrate_yaml_text_raises_for_bar_with_chart_level_scale_zero(
 def test_bar_mixed_zero_and_nonzero_field_with_axis_y_no_warning(
     catalog: YamlSchemaCatalog,
 ) -> None:
-    """With axis_y present, ConditionalMove moves zero; residual nice triggers
-    UnsupportedSchemaError; prepare_board_mapping returns original; no warning.
+    """With axis_y present, ConditionalMove moves zero; residual nice stops the
+    migration finishing; prepare_board_mapping returns the original — and says so.
 
-    The warning fires only in the sibling-absent branch; with sibling present,
-    the move fires normally (no drop), and the subsequent schema-rejection
-    UnsupportedSchemaError aborts before the "in-memory migration" warning.
+    No *drop* warning: with the sibling present the move fires normally and
+    nothing is discarded. But the board was old and could not be fully
+    modernized, which is announced rather than swallowed — silence here is what
+    made a stale board fail with errors naming fields nobody touched.
     """
     raw = _bar_board(
         {
@@ -344,7 +350,9 @@ def test_bar_mixed_zero_and_nonzero_field_with_axis_y_no_warning(
     migration_warns = [
         w for w in caught if issubclass(w.category, SchemaMigrationWarning)
     ]
-    assert not migration_warns
+    assert len(migration_warns) == 1
+    assert "could not finish migrating" in str(migration_warns[0].message)
+    assert "dropped" not in str(migration_warns[0].message)
 
     with pytest.raises(ValidationError, match="extra_forbidden"):
         AuthoredBoard.model_validate(prepared)
@@ -354,9 +362,14 @@ def test_bar_mixed_zero_and_nonzero_field_with_axis_y_no_warning(
 def test_bar_mixed_zero_and_nonzero_field_without_axis_y_warns_and_fails(
     catalog: YamlSchemaCatalog,
 ) -> None:
-    """Without axis_y, ConditionalMove drops zero with warning; residual nice
-    causes UnsupportedSchemaError; prepare_board_mapping returns original;
-    both the drop warning AND the ValidationError on scale are observable.
+    """Without axis_y the ConditionalMove would drop zero — but the migration is
+    then discarded, so nothing is actually dropped and no drop warning fires.
+
+    ``prepare_board_mapping`` returns the *original* mapping here, zero included.
+    Telling the author their value was destroyed would send them hunting for
+    damage that never happened, so drop warnings are held until the
+    current-schema gate passes. What they get instead is the accurate notice
+    that the migration could not finish.
     """
     raw = _bar_board(
         {
@@ -372,7 +385,8 @@ def test_bar_mixed_zero_and_nonzero_field_without_axis_y_warns_and_fails(
         w for w in caught if issubclass(w.category, SchemaMigrationWarning)
     ]
     assert len(migration_warns) == 1
-    assert "revenue_bar" in str(migration_warns[0].message)
+    assert "could not finish migrating" in str(migration_warns[0].message)
+    assert "dropped" not in str(migration_warns[0].message)
 
     with pytest.raises(ValidationError, match="extra_forbidden"):
         AuthoredBoard.model_validate(prepared)
@@ -491,11 +505,13 @@ def test_bar_layer_style_scale_not_touched_by_migration(
 ) -> None:
     """A layers: [{type: bar, ...}] layer dict is left untouched by the migration.
 
-    _apply_conditional_move_recursive fires on any dict matching chart_type,
-    including layers entries. But a layer's style has no scale field (it is a
-    marks-only patch), so old_tail navigation bails immediately — this test
-    pins that the migration moves the parent chart's zero to axis_y while
-    leaving the embedded layer dict untouched.
+    _apply_conditional_move_recursive fires on any dict whose type matches
+    chart_type *and* whose position the source grammar declares as that
+    chart family -- a layer entry qualifies on both counts (layers are
+    themselves chart-shaped patches in the schema). But a layer's style has
+    no scale field (it is a marks-only patch), so old_tail navigation bails
+    immediately — this test pins that the migration moves the parent chart's
+    zero to axis_y while leaving the embedded layer dict untouched.
     """
     raw = {
         "charts": {

@@ -331,9 +331,12 @@ def test_v2_stacked_bar_authored_domain_wins_over_stacked_totals(bar_style) -> N
 
 
 def test_v2_scatter_y_ticks_span_authored_domain(scatter_style) -> None:
+    import dataclasses
+
     from dbt_charts.core.compile.models.chart.resolved import ResolvedScatterChart
 
     ax, ay = _v2_axes("scatter", _WIDE_DOMAIN, _COUNT)
+    ay = dataclasses.replace(ay, is_quantitative=True, zero_anchored=True)
     chart = ResolvedScatterChart(
         panel_axes=(),
         id="s",

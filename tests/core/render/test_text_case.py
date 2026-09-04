@@ -130,7 +130,7 @@ def test_sentence_single_char() -> None:
         # it; the post-process explicitly skips all-caps tokens.
         ("scale UP now", "Scale UP Now"),
         # "dbt" is stylized lowercase always (dbt Labs' own convention,
-        # e.g. "dbt Cloud"), never an acronym. Without an explicit guard,
+        # e.g. "dbt charts"), never an acronym. Without an explicit guard,
         # the titlecase library's built-in all-consonant heuristic (the
         # same rule that promotes "mrr"/"sql") misreads "dbt" as an
         # acronym-to-uppercase and renders "DBT Charts ..." — visibly

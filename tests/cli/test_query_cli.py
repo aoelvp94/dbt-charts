@@ -488,7 +488,7 @@ class TestQueryCommonErrors:
 class TestQueryIgnoresCacheEnv:
     """query.py no longer reads DCT_CACHE_PATH — the verb doesn't consume the cache."""
 
-    def test_query_succeeds_when_dft_cache_path_points_to_missing_file(
+    def test_query_succeeds_when_dct_cache_path_points_to_missing_file(
         self, monkeypatch: pytest.MonkeyPatch, board_dir: Path
     ) -> None:
         """DCT_CACHE_PATH pointing to a non-existent file must not affect query.

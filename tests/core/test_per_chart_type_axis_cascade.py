@@ -73,7 +73,7 @@ rows:
         chart, _NOMINAL_DATA, board_style=rs, chart_style_context=ctx
     )
     enc = spec.get("encoding", {})
-    # For horizontal bars the categorical (Dataface x) axis is VL y; for vertical
+    # For horizontal bars the categorical (dbt charts x) axis is VL y; for vertical
     # it is VL x.  Return the axis dict for whichever encoding holds category.
     for key in ("x", "y"):
         entry = enc.get(key, {})

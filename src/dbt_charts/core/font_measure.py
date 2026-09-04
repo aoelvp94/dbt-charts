@@ -130,6 +130,19 @@ def get_font_measurer(
     return _load_measurer(get_font_path(font_family, numeric=numeric))
 
 
+def centered_baseline_offset(font_family: str | None, font_size: float) -> float:
+    """How far below a container's vertical centre a centred line's baseline sits.
+
+    Centring a line puts its content box — ``ascent + descent`` — astride the
+    middle, so the baseline lands ``(ascent - descent) / 2`` below it. The ratio
+    is the face's, not a constant: a face with a deep descender carries its
+    baseline higher, and the ``0.35`` this replaced was one family's value spread
+    across every other by hand.
+    """
+    measurer = get_font_measurer(font_family)
+    return (measurer.ascent_em - measurer.descent_em) / 2 * font_size
+
+
 def _measurer_for_composition(font_family: str) -> FontMeasurer:
     """The measurer a suffix-field reservation composes and validates
     against: ``font_family``'s own face when it is vendored, the numeric

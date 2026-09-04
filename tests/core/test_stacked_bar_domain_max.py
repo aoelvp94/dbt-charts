@@ -18,7 +18,7 @@ from dbt_charts.core.compile.resolve.style.board import (
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
 
-def _make_stacked_bar_spec(data, orientation="vertical", theme="cream"):
+def _make_stacked_bar_spec(data, orientation="vertical", theme="paper"):
     reset_config()
     rs, ctx = resolve_style_and_context(get_theme_style(theme))
     chart_kwargs: dict[str, object] = {
@@ -75,7 +75,7 @@ def test_stacked_bar_scale_domain_max_covers_stacked_total():
     chart = _chart_pane(spec)
     y_scale = chart.get("encoding", {}).get("y", {}).get("scale", {})
     domain_max = y_scale.get("domainMax")
-    expected = _expected_stacked_domain_max("cream")
+    expected = _expected_stacked_domain_max("paper")
     assert domain_max is not None, f"scale.domainMax must be set; got scale={y_scale}"
     assert domain_max == expected, (
         f"scale.domainMax must equal the headroom-applied stacked total ({expected}), "
@@ -89,7 +89,7 @@ def test_stacked_bar_horizontal_scale_domain_max_covers_stacked_total():
     chart = _chart_pane(spec)
     x_scale = chart.get("encoding", {}).get("x", {}).get("scale", {})
     domain_max = x_scale.get("domainMax")
-    expected = _expected_stacked_domain_max("cream")
+    expected = _expected_stacked_domain_max("paper")
     assert domain_max is not None, (
         f"scale.domainMax must be set on x-axis (measure) for horizontal "
         f"stacked bar; got x.scale={x_scale}"

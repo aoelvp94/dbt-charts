@@ -32,7 +32,7 @@ class QueryHeader(MacroQueryStringSetter):
 
     Subclasses dbt's own setter — that is the type ``BaseConnectionManager``
     declares — but deliberately skips its ``__init__``: the parent builds a Jinja
-    generator from a project's ``query-comment`` macro and a manifest, and Dataface
+    generator from a project's ``query-comment`` macro and a manifest, and dbt charts
     has neither. Everything the parent would stash is derived per read instead.
 
     Holds no attribution of its own. One header serves every query on a pooled
@@ -79,7 +79,7 @@ class QueryHeader(MacroQueryStringSetter):
         dbt uses it to render a per-node comment from a macro; our payload is derived
         from the ambient context on each read, so there is no per-node state to stash.
 
-        The context is typed ``None`` because Dataface always opens connections
+        The context is typed ``None`` because dbt charts always opens connections
         without one. Should a call site ever start passing a real context, that is a
         new contract and the type checker should say so rather than let it be
         silently ignored here.
@@ -92,5 +92,5 @@ class QueryHeader(MacroQueryStringSetter):
         # Nothing here depends on merge order: `validate_attribution` has already
         # rejected every engine-owned key at the compile boundary, so an authored
         # pair can never collide with one. For `app` that guard is RESERVED_KEYS
-        # rather than the `dft_` prefix, since it sits outside the namespace.
+        # rather than the `dbt_charts_` prefix, since it sits outside the namespace.
         return json.dumps({**engine_attribution(), **current_attribution()})

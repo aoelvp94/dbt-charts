@@ -162,3 +162,41 @@ class TestComposedQueryWithFilter:
         )
         assert len(rows) == 1
         assert rows[0]["id"] == 1
+
+    def test_composed_query_with_filter_date_range_empty_list_is_unfiltered(
+        self, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A cleared date picker publishes `[]` (variables.js's unset spelling).
+        The coercer must read that as unset rather than raising, so the query
+        executes unfiltered instead of failing the whole board."""
+        yaml_body = "\n".join(
+            [
+                "source: db",
+                "variables:",
+                "  created_range:",
+                "    input: daterange",
+                "    default: ['2025-01-01', '2025-12-31']",
+                "queries:",
+                "  base:",
+                "    sql: |",
+                "      SELECT 1 AS id, DATE '2025-02-01' AS created_at",
+                "      UNION ALL",
+                "      SELECT 2 AS id, DATE '2026-06-01' AS created_at",
+                "    source: db",
+                "  composed:",
+                "    sql: |",
+                "      SELECT * FROM {{ queries.base }}",
+                "      WHERE {{ filter_date_range('created_at', created_range) }}",
+                "    source: db",
+                "charts:",
+                "  dummy:",
+                "    type: bar",
+                "    x: id",
+                "    y: id",
+                "    query: composed",
+            ]
+        )
+        executor = _build_board_and_executor(yaml_body, local_project)
+
+        rows = executor.execute_query("composed", {"created_range": []})
+        assert len(rows) == 2

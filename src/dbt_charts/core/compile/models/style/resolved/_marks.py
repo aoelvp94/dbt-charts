@@ -101,7 +101,7 @@ class ResolvedAreaLineStyle(BaseModel):
     """Area's top-edge line: stroke/halo geometry + value labels.
 
     Vega-Lite compiles an area's edge line as a genuine separate ``line``
-    mark, and Dataface's emitter builds the same separate line mark by
+    mark, and dbt charts' emitter builds the same separate line mark by
     hand — so its stroke geometry belongs here, not on
     ``ResolvedAreaMarkStyle`` (fill only). Deliberately NOT the full
     ``ResolvedLineMarkStyle``: no ``curve``/``connect`` — curve is a single
@@ -136,6 +136,9 @@ class ResolvedSeriesLabelStyle(BaseModel):
     font_family: str = Field(description="Series-label font family.")
     font_size: float = Field(description="Series-label font size (px).")
     font_weight: str = Field(description="Series-label font weight as a CSS string.")
+    font_style: Literal["normal", "italic"] = Field(
+        description="Series-label upright/slanted style."
+    )
     dark_companion_palette: tuple[str, ...] = Field(
         description=(
             "Dark-companion ink stops for the full effective palette; the renderer "

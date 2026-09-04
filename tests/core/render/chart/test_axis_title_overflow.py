@@ -19,6 +19,8 @@ from dbt_charts.core.compile.config import get_default_theme_name, get_theme_sty
 from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
 from dbt_charts.core.compile.models.style.resolved._base import ResolvedAxisStyle
 from dbt_charts.core.compile.models.style.resolved.bar import ResolvedBarStyle
+from dbt_charts.core.compile.models.style.resolved.heatmap import ResolvedHeatmapStyle
+from dbt_charts.core.compile.models.style.resolved.scatter import ResolvedScatterStyle
 from dbt_charts.core.compile.resolve.chart._axes import _bake_cartesian_axes
 from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
 from dbt_charts.core.compile.resolve.style.axis_cascade import (
@@ -367,3 +369,189 @@ def test_layered_bar_base_legend_label_is_not_a_wrapped_list(
             assert isinstance(entry, str), (
                 f"scale domain entry not a primitive: {entry!r}"
             )
+
+
+# ── Scatter emitter coverage ──────────────────────────────────────────────────
+
+
+def _scatter_chart(scatter_style: ResolvedScatterStyle, **labels: str) -> Any:
+    from dbt_charts.core.compile.models.chart.resolved.scatter import (
+        ResolvedScatterChart,
+    )
+
+    ax, ay = _make_resolved_axes("scatter", "quantitative", "quantitative")
+    ay = replace(ay, is_quantitative=True, zero_anchored=True)
+    return ResolvedScatterChart(
+        panel_axes=(),
+        id="s",
+        chart_type="scatter",
+        x="x_val",
+        y="y_val",
+        style=scatter_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
+        **{**_C, **labels},
+    )
+
+
+def test_scatter_emitter_wraps_a_long_y_label(
+    scatter_style: ResolvedScatterStyle,
+) -> None:
+    """A long y_label on scatter in a short slot is wrapped, not left to collapse it."""
+    from dbt_charts.core.render.chart.emitters.scatter import ScatterEmitter
+
+    chart = _scatter_chart(scatter_style, y_label=LONG)
+    spec = ScatterEmitter().emit(
+        chart,
+        RenderBox(width=500.0, height=220.0),
+        regroup((), [{"x_val": 1.0, "y_val": 2.0}]),
+    )
+    assert isinstance(spec.encoding["y"]["title"], list)
+
+
+def test_scatter_emitter_wraps_a_long_x_label(
+    scatter_style: ResolvedScatterStyle,
+) -> None:
+    """A long x_label on scatter in a narrow slot is wrapped."""
+    from dbt_charts.core.render.chart.emitters.scatter import ScatterEmitter
+
+    chart = _scatter_chart(scatter_style, x_label=LONG)
+    spec = ScatterEmitter().emit(
+        chart,
+        RenderBox(width=200.0, height=500.0),
+        regroup((), [{"x_val": 1.0, "y_val": 2.0}]),
+    )
+    assert isinstance(spec.encoding["x"]["title"], list)
+
+
+def test_scatter_emitter_y_plain_stays_primitive_when_y_title_wraps(
+    scatter_style: ResolvedScatterStyle,
+) -> None:
+    """The overlay's base-series legend label is data, not layout text.
+
+    After bounding, y_enc["title"] may be a list[str], but base_label must stay
+    a primitive — VL's color.datum accepts only a scalar, and a nested list
+    yields a broken legend entry on a layered scatter chart with a long y label.
+    """
+    from dbt_charts.core.compile.models.chart.resolved._layer import ResolvedLineLayer
+    from dbt_charts.core.compile.models.chart.resolved.scatter import (
+        ResolvedScatterChart,
+    )
+    from dbt_charts.core.render.chart.emitters.scatter import ScatterEmitter
+
+    line_marks = resolve_style(
+        get_theme_style(get_default_theme_name())
+    ).chart_defaults.line.marks
+    ax, ay = _make_resolved_axes("scatter", "quantitative", "quantitative")
+    ay = replace(ay, is_quantitative=True, zero_anchored=True)
+    chart: Any = ResolvedScatterChart(
+        panel_axes=(),
+        id="s",
+        chart_type="scatter",
+        x="x_val",
+        y="y_val",
+        y_label=LONG,
+        layers=(
+            ResolvedLineLayer(
+                type="line",
+                line_mark=line_marks.line,
+                point_mark=line_marks.point,
+                y="target",
+                label="Target",
+            ),
+        ),
+        style=scatter_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
+        **_C,
+    )
+    spec = ScatterEmitter().emit(
+        chart,
+        RenderBox(width=500.0, height=220.0),
+        regroup((), [{"x_val": 1.0, "y_val": 2.0, "target": 3.0}]),
+    )
+    datums = [
+        color["datum"]
+        for layer in (spec.layers or [])
+        if isinstance(color := (layer.encoding or {}).get("color"), dict)
+        and "datum" in color
+    ]
+    assert datums, "expected the overlay to emit color.datum entries"
+    for datum in datums:
+        assert isinstance(datum, str), (
+            f"legend datum must be a primitive, got {datum!r}"
+        )
+
+
+# ── Heatmap emitter coverage ──────────────────────────────────────────────────
+
+
+def _heatmap_chart(heatmap_style: ResolvedHeatmapStyle, **labels: str) -> Any:
+    from dbt_charts.core.compile.models.chart.resolved.heatmap import (
+        ResolvedHeatmapChart,
+    )
+
+    ax, ay = _make_resolved_axes("heatmap", "nominal", "nominal")
+    return ResolvedHeatmapChart(
+        panel_axes=(),
+        id="h",
+        chart_type="heatmap",
+        x="col",
+        y="row",
+        style=heatmap_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
+        **{**_C, **labels},
+    )
+
+
+def test_heatmap_emitter_wraps_a_long_y_label(
+    heatmap_style: ResolvedHeatmapStyle,
+) -> None:
+    """A long y_label on heatmap in a short slot is wrapped."""
+    from dbt_charts.core.render.chart.emitters.heatmap import HeatmapEmitter
+
+    chart = _heatmap_chart(heatmap_style, y_label=LONG)
+    spec = HeatmapEmitter().emit(
+        chart,
+        RenderBox(width=500.0, height=220.0),
+        regroup((), [{"col": "A", "row": "X"}]),
+    )
+    assert isinstance(spec.encoding["y"]["title"], list)
+
+
+def test_heatmap_emitter_wraps_a_long_x_label(
+    heatmap_style: ResolvedHeatmapStyle,
+) -> None:
+    """A long x_label on heatmap in a narrow slot is wrapped."""
+    from dbt_charts.core.render.chart.emitters.heatmap import HeatmapEmitter
+
+    chart = _heatmap_chart(heatmap_style, x_label=LONG)
+    spec = HeatmapEmitter().emit(
+        chart,
+        RenderBox(width=200.0, height=500.0),
+        regroup((), [{"col": "A", "row": "X"}]),
+    )
+    assert isinstance(spec.encoding["x"]["title"], list)
+
+
+def test_scatter_emitter_leaves_a_short_label_unwrapped(
+    scatter_style: ResolvedScatterStyle,
+) -> None:
+    from dbt_charts.core.render.chart.emitters.scatter import ScatterEmitter
+
+    chart = _scatter_chart(scatter_style, y_label="Revenue")
+    spec = ScatterEmitter().emit(
+        chart,
+        RenderBox(width=500.0, height=220.0),
+        regroup((), [{"x_val": 1.0, "y_val": 2.0}]),
+    )
+    assert spec.encoding["y"]["title"] == "Revenue"
+
+
+def test_heatmap_emitter_leaves_a_short_label_unwrapped(
+    heatmap_style: ResolvedHeatmapStyle,
+) -> None:
+    from dbt_charts.core.render.chart.emitters.heatmap import HeatmapEmitter
+
+    chart = _heatmap_chart(heatmap_style, y_label="Region")
+    spec = HeatmapEmitter().emit(
+        chart,
+        RenderBox(width=500.0, height=220.0),
+        regroup((), [{"x_val": "Jan", "y_val": "West", "v": 1.0}]),
+    )
+    assert spec.encoding["y"]["title"] == "Region"

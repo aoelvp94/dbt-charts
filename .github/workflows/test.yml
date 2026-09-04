@@ -31,11 +31,11 @@ jobs:
 
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
-          version: "0.12.5"
+          version: "0.12.6"
           enable-cache: true
-          cache-dependency-glob: pyproject.toml  # no committed uv.lock in this export
+          cache-dependency-glob: uv.lock
 
-      - uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f  # v2.86.4
+      - uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc  # v2.86.7
         with:
           tool: just
 

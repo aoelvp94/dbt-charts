@@ -298,7 +298,7 @@ class BaseAdapter(ABC):
     """Base interface for query adapters.
 
     All adapters must implement this interface to execute queries
-    against different backends (MetricFlow, SQL, HTTP, CSV, etc.).
+    against different backends (SQL, HTTP, CSV, etc.).
 
     The unified interface pattern uses:
     - `supported_types`: Property returning set of query types this adapter handles

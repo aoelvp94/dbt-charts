@@ -8,7 +8,7 @@ Entry Points:
 
 This is the core transformation step of compilation:
 1. Resolve all chart references (queries, extends, partials)
-2. Resolve remote dataface references
+2. Resolve remote board references
 3. Generate unique IDs for all entities
 4. Apply structural defaults (empty description/subtitle)
 5. Transform input types → compiled types
@@ -104,6 +104,7 @@ from dbt_charts.core.compile.normalize.variables import (
     validate_variable_value,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
+from dbt_charts.core.diagnostics.codes_compile import ERR_VALIDATION_FIELD
 
 
 def _theme_from_extends(extends: str | list[str] | None) -> str | None:
@@ -113,9 +114,9 @@ def _theme_from_extends(extends: str | list[str] | None) -> str | None:
     Returns None if no theme name is found (board extends a named board or path,
     or extends is absent).
     """
-    from dbt_charts.core.compile.merge import _get_theme_names
+    from dbt_charts.core.compile.merge import get_theme_names
 
-    theme_names = _get_theme_names()
+    theme_names = get_theme_names()
     if extends is None:
         return None
     if isinstance(extends, str):
@@ -247,34 +248,37 @@ def _root_width_style_patch(board: AuthoredBoard) -> StylePatch | None:
 
     Percentages are meaningless without a parent to be relative to, and
     authoring both ``width:`` and ``style.frame.width:`` is ambiguous — both
-    raise ``CompilationError`` rather than silently picking one.
+    are ``ERR-VALIDATION-FIELD`` rather than silently picking one. This runs
+    past the parse gate, so a bare raise here would surface as ``ERR-INTERNAL``.
     """
     if board.width is None:
         return None
 
     from dbt_charts.core.compile.sizing import parse_dimension
 
+    def reject(msg: str) -> CompilationError:
+        return CompilationError.from_code(
+            ERR_VALIDATION_FIELD, field_path="width", pydantic_msg=msg
+        )
+
     raw = str(board.width).strip()
     if raw.endswith("%"):
-        raise CompilationError(
-            f"Root board 'width: {board.width!r}' cannot be a percentage — "
+        raise reject(
+            f"{board.width!r} cannot be a percentage on the root board — "
             "there is no parent to size it relative to. Use pixels "
             "(e.g. '900' or '900px')."
         )
     pixels = parse_dimension(raw, total=0.0)
     if pixels is None:
-        raise CompilationError(
-            f"Root board 'width: {board.width!r}' is not a valid dimension "
-            "(use e.g. '900' or '900px')."
+        raise reject(
+            f"{board.width!r} is not a valid dimension (use e.g. '900' or '900px')."
         )
     if pixels <= 0:
-        raise CompilationError(
-            f"Root board 'width: {board.width!r}' must be positive (got {pixels})."
-        )
+        raise reject(f"{board.width!r} must be positive (got {pixels}).")
 
     frame_patch = board.style.model_dump().get("frame") if board.style else None
     if isinstance(frame_patch, dict) and frame_patch.get("width") is not None:
-        raise CompilationError(
+        raise reject(
             "Cannot specify both 'width:' and 'style.frame.width:' on the "
             "root board. 'width:' is sugar for 'style.frame.width:' — use "
             "one or the other."
@@ -467,7 +471,7 @@ def normalize_board(
     # ════════════════════════════════════════════════════════════════════
     default_source = board.get_default_source() or parent_context.get("default_source")
     # Board-global named source configs — threaded (like base_dir) so inline
-    # chart metricflow queries resolve their model exactly like up-top
+    # chart queries resolve their source exactly like up-top
     # queries. Set once at the root compile and carried down via parent_context.
     # `{}` here, and nowhere downstream: "this compile has no project config" is
     # a real state at this boundary, but past it `sources` carries the source-scope
@@ -794,7 +798,7 @@ def normalize_board(
     compiled_board = Board(
         id=board_id,
         title=board.title if board.title is not None else "",
-        description=board.description if board.description is not None else "",
+        notes=board.notes if board.notes is not None else "",
         tags=board.tags if board.tags is not None else [],
         aliases=board.aliases if board.aliases is not None else [],
         text=board.text if board.text is not None else "",

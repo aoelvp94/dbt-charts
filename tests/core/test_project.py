@@ -101,7 +101,7 @@ class TestIterBoards:
     def test_excludes_dbt_noise_dirs(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """A dbt project root is a valid Dataface root; dbt's generated dirs
+        """A dbt project root is a valid dbt charts root; dbt's generated dirs
         (dbt_packages vendored .yml/.md, target compiled copies, logs) must not
         be swept into board enumeration."""
         for noise in ("dbt_packages/some_pkg", "target/compiled", "logs"):

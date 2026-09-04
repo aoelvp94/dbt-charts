@@ -10,12 +10,15 @@ per destination, "When to compact") and
 
 from __future__ import annotations
 
+from d3_format import format as _d3_format
 from dbt_charts.core.numeric import nice_tick_values
 from dbt_charts.core.text.numeral_scale import (
     SharedScale,
     SuffixMode,
     _integer_digit_count,
     _precision_for_step,
+    column_shares_one_printed_unit,
+    fractional_digit_count,
     plain_digit_format,
     shared_scale_for_column,
     shared_scale_for_ladder,
@@ -270,6 +273,117 @@ def test_column_takes_one_scale_even_when_a_minority_member_renders_small():
     assert scale is not None
     assert scale.exponent == 6
     assert scale.mode is SuffixMode.ANCHOR
+
+
+def _si(*values: float) -> list[tuple[float, str]]:
+    """(value, printed-text) pairs at a 3-significant-figure SI spec --
+    ``column_shares_one_printed_unit``'s real input shape, built from the
+    actual formatter rather than hand-typed strings.
+    """
+    return [(v, _d3_format(".3~s", v)) for v in values]
+
+
+def test_column_shares_one_printed_unit_true_within_one_real_tier():
+    """1.2M/3M/5M are all inside the millions tier -- every cell prints the
+    same "M" suffix, so alignment is meaningful even though nothing is below
+    the smallest tier.
+    """
+    assert column_shares_one_printed_unit(_si(1.2e6, 3.0e6, 5.0e6)) is True
+
+
+def test_column_shares_one_printed_unit_true_when_all_below_every_tier():
+    """30-128: none of these reach the smallest SI tier (1,000), so every
+    cell prints in the same bare units -- the case a no-shared-tier
+    decimal-pad bake is valid for.
+    """
+    assert column_shares_one_printed_unit(_si(84.3, 88, 128.4, 42)) is True
+
+
+def test_column_shares_one_printed_unit_true_below_the_compaction_threshold():
+    """1200/3000/5600 all sit in the thousands tier, but the extreme value's
+    5 integer digits miss shared_scale_for_column's own 6-digit compaction
+    floor -- that refusal is orthogonal to whether a tier is shared, so this
+    must still read True (regression: an earlier, narrower predicate treated
+    every shared_scale_for_column refusal as "no shared position," silently
+    dropping the pad support_table_attachment.py already gave this exact
+    column pre-fix).
+    """
+    assert column_shares_one_printed_unit(_si(1200, 3000, 5600)) is True
+
+
+def test_column_shares_one_printed_unit_false_across_two_real_tiers():
+    """4.5M and 800k print different suffixes -- different place values, so
+    the two cannot be decimal-aligned against each other.
+    """
+    assert column_shares_one_printed_unit(_si(4.5e6, 800_000)) is False
+
+
+def test_column_shares_one_printed_unit_false_on_tier_vs_no_tier_mix():
+    """12,100 has a natural tier (thousands); 900 does not. A bare "900" and
+    a "12.1 k" print at different place values.
+    """
+    assert column_shares_one_printed_unit(_si(12_100, 900)) is False
+
+
+def test_column_shares_one_printed_unit_false_on_sub_unit_milli_prefix_mix():
+    """0.671 prints "671m" (a milli-prefixed SI suffix) while 84.3 prints
+    bare -- regression: ``_natural_tier`` only classifies tiers at or above
+    thousands, so a raw-value classifier reads both as "no tier" and wrongly
+    calls this a shared unit. The printed text disagrees.
+    """
+    assert column_shares_one_printed_unit(_si(0.671, 84.3)) is False
+
+
+def test_column_shares_one_printed_unit_false_when_a_value_rounds_across_a_tier_edge():
+    """999.96 rounds up to "1k" at 3 significant figures while 84.3 prints
+    bare -- regression: a raw-value classifier over the unrounded 999.96
+    reads "no tier" (below 1000), disagreeing with what the spec actually
+    printed.
+    """
+    assert column_shares_one_printed_unit(_si(999.96, 84.3)) is False
+
+
+def test_column_shares_one_printed_unit_ignores_the_accounting_sign_paren():
+    """An accounting-sign spec wraps a negative value in parens ("($4.5M)"),
+    which carries no unit information of its own -- whether a column happens
+    to contain a negative value must not decide whether it decimal-aligns.
+    """
+    cells = [(v, _d3_format("($,.3~s", v)) for v in (4.5e6, -4.5e6, 5.0e6)]
+    assert cells[1][1] == "($4.5M)"
+    assert column_shares_one_printed_unit(cells) is True
+
+
+def test_column_shares_one_printed_unit_vacuously_true_for_empty_or_zero():
+    assert column_shares_one_printed_unit([]) is True
+    assert column_shares_one_printed_unit(_si(0, 0.0)) is True
+
+
+def test_column_shares_one_printed_unit_ignores_non_finite_values():
+    """An inf/nan cell has no unit of its own to disagree with the rest of
+    the column about, and must not silently veto every other cell's pad.
+    """
+    assert (
+        column_shares_one_printed_unit([*_si(30, 84.3, 128), (float("inf"), "∞")])
+        is True
+    )
+    assert (
+        column_shares_one_printed_unit([*_si(30, 84.3, 128), (float("nan"), "NaN")])
+        is True
+    )
+
+
+def test_fractional_digit_count_ignores_a_magnitude_suffix_letter():
+    """A magnitude suffix letter after the fractional digits must not count
+    as a digit: ``"4.5M".partition(".")[2]`` is ``"5M"`` (2 characters), but
+    only "5" is a real fractional digit. Same for an accounting-sign
+    closing paren (``"(2.5)"`` -> ``"5)"``). Digit-only counting is what lets
+    this one function serve a magnitude-suffixed SI spec and a plain
+    fixed-point spec identically.
+    """
+    assert fractional_digit_count("4.5M") == 1
+    assert fractional_digit_count("(2.5)") == 1
+    assert fractional_digit_count("128") == 0
+    assert fractional_digit_count("5M") == 0
 
 
 def test_suffix_at_register_reads_the_named_table_regardless_of_mode():

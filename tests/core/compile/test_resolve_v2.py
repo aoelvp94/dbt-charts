@@ -353,8 +353,13 @@ def test_area_resolve_zero_anchors_near_zero_data() -> None:
     assert resolved.style.axis_y.scale.continuous.zero is True
 
 
-def test_area_resolve_data_fitted_far_from_zero() -> None:
-    """Area with data far from zero (min/max > 0.25) bakes scale.zero=False."""
+def test_area_resolve_zero_anchors_even_far_from_zero() -> None:
+    """Area with data far from zero (min/max > 0.25) still bakes scale.zero=True.
+
+    Area is not an optional-zero family (see enrich._OPTIONAL_ZERO_CHART_TYPES):
+    the fill is the magnitude encoding, so it always zero-anchors positive data
+    like bar, regardless of the ratio the optional-zero heuristic would use.
+    """
     from dbt_charts.core.compile.resolve import resolve
 
     compiled = AreaChart(
@@ -365,7 +370,7 @@ def test_area_resolve_data_fitted_far_from_zero() -> None:
     assert resolved.style.axis_y is not None
     assert resolved.style.axis_y.scale is not None
     assert resolved.style.axis_y.scale.continuous is not None
-    assert resolved.style.axis_y.scale.continuous.zero is False
+    assert resolved.style.axis_y.scale.continuous.zero is True
 
 
 _CATEGORICAL_Y_AREA_DATA: list[dict[str, Any]] = [
@@ -954,6 +959,293 @@ def test_resolve_point_map_keeps_explicit_projection() -> None:
     assert resolved.projection == "mercator"
 
 
+def test_geoshape_sub_dollar_color_measure_tooltip_avoids_si_milli() -> None:
+    """geoshape's tooltip votes on its color measure -- a sub-$1 color
+    column must not misread as SI milli (see resolve_format_for_values)."""
+    from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+    )
+    from dbt_charts.core.text.predefined_formats import PREDEFINED_SPECS
+
+    tooltip_patch = StylePatch.model_validate(
+        {"charts": {"tooltip": {"format": "currency"}}}
+    )
+    board_style = resolve_chart_style_context(
+        get_theme_style(get_default_theme_name()), tooltip_patch
+    )
+    compiled = GeoshapeChart(
+        id="g2",
+        type="geoshape",
+        query=_sql(),
+        query_name="q",
+        geo="geo_field",
+        lookup="id",
+        color="cents",
+    )
+    data = [{"id": "CA", "cents": 0.42}, {"id": "NY", "cents": 0.25}]
+    resolved = resolve(compiled, data, board_style)
+    assert isinstance(resolved, ResolvedGeoshapeChart)
+    assert resolved.style.tooltip_format == PREDEFINED_SPECS["currency_full"]
+
+
+def test_geoshape_value_field_spelling_votes_not_color_channel() -> None:
+    """A choropleth authored with `value:` (not `color:`) paints value_field
+    in its tooltip (emitters/geo.py's chart.value_field, which
+    _resolve_choropleth_value_field defines as normalized.value or the color
+    channel -- value: wins when authored). The vote must read that same
+    field, not the color channel directly, or an authored value: silently
+    outvotes it -- regression for the case with no color channel at all."""
+    from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+    )
+    from dbt_charts.core.text.predefined_formats import PREDEFINED_SPECS
+
+    tooltip_patch = StylePatch.model_validate(
+        {"charts": {"tooltip": {"format": "currency"}}}
+    )
+    board_style = resolve_chart_style_context(
+        get_theme_style(get_default_theme_name()), tooltip_patch
+    )
+    compiled = GeoshapeChart(
+        id="g3",
+        type="geoshape",
+        query=_sql(),
+        query_name="q",
+        geo="geo_field",
+        lookup="id",
+        value="cents",
+    )
+    data = [{"id": "CA", "cents": 0.42}, {"id": "NY", "cents": 0.25}]
+    resolved = resolve(compiled, data, board_style)
+    assert isinstance(resolved, ResolvedGeoshapeChart)
+    assert resolved.style.tooltip_format == PREDEFINED_SPECS["currency_full"]
+
+
+def test_resolve_point_map_sub_dollar_size_measure_tooltip_avoids_si_milli() -> None:
+    """point_map's tooltip votes on its size measure -- a sub-$1 size
+    column must not misread as SI milli (see resolve_format_for_values)."""
+    from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+    )
+    from dbt_charts.core.text.predefined_formats import PREDEFINED_SPECS
+
+    tooltip_patch = StylePatch.model_validate(
+        {"charts": {"tooltip": {"format": "currency"}}}
+    )
+    board_style = resolve_chart_style_context(
+        get_theme_style(get_default_theme_name()), tooltip_patch
+    )
+    compiled = PointMapChart(
+        id="pm5",
+        type="point_map",
+        query=_sql(),
+        query_name="q",
+        latitude="lat",
+        longitude="lon",
+        size="cents",
+    )
+    data = [
+        {"lat": 37.7, "lon": -122.4, "cents": 0.42},
+        {"lat": 34.0, "lon": -118.2, "cents": 0.25},
+    ]
+    resolved = resolve(compiled, data, board_style)
+    assert isinstance(resolved, ResolvedPointMapChart)
+    assert resolved.style.tooltip_format == PREDEFINED_SPECS["currency_full"]
+
+
+def test_resolve_point_map_color_measure_never_votes_only_size_does() -> None:
+    """geo_tooltip.py formats only size_field with tooltip_format -- the
+    color entry gets no format at all. A sub-$1 color column (rate) must
+    not drag a large size column (revenue) down to two decimals -- that
+    would misrender $1.2M as the ugly-but-technically-correct
+    $1,200,000.00 for a column the tooltip never even applies the sub-$1
+    rule to, since color is never formatted with tooltip_format at all."""
+    from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+    )
+    from dbt_charts.core.text.predefined_formats import PREDEFINED_SPECS
+
+    tooltip_patch = StylePatch.model_validate(
+        {"charts": {"tooltip": {"format": "currency"}}}
+    )
+    board_style = resolve_chart_style_context(
+        get_theme_style(get_default_theme_name()), tooltip_patch
+    )
+    compiled = PointMapChart(
+        id="pm6",
+        type="point_map",
+        query=_sql(),
+        query_name="q",
+        latitude="lat",
+        longitude="lon",
+        size="revenue",
+        color="rate",
+    )
+    data = [
+        {"lat": 37.7, "lon": -122.4, "revenue": 1_200_000.0, "rate": 0.42},
+        {"lat": 34.0, "lon": -118.2, "revenue": 2_400_000.0, "rate": 0.25},
+    ]
+    resolved = resolve(compiled, data, board_style)
+    assert isinstance(resolved, ResolvedPointMapChart)
+    assert resolved.style.tooltip_format == PREDEFINED_SPECS["currency"]
+
+
+def test_resolve_point_map_negative_size_row_never_votes() -> None:
+    """A negative size row never paints (emitters/geo.py's
+    row_has_negative_size filter drops it -- mark AREA cannot be negative),
+    so it must not vote either. Isolated: the only in-band value is
+    negative, so a fix that forgot the exclusion would floor and this would
+    fail with currency_full instead of the unchanged SI spec."""
+    from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+    )
+    from dbt_charts.core.text.predefined_formats import PREDEFINED_SPECS
+
+    tooltip_patch = StylePatch.model_validate(
+        {"charts": {"tooltip": {"format": "currency"}}}
+    )
+    board_style = resolve_chart_style_context(
+        get_theme_style(get_default_theme_name()), tooltip_patch
+    )
+    compiled = PointMapChart(
+        id="pm7",
+        type="point_map",
+        query=_sql(),
+        query_name="q",
+        latitude="lat",
+        longitude="lon",
+        size="delta",
+    )
+    data = [
+        {"lat": 37.7, "lon": -122.4, "delta": -0.42},
+        {"lat": 34.0, "lon": -118.2, "delta": 100.0},
+    ]
+    resolved = resolve(compiled, data, board_style)
+    assert isinstance(resolved, ResolvedPointMapChart)
+    assert resolved.style.tooltip_format == PREDEFINED_SPECS["currency"]
+
+
+def test_heatmap_sub_dollar_color_measure_tooltip_avoids_si_milli() -> None:
+    """emitters/heatmap.py and structured_tooltip.py both format the color
+    channel with tooltip_format -- heatmap's tooltip IS in scope for the
+    sub-$1 vote, not "adjacent Vega-painted" out-of-scope work. A sub-$1
+    color column must not misread as SI milli."""
+    from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+    )
+    from dbt_charts.core.text.predefined_formats import PREDEFINED_SPECS
+
+    tooltip_patch = StylePatch.model_validate(
+        {"charts": {"tooltip": {"format": "currency"}}}
+    )
+    board_style = resolve_chart_style_context(
+        get_theme_style(get_default_theme_name()), tooltip_patch
+    )
+    compiled = HeatmapChart(id="h2", type="heatmap", x="day", y="hour", color="cents")
+    data = [
+        {"day": "Mon", "hour": "9", "cents": 0.42},
+        {"day": "Tue", "hour": "10", "cents": 0.25},
+    ]
+    resolved = resolve(compiled, data, board_style)
+    assert isinstance(resolved, ResolvedHeatmapChart)
+    assert isinstance(resolved.style, ResolvedHeatmapStyle)
+    assert resolved.style.tooltip_format == PREDEFINED_SPECS["currency_full"]
+
+
+def test_faceted_scatter_x_never_votes_since_the_facet_tooltip_never_paints_it() -> (
+    None
+):
+    """_scatter_roles's own applies-to gate requires `chart.multiples is
+    None` -- a faceted scatter's structured tooltip never formats x at all
+    (emitters/scatter.py only ever formats y unconditionally). x must not
+    vote there, or a sub-$1 x column (cpc) drags a correctly-SI'd y column
+    (revenue, $1.2M) to the two-decimal register with nothing painting the
+    x side to justify it."""
+    from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+    from dbt_charts.core.compile.models.chart.authored import MultiplesConfig
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+    )
+    from dbt_charts.core.text.predefined_formats import PREDEFINED_SPECS
+
+    tooltip_patch = StylePatch.model_validate(
+        {"charts": {"tooltip": {"format": "currency"}}}
+    )
+    board_style = resolve_chart_style_context(
+        get_theme_style(get_default_theme_name()), tooltip_patch
+    )
+    compiled = ScatterChart(
+        id="sc1",
+        type="scatter",
+        x="cpc",
+        y="revenue",
+        multiples=MultiplesConfig(columns="region"),
+    )
+    data = [
+        {"cpc": 0.42, "revenue": 1_200_000.0, "region": "east"},
+        {"cpc": 0.25, "revenue": 2_400_000.0, "region": "west"},
+    ]
+    resolved = resolve(compiled, data, board_style)
+    assert isinstance(resolved, ResolvedScatterChart)
+    assert resolved.style.tooltip_format == PREDEFINED_SPECS["currency"]
+
+
+def test_layered_scatter_x_never_votes_since_the_layer_tooltip_never_paints_it() -> (
+    None
+):
+    """Same gate, the other half: _scatter_roles also requires `not
+    chart.layers`. A layered scatter's x must not vote either."""
+    from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+    from dbt_charts.core.compile.models.chart.authored import ScatterLayer
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+    )
+    from dbt_charts.core.text.predefined_formats import PREDEFINED_SPECS
+
+    tooltip_patch = StylePatch.model_validate(
+        {"charts": {"tooltip": {"format": "currency"}}}
+    )
+    board_style = resolve_chart_style_context(
+        get_theme_style(get_default_theme_name()), tooltip_patch
+    )
+    compiled = ScatterChart(
+        id="sc2",
+        type="scatter",
+        x="cpc",
+        y="revenue",
+        layers=[ScatterLayer(type="scatter", y="target")],
+    )
+    data = [
+        {"cpc": 0.42, "revenue": 1_200_000.0, "target": 50.0},
+        {"cpc": 0.25, "revenue": 2_400_000.0, "target": 60.0},
+    ]
+    resolved = resolve(compiled, data, board_style)
+    assert isinstance(resolved, ResolvedScatterChart)
+    assert resolved.style.tooltip_format == PREDEFINED_SPECS["currency"]
+
+
 def test_resolve_point_map_style_marks_point_override_propagates() -> None:
     """A chart-root `style.marks.point` override must reach resolved.style.point_mark.
 
@@ -1468,6 +1760,216 @@ def test_scatter_resolve_style_slice_is_resolved_scatter_style() -> None:
     assert resolved.style.label_usable_ratio > 0
 
 
+def test_scatter_nominal_y_resolves_zero_anchored_false() -> None:
+    """A scatter rotated into a dot plot (categorical y, numeric x) has no
+    numeric y column to anchor -- resolve() must publish that as False, not
+    inherit whatever the last numeric chart happened to decide."""
+    from dbt_charts.core.compile.resolve import resolve
+
+    compiled = ScatterChart(
+        id="s", type="scatter", x="value", y="region", query=_sql(), query_name="q"
+    )
+    data = [{"region": "a", "value": 5}, {"region": "b", "value": -3}]
+    resolved = resolve(compiled, data, _default_board_style())
+    assert isinstance(resolved, ResolvedScatterChart)
+    assert resolved.style.axis_y.zero_anchored is False
+
+
+def test_scatter_all_null_y_resolves_zero_anchored_false() -> None:
+    """A y column with no numeric values at all has nothing to anchor --
+    resolve() must publish False rather than claim a decision that never
+    ran."""
+    from dbt_charts.core.compile.resolve import resolve
+
+    compiled = ScatterChart(
+        id="s", type="scatter", x="x", y="y", query=_sql(), query_name="q"
+    )
+    data: list[dict[str, Any]] = [{"x": 1, "y": None}, {"x": 2, "y": None}]
+    resolved = resolve(compiled, data, _default_board_style())
+    assert isinstance(resolved, ResolvedScatterChart)
+    assert resolved.style.axis_y.zero_anchored is False
+
+
+def test_scatter_nominal_y_with_numeric_overlay_and_authored_ticks_count() -> None:
+    """A nominal-y scatter with a shared-scale numeric line overlay and an
+    authored ``ticks.count`` -- the un-anchored base ladder resolve() bakes
+    onto the shared axis, pinned so a regression to the pre-fix anchored
+    ladder (0, 50, 100) is caught here rather than only in a rendered spec."""
+    from pydantic import TypeAdapter
+
+    from dbt_charts.core.compile.models.chart.normalized import Chart
+    from dbt_charts.core.compile.resolve import resolve
+
+    payload: dict[str, Any] = {
+        "id": "s",
+        "type": "scatter",
+        "x": "v",
+        "y": "cat",
+        "layers": [{"type": "line", "y": "y2", "label": "t"}],
+        "style": {"axis_y": {"ticks": {"count": 4}}},
+    }
+    chart = TypeAdapter(Chart).validate_python(payload)
+    data = [
+        {"v": 10, "cat": c, "y2": w} for c, w in zip("abc", [30, 50, 70], strict=True)
+    ]
+    resolved = resolve(chart, data, _default_board_style(), width=420.0)
+    assert isinstance(resolved, ResolvedScatterChart)
+    assert resolved.style.axis_y.zero_anchored is False
+    assert resolved.style.axis_y.tick_values == (20.0, 40.0, 60.0, 80.0)
+
+
+# ---------------------------------------------------------------------------
+# ResolvedAxisStyle.is_quantitative / .zero_anchored -- published per axis,
+# per family, honestly: a channel-type fact (is_quantitative) and a
+# scale-anchor fact (zero_anchored) that must match what the axis's own
+# scale actually carries, not the label-alignment geometry other code reads
+# off the same call sites.
+# ---------------------------------------------------------------------------
+
+
+def test_scatter_quantitative_x_and_y_publishes_is_quantitative_true_on_both_axes() -> (
+    None
+):
+    from pydantic import TypeAdapter
+
+    from dbt_charts.core.compile.models.chart.normalized import Chart
+    from dbt_charts.core.compile.resolve import resolve
+
+    payload: dict[str, Any] = {
+        "id": "s",
+        "type": "scatter",
+        "x": "x",
+        "y": "y",
+        "query": _sql(),
+        "query_name": "q",
+    }
+    chart = TypeAdapter(Chart).validate_python(payload)
+    resolved = resolve(chart, _NUMERIC_DATA, _default_board_style())
+    assert isinstance(resolved, ResolvedScatterChart)
+    assert resolved.style.axis_x.is_quantitative is True
+    assert resolved.style.axis_y.is_quantitative is True
+
+
+def test_bar_vertical_publishes_is_quantitative_true_on_measure_axis_only() -> None:
+    from dbt_charts.core.compile.resolve import resolve
+
+    resolved = resolve(_bar_compiled(), _BAR_DATA, _default_board_style())
+    assert isinstance(resolved, ResolvedBarChart)
+    assert resolved.style.axis_x.is_quantitative is False
+    assert resolved.style.axis_y.is_quantitative is True
+
+
+def test_bar_horizontal_still_publishes_axis_y_is_quantitative_true() -> None:
+    """Bar semantics fix y=measure regardless of orientation (see bar.py's
+    own comment on this) -- a horizontal bar's axis_y is the measure axis
+    just as much as a vertical bar's, so the published channel-type fact
+    must not flip with orientation the way the render geometry does."""
+    from pydantic import TypeAdapter
+
+    from dbt_charts.core.compile.models.chart.normalized import Chart
+    from dbt_charts.core.compile.resolve import resolve
+
+    payload: dict[str, Any] = {
+        "id": "b",
+        "type": "bar",
+        "x": "month",
+        "y": "revenue",
+        "style": {"orientation": "horizontal"},
+        "query": _sql(),
+        "query_name": "q",
+    }
+    chart = TypeAdapter(Chart).validate_python(payload)
+    resolved = resolve(chart, _BAR_DATA, _default_board_style())
+    assert isinstance(resolved, ResolvedBarChart)
+    assert resolved.style.axis_y.is_quantitative is True
+
+
+def test_heatmap_publishes_is_quantitative_false_on_both_axes() -> None:
+    """Both of a heatmap's channels are nominal -- its magnitude lives on
+    the color channel, not either axis."""
+    from dbt_charts.core.compile.resolve import resolve
+
+    compiled = HeatmapChart(
+        id="h", type="heatmap", x="x", y="y", query=_sql(), query_name="q"
+    )
+    resolved = resolve(compiled, _NUMERIC_DATA, _default_board_style())
+    assert isinstance(resolved, ResolvedHeatmapChart)
+    assert resolved.style.axis_x.is_quantitative is False
+    assert resolved.style.axis_y.is_quantitative is False
+
+
+def test_line_publishes_is_quantitative_true_on_both_axes_for_quantitative_x() -> None:
+    """A connected-scatter line (numeric x, not year-shaped) has a genuinely
+    quantitative x -- both axes must publish True, not just axis_y."""
+    from dbt_charts.core.compile.resolve import resolve
+
+    compiled = LineChart(
+        id="l", type="line", x="x", y="y", query=_sql(), query_name="q"
+    )
+    resolved = resolve(compiled, _NUMERIC_DATA, _default_board_style())
+    assert isinstance(resolved, ResolvedLineChart)
+    assert resolved.style.axis_x.is_quantitative is True
+    assert resolved.style.axis_y.is_quantitative is True
+
+
+def test_streamgraph_publishes_zero_anchored_false() -> None:
+    """A center-stacked area's y=0 is the silhouette's visual centerline, not
+    a floor -- the published fact must say so, matching the resolve-time
+    bake skip (see area.py's own center-stack carve-out)."""
+    from pydantic import TypeAdapter
+
+    from dbt_charts.core.compile.models.chart.normalized import Chart
+    from dbt_charts.core.compile.resolve import resolve
+
+    data = [
+        {"month": f"2026-0{i}-01", "segment": seg, "revenue": base + i * 10}
+        for i in range(1, 4)
+        for seg, base in (("Core", 148), ("Growth", 132))
+    ]
+    payload: dict[str, Any] = {
+        "id": "a",
+        "type": "area",
+        "x": "month",
+        "y": "revenue",
+        "color": "segment",
+        "style": {"stack": "center"},
+        "query": _sql(),
+        "query_name": "q",
+    }
+    chart = TypeAdapter(Chart).validate_python(payload)
+    resolved = resolve(chart, data, _default_board_style())
+    assert isinstance(resolved, ResolvedAreaChart)
+    assert resolved.style.axis_y.zero_anchored is False
+
+
+def test_log_scale_area_publishes_zero_anchored_false() -> None:
+    """A log-scaled axis carries no zero anchor -- log(0) is undefined, so
+    the published fact must not claim one, even when the all-positive data
+    would otherwise trip the smart-zero heuristic."""
+    from pydantic import TypeAdapter
+
+    from dbt_charts.core.compile.models.chart.normalized import Chart
+    from dbt_charts.core.compile.resolve import resolve
+
+    data = [
+        {"month": "Jan", "revenue": 200.0},
+        {"month": "Feb", "revenue": 50.0},
+    ]
+    payload: dict[str, Any] = {
+        "id": "a",
+        "type": "area",
+        "x": "month",
+        "y": "revenue",
+        "style": {"axis_y": {"scale": {"continuous": {"type": "log"}}}},
+        "query": _sql(),
+        "query_name": "q",
+    }
+    chart = TypeAdapter(Chart).validate_python(payload)
+    resolved = resolve(chart, data, _default_board_style())
+    assert isinstance(resolved, ResolvedAreaChart)
+    assert resolved.style.axis_y.zero_anchored is False
+
+
 def test_heatmap_resolve_style_slice_is_resolved_heatmap_style() -> None:
     """_resolve_heatmap must populate a full ResolvedHeatmapStyle on the chart."""
     from dbt_charts.core.compile.models.style.resolved import ResolvedHeatmapStyle
@@ -1794,7 +2296,7 @@ def test_bar_chart_local_bracket_role_token_resolves_per_theme() -> None:
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
     from dbt_charts.core.compile.resolve.style.palette import palette as resolve_palette
 
-    for theme, family in (("stark", "vivid-10"), ("editorial", "editorial-10")):
+    for theme, family in (("stark", "vivid-10"), ("clarity", "editorial-10")):
         compiled = _bar_compiled(
             style=BarChartStylePatch.model_validate(
                 {"color": {"categorical": {"palette": ["category_dark[3]"]}}}

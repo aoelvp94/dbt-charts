@@ -340,6 +340,47 @@ class TestResolverStrategyWalk:
         assert layout.label_overlap == "allow"
         assert axis_x.labels.font.size == 11.0
 
+    def test_nominal_tilt_angle_is_picked_against_domain_values_not_data(self) -> None:
+        """The tilt angle picked for a nominal/ordinal axis must come from the
+        same widths the flat-fit gate already measures against
+        ``domain_values`` — not re-derived from ``data`` alone.
+
+        ``data`` carries 3 short single-char labels: on their own they fit
+        flat (wide per-label band). ``domain_values`` — the union an overlay
+        layer widens the shared scale to (``overlay_x_domain_values``) —
+        carries 30 same-width labels: a much narrower band that does not fit
+        flat and needs the steepest tilt available. Picking the angle from
+        ``data`` alone (the pre-fix behaviour) returns 0.0 here even though
+        the rendered axis has 30 crowded bands, not 3.
+        """
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+
+        mock_measurer = _make_mock_measurer(width_per_char=5.0)
+        tilt_increments = [0.0, -30.0, -45.0, -60.0, -90.0]
+        axis_x = _axis_x_with(
+            overlap=_overlap(), tilt_increments=tilt_increments, font_size=11.0
+        )
+        data = [{"x": f"L{i}"} for i in range(3)]
+        domain_values = [f"L{i}" for i in range(30)]
+
+        with patch(
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            return_value=mock_measurer,
+        ):
+            layout = resolve_axis_x_overlap(
+                axis_x,
+                "x",
+                data,
+                1.0,
+                edge_labels_flushed=False,
+                chart_width=200.0,
+                domain_values=domain_values,
+            )
+
+        assert layout.angle == tilt_increments[-1], layout.angle
+
     def test_skip_strategy_does_not_drop_categorical_labels(self) -> None:
         """Ordinal domains keep every label because skipped categories are unrecoverable."""
         from dbt_charts.core.render.chart.emitters._label_overlap import (

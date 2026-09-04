@@ -12,7 +12,7 @@ The public API is:
   all queries declared in the view's ``queries:`` block and return a
   ``dict[name, ViewQueryResult]`` for the template context.
 
-Registry queries reuse the normal Dataface query system: the same
+Registry queries reuse the normal dbt charts query system: the same
 ``normalize_query`` entry point, source protocols, values protocols,
 validation, and execution code as ordinary board queries.  ``{{ path.X }}``
 placeholders are materialized before the query spec reaches the normalizer,

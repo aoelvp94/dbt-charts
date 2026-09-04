@@ -9,7 +9,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from dbt_charts.agent_api.boards import DASHBOARD_KEYS
+from dbt_charts.agent_api.boards import board_declaring_keys
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.project import CHARTS_SUBDIR, Project, posix_relpath
 
@@ -22,9 +22,9 @@ DEFAULT_SEARCH_LIMIT = 10
 _INTERNAL_REF_RE = re.compile(r"\s*;?\s*see\s+ai_notes/\S+", re.IGNORECASE)
 
 
-def _agent_safe_summary(description: str) -> str:
-    """Strip maintainer-only references from board descriptions."""
-    return _INTERNAL_REF_RE.sub("", description).strip()
+def _agent_safe_summary(notes: str) -> str:
+    """Strip maintainer-only references from board notes."""
+    return _INTERNAL_REF_RE.sub("", notes).strip()
 
 
 class SearchBoardsArgs(BaseModel):
@@ -136,7 +136,7 @@ def search_boards_hits(
     if not query_tokens:
         return []
 
-    index = _build_index(project, under=CHARTS_SUBDIR)
+    index = _build_index(project, CHARTS_SUBDIR)
 
     if tags:
         required_tags = {t.lower() for t in tags}
@@ -153,7 +153,7 @@ def search_boards_hits(
     return [
         BoardSearchHit(
             title=entry["title"],
-            summary=entry["description"],
+            summary=entry["notes"],
             match_score=round(score, 2),
             match_reasons=reasons,
             board_path=entry["board_path"],
@@ -168,14 +168,13 @@ def search_boards_hits(
 
 
 def _index_entry_from_content(
-    *,
     board_path: str,
     file_path: str,
     title: str,
-    description: str,
+    notes: str,
     content: dict[str, Any],
 ) -> dict[str, Any] | None:
-    if not any(key in content for key in DASHBOARD_KEYS):
+    if not any(key in content for key in board_declaring_keys()):
         return None
 
     tags = content.get("tags", [])
@@ -219,7 +218,7 @@ def _index_entry_from_content(
         "board_path": board_path,
         "file_path": file_path,
         "title": title,
-        "description": _agent_safe_summary(description),
+        "notes": _agent_safe_summary(notes),
         "tags": [t.lower() for t in tags] if isinstance(tags, list) else [],
         "query_names": query_names,
         "charts": chart_entries,
@@ -227,12 +226,12 @@ def _index_entry_from_content(
     }
 
 
-def _build_index(project: Project, *, under: str) -> list[dict[str, Any]]:
+def _build_index(project: Project, under: str) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for pf in sorted(
         project.iter_boards(under=under, recursive=True), key=lambda p: p.relpath
     ):
-        if not pf.is_yaml:
+        if not pf.is_yaml or pf.is_meta:
             continue
         try:
             content = yaml.safe_load(pf.read_text())
@@ -253,7 +252,7 @@ def _build_index(project: Project, *, under: str) -> list[dict[str, Any]]:
             board_path=board_path,
             file_path=pf.relpath,
             title=title,
-            description=content.get("description", ""),
+            notes=content.get("notes", ""),
             content=content,
         )
         if entry is not None:
@@ -285,7 +284,7 @@ def _score_entry(
     reasons: list[str] = []
 
     title_tokens = _tokenize(entry["title"])
-    desc_tokens = _tokenize(entry["description"])
+    notes_tokens = _tokenize(entry["notes"])
     tag_set = set(entry["tags"])
     query_name_tokens = _tokenize(" ".join(entry["query_names"]))
     sql_tokens = _tokenize(" ".join(entry["sql_snippets"]))
@@ -305,10 +304,10 @@ def _score_entry(
             if "tag_match" not in reasons:
                 reasons.append("tag_match")
 
-        if qt in desc_tokens:
+        if qt in notes_tokens:
             score += 1.5
-            if "description_match" not in reasons:
-                reasons.append("description_match")
+            if "notes_match" not in reasons:
+                reasons.append("notes_match")
 
         for chart_id, tokens in chart_tokens:
             if qt in tokens:

@@ -209,7 +209,9 @@ _MANIFEST = {
     },
 }
 
-_INDEX = ref_index(LoadedManifest(raw=_MANIFEST, relpath="target/manifest.json"))
+_INDEX = ref_index(
+    LoadedManifest(raw=_MANIFEST, relpath="target/manifest.json", version="v1")
+)
 
 
 class TestCallForms:

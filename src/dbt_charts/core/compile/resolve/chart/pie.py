@@ -6,7 +6,7 @@ from types import EllipsisType
 from typing import Any, Literal
 
 from dbt_charts.core.compile.config import get_chart_rendering
-from dbt_charts.core.compile.format import resolve_format
+from dbt_charts.core.compile.format import resolve_format_for_values
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.authored import ChartTotal
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -23,11 +23,15 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedPieStyle,
 )
 from dbt_charts.core.compile.models.style.theme import SliceLabelsStyle, SliceMarkStyle
-from dbt_charts.core.compile.resolve.chart._channels import _channels_for
+from dbt_charts.core.compile.resolve.chart._channels import (
+    _channels_for,
+    _column_numeric_values,
+)
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     ChartTextVariables,
     _base_kwargs,
+    _bound_scales,
     _shared_kwargs,
     _title_font,
 )
@@ -80,6 +84,11 @@ def _resolve_pie(
     )
     primary = _with_color_tokens(normalized.style, chart_style_context)
     pie = merge_onto_base(chart_style_context.pie, primary)
+    # The centre total and every slice tooltip vote on one set (theta values
+    # plus their sum) so they never disagree about the same sub-$1 value --
+    # see resolve_format_for_values's per-set contract.
+    theta_values = _column_numeric_values(data, normalized.theta)
+    format_vote_values = [*theta_values, sum(theta_values)] if theta_values else []
     channels = _channels_for(normalized, data)
     # Pie patches are radial (_RadialChartStyle). Use _effective_palette to pick up
     # chart-local color.categorical override or the board-level palette.
@@ -120,23 +129,20 @@ def _resolve_pie(
 
     # Bake dark-companion stops for label color encoding.  Computed here so
     # render/chart/ never needs to import compile.palette. Multi-series pies
-    # get one stop per distinct color value; single-series pies get one stop
-    # for palette[0] — the same value the emitter paints the wedge with when
-    # there's no color channel, so label ink and wedge fill always match.
-    # marks.slice.labels.font.color is never read here — an authored value
-    # (single-series only; the merged sentinel is real, so no patch-peeking
-    # is needed) is applied later by PieEmitter, which prefers it over
-    # dark_companion_stops[0]. Multi-series pies never honor font.color.
+    # get the full companion palette, parallel index-for-index with
+    # `chart.palette` — a value's board slot can land anywhere in that range,
+    # not just within this chart's own distinct-value count, so the emitter
+    # must be able to index a companion by ANY slot the board hands it, not
+    # only the ones this particular pie happens to draw. Single-series pies
+    # get one stop for palette[0] — the same value the emitter paints the
+    # wedge with when there's no color channel, so label ink and wedge fill
+    # always match. marks.slice.labels.font.color is never read here — an
+    # authored value (single-series only; the merged sentinel is real, so no
+    # patch-peeking is needed) is applied later by PieEmitter, which prefers
+    # it over dark_companion_stops[0]. Multi-series pies never honor font.color.
     dark_stops: tuple[str, ...]
     if color_channel is not None and color_channel.data_field:
-        seen: list[str] = []
-        for row in data:
-            v = row.get(color_channel.data_field)
-            if v is not None:
-                s = str(v)
-                if s not in seen:
-                    seen.append(s)
-        dark_stops = tuple(resolve_dark_companion_stops(eff_palette[: len(seen)]))
+        dark_stops = tuple(resolve_dark_companion_stops(list(eff_palette)))
     else:
         dark_stops = tuple(resolve_dark_companion_stops(eff_palette[:1]))
 
@@ -171,7 +177,9 @@ def _resolve_pie(
         total = ChartTotal(
             visible=total.visible,
             label=total.label,
-            format=resolve_format(total.format, chart_style_context.formats),
+            format=resolve_format_for_values(
+                total.format, chart_style_context.formats, format_vote_values
+            ),
         )
 
     label_font_family = resolved_labels.font.family
@@ -200,6 +208,15 @@ def _resolve_pie(
             available_width,
         )
 
+    # This chart's own board-wide category-color binding, narrowed the same
+    # way `category_colors` on the resolved chart is (`_bound_scales` below,
+    # mirrored again at the bottom of this function via `_base_kwargs`) --
+    # so the attached table's swatch and the wedge fill it names always read
+    # off the identical scale. Empty when the field isn't board-bound (or
+    # there is no color field at all): the table then keeps its existing
+    # positional swatch, matching an unbound pie's uniform wedge fill.
+    chart_category_colors = _bound_scales(normalized, chart_style_context, eff_palette)
+
     def plan_for(arc_mode: ArcRenderMode) -> AttachmentPlan:
         return plan_attachment(
             arc_mode,
@@ -211,6 +228,7 @@ def _resolve_pie(
             normalized.format,
             chart_style_context.table,
             width,
+            chart_category_colors,
         )
 
     mode = dominance_mode(width)
@@ -309,8 +327,10 @@ def _resolve_pie(
         style=ResolvedPieStyle(
             inner_radius=pie.inner_radius if pie.inner_radius is not None else 0.0,
             slice_mark=effective_slice_mark,
-            tooltip_format=resolve_format(
-                chart_style_context.tooltip.format, chart_style_context.formats
+            tooltip_format=resolve_format_for_values(
+                chart_style_context.tooltip.format,
+                chart_style_context.formats,
+                format_vote_values,
             ),
             total_style=pie.total,
             title_font=_tf,

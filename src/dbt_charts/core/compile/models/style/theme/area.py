@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from dbt_charts.core.compile.models.markers import InheritSlot, SkipInheritSlots
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _CartesianChartStyle,
+    _QuantitativeAxisChartStyleMixin,
 )
 from dbt_charts.core.compile.models.style.theme.marks import (
     AreaMarkStyle,
@@ -32,7 +33,7 @@ class AreaLineStyle(BaseModel):
 
     Vega-Lite itself compiles an area's edge line as a genuine separate
     ``line`` mark (``mark: {type: area, line: {...}}`` produces independent
-    ``area``/``line`` marks in the compiled Vega spec), and Dataface's
+    ``area``/``line`` marks in the compiled Vega spec), and dbt charts'
     emitter builds the same separate line mark by hand. So the edge's
     stroke geometry belongs here, on the "line" identity — not on
     ``AreaMarkStyle`` (fill only).
@@ -104,7 +105,7 @@ class AreaLayerStyle(BaseModel):
     )
 
 
-class AreaChartStyle(_CartesianChartStyle):
+class AreaChartStyle(_CartesianChartStyle, _QuantitativeAxisChartStyleMixin):
     """Area chart style: chart-level fields + marks sub-block."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)

@@ -8,8 +8,10 @@ estimates that drift apart.
 
 from __future__ import annotations
 
+import datetime
 import json
 import xml.etree.ElementTree as ET
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,7 +22,10 @@ from dbt_charts.core.render.controls import interactive_controls
 from dbt_charts.core.render.template_loader import render_template
 from dbt_charts.core.render.variables_layout import lay_out_variables
 from dbt_charts.core.render.variables_resolve import resolve_controls
-from dbt_charts.core.render.variables_strip import render_variables_strip_svg
+from dbt_charts.core.render.variables_strip import (
+    _committed_value,
+    render_variables_strip_svg,
+)
 
 _WIDE = 1000.0
 
@@ -36,6 +41,8 @@ class _NoQueries:
     the data-dependent parts of a control — refined widget, options, `enabled` —
     when a caller has an executor to answer with.
     """
+
+    cache_hit_ats: list = []
 
     def execute_query(self, name, variables):
         raise AssertionError(f"no query expected, got {name!r}")
@@ -535,6 +542,74 @@ class TestDrawnStateMatchesTheResolvedControl:
         assert float(glyph.get("x")) + float(glyph.get("width")) <= right + 0.5
 
 
+def _ornament_left(root: ET.Element) -> float:
+    """Left edge of whatever glyph the strip drew, read off the drawn geometry.
+
+    The two ornaments publish it differently -- the chevron is a bare ``path``
+    whose ``d`` opens on its leftmost point, the calendar is a ``g`` whose first
+    child rect carries ``x``. Reading both here rather than recomputing either
+    is the point: a test that re-derives the position from the layout cannot
+    catch the chrome being re-anchored.
+    """
+    for element in root.iter():
+        kind = element.get("data-dbt-ornament")
+        if kind == "arrow":
+            return float(element.get("d").split()[0][1:])
+        if kind == "calendar":
+            return float(next(iter(element)).get("x"))
+    raise AssertionError("no ornament drawn")
+
+
+@pytest.mark.parametrize(
+    ("input_type", "value"),
+    [
+        ("select", "All"),
+        ("select", "Latin America and the Caribbean"),
+        ("multiselect", "North, South"),
+        ("date", "2026-04-10"),
+        ("date", "Any date"),
+    ],
+)
+def test_the_drawn_value_never_reaches_its_drawn_ornament(
+    input_type: str, value: str
+) -> None:
+    """Every content-sized ornamented field draws breathing room before its glyph.
+
+    The layout used to reserve ``text + padding + ornament`` exactly, which puts
+    the glyph's left edge on the text's right edge -- a zero gap at every
+    viewport and every value length, for all five cases here. Zero is not a
+    rounding error to absorb: the width is measured in Python and drawn by
+    Chromium, so any variance between the two measurers renders as the chevron
+    sitting on the final letters.
+
+    Read off the emitted SVG rather than recomputed from ``lay_out_variables``,
+    so that re-anchoring ``_draw_arrow`` from the field's *left* edge -- which
+    would bring the collision straight back -- reddens this.
+
+    ``daterange`` is deliberately absent: it is theme-sized with ~107 units of
+    slack at any value that fits, so it never collided and asserting on it here
+    would pass on unfixed code.
+    """
+    from dbt_charts.core.font_measure import get_font_measurer
+
+    committed = None if value in ("All", "Any date") else {"v": value}
+    svg, _ = _strip({"v": Variable(input=input_type, label="When")}, committed)
+    root = ET.fromstring(f"<svg xmlns='http://www.w3.org/2000/svg'>{svg}</svg>")
+
+    text = next(e for e in root.iter() if (e.text or "") == value)
+    font_size = float(text.get("font-size"))
+    text_right = float(text.get("x")) + get_font_measurer().measure(value, font_size)
+
+    # Bare non-overlap is too weak to be a regression pin: with the gap deleted
+    # the glyph lands 0.08 units clear of the text here, which passes `>` while
+    # rendering as a collision. Demand room proportional to the type instead --
+    # a fraction of what the layout reserves, so this survives a retune of the
+    # gap without pinning its exact size.
+    assert _ornament_left(root) - text_right >= font_size * 0.2, (
+        f"{input_type} {value!r}: the glyph is drawn on top of the value"
+    )
+
+
 def test_a_long_value_stays_inside_the_box_the_layout_published() -> None:
     """The reserved width is the drawn width, for every input kind.
 
@@ -664,6 +739,63 @@ def test_a_list_valued_control_publishes_json_not_a_python_repr() -> None:
         "2026-02-01",
     ]
     assert "['" not in svg
+
+
+def test_a_list_of_dates_publishes_iso_string_json() -> None:
+    control = SimpleNamespace(
+        current=[datetime.date(2026, 1, 1), datetime.date(2026, 2, 1)]
+    )
+
+    assert json.loads(_committed_value(control)) == ["2026-01-01", "2026-02-01"]
+
+
+def test_a_board_with_a_bare_date_daterange_default_renders() -> None:
+    from dbt_charts.core.compile import compile
+    from dbt_charts.core.render.board_resolve import (
+        build_resolved_board_static as resolve_board,
+    )
+    from dbt_charts.core.render.boards import render_board_svg
+
+    from .._board_utils import apply_static_layout
+
+    result = compile(
+        """
+variables:
+  date_range:
+    input: daterange
+    default:
+      - 2026-01-01
+      - 2026-02-01
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, revenue: 100}
+charts:
+  c:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+rows:
+  - c
+"""
+    )
+    assert result.success, result.errors
+    board = apply_static_layout(result.board)
+
+    svg = render_board_svg(
+        resolve_board(board),
+        _NoQueries(),
+        board.variable_defaults,
+        background=None,
+        render_cache={},
+    )
+
+    assert json.loads(_groups(svg)[0].get("data-dbt-value")) == [
+        "2026-01-01",
+        "2026-02-01",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -829,3 +961,72 @@ def test_an_unset_date_still_states_itself_in_a_static_export() -> None:
 
     drawn = [t for t in _drawn_text(svg) if t.strip()]
     assert drawn != ["On or after:"], "the field states nothing at all"
+
+
+def test_a_label_sits_on_the_baseline_its_own_face_centres_it_on() -> None:
+    """The label is centred in its box, and the strip asks the face where that is.
+
+    Wiring rather than the ratio itself: the strip snaps ``y`` to whole pixels,
+    so at an 11px label the face's answer and the ``font_size * 0.35`` it
+    replaced round to the same line. ``centered_baseline_offset``'s own tests
+    pin the ratio; this pins that the strip is what asks for it, and fails if
+    the label goes back to being centred on some other rule.
+    """
+    from dbt_charts.core.font_measure import centered_baseline_offset
+
+    defs = {"region": Variable(input="text", label="Region")}
+    svg, _ = _strip(defs)
+    layout = lay_out_variables(
+        [c.spec for c in resolve_controls(defs, {}, None, _rs().variables)],
+        _WIDE,
+        get_theme_style().variables,
+    )
+
+    label_font = _rs().variables.label.font
+    box = layout.boxes[0]
+    root = ET.fromstring(f"<svg xmlns='http://www.w3.org/2000/svg'>{svg}</svg>")
+    label = next(
+        e
+        for e in root.iter()
+        if e.tag.endswith("text") and (e.text or "").startswith("Region")
+    )
+
+    expected = (
+        box.y
+        + box.height / 2
+        + centered_baseline_offset(label_font.family, float(label_font.size))
+    )
+    assert float(label.get("y")) == pytest.approx(expected, abs=0.5)
+
+
+@pytest.mark.parametrize(
+    ("input_type", "label"),
+    [("select", "All"), ("multiselect", "All"), ("radio", "All")],
+)
+def test_every_chooser_publishes_the_chooser_unset_label(
+    input_type: str, label: str
+) -> None:
+    """`_INPUT_TRAITS`' third column, pinned by what the chrome draws.
+
+    The table gates *membership* — a new `VariableInputType` cannot render until
+    it has a row — but a row whose `unset` said `none` would still satisfy that,
+    and the control would silently lose its path back to unfiltered. That is the
+    shape of the bug the traits table was written for, so the column that decides
+    it gets a behavioural test like the other two.
+    """
+    svg, _ = _strip(
+        {"region": Variable(input=input_type, options=VariableOptions(static=["US"]))}
+    )
+
+    group = _groups(svg)[0]
+    assert group.get("data-dbt-can-unset") == "true"
+    assert group.get("data-dbt-unset-label") == label
+
+
+@pytest.mark.parametrize("input_type", ["text", "number", "checkbox", "slider"])
+def test_a_control_with_no_unset_affordance_publishes_none(input_type: str) -> None:
+    """The mirror. A text box has no popover to offer Clear from, so publishing
+    the attribute would promise an affordance the chrome never draws."""
+    svg, _ = _strip({"region": Variable(input=input_type)})
+
+    assert _groups(svg)[0].get("data-dbt-can-unset") is None

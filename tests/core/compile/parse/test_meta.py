@@ -353,7 +353,7 @@ class TestCompileFileWithMeta:
             )
         )
         board = {
-            "title": "Test Dataface",
+            "title": "Test dbt charts",
             "queries": {"board_query": {"sql": "SELECT 'board'", "source": "db"}},
             "charts": {
                 "my_chart": {"query": "board_query", "type": "kpi", "value": "count"}

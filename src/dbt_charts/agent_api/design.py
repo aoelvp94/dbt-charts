@@ -27,10 +27,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard, TabItem
-from dbt_charts.core.compile.models.markers import Channel, Format
+from dbt_charts.core.compile.models.chart.authored import (
+    CHART_SUPPORT_TABLE_SUPPORTED_TYPES,
+    ChartSupportTablePerSeries,
+    ChartSupportTableSource,
+)
+from dbt_charts.core.compile.models.markers import Channel, FontFamily, Format
 from dbt_charts.core.compile.models.query.authored import (
     AuthoredCompactValuesQuery,
-    AuthoredMetricflowQuery,
     AuthoredSqlQuery,
     AuthoredValuesQuery,
 )
@@ -48,32 +52,58 @@ from dbt_charts.core.compile.schema.introspection import (
     SchemaField,
     introspect,
 )
-from dbt_charts.core.compile.sql_guard import build_skeleton
+from dbt_charts.core.compile.sql_guard import (
+    SKELETON_PLACEHOLDER_PREFIX,
+    build_skeleton,
+)
 from dbt_charts.core.compile.template.variables import (
     coerce_variable_values,
     variable_value_is_absent,
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError, UnparseableSqlError
+from dbt_charts.core.fonts import offered_font_families
 from dbt_charts.core.project import Project
 
 Widget = Literal["text", "number", "checkbox", "select", "combo", "list"]
+
+# ---------------------------------------------------------------------------
+# The tables below hold rules this module did not invent, so each says how it is
+# held to its source of truth. "There is a passing test beside the constant"
+# means three different things here, and only one of them is a guarantee:
+#
+#   GATED     the property sweeps in `tests/agent_api/test_design.py` call the
+#             real validator, so a table that drifts from it fails them.
+#   AGREED    no sweep can reach the rule — it is about a key *pair* (the sweeps
+#             set one key at a time), or a value the compiler silently discards
+#             (nothing raises), or a control the render sweep skips (it is bound
+#             to the `list` widget for cost). A named test asserts the
+#             compiler's behaviour beside the panel's instead.
+#   POLICY    nothing in the compiler agrees or disagrees. There is no source of
+#             truth to drift from; the entry is a scoping decision with a reason.
+#   STRUCTURE not a rule at all — a fact about the schema's own shape.
+#
+# Spelling is gated separately for all of them, by
+# `test_every_rule_table_names_a_field_that_still_exists`: a renamed field
+# otherwise leaves an entry that stops matching rather than failing.
+# ---------------------------------------------------------------------------
 
 # The six fields that hold child *targets* rather than properties: the target
 # walk descends them, so the property walk must not. That exclusion is what
 # bounds the recursion — the nested-model graph has seven cycles reachable from
 # `AuthoredBoard` and every one of them runs through a layout container.
+# STRUCTURE — pinned by `test_the_group_graph_is_acyclic_so_the_ancestor_guard_never_fires`.
 _CHILD_TARGETS = frozenset({"rows", "cols", "grid", "tabs", "charts", "variables"})
 
-# Authoring surfaces that belong to a different editor. `query`/`queries` and
-# `model` are the query editor's — `model:` is semantic-layer query sugar, and
-# the compiler refuses it beside a `query:` — while the rest are 0..n sub-forms
-# rather than controls, and each needs its own affordance before it can be
-# edited here.
+# Authoring surfaces that belong to a different editor. `query`/`queries` are
+# the query editor's, while the rest are 0..n sub-forms rather than controls,
+# and each needs its own affordance before it can be edited here.
+# POLICY — several categories in one set, and whether to split them is an open
+# design question; membership is a scoping decision, not a copy of anything the
+# compiler enforces.
 _NOT_DESIGN = frozenset(
     {
         "query",
         "queries",
-        "model",
         # The board's default warehouse connection — query-layer, not design
         # (root `AGENTS.md` non-negotiable #6). A string parses and nothing in
         # `normalize/` checks the name, so the write gate cannot see it; the
@@ -96,7 +126,7 @@ _NOT_DESIGN = frozenset(
         "html_policy",
         # `type` is the chart union's discriminator — the object's identity, not
         # a property of it. Offering it as a select meant one click could turn a
-        # bar into a histogram beside a `data_table` the family does not
+        # bar into a histogram beside a `support_table` the family does not
         # support, or into a `bar` whose multi-metric `y` now needs an `x`;
         # every such pair is a compiler rule the panel would have to re-encode.
         # Changing a chart's type is a structural edit, and the code panel is
@@ -123,13 +153,18 @@ _NOT_DESIGN = frozenset(
         # that stops parsing.
         "aliases",
         "warnings_ignore",
+        # dct migrate-written only, informational (see AuthoredBoard.schema_version's
+        # description) -- a design control would let a Cloud user hand-author a
+        # value that lies about the file's actual grammar. Named by its YAML
+        # key/alias, _schema_version, matching every other entry in this set:
+        # introspection's field.name is the alias, not the Python attribute.
+        "_schema_version",
         # Names a chart to show alone. A wrong name raises at normalize time
         # (past the parse gate), a right one collapses the board to one chart,
         # and on a nested board it is ignored entirely — every outcome is
         # structural rather than design.
         "chart_focus",
         "layers",
-        "data_table",
         "conditional_formatting",
     }
 )
@@ -146,6 +181,7 @@ _NOT_DESIGN = frozenset(
 # edit writes a board that parses and stops rendering, with no panel path
 # back to validity (a table has no `color:` field at all). The group needs a
 # form that writes the whole object at once.
+# POLICY — a scoping decision about what the design surface is for.
 _NOT_DESIGN_PATHS = ("style.charts", "style.color.gradient")
 
 # `{model: ((key, guard), …)}` — the exclusion the two tables above cannot
@@ -168,11 +204,10 @@ _NOT_DESIGN_PATHS = ("style.charts", "style.color.gradient")
 # list empty rather than breaking the board. So `options.column` is a hazard on
 # one branch and a real control on the other, and a name that is simply in or
 # out gets one of the two wrong.
+# GATED — the render sweep walks every Variable control in full.
 _NOT_DESIGN_ON: dict[str, tuple[tuple[str, str | None], ...]] = {
     "Variable": (
         ("column", None),
-        ("dimension", None),
-        ("measure", None),
         ("options.query", None),
         ("options.column", "options.query"),
         ("options.label_column", "options.query"),
@@ -181,14 +216,16 @@ _NOT_DESIGN_ON: dict[str, tuple[tuple[str, str | None], ...]] = {
 
 # A layout container earns a design entry only once it carries content of its
 # own. A bare row/col is a hit-testing waypoint, not something to style.
+# POLICY — what makes a bare container worth styling.
 _CONTENT_FIELDS = ("title", "text")
 
+# STRUCTURE — the schema's own scalar spellings.
 _NUMERIC_TYPES = frozenset({"int", "float"})
 _SCALAR_TYPES = _NUMERIC_TYPES | {"str", "bool"}
 
 # Every wide-capable family folds its measures onto one mark family, which spends
-# the colour channel and the layer stack on the measures themselves — so a
-# list-valued `y` and any of these three siblings cannot both be authored.
+# the layer stack (and the mark fill) on the measures themselves — so a
+# list-valued `y` and any of these siblings cannot both be authored.
 #
 # The rule is one rule; where it *fires* is not. Bar and area raise from
 # `reject_multi_series_channel_conflicts` at parse time, line from
@@ -200,21 +237,24 @@ _SCALAR_TYPES = _NUMERIC_TYPES | {"str", "bool"}
 #
 # The two halves do not cover the same siblings. The parse gate counts
 # `conditional_formatting` as a colour source — its rules project into the mark
-# fill — while `resolve_wide_measure_channels` reads `color:` and `layers:` and
-# nothing else, so a line chart carrying both rules and a list `y` renders with
-# no diagnostic. Line's row is short by that one entry, because a table that
-# claims more than the compiler enforces hides a control on a board that works.
+# fill — while `resolve_wide_measure_channels` reads `layers:` (and refuses a
+# `color:` that is not a plain column) and nothing else, so a line chart
+# carrying both rules and a list `y` renders with no diagnostic. Line's row is
+# short by that one entry, because a table that claims more than the compiler
+# enforces hides a control on a board that works. `color` is in neither row: a
+# column there composes with a list `y` (one series per value per measure).
 #
 # Forward: once `y` holds a list, the conflicting sibling is not a control, or
 # the panel shows one half of a mutually exclusive pair and hides the other.
 # Mirror: once a sibling is authored, `y` is not a *multi-value* control, since
-# the list is the edit that creates the collision. Only `color` has a control at
-# all — `layers` and `conditional_formatting` are `_NOT_DESIGN` — so the forward
-# direction concerns `color` alone while the mirror concerns all three.
+# the list is the edit that creates the collision. Neither `layers` nor
+# `conditional_formatting` has a control (`_NOT_DESIGN`), so only the mirror
+# direction is live today.
+# GATED — the parse sweep (bar, area) and the render sweep (line).
 _LIST_CONFLICTS = {
-    "bar": ("y", ("color", "layers", "conditional_formatting")),
-    "AreaChart": ("y", ("color", "layers", "conditional_formatting")),
-    "LineChart": ("y", ("color", "layers")),
+    "bar": ("y", ("layers", "conditional_formatting")),
+    "AreaChart": ("y", ("layers", "conditional_formatting")),
+    "LineChart": ("y", ("layers",)),
 }
 
 # What a list-valued `y` collides with that is neither a sibling field nor a
@@ -254,15 +294,28 @@ _LIST_CONFLICTS = {
 # raise and is invisible here, so the multi-value control stays live on a chart
 # whose default it is. Not a regression — the gap was total before — but it is a
 # gap, and closing it means resolving the style cascade from the panel.
+# GATED — the render sweep, via the stepped fixtures.
+# `style.color.gradient` is the third: it upgrades an authored `color:` column
+# to a gradient channel (`resolve/chart/channel.py`), and the wide fold takes
+# only a plain series column to cross its measures with
+# (`resolve_wide_measure_channels` raises `ERR-MULTI-Y-COLOR-CONFLICT` on any
+# other mode). Parse no longer looks at colour at all, so the save endpoint's
+# re-parse waves a list `y` through and the chart dies at resolve.
+# GATED — the render sweep, via the gradient fixtures.
 _VALUE_CONFLICTS = {
-    "bar": (("y", "style.axis_y.mirror", None),),
+    "bar": (
+        ("y", "style.axis_y.mirror", None),
+        ("y", "style.color.gradient", None),
+    ),
     "LineChart": (
         ("y", "style.marks.line.curve", "step"),
         ("y", "style.axis_y.mirror", None),
+        ("y", "style.color.gradient", None),
     ),
     "AreaChart": (
         ("y", "style.marks.area.curve", "step"),
         ("y", "style.axis_y.mirror", None),
+        ("y", "style.color.gradient", None),
     ),
 }
 
@@ -276,12 +329,16 @@ _VALUE_CONFLICTS = {
 #
 # `HeatmapChart.y` is the third, and the only one with no validator behind it at
 # all. `reject_multi_series_channel_conflicts` states the rule every wide family
-# obeys — the fold "spends the color channel" — and a heatmap's colour *is* its
-# measure, so there is nothing left to spend. Heatmap neither calls that
+# obeys — the fold spends the mark fill on the measures — and a heatmap's colour
+# *is* its measure, so there is nothing left to spend. Heatmap neither calls that
 # validator nor refuses from its own resolver, so `y: [region, revenue]` renders
 # clean: a y band stacking two columns' values against each other, and a cell
 # colour that has stopped encoding magnitude. Neither gate can see a chart that
 # is merely wrong, so this one is pinned by an explicit test.
+# GATED for scatter and spark bar (both sweeps). The `HeatmapChart` row is
+# POLICY: a heatmap renders a list `y` clean, so there is no rule to agree with
+# — `test_a_heatmap_spends_its_colour_channel_on_the_measure_and_takes_no_list`
+# is the whole of it.
 _NEVER_A_LIST = {
     "SparkBarChart": ("y",),
     "ScatterChart": ("y",),
@@ -300,6 +357,7 @@ _NEVER_A_LIST = {
 # the pair (so `gated` is no control while none of `pair` is authored), and
 # clearing whichever of the pair is the last one standing on a table that is
 # already pivoting (so that one is `required`, and the panel offers no clear).
+# GATED — the render sweep.
 _PIVOT_ARITY = {"TableChart": (("rows", "values"), ("columns",))}
 
 # Groups that mean something only while a sibling holds a particular value.
@@ -321,6 +379,9 @@ _PIVOT_ARITY = {"TableChart": (("rows", "values"), ("columns",))}
 # same style node arrives as `ScaleContinuousStylePatch` under a chart and as
 # `ScaleContinuousStyle` under the board's theme block, and the rule is the
 # model's either way.
+# AGREED — `test_a_scale_parameter_block_is_refused_without_its_own_scale_type`.
+# The raise is on the merged style and the control is a number, so the render
+# sweep (bounded to `list`) cannot see it.
 _CONDITIONAL_GROUPS = {
     "ScaleContinuousStyle": {
         "log": ("type", "log"),
@@ -333,6 +394,7 @@ _CONDITIONAL_GROUPS = {
 # (`emitters/bar.py`, "multi-metric (y: [...]) charts require an x field").
 # The schema calls `x` optional because a single-metric chart can omit it, so
 # `required` has to be raised here or the panel renders a way to clear it.
+# GATED — the parse sweep.
 _REQUIRED_WITH_LIST = {"bar": {"x": "y"}}
 
 # The unconditional half of the same rule, and the reason the exemption below
@@ -341,7 +403,18 @@ _REQUIRED_WITH_LIST = {"bar": {"x": "y"}}
 # rule is the *weaker* one; histogram's is stronger, not absent. The board parses
 # without an `x`, so the save endpoint's re-parse waves the clear through and the
 # chart stops rendering.
+# AGREED — `test_a_histogram_that_loses_its_x_stops_rendering`. Clearing an `x`
+# is not a `list` edit, so the render sweep never makes it.
 _ALWAYS_REQUIRED = {"histogram": ("x",)}
+
+# Required once a sibling is authored: `{model: {field: (siblings, …)}}`. A
+# bar's `y` is optional to the schema and a bar with neither `x` nor `y`
+# parses and renders, but `BarChart._validate_multi_series` refuses an `x`
+# with no measure ("x requires a y field"). Clearing `y` *is* a `list` edit —
+# `y` stays a list control beside `color:`, since the two compose — so the
+# panel has to withhold the clear exactly while an `x` stands.
+# GATED — the parse sweep. AGREED — `test_a_bar_that_loses_its_y_stops_rendering`.
+_REQUIRED_WITH = {"bar": {"y": ("x",)}}
 
 # The tables above are filed by model, and one model backs two `type:` values.
 # `BarChart` covers `Literal["bar", "histogram"]` and `_validate_multi_series`
@@ -356,17 +429,26 @@ _ALWAYS_REQUIRED = {"histogram": ("x",)}
 # fact. Only this model, because `type` is not a chart's alone: a table's spark
 # column style is typed `line`/`area`/`bar` too, and keying every node on its
 # `type` would hand line's rules to a sparkline.
+# STRUCTURE — which key the tables above are filed under, not a rule.
 _BY_DISCRIMINATOR = {"BarChart"}
 
 # Fields the compiler honours on the root board and not on a nested one.
-# `card_gap` raises there (`normalizer.normalize_board`: "card_gap can only be
+# `card_gap` raises there (`dispatch.normalize_board`: "card_gap can only be
 # set on the root board") — a single click from a board that will not compile,
 # and a checkbox commits on that first click. The `frame` group is the quiet
 # half of the same rule (`compile/AGENTS.md`, "Root-only board frame": nested
 # boards render into the parent's grid and their `FrameStyle` is ignored): the
 # save succeeds, the value is discarded, the board is unchanged, and the panel
 # shows it as authored. Prefixes match a key and everything under it.
-_ROOT_ONLY = ("card_gap", "style.frame")
+# `extends` joins them for the same reason and arrived by the same route as
+# `card_gap`: it is a field of every `AuthoredBoard` node, and `merged_patch`
+# folds the extends chain once, on the root document (`compiler.py:957`). A
+# nested board's `extends:` is never merged — the save succeeds, the value is
+# discarded, the board is unchanged, and the panel shows it as authored.
+# AGREED — `test_card_gap_is_read_at_the_root_and_refused_on_a_nested_board` and
+# `test_a_nested_boards_frame_changes_nothing_the_reader_can_see`. The frame half
+# is discarded at *render* with no diagnostic, which neither sweep can observe.
+_ROOT_ONLY = ("card_gap", "style.frame", "extends")
 
 # The mirror: honoured on a nested board and read nowhere at the root.
 # `AuthoredBoard.height` is documented "Height when nested" and reached only
@@ -375,14 +457,17 @@ _ROOT_ONLY = ("card_gap", "style.frame")
 # as authored — the `card_gap` shape without the raise that caught it, which
 # the parse gate is structurally unable to see. (`width` is not here: the root
 # desugars it, and `_ROOT_SUGAR` already picks one of that pair.)
+# AGREED — `test_height_is_read_on_a_nested_board_and_discarded_at_the_root`.
 _NESTED_ONLY = ("height",)
 
 # On the root board only, `width:` is sugar for `style.frame.width:` and
-# authoring both raises (`normalizer._root_width_style_patch`). Offering the
+# authoring both raises (`dispatch._root_width_style_patch`). Offering the
 # pair as two independent controls is two clicks from a board that will not
 # compile, so the surface emits exactly one. On a nested board `width:` is
 # layout placement instead — a different field with a different meaning — so
 # the pair is legitimate there.
+# AGREED — `test_the_width_pair_the_panel_splits_is_the_pair_the_compiler_refuses`.
+# A rule about authoring *both* keys, which a one-key-at-a-time sweep cannot reach.
 _ROOT_SUGAR = (("width", "style.frame.width"),)
 
 
@@ -422,14 +507,25 @@ class DesignProperty(BaseModel):
         default=None,
         description="Human-readable default, or None where there is no meaningful one.",
     )
+    options_complete: bool = Field(
+        default=False,
+        description=(
+            "Whether `enum_values` names every value this control can take "
+            "here: a closed schema enum, or a column offer that names every "
+            "output of the chart's query. False on shortcut offers (format "
+            "aliases, font faces) and wherever inference could not name "
+            "everything — a consumer must not render an incomplete offer as "
+            "a closed choice."
+        ),
+    )
     facets: tuple[str, ...] = Field(
         default=(),
         description=(
-            "Semantic facets the schema declares on this field, lowercased — "
-            "`color`, `channel` and `format` today — naming what the value "
-            "means where its type cannot. A consumer picks a control from "
-            "these; the schema does not name controls, because what a colour "
-            "should look like is the editor's decision and not the model's."
+            "Semantic facets the schema declares on this field, lowercased, "
+            "naming what the value means where its type cannot. A consumer "
+            "picks a control from these; the schema does not name controls, "
+            "because what a colour should look like is the editor's decision "
+            "and not the model's."
         ),
     )
     list_only: bool = Field(
@@ -440,6 +536,17 @@ class DesignProperty(BaseModel):
             "wrapped before it is written: a bar's `y` takes `revenue` or "
             "`[revenue, cost]`, but a table's `rows` takes only the list, and "
             "writing the bare string back leaves a board that stops parsing."
+        ),
+    )
+    readonly: bool = Field(
+        default=False,
+        description=(
+            "True when this property is shown for information but cannot be "
+            "saved from this control: the authored value carries more than the "
+            "widget can hold, and writing what the widget shows back would "
+            "silently drop the rest — `chart.support_table` with a `format:` or "
+            "`aggregate:` entry, on the `list` control that can only author "
+            "bare column names."
         ),
     )
 
@@ -462,6 +569,14 @@ class DesignNode(BaseModel):
     )
     children: dict[str, DesignNode] = Field(
         description="Nested groups, keyed by field name. Empty groups are not emitted."
+    )
+    description: str = Field(
+        default="",
+        description=(
+            "Description of the field that introduced this node — a leaf's "
+            "`data-hint` and a group's title should carry the same schema "
+            "prose. Empty at the root, which no field introduces."
+        ),
     )
 
 
@@ -544,16 +659,31 @@ def _widget_for(field: SchemaField) -> Widget | None:
             arm.removeprefix("list[").removesuffix("]") == "str" for arm in list_arms
         ):
             return None
-        return "list" if (arms - list_arms) <= _SCALAR_TYPES else None
+        scalars = arms - list_arms
+        if field.enum_values and "str" in scalars:
+            # A closed vocabulary is a set of strings, so the box holds it as
+            # well as it holds the `str` arm — `extends` and a categorical
+            # `palette` are both `<enum> | str | list[str]`, and failing the
+            # scalar check on the enum arm left the board's theme and its
+            # palette with no control at all. The values ride along on
+            # `enum_values` for whoever offers them — the IDE and `dct` do;
+            # Cloud's panel draws a suggestion menu for the `list` widget
+            # below too. The `str` arm is the same condition `combo` answers
+            # to below: without one, a free-text box takes what no arm
+            # accepts.
+            scalars = {arm for arm in scalars if not arm.startswith("one of: ")}
+        return "list" if scalars <= _SCALAR_TYPES else None
     if field.enum_values:
         # `select` says these are the values; `combo` says these are the
-        # shortcuts. A format field is `FormatAlias | str` — the 13 theme
-        # aliases plus any d3 spec — so a select there makes `,.0f`
-        # unauthorable. Only a `str` arm earns the combo: `zero` is
+        # shortcuts. A format field is `<alias Literal> | str` — the engine's
+        # names for that slot's kind, plus any d3 spec — so a select there makes
+        # `,.0f` unauthorable. Only a `str` arm earns the combo: `zero` is
         # `bool | 'auto'` and `title.level` is `int | 'auto'`, where "type
         # anything else" is false, and a text box would take what neither arm
-        # accepts. Those two stay selects that cannot reach their non-enum arm
-        # — a control the widget set does not have yet, not one to fake.
+        # accepts. A `bool` arm is closed, so those selects carry it in full
+        # (see the enum_values assembly below); an `int` arm is not, which
+        # leaves `title.level` unable to reach its non-enum arm — a control
+        # the widget set does not have yet, not one to fake.
         return "combo" if "str" in arms else "select"
     if not arms or not arms <= _SCALAR_TYPES:
         return None
@@ -680,12 +810,16 @@ def _variable_accepts(var: Variable, **edit: Any) -> bool:
       the unresolved `auto` asks the validator about an input it accepts
       unconditionally, and every answer comes back yes.
     - `validate_variable_value`, the compile-time gate.
-    - `coerce_variable_values`, the *runtime* gate on the render path, which is
-      strictly narrower in one place that matters: `bool` subclasses `int`, so
-      the type table takes a bool wherever it takes a number, while
-      `_coerce_number` rejects it by name. Compile alone says yes to
-      `input: number` on a checkbox and the render says
-      "must be numeric, got a boolean".
+    - `coerce_variable_values`, the *runtime* gate on the render path. Not a
+      strict narrowing of `validate_variable_value` in every direction: a
+      `bool` subclasses `int`, so the type table takes a bool wherever it
+      takes a number, while `_coerce_number` rejects it by name — compile
+      alone says yes to `input: number` on a checkbox and the render says
+      "must be numeric, got a boolean". It diverges the other way for
+      `daterange` — `coerce_variable_values` reads `[]`/`""` as unset where
+      `validate_variable_value` rejects both — but never observably here:
+      both calls take `hypothesis.default` independently under one `except`,
+      so the answer is "either raised" whatever the order.
 
     `model_copy` builds the hypothesis, not a patch: nothing keeps the result,
     and the question is what the compiler *would* say.
@@ -813,15 +947,24 @@ def _describe(
     ancestors: frozenset[str],
     aliases: tuple[str, ...],
     channel_options: tuple[str, ...] = (),
+    channel_options_complete: bool = False,
+    description: str = "",
 ) -> DesignNode:
     """One model's controls and groups, recursed to the leaves.
 
     Bounded by `_CHILD_TARGETS`, which the target walk descends instead; the
     `ancestors` guard is defence in depth for a self-referential style model.
+
+    `description` is the description of the *field that introduced this call* —
+    not a property of `model_name` itself — so the root call leaves it at the
+    default "" and the one recursive call site (below) passes the introducing
+    `SchemaField.description` along.
     """
     model: AuthorableModel | None = schema.models.get(model_name)
     if model is None:
-        return DesignNode(model=model_name, properties={}, children={})
+        return DesignNode(
+            model=model_name, properties={}, children={}, description=description
+        )
 
     properties: dict[str, DesignProperty] = {}
     children: dict[str, DesignNode] = {}
@@ -849,6 +992,19 @@ def _describe(
         if any(key == one or key.startswith(f"{one}.") for one in drop):
             continue
         value = getattr(instance, field.name, None) if instance is not None else None
+
+        if field.name == "support_table" and not prefix:
+            # `ChartSupportTable` is a nested model, so the generic walk below
+            # would drill into it as a group and offer its own `entries:`
+            # field — a list of a three-shape union, which projects to no
+            # control. The panel's actual affordance is the field itself, as
+            # a flat `list` of column names, the same shape `y:` already has.
+            prop = _support_table_property(
+                instance, field, key, writes_at, authored, channel_options
+            )
+            if prop is not None:
+                properties["support_table"] = prop
+            continue
 
         group = _drills_into(field)
         if group is not None:
@@ -890,6 +1046,7 @@ def _describe(
                 drop,
                 ancestors | {group},
                 aliases,
+                description=field.description,
             )
             # An empty group is a drill-in that opens onto nothing.
             if child.properties or child.children:
@@ -921,6 +1078,10 @@ def _describe(
         required = (
             field.required
             or field.name in _ALWAYS_REQUIRED.get(rules, ())
+            or any(
+                getattr(instance, sibling, None) is not None
+                for sibling in _REQUIRED_WITH.get(rules, {}).get(field.name, ())
+            )
             or (gate is not None and isinstance(getattr(instance, gate, None), list))
             # Only while the chart is actually pivoting: a flat table clears its
             # `rows:` freely, and the raise needs a `columns:` to fire at all.
@@ -943,20 +1104,47 @@ def _describe(
                 value = value[0]
             widget = "text"
         enum_values = tuple(field.enum_values) if field.enum_values else None
+        if enum_values is not None and "bool" in _arms(field.type_repr):
+            # A `bool | <Literal> | None` slot is a real boolean that also
+            # takes a named mode -- `axis_x.ticks.visible` is `bool | "auto"`.
+            # Offering only the literal would strip the control down to its
+            # mode and leave an authored true/false unreachable: the panel
+            # could neither show it nor put it back. The bool arm is closed
+            # (exactly two values), so unlike a `str` arm it can be offered in
+            # full rather than left to a combo's free text.
+            enum_values = (True, False) + tuple(
+                v for v in enum_values if not isinstance(v, bool)
+            )
+        options_complete = enum_values is not None and widget == "select"
         if channel and channel_options and enum_values is None:
             # The query's statically-inferred output columns, as suggestions:
-            # `combo` keeps the input free-text, because the offer can be
-            # partial (a projection the skeleton cannot name) and a select
-            # would make the rest unauthorable. A `list` control keeps its
-            # widget and gains the same suggestions.
+            # `combo` keeps the input free-text because the offer can be
+            # partial (a projection the skeleton cannot name), and
+            # `options_complete` says which — a consumer may close a complete
+            # offer into a choice, never a partial one. A `list` control
+            # keeps its widget and gains the same suggestions.
             enum_values = channel_options
+            options_complete = channel_options_complete
             if widget == "text":
                 widget = "combo"
+        if (
+            enum_values is None
+            and widget == "text"
+            and any(isinstance(f, FontFamily) for f in field.facets)
+        ):
+            # The wheel knows which faces it ships — offered as shortcuts, the
+            # way a format field offers its aliases. Combo keeps free text:
+            # any CSS family or stack stays authorable.
+            enum_values = offered_font_families()
+            widget = "combo"
         if enum_values and any(isinstance(f, Format) for f in field.facets):
-            # `FormatAlias` is the engine's own names, which is all a wheel
-            # can know; the aliases this node's scope authors are legal here
-            # too, and offering the snapshot alone tells an author the alias
-            # they wrote themselves is not a value. The dedup is not shadowing
+            # The field's Literal is the engine's own names for that slot's
+            # kind (`FormatAlias` on a kind-agnostic `format:`, the narrower
+            # `NumberFormatAlias`/`TimeFormatAlias` where the slot knows what it
+            # paints), which is all a wheel can know; the aliases this node's
+            # scope authors are legal here too — in every slot, since a user's
+            # alias carries no kind — and offering the snapshot alone tells an
+            # author the alias they wrote themselves is not a value. The dedup is not shadowing
             # support — a `style.formats` key spelling a predefined name raises
             # `ERR_FORMAT_PREDEFINED_SHADOW` — it keeps the offer honest for a
             # board that does not compile, which this verb still parses.
@@ -985,10 +1173,16 @@ def _describe(
             # `dataclasses.MISSING`, which would serialise as a repr of the
             # sentinel object.
             default_repr=field.default_repr,
+            options_complete=options_complete,
             facets=tuple(type(f).__name__.lower() for f in field.facets),
             list_only=_list_only(field),
         )
-    return DesignNode(model=model_name, properties=properties, children=children)
+    return DesignNode(
+        model=model_name,
+        properties=properties,
+        children=children,
+        description=description,
+    )
 
 
 def _is_target(schema: AuthorableSchema, node: Any, path: str) -> bool:
@@ -1100,48 +1294,209 @@ def _resolve(
 
 # What `build_skeleton` turns a `{{ expr }}` into. A placeholder that survives
 # into the projection is a column whose name only a render would know.
-_JINJA_PLACEHOLDER_RE = re.compile(r"^__dft_j\d+__$")
+_JINJA_PLACEHOLDER_RE = re.compile(rf"^{SKELETON_PLACEHOLDER_PREFIX}\d+__$")
 
 
-def _sql_output_columns(sql: str) -> tuple[str, ...]:
+def _sql_output_columns(sql: str) -> tuple[tuple[str, ...], bool]:
     """The statically-knowable output columns of one SQL string.
 
     Jinja is flattened to the same skeleton the SQL guard validates, so
     `{{ filter(...) }}` in a WHERE clause costs nothing; a projection the
-    skeleton cannot name (`*`, a Jinja expression) is dropped rather than
-    guessed at. Dialect-agnostic parse: the offer is suggestions, and a
-    dialect-specific string that fails to parse degrades to none.
+    skeleton cannot name (`*`, an unaliased aggregate, a Jinja expression)
+    is dropped rather than guessed at. The second return says whether the
+    columns name *every* projection — counted against ``parsed.selects``,
+    which is projection-aligned where ``named_selects`` silently omits
+    unnamed expressions. Dialect-agnostic parse: a dialect-specific string
+    that fails to parse degrades to no offer.
     """
     try:
         parsed = sqlglot.parse_one(build_skeleton(sql, all_branches=False))
     except (UnparseableSqlError, sqlglot.errors.SqlglotError):
-        return ()
+        return (), False
     names = getattr(parsed, "named_selects", None) or []
-    return tuple(
+    columns = tuple(
         name
         for name in names
         if name and name != "*" and not _JINJA_PLACEHOLDER_RE.match(name)
     )
+    selects = getattr(parsed, "selects", None)
+    complete = (
+        selects is not None
+        and len(columns) == len(selects)
+        # The skeleton is not projection-faithful under Jinja control blocks:
+        # an `{% if %}` emits only its primary branch and a `{% for %}` body
+        # runs once, so the count proves nothing about the other branches —
+        # and a `{{ }}` embedded inside an alias survives as a fabricated
+        # `__dct_jN__` name that counts as named.
+        and "{%" not in sql
+        and not any(SKELETON_PLACEHOLDER_PREFIX in c for c in columns)
+    )
+    return columns, complete
 
 
-def _query_columns(query: Any) -> tuple[str, ...]:
+def _query_columns(query: Any) -> tuple[tuple[str, ...], bool]:
     """The output columns one authored query declares, where they are static.
 
     HTTP and schema queries answer only at execution time; a cross-file ref is
-    authored elsewhere. All degrade to no suggestions rather than a guess.
+    authored elsewhere. All degrade to no suggestions rather than a guess. The
+    second return says whether the columns name every output — heterogeneous
+    values rows and unnameable SQL projections make the offer partial.
     """
     if isinstance(query, AuthoredSqlQuery):
-        return _sql_output_columns(query.sql) if query.sql else ()
+        return _sql_output_columns(query.sql) if query.sql else ((), False)
     if isinstance(query, AuthoredValuesQuery):
-        return tuple(query.rows[0]) if query.rows else ()
+        if not query.rows:
+            return (), False
+        first = tuple(query.rows[0])
+        return first, all(set(row) == set(first) for row in query.rows)
     if isinstance(query, AuthoredCompactValuesQuery):
-        return tuple(query.columns)
-    if isinstance(query, AuthoredMetricflowQuery):
-        return (*(query.dimensions or ()), *(query.metrics or ()))
-    return ()
+        return tuple(query.columns), True
+    return (), False
 
 
-def _channel_columns(node: Any, queries: Mapping[str, Any]) -> tuple[str, ...]:
+def _support_table_bare_strings(entries: Any) -> list[str] | None:
+    """The entries as the `list` widget's bare-string spelling would write
+    them back, or None when that spelling would lose something.
+
+    `model_dump(exclude_defaults=True).keys() == {"source"}` rather than
+    naming `format`/`label` individually: a field added to `ChartSupportTableSource`
+    later is caught by construction instead of silently round-tripping through
+    a check written for today's two optional fields.
+    """
+    names: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, ChartSupportTableSource):
+            return None
+        if set(entry.model_dump(exclude_defaults=True)) != {"source"}:
+            return None
+        names.append(entry.source)
+    return names
+
+
+def _support_table_display_names(entries: Any) -> list[str]:
+    """A read-only strip's entries, named for display only.
+
+    Never round-tripped — this is what a read-only row shows in place of the
+    generic control's `unset` placeholder, so a formatted or aggregated strip
+    still reads as "here", not as an empty control the panel forgot to fill.
+    """
+    return [
+        entry.per_series
+        if isinstance(entry, ChartSupportTablePerSeries)
+        else entry.source
+        for entry in entries
+    ]
+
+
+def _support_table_attach_blocked(instance: Any) -> bool:
+    """Whether offering an *empty* support_table attach point would itself be
+    the edit that breaks the board — every check here is decidable from the
+    authored instance alone, with no query run.
+
+    - Unsupported chart type, or a multi-metric `y:` list (`chart.support_table`
+      accepts only `per_series:`/`by_measure:` entries there, which this
+      control cannot author) — both `_validate_support_table`'s own checks
+      (`compile/models/chart/authored/_base.py`).
+    - `multiples:` — `render/chart/features/facet.py` refuses `support_table`
+      unconditionally once a chart facets into panels.
+    - No `x:` — `support_table_attachment.py` requires an x-encoding to align
+      strip columns to.
+    - `color:` — a color-encoded chart is long-format, and the correct entry
+      there is `per_series:`, which this control cannot author (the same
+      standard `_LIST_CONFLICTS["LineChart"]` applies to `y:` against
+      `layers:`); `support_table_attachment.py`'s ambiguous-source
+      check would also fire on it the moment a query returns more than one
+      row per x, which this verb cannot see coming.
+
+    A bar's orientation (vertical: rows above/below the plot; horizontal:
+    value columns beside it) is not itself a blocker — both attach cleanly,
+    and the empty attach point this offers authors no `position:`, so the
+    chart's own default resolves it either way without this verb needing to
+    know which orientation the query's actual rows will resolve to.
+
+    - `style.axis_y.mirror` on a bar — a mirrored axis reserves its own
+      chrome on both edges of the category axis, and if the query's actual
+      rows resolve the bar horizontal that axis is the one the column block
+      sits beside; the two reservations can together starve the plot below
+      `render/layout_sizing.py`'s width floor on an otherwise ordinary card.
+      Line/area never resolve horizontal — their strip only ever costs
+      height — so this is a bar-only risk.
+    """
+    chart_type = getattr(instance, "type", None)
+    return (
+        chart_type not in CHART_SUPPORT_TABLE_SUPPORTED_TYPES
+        or isinstance(getattr(instance, "y", None), list)
+        or getattr(instance, "multiples", None) is not None
+        or not getattr(instance, "x", None)
+        or bool(getattr(instance, "color", None))
+        or (
+            chart_type == "bar"
+            and bool(
+                getattr(
+                    getattr(getattr(instance, "style", None), "axis_y", None),
+                    "mirror",
+                    None,
+                )
+            )
+        )
+    )
+
+
+def _support_table_property(
+    instance: Any,
+    field: SchemaField,
+    key: str,
+    writes_at: str,
+    authored: frozenset[str],
+    channel_options: tuple[str, ...],
+) -> DesignProperty | None:
+    """The `support_table` control for a chart, or None where offering one would
+    itself be the edit that breaks the board.
+
+    Read-only whenever the authored block holds more than a source-name list
+    can carry (see `_support_table_bare_strings`) — shown so the panel does not
+    pretend the strip is empty, saved from nowhere so it is never rewritten.
+    An *unset* block only gets the editable, empty attach point past
+    `_support_table_attach_blocked`.
+    """
+    table = getattr(instance, "support_table", None)
+    if table is None:
+        if _support_table_attach_blocked(instance):
+            return None
+        value: list[str] | None = None
+        readonly = False
+    else:
+        bare = _support_table_bare_strings(table.entries)
+        value = (
+            bare if bare is not None else _support_table_display_names(table.entries)
+        )
+        readonly = bare is None
+    return DesignProperty(
+        widget="list",
+        type_repr=field.type_repr,
+        value=value,
+        authored_here=_absolute(writes_at, key) in authored,
+        required=False,
+        description=field.description,
+        enum_values=channel_options or None,
+        default_repr=field.default_repr,
+        # Derived from the field's own `Channel()` marker (`_base.py`), same
+        # as every other control this file builds — `enum_values` here are
+        # the query's column suggestions, a free-text offer rather than a
+        # vocabulary the control restricts input to. Without the marker, a
+        # consumer that treats `enum_values` as closed choices (this file's
+        # own `_panel_interactions` test helper did) writes a bare suggestion
+        # straight onto `support_table`, which is not a column name at that
+        # position — it is the whole block.
+        facets=tuple(type(f).__name__.lower() for f in field.facets),
+        list_only=True,
+        readonly=readonly,
+    )
+
+
+def _channel_columns(
+    node: Any, queries: Mapping[str, Any]
+) -> tuple[tuple[str, ...], bool]:
     """Column suggestions for the target's channel controls, or none.
 
     A bare string is a named query where the scope defines one, and the SQL
@@ -1213,14 +1568,20 @@ def build_design_target(yaml_text: str, path: str) -> DesignTarget:
     Cloud editor buffer, an unsaved draft) has nothing to resolve, and forcing
     it through a path would mean writing the buffer to a store to read it back.
     This half performs no I/O at all.
-
-    Computed per call, with no cache: it parses a board and reads the schema IR,
-    runs no queries, and any authored change invalidates it immediately — so a
-    cache would buy nothing and cost an invalidation story.
     """
     schema = introspect()
     board = parse_yaml(yaml_text)
     authored = frozenset(build_source_index(yaml_text, "<design-target>").source_map)
+    if "theme" in authored:
+        # `theme:` is authoring sugar the parser folds into `extends:` before
+        # the walk sees either, so the source map holds the spelling the file
+        # used while the walk asks for the one it resolved to. Read apart, a
+        # board plainly using a theme renders an empty theme control.
+        #
+        # The top-level key exactly, not any `*.theme`: `extends` is `_ROOT_ONLY`,
+        # so a nested board's is withheld and there is no control for a nested
+        # `rows.0.theme` to fill.
+        authored |= {"extends"}
     node, target_path, writes_at, aliases, queries = _resolve(schema, board, path)
     model_name = type(node).__name__
     described = _describe(
@@ -1233,7 +1594,7 @@ def build_design_target(yaml_text: str, path: str) -> DesignTarget:
         _suppressed(node, target_path == "", writes_at, authored),
         frozenset({model_name}),
         aliases,
-        _channel_columns(node, queries),
+        *_channel_columns(node, queries),
     )
     return DesignTarget(
         model=model_name,

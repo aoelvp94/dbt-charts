@@ -6,10 +6,8 @@ typed authored fields to the per-family normalized model.
 
 from __future__ import annotations
 
-import json
 import re
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, get_args
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from dbt_charts.core.project import ProjectDirectory
@@ -17,9 +15,7 @@ if TYPE_CHECKING:
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from dbt_charts.core.compile.data_table import apply_measure_format_to_data_table
 from dbt_charts.core.compile.errors import CompilationError, ReferenceError
-from dbt_charts.core.compile.models.board.authored import QueryOrRef
 from dbt_charts.core.compile.models.board.normalized import Layout
 from dbt_charts.core.compile.models.cache import INHERIT_CACHE, CachePatch
 from dbt_charts.core.compile.models.chart.authored import (
@@ -43,11 +39,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
     TableChart,
 )
 from dbt_charts.core.compile.models.primitives import FormatConfig
-from dbt_charts.core.compile.models.query.authored import (
-    AuthoredMetricflowQuery,
-    TimeGrain,
-    _BaseQueryFields,
-)
+from dbt_charts.core.compile.models.query.authored import _BaseQueryFields
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.refs import QueryRef
 from dbt_charts.core.compile.normalize.queries import (
@@ -56,8 +48,11 @@ from dbt_charts.core.compile.normalize.queries import (
 )
 from dbt_charts.core.compile.normalize.variables import synthetic_query_name
 from dbt_charts.core.compile.parse.parser import looks_like_sql
+from dbt_charts.core.compile.support_table import apply_measure_format_to_support_table
 from dbt_charts.core.compile.template.jinja import extract_variable_dependencies
+from dbt_charts.core.diagnostics.codes_compile import ERR_MULTIPLES_SELF_CROSSED
 from dbt_charts.core.text.case import apply_case, inferred_display_name
+from dbt_charts.core.text.predefined_formats import PredefinedNumberFormat
 
 _AUTHORED_CHART_ADAPTER: TypeAdapter[AuthoredChart] = TypeAdapter(AuthoredChart)
 
@@ -111,7 +106,7 @@ def normalize_chart(
 
     # --- callout: query-less, chrome-less family ---
     # CalloutChart is the only family whose authored model extends bare
-    # BaseModel rather than _BaseChartFields — it has no query/description/
+    # BaseModel rather than _BaseChartFields — it has no query/notes/
     # link/conditional_formatting fields at all. Dispatch it before the
     # shared query-resolution block below, which assumes those fields exist.
     if chart_type == "callout":
@@ -251,7 +246,8 @@ def normalize_chart(
         "source_path": source_path,
         "defined_in_other_file": defined_in_other_file,
         "query_is_inline": query_is_inline,
-        "description": authored.description or "",
+        "notes": authored.notes
+        or "",  # type-state: silent_fallback — as title/subtitle
         "link": authored.link,
         "conditional_formatting": conditional_formatting,
         "warnings_ignore": list(authored.warnings_ignore or []),
@@ -368,11 +364,18 @@ def normalize_chart(
                 )
 
                 pie_style = PieChartStylePatch(inner_radius=0.6)  # type: ignore[call-arg]
-            # Donut center total auto-injection
+            # Donut center total auto-injection. Label and format fill
+            # independently, so authoring one never costs the other: a
+            # `total: {format: ",d"}` keeps the derived caption, and a
+            # `total: {label: "Sessions"}` keeps the non-abbreviating format.
             total = authored.total
             inner_radius = pie_style.inner_radius if pie_style is not None else None
             is_donut_shape = isinstance(inner_radius, (int, float)) and inner_radius > 0
-            if is_donut_shape and total is None and theta:
+            if (
+                is_donut_shape
+                and theta
+                and (total is None or total.label is None or total.format is None)
+            ):
                 slug = inferred_display_name(theta)
                 auto_label = (
                     slug
@@ -383,7 +386,18 @@ def normalize_chart(
                     auto_label = f"Total {auto_label}"
                 from dbt_charts.core.compile.models.chart.authored import ChartTotal
 
-                total = ChartTotal(visible=True, label=auto_label, format=".3~s")
+                auto_format = str(PredefinedNumberFormat.integer)
+                if total is None:
+                    total = ChartTotal(
+                        visible=True, label=auto_label, format=auto_format
+                    )
+                else:
+                    fill: dict[str, str] = {}
+                    if total.label is None:
+                        fill["label"] = auto_label
+                    if total.format is None:
+                        fill["format"] = auto_format
+                    total = total.model_copy(update=fill)
             return PieChart(
                 **base,
                 **shared,
@@ -507,6 +521,15 @@ def _build_cartesian(
     cartesian style patch carrying aspect_ratio/min_height/max_height/
     number_format/axis_y.
     """
+    multiples = authored.multiples
+    if (
+        multiples is not None
+        and multiples.rows is not None
+        and multiples.rows == multiples.columns
+    ):
+        raise CompilationError.from_code(
+            ERR_MULTIPLES_SELF_CROSSED, field=multiples.rows
+        )
     aspect_ratio: float | None = None
     promo_min_height: float | None = None
     promo_max_height: float | None = None
@@ -523,14 +546,14 @@ def _build_cartesian(
             and authored_style.axis_y.labels.format
         ):
             measure_format = authored_style.axis_y.labels.format
-    data_table = authored.data_table
+    support_table = authored.support_table
     if (
-        data_table is not None
+        support_table is not None
         and measure_format is not None
         and isinstance(authored.y, str)
     ):
-        data_table = apply_measure_format_to_data_table(
-            data_table, measure_format, authored.y
+        support_table = apply_measure_format_to_support_table(
+            support_table, measure_format, authored.y
         )
     layers = extra.get("layers")
     if layers and query_registry is not None:
@@ -554,7 +577,7 @@ def _build_cartesian(
         y_label=authored.y_label,
         sort=authored.sort,
         multiples=authored.multiples,
-        data_table=data_table,
+        support_table=support_table,
         height=authored.height,
         width=authored.width,
         aspect_ratio=aspect_ratio,
@@ -679,245 +702,6 @@ _FIELD_CHANNEL_KEYS: frozenset[str] = frozenset(
         "background",
     }
 )
-
-
-# Maps a raw grain token ("month") to the typed TimeGrain literal, so the
-# classifier returns a real TimeGrain without a cast.
-_GRAIN_BY_NAME: dict[str, TimeGrain] = {name: name for name in get_args(TimeGrain)}
-
-
-@dataclass(frozen=True)
-class _SemanticModelView:
-    """The classify-relevant slice of one semantic model, lifted off the raw
-    manifest JSON into typed name-sets so the classifier itself is `Any`-free."""
-
-    metrics: frozenset[str]
-    categorical: frozenset[str]
-    time_dims: frozenset[str]
-    entities: frozenset[str]
-    primary_entity: str | None
-
-
-def _manifest_names(items: Any, type_value: str | None = None) -> frozenset[str]:
-    """The `name` of each manifest entry in `items`, optionally filtered by `type`.
-
-    `items` is a raw-JSON list of dicts (or absent/malformed → empty). Confines
-    the manifest's `Any` to this one extraction helper.
-    """
-    if not isinstance(items, list):
-        return frozenset()
-    names: set[str] = set()
-    for entry in items:
-        if not isinstance(entry, dict):
-            continue
-        name = entry.get("name")
-        if isinstance(name, str) and (
-            type_value is None or entry.get("type") == type_value
-        ):
-            names.add(name)
-    return frozenset(names)
-
-
-def _build_model_view(manifest: Any, model_name: str) -> _SemanticModelView | None:
-    """Extract the named semantic model's classify-relevant name-sets, or None
-    when the manifest doesn't declare it."""
-    models = manifest.get("semantic_models") if isinstance(manifest, dict) else None
-    if not isinstance(models, list):
-        return None
-    model = next(
-        (m for m in models if isinstance(m, dict) and m.get("name") == model_name),
-        None,
-    )
-    if model is None:
-        return None
-    dimensions = model.get("dimensions")
-    entities = model.get("entities")
-    primary_entity: str | None = None
-    for entry in entities if isinstance(entities, list) else []:
-        if isinstance(entry, dict) and entry.get("type") == "primary":
-            name = entry.get("name")
-            if isinstance(name, str):
-                primary_entity = name
-                break
-    return _SemanticModelView(
-        metrics=_manifest_names(manifest.get("metrics")),
-        categorical=_manifest_names(dimensions, "categorical"),
-        time_dims=_manifest_names(dimensions, "time"),
-        entities=_manifest_names(entities),
-        primary_entity=primary_entity,
-    )
-
-
-def _classify_metricflow_field(
-    view: _SemanticModelView, model_name: str, field: str
-) -> tuple[str, str, TimeGrain | None]:
-    """Classify a bare chart-channel field against a semantic model view.
-
-    Returns `(role, mf_name, time_grain)` where `role` is one of "metric",
-    "dimension", or "time":
-
-    - a top-level metric name              -> ("metric", <name>, None)
-    - a categorical dimension `region`     -> ("dimension", "<primary_entity>__region", None)
-    - an entity `order_id`                 -> ("dimension", "order_id", None)
-    - `metric_time__<grain>`               -> ("time", "metric_time__<grain>", "<grain>")
-
-    Metric names win over dimension names when both exist (MetricFlow's own
-    resolution). `mf_name` is the group-by / metric name MetricFlow expects —
-    and the value the chart channel is rewritten to, so it lines up with the
-    lowered SQL's output column. Anything else raises: no silent drop.
-    """
-    if field == "metric_time" or field.startswith("metric_time__"):
-        raw_grain = field.split("__", 1)[1] if "__" in field else ""
-        grain = _GRAIN_BY_NAME.get(raw_grain)
-        if grain is None:
-            raise CompilationError(
-                f"time channel '{field}' needs a valid grain — use "
-                f"`metric_time__<grain>` with grain in {sorted(_GRAIN_BY_NAME)}."
-            )
-        return ("time", field, grain)
-
-    if field in view.metrics:
-        return ("metric", field, None)
-
-    if field in view.categorical:
-        if view.primary_entity is None:
-            raise CompilationError(
-                f"dimension '{field}' in semantic model '{model_name}' has no "
-                "primary entity to qualify it — MetricFlow group-by names are "
-                "entity-qualified (e.g. `order_id__region`)."
-            )
-        return ("dimension", f"{view.primary_entity}__{field}", None)
-
-    if field in view.entities:
-        return ("dimension", field, None)
-
-    if field in view.time_dims:
-        raise CompilationError(
-            f"time dimension '{field}' needs a grain — use `metric_time__<grain>` "
-            "(e.g. `metric_time__month`) in the chart channel."
-        )
-
-    raise CompilationError(
-        f"chart channel '{field}' is not a metric, dimension, entity, or "
-        f"metric_time in semantic model '{model_name}' "
-        "(target/semantic_manifest.json)."
-    )
-
-
-def _read_semantic_manifest(base_dir: ProjectDirectory | None, query_name: str) -> Any:
-    """Read + parse target/semantic_manifest.json through the Project seam."""
-    if base_dir is None:
-        raise CompilationError(
-            f"metricflow `model:` sugar for query '{query_name}' needs a project "
-            "directory to read the semantic manifest — none was provided."
-        )
-    manifest_path = base_dir.project.path("target/semantic_manifest.json")
-    if not manifest_path.exists():
-        raise CompilationError(
-            f"metricflow `model:` sugar for query '{query_name}': no semantic "
-            "manifest at target/semantic_manifest.json. Run `dbt parse` first."
-        )
-    return json.loads(manifest_path.read_text())
-
-
-def _collect_metricflow_channel_value(
-    value: str | list[str],
-    view: _SemanticModelView,
-    model_name: str,
-    metrics: list[str],
-    dimensions: list[str],
-) -> tuple[str | list[str], TimeGrain | None]:
-    """Classify a channel value (scalar ref or list of refs) against the view.
-
-    Appends any metric / dimension names to `metrics` / `dimensions` in place and
-    returns the value rewritten to MetricFlow group-by names plus the time grain
-    seen (or None).
-    """
-    items = value if isinstance(value, list) else [value]
-    rewritten: list[str] = []
-    grain_seen: TimeGrain | None = None
-    for item in items:
-        role, mf_name, grain = _classify_metricflow_field(view, model_name, item)
-        if role == "metric":
-            if mf_name not in metrics:
-                metrics.append(mf_name)
-        elif role == "dimension":
-            if mf_name not in dimensions:
-                dimensions.append(mf_name)
-        else:
-            grain_seen = grain
-        rewritten.append(mf_name)
-    return (rewritten if isinstance(value, list) else rewritten[0]), grain_seen
-
-
-def collect_metricflow_channel_refs(
-    charts: dict[str, Any],
-    query_registry: dict[str, QueryOrRef],
-    model_by_query: dict[str, str],
-    base_dir: ProjectDirectory | None,
-) -> None:
-    """Populate a `model:`-synthesized metricflow query from its charts' channels.
-
-    `model_by_query`
-    maps each synthesized query name to the semantic model named in the chart's
-    `model: <source>.<semantic_model>`. For every chart bound to that query, each
-    bare channel field is classified against the manifest into a metric, an
-    entity-qualified dimension, or a `time_grain`, and the query's
-    `metrics`/`dimensions`/`time_grain` are filled in. Channel values are
-    rewritten to the MetricFlow group-by name so they match the lowered SQL's
-    output columns.
-
-    Raises:
-        CompilationError: the named semantic model is missing, a channel field is
-            unclassifiable, or no chart binds a metric channel to the query (an
-            empty metrics list can't be lowered).
-    """
-    for query_name, model_name in model_by_query.items():
-        query_def = query_registry.get(query_name)
-        if not isinstance(query_def, AuthoredMetricflowQuery):
-            continue
-        manifest = _read_semantic_manifest(base_dir, query_name)
-        view = _build_model_view(manifest, model_name)
-        if view is None:
-            raise CompilationError(
-                f"metricflow `model:` sugar for query '{query_name}': semantic "
-                f"model '{model_name}' is not in target/semantic_manifest.json."
-            )
-
-        metrics: list[str] = []
-        dimensions: list[str] = []
-        time_grain: TimeGrain | None = None
-
-        for chart_def in charts.values():
-            is_model = isinstance(chart_def, BaseModel)
-            chart_dict = (
-                chart_def.model_dump(exclude_none=True) if is_model else chart_def
-            )
-            if chart_dict.get("query") != query_name:
-                continue
-            for field_name, value in chart_dict.items():
-                if field_name not in _FIELD_CHANNEL_KEYS:
-                    continue
-                if not isinstance(value, (str, list)):
-                    continue
-                new_value, grain = _collect_metricflow_channel_value(
-                    value, view, model_name, metrics, dimensions
-                )
-                if grain is not None:
-                    time_grain = grain
-                if is_model:
-                    setattr(chart_def, field_name, new_value)
-                else:
-                    chart_dict[field_name] = new_value
-
-        if not metrics:
-            raise CompilationError(
-                f"metricflow `model:` sugar for query '{query_name}' collected no "
-                "metric — bind a metric to a chart channel (e.g. `y: total_revenue`)."
-            )
-        query_def.metrics = metrics
-        query_def.dimensions = dimensions or None
-        query_def.time_grain = time_grain
 
 
 def generate_inline_chart_id(

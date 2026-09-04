@@ -1,5 +1,5 @@
 title: Table Style Variants
-description: 'Same data rendered under three explicit table style profiles. Each variant
+notes: 'Same data rendered under three explicit table style profiles. Each variant
   applies per-chart style overrides to demonstrate distinct table aesthetics
   side-by-side in a single board.
 
@@ -34,7 +34,7 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
@@ -71,7 +71,7 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent
@@ -96,7 +96,7 @@ charts:
           label: Company
         quarterly_revenue:
           label: Revenue
-          format: currency_compact
+          format: currency
         growth_rate:
           label: Growth
           format: percent

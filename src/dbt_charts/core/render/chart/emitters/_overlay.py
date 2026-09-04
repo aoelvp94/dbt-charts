@@ -12,7 +12,8 @@ handled here.
 from __future__ import annotations
 
 import json as _json
-from typing import Any
+import math
+from typing import Any, Literal
 
 from dbt_charts.core.compile.models.chart.resolved._layer import (
     ResolvedAreaLayer,
@@ -23,15 +24,28 @@ from dbt_charts.core.compile.models.chart.resolved._layer import (
 )
 from dbt_charts.core.compile.models.style.resolved import ResolvedLegendStyle
 from dbt_charts.core.compile.models.style.resolved._base import ResolvedAxisStyle
+from dbt_charts.core.compile.resolve.chart.tick_values import numeric_domain_bounds
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_render import (
+    ERR_LAYER_AXIS_POSITION_ORIENTATION,
+    ERR_LAYER_STEP_ORIENTATION,
+)
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.emitters._cartesian import (
+    authored_measure_domain,
+    build_zero_rule_if_applicable,
     canonicalize_cartesian_x_data,
     distinct_series_values,
+    layer_encoding_owner,
+    nest_zero_rule,
+    non_bar_zero_rule_should_fire,
     spatial_color_scale,
+    values_straddle_zero,
+    x_encoding_is_banded,
 )
 from dbt_charts.core.render.chart.emitters._channels import apply_color_legend
 from dbt_charts.core.render.chart.emitters._layers import (
+    CLIP_TO_PLOT,
     emit_area_layer,
     emit_bar_layer,
     emit_line_layer,
@@ -46,6 +60,7 @@ from dbt_charts.core.render.chart.features.value_labels import (
     BandLabelAnchor,
     _build_bar_text_layer,
     _build_point_text_layer,
+    _layer_label_slots,
     band_label_anchor,
     build_line_text_layers,
     labels_draw_text,
@@ -71,7 +86,7 @@ from dbt_charts.core.render.utils import (
     normalize_data_types,
     ordered_distinct_values,
 )
-from dbt_charts.core.text.case import format_display_text
+from dbt_charts.core.text.case import default_axis_title
 
 # VL scale types where the domain is an ordered list of discrete categories
 # (as opposed to a continuous [min, max] range). Union-domain reconciliation
@@ -194,6 +209,7 @@ def _reconcile_x_domain(
     x_enc: VLDict,
     base_data: list[_Row],
     layer_x_columns: list[tuple[str, list[_Row]]],
+    chart_id: str,
     force: bool = False,
 ) -> None:
     """Set an explicit ordered-union domain on the shared categorical x scale
@@ -206,8 +222,8 @@ def _reconcile_x_domain(
     unordered (alphabetical), so a layer whose rows diverge from the base's
     needs an explicit domain to preserve the base's own row order and to
     guarantee its categories — which may not be a subset of the base's own —
-    aren't dropped from the shared scale. The base's order comes first,
-    exactly as its query returned it.
+    aren't dropped from the shared scale. The base's own relative order is
+    never disturbed — it is exactly as its query returned it.
 
     An authored ``chart.sort`` is NOT "reordered upstream of this function"
     — ``chart_sort_to_vl`` only builds a Vega-Lite ``sort:`` dict applied at
@@ -231,8 +247,11 @@ def _reconcile_x_domain(
     ``rendered_x_domain``), rather than bailing out — an unsorted pin
     would defeat the sort exactly as badly as no pin does for this trigger.
 
-    Any layer-only categories are appended after, in the layer's own
-    first-seen order. No-op when the base x scale isn't categorical
+    Layer-only categories go where the base's own stated order puts them —
+    a base ordered most-recent-first keeps taking new dates at the front (see
+    ``rendered_x_domain``). Only when the base states no order to extend do
+    they land on the end in the layer's own first-seen order, and that case
+    earns WARN-LAYER-X-DOMAIN-PAINT-ORDER. No-op when the base x scale isn't categorical
     (nominal/ordinal) or when neither trigger fires. Every layer's own x
     type has already been resolved against the base's (see
     _resolve_layer_x_encoding) by the time this runs — this function only
@@ -247,7 +266,7 @@ def _reconcile_x_domain(
     if not isinstance(x_enc.get("field"), str):
         return
     x_enc.setdefault("scale", {})["domain"] = rendered_x_domain(
-        x_enc, base_data, layer_x_columns
+        x_enc, base_data, layer_x_columns, chart_id=chart_id
     )
 
 
@@ -464,15 +483,26 @@ def _build_layer_label_specs(
     background: str,
     rows: list[_Row],
     band: BandLabelAnchor | None,
+    val_ch: str,
 ) -> list[ChartSpec]:
     """Build this overlay layer's OWN value-label text layers, or [] when unset.
 
     Mirrors ``ValueLabelFeature``'s per-family dispatch but reads the layer's
-    OWN mark style (``layer.bar_mark.labels`` / ``layer.line_mark.labels`` /
-    ``layer.point_mark.labels``) instead of the base chart's — each typed
-    overlay layer carries its own full resolved mark style, so its labels are
-    independent of the base chart's. Callers stamp ``.data`` onto the returned
-    specs when the layer authored its own ``query:`` (own_data is not None).
+    OWN mark style instead of the base chart's — each typed overlay layer
+    carries its own full resolved mark style, so its labels are independent of
+    the base chart's.
+
+    Its POSITION is not: ``val_ch`` is the channel the base measures on, and a
+    layer label pinned to VL ``y`` lands on the category axis of a horizontal
+    base, opening a second quantitative scale across the category names.
+
+    The slots themselves come from
+    ``_layer_label_slots`` (``features/value_labels.py``) — the single
+    per-family layer -> mark-style-attribute mapping both this function and
+    ``ValueLabelFeature``'s column-existence validation read, so the two
+    never drift onto different attribute paths for the same layer type.
+    Callers stamp ``.data`` onto the returned specs when the layer authored
+    its own ``query:`` (own_data is not None).
 
     ``band`` is this layer's own band verdict (its ``curve`` already applied
     the band transform above), non-None only for a line/area layer drawing a
@@ -480,13 +510,13 @@ def _build_layer_label_specs(
     layers — see ``build_line_text_layers``.
     """
     if isinstance(layer, ResolvedBarLayer):
-        bar_labels = layer.bar_mark.labels
+        (bar_labels,) = _layer_label_slots(layer)
         if bar_labels.visible is not True:
             return []
         text_layer = _build_bar_text_layer(
             bar_labels,
             y_field,
-            is_horizontal=False,
+            is_horizontal=val_ch == "x",
             is_stacked=False,
             background=background,
             is_house=layer.label_is_house,
@@ -500,10 +530,8 @@ def _build_layer_label_specs(
     elif isinstance(layer, ResolvedLineLayer):
         # marks.point.labels is an alias for marks.line.labels — same fallback
         # ValueLabelFeature._apply_line uses for the base chart.
-        line_labels = layer.line_mark.labels
-        point_labels = (
-            line_labels if line_labels.visible is True else layer.point_mark.labels
-        )
+        line_labels, point_labels_slot = _layer_label_slots(layer)
+        point_labels = line_labels if line_labels.visible is True else point_labels_slot
         if point_labels.visible is not True:
             return []
         return [
@@ -514,10 +542,11 @@ def _build_layer_label_specs(
                 layer.label_is_house,
                 labels_draw_text(point_labels, rows),
                 band,
+                measure_channel=val_ch,
             )
         ]
     elif isinstance(layer, ResolvedAreaLayer):
-        area_line_labels = layer.line_mark.labels
+        (area_line_labels,) = _layer_label_slots(layer)
         if area_line_labels.visible is not True:
             return []
         return [
@@ -528,10 +557,11 @@ def _build_layer_label_specs(
                 layer.label_is_house,
                 labels_draw_text(area_line_labels, rows),
                 band,
+                measure_channel=val_ch,
             )
         ]
     else:  # ResolvedScatterLayer
-        point_labels = layer.point_mark.labels
+        (point_labels,) = _layer_label_slots(layer)
         if point_labels.visible is not True:
             return []
         text_layer = _build_point_text_layer(
@@ -539,9 +569,84 @@ def _build_layer_label_specs(
             y_field,
             is_house=layer.label_is_house,
             label_is_text=labels_draw_text(point_labels, rows),
+            measure_channel=val_ch,
         )
 
     return [text_layer_spec(text_layer)]
+
+
+# A bar mark's rounded corner is Vega's own clip-path anchored to the bar's
+# LOCAL (unclipped) geometry (see bar_corner_props's docstring in
+# vl_field_maps.py) — `autosize: fit`'s bounds computation follows that local
+# geometry rather than the outer plot clip, so a clipped-but-rounded bar
+# still blows the plot out to fit its full unclipped extent. Square corners
+# don't have this local clip-path, so they clip cleanly like every other
+# mark type. Dropped only on a layer already being clipped for painting
+# outside the pinned normalize domain — an in-range bar layer keeps its
+# authored corner radius untouched.
+_BAR_CORNER_RADIUS_PROPS: tuple[str, ...] = (
+    "cornerRadiusEnd",
+    "cornerRadiusTopLeft",
+    "cornerRadiusBottomLeft",
+    "cornerRadiusBottomRight",
+)
+
+
+def _paints_outside_domain(
+    value: object,  # type-state: object_annotation — duck-types an arbitrary row value through float()
+    domain: tuple[float, float],
+) -> bool:
+    """True iff Vega-Lite's own quantitative-encoding parse would paint
+    ``value`` (VL parses anything JS's ``Number()`` accepts, including a
+    numeric string, and drops non-finite/non-numeric values) AND that value
+    lands outside ``domain`` — the pinned ``[0, 1]`` normalize domain, or an
+    author's own wider/narrower pin (``authored_measure_domain``): a value
+    inside an authored ``[0, 1.2]`` must not be clipped just because it
+    exceeds the un-authored default.
+
+    Mirrors VL's own validity/coercion rule with ``float()`` rather than
+    checking Python types directly — VL parses a numeric *string* (a
+    ``::text``-cast or CSV-sourced column) the same as a real number, so a
+    type check alone under-clips it and the plot still collapses; a
+    ``Decimal("NaN")`` passes an ``isinstance`` check but raises on ``<=``,
+    while ``float("nan")`` correctly sorts as not-finite instead. All three
+    ``except`` members are load-bearing: ``ArithmeticError`` also catches
+    ``OverflowError`` from a Python ``int`` too large to represent as a
+    ``float`` — reachable via an authored inline ``values:`` query, which
+    passes rows through unchanged and so preserves arbitrary-precision
+    YAML integers all the way to this call.
+    """
+    try:
+        f = float(value)  # type: ignore[arg-type]  # type-state: type_ignore — duck-typed row value; the except below is the real type guard
+    except (TypeError, ValueError, ArithmeticError):
+        return False
+    lo, hi = domain
+    return math.isfinite(f) and not lo <= f <= hi
+
+
+def _clip_layer_marks(spec: ChartSpec) -> None:
+    """Set ``clip: true`` on every mark ``spec`` paints, recursing into
+    ``layers`` (a line/area layer's halo/fg/hover sub-specs).
+
+    Used only for a layer sharing a normalize base's pinned domain — ``[0, 1]``,
+    or the author's own wider/narrower pin — see ``render_cartesian_overlay``'s
+    ``base_stack_normalize`` docstring for why. A plain (non-wrapper) spec paints one mark; a
+    wrapper (``mark == "layered"``, e.g. a line/area layer's own halo + fg +
+    hover sub-layers) paints through ``layers`` instead and has nothing of
+    its own to clip.
+    """
+    if spec.layers:
+        for sub in spec.layers:
+            _clip_layer_marks(sub)
+    else:
+        spec.mark_props = {
+            **{
+                k: v
+                for k, v in spec.mark_props.items()
+                if k not in _BAR_CORNER_RADIUS_PROPS
+            },
+            **CLIP_TO_PLOT,
+        }
 
 
 def _resolved_layer_y_orients(layers: tuple[ResolvedLayer, ...]) -> list[str] | None:
@@ -567,6 +672,7 @@ def _mixed_mark_legend_symbols(
     square_datums: set[str],
     area_opacity: float,
     base_symbol: str,
+    shared_color_scale: VLDict | None,
 ) -> None:
     """Patch symbolType/Size/StrokeWidth/Opacity exprs for mixed-mark legends.
 
@@ -590,10 +696,24 @@ def _mixed_mark_legend_symbols(
         type_expr = f"{_pred(stroke_datums)} ? 'stroke' : {type_expr}"
 
     symbol_props: dict[str, Any] = {"symbolType": {"expr": type_expr}}
+    # A 'stroke' glyph needs more length/weight than circle or square to read
+    # as a line — but that is a property of the RESOLVED shape, not of which
+    # layer (base or overlay) contributed the entry. Re-testing the same
+    # `type_expr` this glyph's own symbolType came from (rather than the
+    # narrower stroke_datums membership) keeps every 'stroke' row — base
+    # color-split series included — on the one size/weight spec.
+    #
+    # Gated on stroke_datums, NOT on `base_symbol == "stroke"`: a plain line
+    # base with an area or bar overlay is a MIXED-shape legend, where the two
+    # entries are meant to look different. Widening the gate to the base type
+    # would resize that base's own glyph with nothing to converge it with, and
+    # would also stomp the symbolSize a dashed line's legend sets to keep a
+    # full dash cycle legible (line.py) — a short swatch clips it to a stub.
     if stroke_datums:
-        line_pred = _pred(stroke_datums)
-        symbol_props["symbolStrokeWidth"] = {"expr": f"{line_pred} ? 2 : 1.5"}
-        symbol_props["symbolSize"] = {"expr": f"{line_pred} ? 400 : 100"}
+        symbol_props["symbolStrokeWidth"] = {
+            "expr": f"({type_expr}) === 'stroke' ? 2 : 1.5"
+        }
+        symbol_props["symbolSize"] = {"expr": f"({type_expr}) === 'stroke' ? 400 : 100"}
     if circle_datums:
         area_pred = _pred(circle_datums)
         symbol_props["symbolOpacity"] = {
@@ -601,9 +721,21 @@ def _mixed_mark_legend_symbols(
         }
 
     for layer in vl_layers:
-        color_enc = layer.encoding.get("color")
+        # A dual-axis entry may be `nest_zero_rule`-wrapped in an empty
+        # `mark="layered"` ChartSpec with no encoding of its own. Unwrap to
+        # the entry that actually carries the color encoding this legend
+        # patch targets.
+        color_enc = layer_encoding_owner(layer).encoding.get("color")
         if isinstance(color_enc, dict) and isinstance(color_enc.get("legend"), dict):
             color_enc["legend"].update(symbol_props)
+            if (
+                stroke_datums
+                and shared_color_scale is not None
+                and color_enc.get("scale") is shared_color_scale
+            ):
+                color_enc["legend"]["symbolStrokeColor"] = {
+                    "expr": "scale('color', datum.value)"
+                }
 
 
 def _layer_series_color(layer: ResolvedLayer) -> str | None:
@@ -662,7 +794,7 @@ def _layer_tooltip_description(
     return build_structured_tooltip_expr("line", header, series, values)
 
 
-def _fix_bar_band_width(spec: ChartSpec) -> None:
+def _fix_bar_band_width(spec: ChartSpec, x_is_banded: bool) -> None:
     """Recursively pin any bar mark's width to its categorical bandwidth.
 
     Undoes VL's degraded-shorthand quirk (see the ``step_band_present`` call
@@ -671,10 +803,45 @@ def _fix_bar_band_width(spec: ChartSpec) -> None:
     positive/negative split — however deep the layered wrapping goes. Grouped
     bars size against their ``xOffset`` sub-band; other bars use the outer
     ``x`` band.
+
+    ``x_is_banded`` is False for a continuous (quantitative, or
+    max_ordinal_buckets-promoted temporal) base x. Leave such a bar's width
+    entirely alone: there is no band for ``bandwidth(...)`` to measure, so
+    rewriting the width is what produced the zero-width-bar defect — VL
+    evaluates ``bandwidth('xOffset')`` to 0 against a scale that has no bands.
+
+    Measured, rather than assumed: the ``{"band": f}`` shorthand does NOT
+    degrade on a continuous x the way it does on a band scale (the case the
+    call site below describes). A grouped continuous-x bar with a sibling
+    xOffset renders at exactly the width the same chart renders at with no
+    layers at all, whether or not ``bar.size`` is set. Pinning the width to
+    ``continuousBandSize`` instead would be wrong twice over: that key is
+    inert while the band shorthand is present (a bar with ``size: 20`` still
+    renders at the shorthand's width), and it is absent entirely when
+    chart-local ``style.marks.bar.size`` is null — ``BarChartStyle.marks``
+    carries an ``InheritSlot``, and only the board-tier merge runs before
+    ``apply_inherit`` refills it, so the chart-local tier can genuinely
+    clear it.
+
+    A literal numeric ``width`` (an authored ``bar.size``, set by
+    ``bar_mark_to_vl``) is left alone even when ``x_is_banded`` — only the
+    ``{"band": f}`` shorthand needs the ``bandwidth(...)`` rewrite. Rewriting
+    a literal pixel width to a bare ``bandwidth(...)`` expression here would
+    discard both the authored width and (since the fraction has nothing to
+    multiply against) the theme's band gutter, contradicting "authored beats
+    computed, always" on the one path this fix exists to protect.
     """
     if spec.mark == "bar":
+        if not x_is_banded:
+            return
         width_prop = spec.mark_props.get("width")
-        band_frac = width_prop.get("band") if isinstance(width_prop, dict) else None
+        # A literal pixel width is an authored bar.size — leave it alone, or
+        # the rewrite below would replace it with the full band and discard
+        # both the author's width and the theme's gutter. An absent width
+        # still needs the explicit bandwidth() the degraded shorthand loses.
+        if width_prop is not None and not isinstance(width_prop, dict):
+            return
+        band_frac = width_prop.get("band") if width_prop is not None else None
         bandwidth_scale = "xOffset" if "xOffset" in spec.encoding else "x"
         bandwidth = f"bandwidth('{bandwidth_scale}')"
         width_expr = (
@@ -683,7 +850,7 @@ def _fix_bar_band_width(spec: ChartSpec) -> None:
         spec.mark_props["width"] = {"expr": width_expr}
     elif spec.mark == "layered":
         for sub in spec.layers:
-            _fix_bar_band_width(sub)
+            _fix_bar_band_width(sub, x_is_banded)
 
 
 def _apply_layer_step_band(
@@ -693,66 +860,71 @@ def _apply_layer_step_band(
     base_x: Any,
     data: list[dict[str, Any]],
     chart_id: str,
+    cat_ch: str,
 ) -> list[dict[str, Any]] | None:
     """Apply the band-aware step transform to an overlay line/area layer,
     mirroring the base emitters. Doubles rows to the band edges and adds
     ``xOffset`` (+ a ``detail`` channel when ``connect`` is False) to
     ``layer_encoding``; returns the doubled rows to attach as the layer's own
     data, or None when not band-aware step. When the layer authored its own
-    ``x``, ``layer_encoding["x"]`` is already set to that field's own encoding
-    and is left alone; otherwise it inherits the base spec's x encoding,
-    copied in here — ``apply_step_band`` needs the band x-channel present to
-    validate and offset against.
+    ``x``, ``layer_encoding[cat_ch]`` is already set to that field's own
+    encoding and is left alone; otherwise it inherits the base spec's category
+    encoding, copied in here — ``apply_step_band`` needs the band channel
+    present to validate and offset against.
+
+    ``cat_ch`` is the VL channel the base actually draws its category on. The
+    offset this builds is spelled ``xOffset`` and sized by ``bandwidth('x')``
+    all the way down into ``apply_step_band``, so the transform only exists
+    for a vertical base; a horizontal one raises rather than offsetting the
+    layer along an axis it does not band. That raise is also what keeps
+    ``step_band_present`` — and so ``_fix_bar_band_width``, equally x-only —
+    unreachable on a horizontal base.
     """
     # Not a `.get(k, default)` config fallback (SIM401) — deliberately written
     # as an if/else so the type-state counter's silent_fallback detector
     # (scripts/type_state_counter.py), which flags exactly that call shape,
     # doesn't mistake this real either/or for one.
-    x_enc = layer_encoding["x"] if "x" in layer_encoding else base_x  # noqa: SIM401
+    x_enc = layer_encoding[cat_ch] if cat_ch in layer_encoding else base_x  # noqa: SIM401
     if not isinstance(x_enc, dict):
         return None
     if not is_band_step(curve, x_enc.get("type")):
         return None
+    if cat_ch != "x":
+        raise ChartDataError.from_code(ERR_LAYER_STEP_ORIENTATION, chart_id=chart_id)
     layer_encoding["x"] = x_enc
     return apply_step_band(data, layer_encoding, chart_id=chart_id, connect=connect)
 
 
 def _layer_band_anchor(
     label_x_field: str,
-    union_x_field: str,
     y_field: str,
     base_x_enc: VLDict,
     base_rows: list[_Row],
     layer_rows: list[_Row],
+    layer_x_columns: list[tuple[str, list[_Row]]],
 ) -> BandLabelAnchor:
     """Band geometry for one overlay layer's own value labels.
 
     Called only when the layer's curve actually applied the band transform.
-    The domain comes from ``rendered_x_domain`` — the same union-and-sort
-    ``_reconcile_x_domain`` pins below, so an authored ``sort:`` moves the
-    leading/trailing band here exactly as it moves it on the rendered axis.
-    Reading query order instead would fire the fallback on the wrong band and
-    paint the real trailing caption outside the plot.
+    The domain is read over EVERY layer's contribution — the same union-and-sort
+    ``_reconcile_x_domain`` pins below — so an authored ``sort:`` moves the
+    leading/trailing band here exactly as it moves it on the rendered axis, and
+    a sibling layer whose unorderable value tips the union into paint order
+    moves it here too. Reading this layer's own column alone would caption the
+    band the axis draws last as if it were drawn first, painting the caption
+    outside the plot; reading query order would do the same.
 
-    Only this layer's own column joins the union. A THIRD layer contributing a
-    category neither the base nor this layer draws can still widen the real
-    domain, but it can only push a band this layer captions AWAY from the edge
-    — never onto it — so the fallback stays conservative rather than wrong.
-
-    The two x fields differ only when the layer authors its own ``x:``:
-    ``union_x_field`` is the column whose values widen the shared domain, while
-    ``label_x_field`` is the base's — the label sublayer carries no x encoding
-    of its own, so the base's is the column its caption is actually positioned
-    by, and therefore the one the edge filter has to test.
-
-    Both are narrowed at the call site rather than here: absorbing the narrows
-    would make three more signature members optional, which costs more against
-    the type-state gate than the duplicated guard costs in lines.
+    ``label_x_field`` is the base's x column, not the layer's — the label
+    sublayer carries no x encoding of its own, so the base's is the column its
+    caption is actually positioned by, and therefore the one the edge filter
+    has to test. It is narrowed at the call site rather than here: absorbing the
+    narrow would make a signature member optional, which costs more against the
+    type-state gate than the duplicated guard costs in lines.
     """
     return band_label_anchor(
         label_x_field,
         y_field,
-        rendered_x_domain(base_x_enc, base_rows, [(union_x_field, layer_rows)]),
+        rendered_x_domain(base_x_enc, base_rows, layer_x_columns, chart_id=None),
         layer_rows,
         rows_are_doubled=False,
     )
@@ -766,7 +938,8 @@ def render_cartesian_overlay(
     chart_id: str,
     axis_x: ResolvedAxisStyle,
     axis_y: ResolvedAxisStyle,
-    base_y_title_suppressed: bool,
+    base_measure_title_suppressed: bool,
+    base_orientation: Literal["vertical", "horizontal"],
     base_x_authored_temporal: bool,
     tooltip_format: str,
     background: str,
@@ -774,6 +947,9 @@ def render_cartesian_overlay(
     legend: ResolvedLegendStyle,
     config: VLDict,
     layered_rail_may_fire: bool,
+    base_stack_normalize: bool,
+    base_stack_center: bool,
+    multiples_scale_independent: bool,
     base_mark_type: str = "bar",
     base_label: str | None = None,
     datasets: dict[str | None, list[dict[str, Any]]] | None = None,
@@ -826,23 +1002,65 @@ def render_cartesian_overlay(
     horizontal" on bar) — required, not defaulted, so a caller that forgets
     to compute it fails loudly rather than silently reverting to the widest
     (or narrowest) collision check.
-    ``base_y_title_suppressed`` says the author explicitly suppressed the
-    title of whichever axis the BASE chart draws on VL ``y`` — required, not
-    defaulted, for the same reason. Only the dual-axis title restore below
-    reads it, and only to split two cases the resolved axis alone cannot tell
-    apart: an axis with no label is suppressed by the theme's blanket
-    default, and dual-axis overrides that (both sides need labelling to tell
-    the scales apart), whereas a labelled axis can only be suppressed by the
-    author saying so — the Layer 5 default would otherwise have forced it
-    visible — so that one is honored and left alone.
+    ``base_stack_normalize`` is the caller's own ``chart.stack ==
+    "normalize"`` (``False`` for line/scatter, which have no stack concept).
+    A normalize base pins its measure domain to ``[0, 1]`` (or the author's
+    own pin) regardless of what shares the scale — see ``bar.py``'s
+    ``_emit_vertical``/``_emit_horizontal`` and ``area.py``'s
+    ``_build_area_top_encoding``/``_emit_multi_metric_area``. A shared-scale layer (no
+    ``axis_y.position``: the only case that actually paints against that
+    pinned domain, since a dual-axis layer gets its own independent scale)
+    can carry raw values well outside it — the common invisible
+    padding/reference-layer case. Vega's ``autosize: fit`` sizes the whole
+    plot to fit every mark's paint, so an unclipped out-of-range layer
+    collapses the plot to zero height instead of just spilling past the
+    axis. Every mark this function builds for such a layer gets
+    ``clip: true`` (the same idiom ``CLIP_TO_PLOT`` in ``emitters/_layers.py``
+    already uses for the identical ``autosize`` risk on invisible
+    halo/hit-target marks) — clipping the marks, not the shared view, keeps
+    the axis/legend/category-label scaffold laid out normally; only this
+    layer's own out-of-range paint disappears at the plot edge.
+    ``base_stack_center`` is the caller's own ``chart.stack == "center"``
+    (``False`` for bar/line/scatter: a bar's own ``stack: "center"`` is a
+    diverging stack, where 0 is still the meaningful anchor, not this
+    area-only streamgraph case). Mirrors
+    ``BaselineFeature._apply_zero_or_top``'s own streamgraph carve-out ("y=0
+    is the visual centerline of the silhouette, not a meaningful baseline")
+    for the base's own dual-axis rule.
+    ``multiples_scale_independent`` is the caller's own
+    ``multiples_scale_independent(chart)`` (``emitters/_cartesian.py``'s
+    shared predicate, also used by ``BaselineFeature``). Mirrors
+    ``BaselineFeature.apply()``'s own independent-small-multiples guard: the
+    base/layer zero-rule verdicts below are each decided once from the
+    pooled union of every panel's rows, but under independent scale each
+    panel gets its own y-domain, so a single chart-wide verdict can be wrong
+    for any one panel. Dual-axis rule insertion skips entirely under this
+    flag, same as ``BaselineFeature`` does for its own shared-scale rule.
+    ``base_measure_title_suppressed`` says the author explicitly suppressed
+    the title of the base's MEASURE axis — required, not defaulted, for the
+    same reason. Only the dual-axis title restore below reads it, and only to
+    split two cases the resolved axis alone cannot tell apart: an axis with no
+    label is suppressed by the theme's blanket default, and dual-axis overrides
+    that (both sides need labelling to tell the scales apart), whereas a
+    labelled axis can only be suppressed by the author saying so — the Layer 5
+    default would otherwise have forced it visible — so that one is honored and
+    left alone. The caller computes it rather than this function deriving it
+    from ``axis_y``, because only the caller knows whether its own family
+    honored the author's suppression.
 
-    The caller computes it, rather than this function deriving it from
-    ``axis_y``, because which axis lands on VL ``y`` is the caller's business:
-    a horizontal bar puts its *category* axis there (governed by ``axis_x`` /
-    ``x_label``), while ``axis_y`` here is always the layers' measure axis.
-    Reading ``axis_y`` for this would delete a horizontal bar's category-axis
-    title whenever its measure-axis title was suppressed.
+    ``base_orientation`` is the base chart's own orientation, and it decides
+    which VL channel each of the resolved model's two axes lands on. The
+    resolved model always carries its category on ``x`` and measures on ``y``
+    whatever the visual orientation (see ``mark_extents.py``); a horizontal
+    bar is that same model painted with the pair swapped. Everything below is
+    written in the model's vocabulary — ``x`` means the category — and reaches
+    the spec through ``cat_ch`` / ``val_ch``. Reading the pair as the literals
+    ``("x", "y")`` is what shared a horizontal base's *measure* with every
+    layer and bound each layer's own field to a second, unmerged scale drawn
+    down the category gutter.
     """
+    # The resolved model's (x, y) as VL channels. Only these two keys move.
+    cat_ch, val_ch = ("y", "x") if base_orientation == "horizontal" else ("x", "y")
     # Deliberately no compose_axis_label_expr here: axis_y is the BASE
     # chart's measure axis, and its ruler (if any) was baked for the base's
     # own tick ladder. In the shared-scale case the base's axis dict already
@@ -853,7 +1071,6 @@ def render_cartesian_overlay(
     # compose_axis_label_expr (see bar.py's comment on the same convention);
     # this is the one call site that must not.
     ay_vl = axis_to_vl(axis_y)
-    _ay_font = axis_y.title.font
 
     # #12: chart-level tick count → tickCount hint on all overlay layer axes.
     # (Base chart's axis is built by build_cartesian_y_encoding using tick_values.)
@@ -867,13 +1084,25 @@ def render_cartesian_overlay(
     # scales are needed whenever base and overlays don't all share one side.
     layer_orients = _resolved_layer_y_orients(layers)
     independent_y = False
+    # None until the `layer_orients is not None` branch below assigns the
+    # real side; every later read of base_side is itself gated on
+    # `layer_orients is not None`, so it is never read as None.
+    base_side: str | None = None
     if layer_orients is not None:
+        if base_orientation == "horizontal":
+            # axis_y.position is left/right, but a horizontal base measures
+            # along VL x, whose sides are top and bottom. There is no honest
+            # place to put the pinned axis, so say so rather than draw the
+            # layer against a side it was not asked for.
+            raise ChartDataError.from_code(
+                ERR_LAYER_AXIS_POSITION_ORIENTATION, chart_id=chart_id
+            )
         pinned = set(layer_orients)
         base_side = (
             "left" if pinned == {"right"} else "right" if pinned == {"left"} else "left"
         )
         independent_y = len({base_side} | pinned) > 1
-        base_y = base_spec.encoding.get("y") if base_spec.encoding else None
+        base_y = base_spec.encoding.get(val_ch) if base_spec.encoding else None
         if isinstance(base_y, dict) and isinstance(base_y.get("axis"), dict):
             prior_orient = base_y["axis"].get("orient")
             base_y["axis"]["orient"] = base_side
@@ -891,12 +1120,13 @@ def render_cartesian_overlay(
             # a dual-axis chart needs both sides labelled to tell the scales
             # apart, so restore the base title from its encoding title —
             # unless the author explicitly suppressed the title of the
-            # axis that actually lands here (see base_y_title_suppressed
-            # above), which must not be overwritten.
+            # axis that actually lands here (see
+            # base_measure_title_suppressed above), which must not be
+            # overwritten.
             if (
                 base_y["axis"].get("title") is None
                 and base_y.get("title")
-                and not base_y_title_suppressed
+                and not base_measure_title_suppressed
             ):
                 base_y["axis"]["title"] = base_y["title"]
 
@@ -904,11 +1134,11 @@ def render_cartesian_overlay(
     outer_config = config or dict(base_spec.config)
     base_spec.config = {}
 
-    # Extract the shared x encoding from the base for the outer spec.
-    x_enc = base_spec.encoding.get("x") if base_spec.encoding else None
+    # Extract the shared category encoding from the base for the outer spec.
+    x_enc = base_spec.encoding.get(cat_ch) if base_spec.encoding else None
     outer_encoding: dict[str, Any] = {}
     if x_enc is not None:
-        outer_encoding["x"] = x_enc
+        outer_encoding[cat_ch] = x_enc
 
     # If the base carries a stack-ordering encoding (stacked-bar nominal series),
     # hoist it and its calculate transform to the outer spec so bar and text-label
@@ -922,38 +1152,36 @@ def render_cartesian_overlay(
     if order_enc is not None:
         outer_encoding["order"] = order_enc
         order_field = order_enc["field"]  # always a str; KeyError signals a bug
-        if base_spec.mark == "layered":
-            # Mixed-sign split (_layers.py): order is on the outer encoding but the
-            # calculate lives inside each sign-filtered sub-layer. Hoist from the
-            # first sub-layer (all carry identical copies) and clear from every sub.
+        moved = [t for t in base_spec.transforms if t.get("as") == order_field]
+        if moved:
+            base_spec.transforms = [
+                t for t in base_spec.transforms if t.get("as") != order_field
+            ]
+        elif base_spec.mark == "layered":
+            # Mixed-sign bar split (_layers.py): order is on the outer encoding but
+            # the calculate lives inside each sign-filtered sub-layer. Hoist from
+            # the first sub-layer (all carry identical copies) and clear every sub.
             moved = [
                 t for t in base_spec.layers[0].transforms if t.get("as") == order_field
             ]
             if not moved:
                 raise ChartDataError(
-                    f"bar spec carries order encoding for field {order_field!r} "
-                    "but no matching calculate transform found in sign-split sub-layers"
+                    f"base spec carries order encoding for field {order_field!r} "
+                    "but no matching calculate transform was found"
                 )
-            outer_transforms.extend(moved)
             for sub in base_spec.layers:
                 sub.transforms = [
                     t for t in sub.transforms if t.get("as") != order_field
                 ]
         else:
-            moved = [t for t in base_spec.transforms if t.get("as") == order_field]
-            if not moved:
-                raise ChartDataError(
-                    f"bar spec carries order encoding for field {order_field!r} "
-                    "but no matching calculate transform was found"
-                )
-            outer_transforms.extend(moved)
-            base_spec.transforms = [
-                t for t in base_spec.transforms if t.get("as") != order_field
-            ]
+            raise ChartDataError(
+                f"base spec carries order encoding for field {order_field!r} "
+                "but no matching calculate transform was found"
+            )
+        outer_transforms.extend(moved)
         # The outer spec carries the same rows (data= on the ChartSpec returned
-        # below). Clear base_spec.data so the bar sublayer inherits outer
-        # transforms; a sublayer with its own .data skips the outer transform
-        # cascade (gap_fill stamps .data on the bar before this function is called).
+        # below). Clear base_spec.data so the base layer inherits outer transforms;
+        # a layer with its own data skips the outer transform cascade.
         base_spec.data = None
         order_hoisted = True
 
@@ -965,11 +1193,88 @@ def render_cartesian_overlay(
     # single-series base (painted with its own fill), or the base field's existing
     # domain/range; each layer contributes its authored color, else the next
     # unclaimed palette slot.
-    # Overlays assume a vertical base (measure on y, shared with the layers). Only
-    # then is the base's y title its series name; on a horizontal base y is the
-    # category, so we leave that case on the pre-shared-scale path.
+    # Both orientations share one measure scale with their layers; `val_ch` is
+    # whichever channel the base measures on, so the base's own title there is
+    # its series name either way. (This block used to exclude a horizontal base
+    # from the shared scale entirely, because it read the pair as the literal
+    # `("x", "y")` and a horizontal base's `y` is its category.)
     palette: list[str] = list((outer_config.get("range") or {}).get("category") or [])
-    y_enc_base = base_spec.encoding.get("y", {}) if base_spec.encoding else {}
+    # Membership test rather than `.get(k, default)`: an absent measure encoding
+    # is a real either/or (the base has none to share), not a config fallback —
+    # same shape `_apply_layer_step_band` uses above, and for the same reason.
+    y_enc_base = (
+        base_spec.encoding[val_ch]
+        if base_spec.encoding and val_ch in base_spec.encoding
+        else {}
+    )
+    # Dual-axis: give the base its own zero-baseline rule too, nested inside
+    # its own vl_layers[0] entry (see `nest_zero_rule`) rather than left as a
+    # naive top-level sibling, which would manufacture a degenerate [0, 0]
+    # scale under `resolve.scale.y: independent`. A normalize-stacked base
+    # wants 0%/100% top rules, not a plain zero rule (mirrors
+    # BaselineFeature._apply_zero_or_top's own normalize branch); drawing
+    # those under an independent dual-axis scale isn't handled here, so the
+    # base gets neither rather than the wrong reference line. A streamgraph
+    # base (`base_stack_center`) gets no rule either: y=0 is only the
+    # silhouette's visual centerline there, not a meaningful baseline (same
+    # carve-out). Skipped on an empty dataset (mirrors
+    # `_apply_zero_or_top`'s own `chart_rows(...).all_rows()` guard) and
+    # entirely under `multiples_scale_independent`; see this function's own
+    # docstring on that flag. `axis_y.is_quantitative` mirrors
+    # `_y_carries_the_measure` (baseline.py): a rotated scatter base (value
+    # on x, category on y -- the dot-plot recipe) has no quantitative y for a
+    # `datum: 0` rule to bind to.
+    if (
+        independent_y
+        and not multiples_scale_independent
+        and (base_mark_type != "scatter" or axis_y.is_quantitative)
+        and not base_stack_normalize
+        and not base_stack_center
+        and data
+    ):
+        base_field = y_enc_base.get("field")
+        if isinstance(base_field, str):
+            base_continuous = (
+                axis_y.scale.continuous if axis_y.scale is not None else None
+            )
+            base_zero_style = axis_y.grid.zero
+            assert base_zero_style is not None, (
+                "zero grid style must be resolved before emitting a "
+                "dual-axis baseline rule"
+            )
+            base_zero_setting = (
+                base_continuous.zero if base_continuous is not None else None
+            )
+            base_authored_domain = authored_measure_domain(axis_y)
+            # Bar always fires. Line/area/scatter mirror BaselineFeature's
+            # own real rule (fires unless the axis explicitly turned
+            # zero-anchoring off) via non_bar_zero_rule_should_fire, not the
+            # layer-only "no zero field, so line/scatter needs an explicit
+            # `zero: true`" default below, which is the wrong default for a
+            # base chart's own axis.
+            base_should_fire = (
+                True
+                if base_mark_type == "bar"
+                else non_bar_zero_rule_should_fire(
+                    base_mark_type == "scatter",
+                    base_zero_setting,
+                    zero_anchored=axis_y.zero_anchored,
+                    authored_domain=base_authored_domain,
+                    zero_in_domain=lambda: values_straddle_zero(data, base_field),
+                )
+            )
+            base_rule = build_zero_rule_if_applicable(
+                base_field,
+                val_ch,
+                log_scale=base_continuous is not None and base_continuous.type == "log",
+                authored_domain=base_authored_domain,
+                grid_visible=axis_y.grid.visible,
+                zero_color=base_zero_style.color,
+                zero_width=base_zero_style.width,
+                should_fire=base_should_fire,
+            )
+            if base_rule is not None:
+                vl_layers[0] = nest_zero_rule(vl_layers[0], base_rule, val_ch)
     base_color_enc = base_spec.encoding.get("color") if base_spec.encoding else None
     field_color_base = (
         isinstance(base_color_enc, dict)
@@ -989,11 +1294,22 @@ def render_cartesian_overlay(
     scale_domain: list[str] = []
     scale_range: list[str] = []
     shared_scale: VLDict = {"domain": scale_domain, "range": scale_range}
+    # Legend dicts for the synthetic `datum:`-bound shared-label scale (base +
+    # authored layer `label:`s, never a real field) -- collected for a single
+    # aria-label patch decision below, once scale_domain is fully known.
+    label_scale_legend_encs: list[VLDict] = []
     if field_color_base:
         assert isinstance(base_color_enc, dict)
         color_field = base_color_enc["field"]
         assert isinstance(color_field, str)
         base_series = distinct_series_values(data, color_field)
+        # Every unauthored layer below draws its fill from `palette`
+        # regardless of which branch supplies the base's own range, so an
+        # empty palette is fatal here unconditionally.
+        if not palette:
+            raise ChartDataError(
+                "layered chart has no color palette", chart_id=chart_id
+            )
         existing_scale = base_color_enc.get("scale")
         existing_domain = (
             existing_scale.get("domain") if isinstance(existing_scale, dict) else None
@@ -1007,10 +1323,6 @@ def render_cartesian_overlay(
         if isinstance(existing_range, list):
             scale_range.extend(existing_range)
         elif scale_domain:
-            if not palette:
-                raise ChartDataError(
-                    "layered chart has no color palette", chart_id=chart_id
-                )
             scale_range.extend(
                 spatial_color_scale(base_series, tuple(palette), scale_domain)["range"]
             )
@@ -1024,6 +1336,7 @@ def render_cartesian_overlay(
     square_datums: set[str] = set()  # bar overlays
     field_color_legend_symbols: list[tuple[ChartSpec, str]] = []
     independent_color_scale = False
+    has_authored_line_color = False
     last_area_opacity: float = 1.0
     # Resolved once, up front, so every layer's own x is validated/typed
     # against the base BEFORE that layer's encoding is built (not classified
@@ -1040,9 +1353,35 @@ def render_cartesian_overlay(
         and isinstance(base_x_field, str)
         and _base_domain_is_date_shaped(data, base_x_field)
     )
-    # Every layer that authors its own x, paired with the rows it resolves
-    # against — fed to the union-domain reconciliation after the loop.
-    layer_x_columns: list[tuple[str, list[_Row]]] = []
+    # Each layer's own (x field, rows), resolved before the loop below rather
+    # than inside it: the band anchors the loop builds caption the leading and
+    # trailing band of the axis ``_reconcile_x_domain`` pins after it, and that
+    # axis is a function of every layer's contribution. Resolving one layer at a
+    # time would let a layer whose own values are orderable disagree with an
+    # axis a sibling's unorderable value tipped into paint order.
+    resolved_layer_rows = [
+        _resolve_layer_rows(
+            layer,
+            base_x_field,
+            axis_x,
+            base_x_authored_temporal,
+            datasets,
+            base_query_name,
+        )
+        for layer in layers
+    ]
+    # Feed the union-domain reconciliation whenever a layer's rows can genuinely
+    # differ from the base's — an authored own `x` field, or a genuinely
+    # diverging own `query:` sharing the base's x field name. A non-diverging,
+    # x-unauthored layer shares the base's own rows exactly, so it contributes
+    # nothing new to the union and is correctly left out.
+    layer_x_columns: list[tuple[str, list[_Row]]] = [
+        (field, own_rows if own_rows is not None else data)
+        for layer, (field, own_rows) in zip(layers, resolved_layer_rows, strict=True)
+        if layer.y is not None
+        and (layer.x is not None or layer.query_name != base_query_name)
+        and field is not None
+    ]
     # True when any layer's label sublayer carries a calculate transform (house
     # register OR a position transform like middle/middle_aligned/bottom) — any
     # of these forks the sublayer's dataflow, so it has no x encoding of its
@@ -1061,19 +1400,13 @@ def render_cartesian_overlay(
             # No y field on this layer — skip.
             continue
 
-        label: str = layer.label or format_display_text(
-            y_field, from_slug=True, font=_ay_font
-        )
+        # Engine-derived layer name: same rule as the base's, which comes
+        # from titles.y_plain. Both land in one color.scale.domain and one
+        # endpoint rail, so they must share a convention — an authored
+        # `label:` is the only thing that opts out.
+        label: str = layer.label or default_axis_title(y_field)
 
-        layer_diverges = layer.query_name != base_query_name
-        effective_x_field, own_data = _resolve_layer_rows(
-            layer,
-            base_x_field,
-            axis_x,
-            base_x_authored_temporal,
-            datasets,
-            base_query_name,
-        )
+        own_data = resolved_layer_rows[layer_idx][1]
         rows_for_layer = own_data if own_data is not None else data
 
         # The layer's own x encoding when authored, else the base's (or {}
@@ -1094,6 +1427,36 @@ def render_cartesian_overlay(
             if layer.x is not None
             else base_x_enc
         )
+        # Clip only when this layer actually needs it: it shares the base's
+        # pinned normalize domain — [0, 1], or the author's own wider/
+        # narrower pin (no axis_y.position of its own — layer_orients is
+        # None, see base_stack_normalize's docstring; a dual-axis layer
+        # paints against its own independent scale and is never at risk) —
+        # AND at least one of its own values genuinely falls outside that
+        # domain. A well-behaved shared-scale layer (e.g. a target-share
+        # line whose values are already fractions) must render exactly as
+        # it would with no clip at all — clipping unconditionally for every
+        # shared-scale layer cuts off an in-range value sitting right at the
+        # domain edge (a label, or half a stroke width) and, for an authored
+        # domain, would drop that layer's own corner radius for no reason.
+        layer_shares_normalize_domain = base_stack_normalize and layer_orients is None
+        if layer_shares_normalize_domain:
+            # An authored domain with no numeric arms (e.g. a "flip" string on
+            # scale.continuous.domain) leaves this None even on a fully-baked
+            # normalize chart -- the axis itself still renders that authored
+            # (non-[0,1]) domain via emit_resolved_scale_vl, so [0, 1] here is
+            # only a floor for this gate, not a claim about the rendered axis.
+            authored_domain = authored_measure_domain(axis_y)
+            normalize_domain = (
+                (min(authored_domain), max(authored_domain))
+                if authored_domain is not None
+                else (0.0, 1.0)
+            )
+            layer_shares_normalize_domain = any(
+                _paints_outside_domain(row.get(y_field), normalize_domain)
+                for row in rows_for_layer
+            )
+
         # Per-layer y axis: dual-axis layers get their own orient + title.
         layer_axis_y = layer.axis_y
         if layer_orients is not None:
@@ -1121,7 +1484,7 @@ def render_cartesian_overlay(
             # theme's flat labels.padding reserved, right-anchoring the
             # layer's own tick labels with no gutter -- the mark then draws
             # over them.
-            base_y_enc = base_spec.encoding.get("y") if base_spec.encoding else None
+            base_y_enc = base_spec.encoding.get(val_ch) if base_spec.encoding else None
             base_y_axis = (
                 base_y_enc.get("axis") if isinstance(base_y_enc, dict) else None
             )
@@ -1142,12 +1505,13 @@ def render_cartesian_overlay(
         # (layer_ay_vl["format"] below stays conditional: an un-authored axis
         # keeps VL's own default tick format, unrelated to the base's unit).
         layer_value_format = (
-            layer_axis_y.label.format
-            if layer_axis_y.label is not None and layer_axis_y.label.format is not None
+            layer_axis_y.labels.format
+            if layer_axis_y.labels is not None
+            and layer_axis_y.labels.format is not None
             else tooltip_format
         )
-        if layer_axis_y.label is not None and layer_axis_y.label.format is not None:
-            layer_ay_vl["format"] = layer_axis_y.label.format
+        if layer_axis_y.labels is not None and layer_axis_y.labels.format is not None:
+            layer_ay_vl["format"] = layer_axis_y.labels.format
 
         # #11: per-layer scale.domain sets the VL y encoding scale.
         layer_y_scale: VLDict | None = None
@@ -1192,6 +1556,8 @@ def render_cartesian_overlay(
         ):
             independent_color_scale = True
         apply_color_legend(color_enc, legend)
+        if layer_color_field is None:
+            label_scale_legend_encs.append(color_enc)
         # The series' color: authored constant if present, else the next palette
         # slot. It paints the mark (as the emitter's single-series color) AND is
         # the legend swatch (shared-scale range) — one value, so they can't
@@ -1232,23 +1598,16 @@ def render_cartesian_overlay(
                     chart_id=chart_id,
                 )
             authored_fill = _layer_series_color(layer)
+            if isinstance(layer, ResolvedLineLayer) and authored_fill is not None:
+                has_authored_line_color = True
             if authored_fill is None:
                 layer_ord = len(
                     scale_domain
                 )  # slots already taken by base + prior layers
-                if field_color_base and layer_ord >= len(palette):
-                    raise ChartDataError(
-                        f"layer {label!r} has no available color palette slot",
-                        chart_id=chart_id,
-                    )
+                # Recycles past the last slot via modulo, same as the base's own
+                # field-color scale (spatial_color_scale in _cartesian.py).
                 authored_fill = (
-                    palette[layer_ord]
-                    if field_color_base
-                    else (
-                        palette[layer_ord % len(palette)]
-                        if palette
-                        else single_series_fill
-                    )
+                    palette[layer_ord % len(palette)] if palette else single_series_fill
                 )
             layer_series_fill = authored_fill
             scale_domain.append(label)
@@ -1256,7 +1615,7 @@ def render_cartesian_overlay(
             color_enc["scale"] = shared_scale
         else:
             layer_series_fill = single_series_fill
-        layer_encoding: VLDict = {"y": y_enc, "color": color_enc}
+        layer_encoding: VLDict = {val_ch: y_enc, "color": color_enc}
         # Overlay layers must not inherit the outer stacked-bar ordering: on
         # line/trail/area 'order' controls point-connection order, not z-order,
         # so inheriting __df_series_order disconnects line segments.
@@ -1268,16 +1627,7 @@ def render_cartesian_overlay(
         # absent here, so the sub-layer keeps inheriting the base's x
         # encoding verbatim, unchanged from prior behavior.
         if layer.x is not None:
-            layer_encoding["x"] = layer_x_enc
-        # Feed the union-domain reconciliation whenever this layer's rows
-        # can genuinely differ from the base's — an authored own `x` field,
-        # or a genuinely diverging own `query:` sharing the base's x field
-        # name (effective_x_field). A non-diverging, x-unauthored layer
-        # shares the base's own rows exactly, so it contributes nothing new
-        # to the union and is correctly left out.
-        if (layer.x is not None or layer_diverges) and effective_x_field is not None:
-            layer_x_columns.append((effective_x_field, rows_for_layer))
-
+            layer_encoding[cat_ch] = layer_x_enc
         # Non-None only for a line/area layer whose curve actually applied the
         # band transform below — the layer's own labels then resolve against
         # the band it draws, not against the datum at its center.
@@ -1288,22 +1638,19 @@ def render_cartesian_overlay(
                 layer.line_mark.curve,
                 layer.line_mark.connect is not False,
                 layer_encoding,
-                base_spec.encoding.get("x"),
+                base_spec.encoding.get(cat_ch),
                 rows_for_layer,
                 chart_id,
+                cat_ch,
             )
-            if (
-                step_data is not None
-                and isinstance(base_x_field, str)
-                and isinstance(effective_x_field, str)
-            ):
+            if step_data is not None and isinstance(base_x_field, str):
                 layer_band = _layer_band_anchor(
                     base_x_field,
-                    effective_x_field,
                     y_field,
                     base_x_enc,
                     data,
                     rows_for_layer,
+                    layer_x_columns,
                 )
             sub_layers = emit_line_layer(
                 line_mark=layer.line_mark,
@@ -1328,6 +1675,8 @@ def render_cartesian_overlay(
                 step_band_present = True
             elif own_data is not None:
                 wrapper.data = own_data
+            if layer_shares_normalize_domain:
+                _clip_layer_marks(wrapper)
             vl_layers.append(wrapper)
             if layer_color_values:
                 stroke_datums.update(layer_color_values)
@@ -1342,22 +1691,19 @@ def render_cartesian_overlay(
                 layer.area_mark.curve,
                 True,
                 layer_encoding,
-                base_spec.encoding.get("x"),
+                base_spec.encoding.get(cat_ch),
                 rows_for_layer,
                 chart_id,
+                cat_ch,
             )
-            if (
-                step_data is not None
-                and isinstance(base_x_field, str)
-                and isinstance(effective_x_field, str)
-            ):
+            if step_data is not None and isinstance(base_x_field, str):
                 layer_band = _layer_band_anchor(
                     base_x_field,
-                    effective_x_field,
                     y_field,
                     base_x_enc,
                     data,
                     rows_for_layer,
+                    layer_x_columns,
                 )
             sub_layers = emit_area_layer(
                 area_mark=layer.area_mark,
@@ -1388,6 +1734,8 @@ def render_cartesian_overlay(
                 step_band_present = True
             elif own_data is not None:
                 wrapper.data = own_data
+            if layer_shares_normalize_domain:
+                _clip_layer_marks(wrapper)
             vl_layers.append(wrapper)
             if layer_color_values:
                 circle_datums.update(layer_color_values)
@@ -1399,7 +1747,7 @@ def render_cartesian_overlay(
         elif isinstance(layer, ResolvedBarLayer):
             bar_spec = emit_bar_layer(
                 bar_mark=layer.bar_mark,
-                orientation="vertical",
+                orientation=base_orientation,
                 has_color_encoding=has_color_encoding,
                 single_series_color=layer_series_fill,
                 radius=bar_mark_radius(layer.bar_mark),
@@ -1408,11 +1756,19 @@ def render_cartesian_overlay(
                 measure_field=y_field,
                 config={},
                 transforms=[],
+                # layer_x_enc is this layer's OWN resolved x (its authored x,
+                # or the base's when it doesn't author one) — see its
+                # definition above for why that's already the right encoding
+                # to classify, not necessarily the outer chart's.
+                x_is_banded=x_encoding_is_banded(layer_x_enc),
+                cat_field=layer_x_enc.get("field"),
             )
             if layer_tooltip_description:
                 bar_spec.tooltip_description = layer_tooltip_description
             if own_data is not None:
                 bar_spec.data = own_data
+            if layer_shares_normalize_domain:
+                _clip_layer_marks(bar_spec)
             vl_layers.append(bar_spec)
             if layer_color_values:
                 square_datums.update(layer_color_values)
@@ -1434,10 +1790,66 @@ def render_cartesian_overlay(
                 scatter_spec.tooltip_description = layer_tooltip_description
             if own_data is not None:
                 scatter_spec.data = own_data
+            if layer_shares_normalize_domain:
+                _clip_layer_marks(scatter_spec)
             vl_layers.append(scatter_spec)
             circle_datums.update(layer_color_values)
             if has_color_encoding and not layer_color_values:
                 field_color_legend_symbols.append((scatter_spec, "circle"))
+
+        # Dual-axis: this layer's own zero-baseline rule, nested into the
+        # entry just appended (vl_layers[-1], whichever branch above built
+        # it) so it binds to THIS layer's own independent scale. Gated on a
+        # different side than the base (layer_orients[i] != base_side): a
+        # layer resolved to the SAME side as the base takes no rule of its
+        # own here and relies on the base's injection above -- whether VL's
+        # independent-scale resolution truly unifies same-side entries onto
+        # one scale, or merely renders them on the same visual side with
+        # each on its own, is a separate mixed-pin/duplicate-axis question,
+        # out of scope here. Skipped on an empty dataset for this layer,
+        # mirroring the base's own `and data` guard above -- the always-fire
+        # bar/area arm below short-circuits before consulting rows, so an
+        # empty-rows layer must be excluded here rather than relying on that
+        # branch to notice.
+        if (
+            not multiples_scale_independent
+            and layer_orients is not None
+            and layer_orients[layer_idx] != base_side
+            and rows_for_layer
+        ):
+            layer_domain = numeric_domain_bounds(
+                layer_axis_y.scale.domain if layer_axis_y.scale is not None else None
+            )
+            layer_grid_visible = (
+                layer_axis_y.grid.visible
+                if layer_axis_y.grid is not None
+                and layer_axis_y.grid.visible is not None
+                else axis_y.grid.visible
+            )
+            layer_zero_style = axis_y.grid.zero
+            assert layer_zero_style is not None, (
+                "zero grid style must be resolved before emitting a "
+                "dual-axis baseline rule"
+            )
+            # A layer carries no `scale.continuous.zero` field to check at
+            # all (`LayerAxisYScale` has only `domain`), so bar/area's
+            # own-mark-default always-fire is the only unconditional case;
+            # line/scatter fall through to the straddle check.
+            layer_should_fire = layer.type in ("bar", "area") or values_straddle_zero(
+                rows_for_layer, y_field
+            )
+            layer_rule = build_zero_rule_if_applicable(
+                y_field,
+                val_ch,
+                log_scale=False,
+                authored_domain=layer_domain,
+                grid_visible=layer_grid_visible,
+                zero_color=layer_zero_style.color,
+                zero_width=layer_zero_style.width,
+                should_fire=layer_should_fire,
+            )
+            if layer_rule is not None:
+                vl_layers[-1] = nest_zero_rule(vl_layers[-1], layer_rule, val_ch)
 
         # This layer's OWN value-label text layer, from its OWN mark style —
         # independent of the base chart's labels (dispatched separately by
@@ -1447,12 +1859,14 @@ def render_cartesian_overlay(
         # below, the same already-normalized rows the base renders against —
         # same fallback contract as the wrapper specs above.
         for label_spec in _build_layer_label_specs(
-            layer, y_field, background, rows_for_layer, layer_band
+            layer, y_field, background, rows_for_layer, layer_band, val_ch
         ):
             if own_data is not None:
                 label_spec.data = own_data
             if label_spec.transforms:
                 any_label_transform = True
+            if layer_shares_normalize_domain:
+                _clip_layer_marks(label_spec)
             vl_layers.append(label_spec)
 
     # A step-band curve's xOffset scale — whether on an overlay line/area
@@ -1466,14 +1880,16 @@ def render_cartesian_overlay(
     # explicit bandwidth('x') expression so it keeps tracking the real band
     # width VL would have given it without the sibling xOffset.
     if step_band_present:
+        x_is_banded = x_encoding_is_banded(base_x_enc)
         for vl_spec in vl_layers:
-            _fix_bar_band_width(vl_spec)
+            _fix_bar_band_width(vl_spec, x_is_banded)
 
     if isinstance(x_enc, dict):
         _reconcile_x_domain(
             x_enc,
             data,
             layer_x_columns,
+            chart_id,
             force=any_label_transform,
         )
 
@@ -1483,6 +1899,7 @@ def render_cartesian_overlay(
     if base_label is not None:
         base_color: VLDict = {"datum": base_label, "scale": shared_scale}
         apply_color_legend(base_color, legend)
+        label_scale_legend_encs.append(base_color)
         base_spec.encoding["color"] = base_color
     elif field_color_base:
         assert isinstance(base_color_enc, dict)
@@ -1491,6 +1908,27 @@ def render_cartesian_overlay(
             base_legend.get("values"), list
         ):
             base_legend["values"] = scale_domain
+
+    # scale_domain is complete now and is what Vega will actually enumerate --
+    # deduped, since two series can legitimately share one label (see the
+    # collision guard above) and collapse to one legend entry despite each
+    # still painting its own mark.
+    #
+    # Vega joins the domain with ", " to build its own aria-label, genuinely
+    # ambiguous the moment a value already contains a comma. That is the only
+    # trigger. There is no VL-level property for a bounded replacement text;
+    # `encode.legend.update.description` is Vega's own mark-encode escape
+    # hatch, confirmed (via `vl_convert`-compiled SVG output) to replace the
+    # guide's auto aria-label outright.
+    domain_values = list(dict.fromkeys(scale_domain))
+    if any("," in value for value in domain_values):
+        description = f"{len(domain_values)} series"
+        for label_scale_enc in label_scale_legend_encs:
+            enc_legend = label_scale_enc.get("legend")
+            if isinstance(enc_legend, dict):
+                enc_legend["encode"] = {
+                    "legend": {"update": {"description": {"value": description}}}
+                }
 
     # Mark-aware legend glyphs: patch symbolType exprs when any typed overlay
     # is present and the legend is visible. Skip when the author pinned a
@@ -1513,6 +1951,11 @@ def render_cartesian_overlay(
             square_datums,
             last_area_opacity,
             _base_symbols.get(base_mark_type, "square"),
+            (
+                shared_scale
+                if has_authored_line_color and not independent_color_scale
+                else None
+            ),
         )
     if legend.symbol_shape is None:
         for field_spec, symbol_type in field_color_legend_symbols:
@@ -1524,12 +1967,12 @@ def render_cartesian_overlay(
 
     resolve_scale: dict[str, Any] = {}
     if independent_y:
-        resolve_scale["y"] = "independent"
+        resolve_scale[val_ch] = "independent"
     if independent_color_scale:
         resolve_scale["color"] = "independent"
     resolve = {"scale": resolve_scale} if resolve_scale else {}
 
-    # A non-diverging layer (see layer_diverges above) carries no explicit
+    # A non-diverging layer (see `_resolve_layer_rows`) carries no explicit
     # .data of its own and inherits this outer spec's — which must be the
     # SAME already gap-filled/bucket-normalized `data` the base renders
     # against, not BoardRenderSession's own later fallback (chart_rows(),

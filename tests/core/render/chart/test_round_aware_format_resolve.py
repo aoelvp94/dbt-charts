@@ -132,7 +132,7 @@ def test_axis_and_kpi_agree_on_digits_for_the_same_authored_spec() -> None:
     Under the three-way contract, inline ``"$,.2s"`` passes through without
     trim on both sides — Vega and Python both render ``"$1.0M"``.
 
-    The space-vs-no-space register gap (Vega's bare d3 ``"M"`` vs Dataface's
+    The space-vs-no-space register gap (Vega's bare d3 ``"M"`` vs dbt charts'
     analytic ``" M"``) is pre-existing and out of scope here — stripped out on
     both sides to isolate the digit-count assertion.
     """

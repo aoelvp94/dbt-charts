@@ -33,7 +33,7 @@ _EXPECTED_SYSTEM_VARS = frozenset(
 
 def test_theme_to_css_emits_system_vars_for_dark_theme() -> None:
     dark, _ = resolve_style_and_context(get_theme_style("neon"))
-    editorial, _ = resolve_style_and_context(get_theme_style("editorial"))
+    editorial, _ = resolve_style_and_context(get_theme_style("clarity"))
     css = theme_to_css(dark)
 
     assert css.startswith(":root{")
@@ -50,7 +50,7 @@ def test_theme_to_css_emits_system_vars_for_dark_theme() -> None:
 
 
 def test_chrome_css_variables_cover_contract_slots() -> None:
-    rs, _ = resolve_style_and_context(get_theme_style("editorial"))
+    rs, _ = resolve_style_and_context(get_theme_style("clarity"))
     variables = chrome_css_variables(rs)
     assert set(variables) == _EXPECTED_SYSTEM_VARS
     assert variables["--dbt-system-muted"] == rs.variables.font.color
@@ -63,14 +63,14 @@ def test_chrome_css_variables_cover_contract_slots() -> None:
 
 
 def test_chrome_css_variables_input_border_style_defaults_to_solid() -> None:
-    rs = resolve_style(get_theme_style("editorial"))
+    rs = resolve_style(get_theme_style("clarity"))
     assert rs.variables.border.dash_array is None
     variables = chrome_css_variables(rs)
     assert variables["--dbt-system-input-border-style"] == "solid"
 
 
 def test_chrome_css_variables_input_border_style_dashed_when_dash_array_set() -> None:
-    base = resolve_style(get_theme_style("editorial"))
+    base = resolve_style(get_theme_style("clarity"))
     dashed_border = base.variables.border.model_copy(update={"dash_array": [4, 4]})
     dashed_variables_style = base.variables.model_copy(update={"border": dashed_border})
     diverged = dataclasses.replace(base, variables=dashed_variables_style)
@@ -83,7 +83,7 @@ def test_chrome_css_variables_muted_uses_variables_font_color_not_style_muted() 
     # Every shipped theme converges Style.muted and variables.font.color on the
     # same ink, so construct an explicit divergence (distinctive-value pattern)
     # to discriminate which source chrome_css_variables reads.
-    base, _ = resolve_style_and_context(get_theme_style("editorial"))
+    base, _ = resolve_style_and_context(get_theme_style("clarity"))
     diverged = dataclasses.replace(base, muted="#ff00ff")
     assert diverged.muted != diverged.variables.font.color
     variables = chrome_css_variables(diverged)

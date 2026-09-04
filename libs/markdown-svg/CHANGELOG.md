@@ -7,8 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A heading opening a document no longer draws its own leading margin. Its
+  `margin_top` separates it from the text above it; at the top of the box there
+  is none, so it collapses — the same rule `BlockMetrics.leading_margin` already
+  exists to let a caller apply to a block opening a column, now applied to the
+  box the renderer draws for itself. Headings only: no other block type declares
+  a leading margin, so nothing else moves. `render()`, `render_content()` and
+  `measure()` all move together: the opening block, and everything under it,
+  rises by that margin, and the block's reported height falls by it. Headings
+  after any other block are unchanged.
+- Text baselines are placed by the font's real ascent instead of assuming one em.
+  Every first baseline used to sit exactly `font_size` below its line box top,
+  which treats the ascent as 1em and drops the whole leading below the baseline;
+  the CSS model splits the leading and puts the baseline at
+  `half_leading + ascent`. Paragraphs, headings, blockquotes and list items move
+  as a result —
+  down for text whose line height leaves room (body prose at 1.4 moved ~0.7px),
+  up for the tight line heights typical of headings (a 24px heading at 1.1 moved
+  ~2.4px). Fenced code blocks and table cells are unaffected: they place their
+  own text and size their own boxes on one model, so nothing misregisters within
+  a line. Line advances, and therefore block heights, are unchanged throughout.
+- Ordered-list numbers follow their item's text. The number shared a baseline
+  with its item only because both were the same expression, so moving one moved
+  the numbers off the words by 1-3px, growing with the font size; it now asks for
+  that baseline explicitly. (Bullets needed no change: half a line box down is
+  also the middle of the line's text, at any line height.)
+
+### Added
+
+- `fonts.FontMeasurer.ascent_em` / `.descent_em` — the face's `hhea` vertical
+  metrics as em fractions. Both raise if the font never loaded rather than
+  reporting zero.
+- `renderer.SVGRenderer.heading_baseline(level)` and
+  `.heading_line_box(level, block_height)` — where a heading's first baseline
+  lands inside its block, and which part of that block is text rather than
+  margin. Both describe a heading that opens its document, whose top margin has
+  collapsed; the line box therefore starts at the block's own top edge. For
+  callers that were deriving either by fitting a ratio to one font at one size.
+
 ### Changed
 
+- `renderer.SVGRenderer.measure()` measures by running the same placement loop
+  that draws, rather than its own copy of it. The two could disagree; a caller
+  reserving space for prose it then renders would clip or float it.
 - `fonts.FontMeasurer.measure()` now recognizes emoji clusters (pictographs,
   VS16-forced symbols, ZWJ sequences, flags, keycaps) and books one real
   emoji-advance width per visible glyph instead of measuring per codepoint.

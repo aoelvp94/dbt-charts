@@ -167,4 +167,4 @@ def test_corrupt_manifest_surfaces_as_diagnostic(tmp_path: Path) -> None:
     result = validate_content(_BOARD_WITH_VALID_REF, project=project)
 
     # Must not raise — error must be in result.errors as a diagnostic
-    assert any("ERR-DBT-MANIFEST-INCOMPATIBLE" in e.code for e in result.errors)
+    assert any("ERR-DBT-MANIFEST-UNREADABLE" in e.code for e in result.errors)

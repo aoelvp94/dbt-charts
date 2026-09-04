@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from types import MappingProxyType
 from typing import Any
 
 from d3_format import format as _d3_fmt
 from dbt_charts.core.colors import sanitize_color
-from dbt_charts.core.compile.format import decimal_pad_table_for, resolve_format
+from dbt_charts.core.compile.format import (
+    decimal_pad_table_for,
+    get_format_prefix_suffix,
+    resolve_format,
+)
 from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     TableChart,
@@ -17,6 +21,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedTableChart,
 )
 from dbt_charts.core.compile.models.primitives import (
+    FormatConfig,
     ResolvedNamedPaletteScaleTargetConfig,
     ResolvedScaleTargetConfig,
 )
@@ -51,17 +56,26 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 from dbt_charts.core.compile.resolve.style.palette import (
     palette as resolve_named_palette,
 )
+from dbt_charts.core.font_measure import compose_decimal_units
 from dbt_charts.core.fonts import (
     DBT_SANS_TABULAR_FONT_FAMILY,
     SOURCE_SERIF_4_FONT_FAMILY,
 )
 from dbt_charts.core.text.format_d3 import is_d3_si_spec
 from dbt_charts.core.text.numeral_scale import (
+    build_decimal_pad_table,
     column_digit_format,
+    column_shares_one_printed_unit,
+    fractional_digit_count,
     shared_scale_for_column,
     tier_distance,
 )
-from dbt_charts.core.text.predefined_formats import PredefinedNumberFormat
+from dbt_charts.core.text.predefined_formats import (
+    PREDEFINED_SPECS,
+    PREDEFINED_SUB_UNIT_FALLBACK,
+    PredefinedNumberFormat,
+    si_sub_unit_floor,
+)
 from dbt_charts.core.utils import coerce_numeric_cell
 
 __all__ = [
@@ -99,6 +113,33 @@ def infer_pivot_measure_names(
     )
 
 
+def _style_input_columns(
+    explicit: Mapping[str, TableColumnConfig] | None,
+    defaults: TableColumnDefaultsConfig | None,
+    query_keys: Collection[str],
+) -> frozenset[str]:
+    """Query columns consumed as per-row style inputs.
+
+    ``background``, ``font.color`` and ``font.weight`` resolve
+    column-ID-first (a value matching a query column name reads that row's
+    value from the named column). A column consumed that way is paint, not
+    display data, so it is auto-hidden — the docs' helper-column cell-styling
+    pattern relies on this, with no authored ``visible:``.
+    """
+    sources: list[TableColumnConfig | TableColumnDefaultsConfig] = list(
+        explicit.values() if explicit else ()
+    )
+    if defaults is not None:
+        sources.append(defaults)
+    specs: list[str | float | None] = []
+    for cfg in sources:
+        specs.append(cfg.background)
+        if cfg.font is not None:
+            specs.append(cfg.font.color)
+            specs.append(cfg.font.weight)
+    return frozenset(s for s in specs if isinstance(s, str) and s in query_keys)
+
+
 def _materialize_table_columns(
     explicit: Mapping[str, TableColumnConfig] | None,
     defaults: TableColumnDefaultsConfig | None,
@@ -115,11 +156,17 @@ def _materialize_table_columns(
     verdict, via ``fill_table_column_defaults``. A single identity-key column
     (per ``plan_link_keys``) is protected from FK-link assignment.
 
-    Visible keys: the explicit ``columns:`` mapping when authored (hiding
-    other query columns is the point of authoring a subset — this is also
-    how a pivoting chart authors columns, keyed by measure name); else every
-    query-inferred column, excluding the row-role column and — for a
-    pivoting chart — the measure fields named in ``pivot_measure_names``.
+    Keys: every query-inferred column — excluding the row-role column and,
+    for a pivoting chart, the measure fields named in ``pivot_measure_names``
+    — plus any explicitly authored keys beyond those (a pivoting chart
+    authors columns keyed by measure name or bare pivoted value, and an
+    empty result set still needs the authored entries for its empty-state
+    headers). ``style.columns`` is styling-only: authoring a subset styles
+    those columns and never narrows this mapping. Hiding is the per-column
+    ``visible: false`` — such entries stay present here carrying
+    ``visible=False`` (render filters at display time), and a column
+    consumed as a style input (see ``_style_input_columns``) is materialized
+    with ``visible=False`` derived automatically.
 
     A pivoted measure's real leaf-column key space (leaf keys, or bare
     pivoted values for a single-dim single-measure pivot) only exists after
@@ -148,14 +195,16 @@ def _materialize_table_columns(
     if not explicit and defaults is None and not table_column_links and not data:
         return None
 
+    keys = [
+        key
+        for key in (data[0] if data else {})
+        if key != row_role and key not in pivot_measure_names
+    ]
     if explicit:
-        keys = list(explicit)
-    else:
-        keys = [
-            key
-            for key in (data[0] if data else {})
-            if key != row_role and key not in pivot_measure_names
-        ]
+        present = set(keys)
+        keys += [key for key in explicit if key not in present]
+
+    style_inputs = _style_input_columns(explicit, defaults, data[0] if data else ())
 
     protected: frozenset[str] = frozenset()
     if table_column_links:
@@ -180,8 +229,73 @@ def _materialize_table_columns(
             defaults,
             link_override=link_override,
             values=() if align_already_set else [row.get(key) for row in data],
+            # An explicit entry is a display signal that beats derivation:
+            # auto-hide applies only to columns the author never mentioned.
+            auto_hidden=source is None and key in style_inputs,
         )
     return result
+
+
+def _si_spec_for_value(
+    raw: str | None, si_check_fmt: str, prefix: str, suffix: str, value: float
+) -> str:
+    """The spec ``format_kpi_parts`` will actually paint ``value`` with, when
+    ``shared_scale`` is ``None`` -- the exact condition this fallback fires
+    under.
+
+    ``format_kpi_parts`` swaps a ``PREDEFINED_SUB_UNIT_FALLBACK`` member (e.g.
+    ``currency``) off its SI spec onto a plain two-decimal spec for any single
+    row that falls in the sub-$1 band -- money below $1 has no sub-cent SI
+    unit to name. Must track that swap exactly: a pad table built by
+    measuring every row with the bare SI spec would be too shallow for what
+    that swapped row actually prints, and ``decimal_pad_for`` raises past it.
+    """
+    if raw not in PREDEFINED_SUB_UNIT_FALLBACK:
+        return si_check_fmt
+    floor = si_sub_unit_floor(si_check_fmt, prefix, suffix)
+    if floor < abs(value) < 1.0:
+        return PREDEFINED_SPECS[PREDEFINED_SUB_UNIT_FALLBACK[raw]]
+    return si_check_fmt
+
+
+def _unscaled_decimal_pad_table(
+    values: list[float],
+    si_check_fmt: str,
+    font_family: str,
+    raw: str | None,
+    prefix: str,
+    suffix: str,
+) -> tuple[str, ...]:
+    """Decimal pad table for a column with no shared SI tier to divide by --
+    every cell keeps its own per-cell significant-figures spec. Self-gates on
+    ``column_shares_one_printed_unit``: returns ``()`` when the column's
+    cells don't all print the same SI suffix (a genuine tier mix, e.g.
+    12100/900), since a bare whole number and a "k"-suffixed one share no
+    decimal position to pad to.
+
+    Compile-side twin of ``support_table_attachment.py``'s
+    ``_unscaled_decimal_pad``: same string-level questions (do these cells
+    share a printed unit; how many fractional digits does the deepest one
+    print), but formats with ``_d3_fmt`` directly rather than render's
+    ``format_value``, since ``compile`` cannot import ``render``
+    (``compile ↛ render``). Each value is measured through
+    ``_si_spec_for_value``, not the bare ``si_check_fmt`` -- a sub-$1 cell
+    prints deeper than the rest of the column.
+
+    Returns ``()`` when every cell already prints the same number of
+    fractional digits (nothing to align).
+    """
+    texts = [
+        (v, _d3_fmt(_si_spec_for_value(raw, si_check_fmt, prefix, suffix, v), v))
+        for v in values
+    ]
+    if not column_shares_one_printed_unit(texts):
+        return ()
+    fracs = {fractional_digit_count(t) for _, t in texts}
+    if len(fracs) <= 1:
+        return ()
+    digit_unit, dot_unit = compose_decimal_units(font_family)
+    return build_decimal_pad_table(max(fracs), digit_unit, dot_unit)
 
 
 def _with_resolved_scale_stops(
@@ -227,15 +341,29 @@ def _with_resolved_scale_stops(
         resolved_fmt = resolve_format(col.format, formats)
         coerced_values = _coerced_column_values(rows, name) if rows else []
 
-        # A column with no explicit format: still falls back to number_default
+        # A column with no explicit format: still falls back to the engine default
         # (an SI spec) at render time (format_kpi_parts's default_number=True)
         # -- mirror that fallback here so an unformatted numeric column is
         # eligible for the same shared-scale bake as an explicitly `~s`
-        # column, matching the Problem this task targets ("number_default,
-        # or any inline ~s spec").
+        # column, matching the Problem this task targets ("the engine
+        # default, or any inline ~s spec").
         si_check_fmt = resolved_fmt or resolve_format(
-            PredefinedNumberFormat.number_default, formats
+            PredefinedNumberFormat.number, formats
         )
+        # Raw format name feeding the sub-unit-floor swap below, mirroring
+        # format_kpi_parts's own _raw derivation order: derive from the
+        # authored format first, then override to the engine default only
+        # when unformatted (matching table.py's default_number=True call).
+        raw_format_name = (
+            col.format.spec
+            if isinstance(col.format, FormatConfig)
+            else col.format
+            if isinstance(col.format, str)
+            else None
+        )
+        if not resolved_fmt:
+            raw_format_name = PredefinedNumberFormat.number.value
+        explicit_prefix, explicit_suffix = get_format_prefix_suffix(col.format)
 
         shared_scale: ResolvedColumnSharedScale | None = None
         if allow_shared_scale and coerced_values and is_d3_si_spec(si_check_fmt):
@@ -321,12 +449,10 @@ def _with_resolved_scale_stops(
                 # and every row's trimmed depth is already known here -- no
                 # row can ever need more padding than the deepest one
                 # actually observed. Scoped to shared_scale columns only:
-                # a plain fixed-point column's pad_table is also applied
-                # (unconditionally, pre-existing behavior) to non-numeric
-                # fallback cell text in measure_column_demands, so capping
-                # it here risks under-sizing for a stray string this bake
-                # never saw -- leave that path at its original, generously
-                # uncapped precision.
+                # this bake knows its own digit_spec produced every cell it
+                # measured, so the observed depths really do bound what the
+                # pad must cover. A plain fixed-point column has no such
+                # guarantee, so its table stays at the declared precision.
                 pad_table = decimal_pad_table_for(
                     pad_fmt, font_family, max_precision=max(actual_fracs)
                 )
@@ -334,6 +460,27 @@ def _with_resolved_scale_stops(
                 pad_table = spec_table
         else:
             pad_table = spec_table
+        if (
+            shared_scale is None
+            and not pad_table
+            and coerced_values
+            and is_d3_si_spec(si_check_fmt)
+        ):
+            # decimal_pad_table_for refuses an SI spec (type "s") -- it only
+            # builds a table from a declared fixed-point precision. A column
+            # with no shared tier at all still needs decimal alignment, so
+            # fall back to measuring each cell's own printed depth, mirroring
+            # support_table_attachment.py's _unscaled_decimal_pad.
+            # _unscaled_decimal_pad_table self-gates on
+            # column_shares_one_printed_unit, refusing a genuine tier mix.
+            pad_table = _unscaled_decimal_pad_table(
+                coerced_values,
+                si_check_fmt,
+                font_family,
+                raw_format_name,
+                explicit_prefix,
+                explicit_suffix,
+            )
         if col.scale is None:
             result[name] = ResolvedTableColumnConfig.model_validate(
                 {

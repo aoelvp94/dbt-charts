@@ -2,7 +2,7 @@
 name: report-design
 kind: workflow
 description: >
-  Design principles for Dataface narrative reports — data-driven documents
+  Design principles for dbt charts narrative reports — data-driven documents
   that answer specific questions. Use when creating analyses, investigations,
   periodic reports, or when the user says 'write a report', 'analyze this
   data', 'create an analysis', 'narrative report'. Covers narrative
@@ -42,12 +42,13 @@ If the user needs at-a-glance monitoring, use the `board-design` skill instead.
 
 ## Metadata Requirement
 
-When producing Dataface YAML, include `description` metadata for AI context/search:
+When producing dbt charts YAML, include `notes` metadata for AI context/search — it
+never renders:
 
-- `queries.*.description`: query purpose
-- `charts.*.description`: what evidence the chart provides
-- `variables.*.description`: filter meaning (if variables are present)
-- Layout object `description` fields (`rows`/`cols`/`grid.items`/`tabs.items`) where section context helps
+- `queries.*.notes`: query purpose
+- `charts.*.notes`: what evidence the chart provides
+- `variables.*.notes`: filter meaning (if variables are present)
+- Layout object `notes` fields (`rows`/`cols`/`grid.items`/`tabs.items`) where section context helps
 
 ## Narrative Structure
 
@@ -161,7 +162,7 @@ Key differences from dashboard YAML:
 - [ ] Story flows logically section to section
 - [ ] Appropriate length (3-6 analysis sections)
 - [ ] Professional tone (direct, specific, active voice)
-- [ ] Query/chart/variable/layout `description` metadata is filled for AI context
+- [ ] Query/chart/layout/variable `notes` metadata is filled for AI context
 
 ## Common Mistakes
 

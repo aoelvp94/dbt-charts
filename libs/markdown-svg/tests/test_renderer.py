@@ -1,5 +1,6 @@
 """Tests for the SVG renderer."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,7 @@ from mdsvg import (
     render_blocks,
     render_content,
 )
-from mdsvg.fonts import FontFace, FontFaces, _cached_measurer
+from mdsvg.fonts import FontFace, FontFaces, FontMeasurer, _cached_measurer
 from mdsvg.renderer import SVGRenderer
 
 
@@ -1261,7 +1262,9 @@ class TestHeadingMarginPxOverrides:
 
         em_only = Style(heading_margin_top=2.0, heading_margin_top_px=None)
         px_override = Style(heading_margin_top=2.0, heading_margin_top_px=40.0)
-        h1 = "# Heading"
+        # Preceded by a paragraph: an opening heading collapses its top margin,
+        # so a lone heading cannot show a top-margin override at all.
+        h1 = "Body.\n\n# Heading"
 
         em_size = measure(h1, width=400, style=em_only)
         px_size = measure(h1, width=400, style=px_override)
@@ -1293,15 +1296,19 @@ class TestHeadingMarginPxOverrides:
         # Same px margin on top and bottom — block heights should differ
         # only by the heading text height, not by scaled margins.
         style = Style(heading_margin_top_px=20.0, heading_margin_bottom_px=20.0)
-        h1 = measure("# H", width=400, style=style)
-        h2 = measure("## H", width=400, style=style)
-        h6 = measure("###### H", width=400, style=style)
+        # Each heading follows a paragraph, so its top margin is drawn; an
+        # opening heading collapses it and would leave only the bottom half
+        # of the constant this test is about.
+        lead = measure("Body.", width=400, style=style).height
+        h1 = measure("Body.\n\n# H", width=400, style=style)
+        h2 = measure("Body.\n\n## H", width=400, style=style)
+        h6 = measure("Body.\n\n###### H", width=400, style=style)
 
         # Compute the non-margin portion (= heading text height).
         # block_height - 40px (top+bottom px) = text_height
-        h1_text = h1.height - 40
-        h2_text = h2.height - 40
-        h6_text = h6.height - 40
+        h1_text = h1.height - lead - 40
+        h2_text = h2.height - lead - 40
+        h6_text = h6.height - lead - 40
 
         # Each heading's text height differs (different font sizes).
         assert h1_text > h2_text > h6_text, (
@@ -1310,9 +1317,9 @@ class TestHeadingMarginPxOverrides:
         # The margin contribution itself is 40px in every case.
         # Equivalently: block_height - text_height is constant.
         assert (
-            (h1.height - h1_text)
-            == (h2.height - h2_text)
-            == (h6.height - h6_text)
+            (h1.height - lead - h1_text)
+            == (h2.height - lead - h2_text)
+            == (h6.height - lead - h6_text)
             == 40
         )
 
@@ -1323,8 +1330,8 @@ class TestHeadingMarginPxOverrides:
         em_only_3 = Style(heading_margin_top=3.0, heading_margin_top_px=None)
         em_only_1 = Style(heading_margin_top=1.0, heading_margin_top_px=None)
 
-        size_3 = measure("# H", width=400, style=em_only_3)
-        size_1 = measure("# H", width=400, style=em_only_1)
+        size_3 = measure("Body.\n\n# H", width=400, style=em_only_3)
+        size_1 = measure("Body.\n\n# H", width=400, style=em_only_1)
 
         # Larger em multiplier → taller block.
         assert size_3.height > size_1.height
@@ -1357,11 +1364,13 @@ class TestHeadingAdjacentSpacingSkipsParagraphSpacing:
         h_alone = measure("## H", width=400, padding=0, style=style)
         seq = measure("Para.\n\n## H", width=400, padding=0, style=style)
 
-        assert seq.height == text_alone.height + h_alone.height, (
+        # h_alone opens its own document, so it collapsed the 40px top margin
+        # the heading in `seq` draws — the joint itself still adds nothing.
+        expected = text_alone.height + h_alone.height + 40.0
+        assert seq.height == expected, (
             f"p → h should sum the two block heights exactly (heading margins "
-            f"are inside h_alone). Got {seq.height} vs "
-            f"{text_alone.height + h_alone.height} expected. Excess implies "
-            f"paragraph_spacing leaked into the joint."
+            f"are inside h_alone). Got {seq.height} vs {expected} expected. "
+            f"Excess implies paragraph_spacing leaked into the joint."
         )
 
     def test_heading_to_paragraph_skips_paragraph_spacing(self) -> None:
@@ -1398,8 +1407,9 @@ class TestHeadingAdjacentSpacingSkipsParagraphSpacing:
         h_alone = measure("## H", width=400, padding=0, style=style)
         seq = measure("## H\n\n## H", width=400, padding=0, style=style)
 
-        # Without collapse, seq = 2 * h_alone. Collapse subtracts margin_bottom.
-        expected = 2 * h_alone.height - 10.0
+        # h_alone collapsed its own top margin; the second heading in `seq`
+        # draws its 40, and the collapse drops the first one's trailing 10.
+        expected = 2 * h_alone.height + 40.0 - 10.0
         assert seq.height == expected, (
             f"h → h should margin-collapse: 2 * h_alone - margin_bottom = "
             f"{expected}. Got {seq.height}. A summed (10+40) joint OR a "
@@ -1792,3 +1802,255 @@ class TestCodeHighlighting:
         svg = render("```yaml\nkey: value\n```", style=style)
         fills = set(re.findall(r'<tspan fill="([^"]+)"', svg))
         assert len(fills) > 1
+
+
+class TestBaselinePlacement:
+    """Where the first baseline lands inside its line box.
+
+    CSS puts it at ``half_leading + ascent``, splitting the leading above and
+    below the text. Assuming the ascent is one em and dropping the whole leading
+    under the baseline sets every line low in the box reserved for it, by an
+    amount that grows with the font size.
+    """
+
+    @staticmethod
+    def _baselines(svg: str) -> list[float]:
+        found = re.findall(r'<text[^>]*\by="([\d.]+)"', svg)
+        assert found, "no text element in the rendered SVG"
+        return [float(y) for y in found]
+
+    @classmethod
+    def _first_baseline(cls, svg: str) -> float:
+        return cls._baselines(svg)[0]
+
+    @staticmethod
+    def _expected(measurer, font_size: float, line_height: float) -> float:
+        ascent = measurer.ascent_em * font_size
+        descent = measurer.descent_em * font_size
+        return (font_size * line_height - ascent - descent) / 2 + ascent
+
+    def test_paragraph_baseline_splits_the_leading(self) -> None:
+        style = Style(base_font_size=14, line_height=1.4)
+        renderer = SVGRenderer(style=style)
+        svg = renderer.render(parse("Body copy."), width=400, padding=0.0)
+
+        assert self._first_baseline(svg) == pytest.approx(
+            self._expected(renderer._measurer, 14, 1.4), abs=0.01
+        )
+
+    def test_heading_baseline_splits_the_leading_below_its_margin(self) -> None:
+        """A heading's own top margin offsets the line box; the split is the same.
+
+        Its leading is negative — the shipped heading line heights are tighter
+        than a face's ascent-to-descender — so this is also the case that pins
+        the model holding when the text overflows the box it is allotted.
+        """
+        style = Style(
+            base_font_size=14,
+            heading_line_height=1.1,
+            heading_margin_top_px=20.0,
+            heading_margin_bottom_px=10.0,
+        )
+        renderer = SVGRenderer(style=style)
+        # After a paragraph, so the heading draws the margin this test offsets by.
+        lead = renderer.measure(parse("Body."), width=400, padding=0.0).height
+        svg = renderer.render(parse("Body.\n\n# Heading"), width=400, padding=0.0)
+
+        font_size = style.get_heading_size(1)
+        assert self._baselines(svg)[1] == pytest.approx(
+            lead + 20.0 + self._expected(renderer._measurer, font_size, 1.1), abs=0.01
+        )
+
+    def test_line_advance_is_unchanged_by_where_the_baseline_sits(self) -> None:
+        """Only the baseline moves — the leading it splits is the same leading.
+
+        Consecutive baselines stay exactly one advance apart, so blocks keep
+        their heights and nothing stacked below a text block has to move. That
+        is what keeps this a typography fix rather than a layout one.
+        """
+        style = Style(base_font_size=14, line_height=1.4)
+        renderer = SVGRenderer(style=style)
+        # Narrow enough to wrap, so the two baselines are lines of one paragraph.
+        svg = renderer.render(parse("One two three four five"), width=60, padding=0.0)
+
+        baselines = [float(m) for m in re.findall(r'<text[^>]*\by="([\d.]+)"', svg)]
+        assert len(baselines) >= 2, svg
+        assert baselines[1] - baselines[0] == pytest.approx(14 * 1.4, abs=0.01)
+
+    def test_heading_baseline_reports_the_line_the_heading_was_drawn_on(self) -> None:
+        """Including at a zero heading line height, which is a reachable style.
+
+        ``heading_line_height`` is optional with no validator, so ``0.0`` is a
+        value a consumer of this library can set. Resolving it with ``or`` treats
+        it as unset and falls back to the body line height, which reports a
+        baseline ~19px away from the one drawn — on the one method whose whole
+        contract is "the number the heading was actually drawn with".
+        """
+        for multiplier in (0.0, 1.1, 1.5):
+            style = Style(
+                base_font_size=14,
+                heading_line_height=multiplier,
+                heading_margin_top_px=20.0,
+                heading_margin_bottom_px=10.0,
+            )
+            renderer = SVGRenderer(style=style)
+            svg = renderer.render(parse("# Heading"), width=400, padding=0.0)
+
+            drawn = re.search(r'<text[^>]*\by="([\d.]+)"', svg)
+            assert drawn, svg
+            assert renderer.heading_baseline(1) == pytest.approx(
+                float(drawn.group(1)), abs=0.01
+            ), f"heading_line_height={multiplier}"
+
+    def test_heading_line_box_is_the_block_without_its_margins(self) -> None:
+        """The bottom margin is rhythm; what is left is the text.
+
+        The top margin is not in the block at all — an opening heading collapses
+        it — so the line box starts at the block's own top edge.
+        """
+        style = Style(
+            base_font_size=14, heading_margin_top_px=20.0, heading_margin_bottom_px=10.0
+        )
+        renderer = SVGRenderer(style=style)
+        block = renderer.measure(parse("# Heading"), width=400, padding=0.0).height
+
+        top, height = renderer.heading_line_box(1, block)
+        assert top == pytest.approx(0.0)
+        assert height == pytest.approx(block - 10.0)
+        assert top <= renderer.heading_baseline(1) < top + height
+
+    def test_vertical_metrics_come_from_the_face(self) -> None:
+        """Both are em fractions of the loaded font, and both refuse to guess."""
+        renderer = SVGRenderer(style=Style())
+        measurer = renderer._measurer
+
+        assert 0.0 < measurer.ascent_em <= 2.0
+        assert 0.0 < measurer.descent_em <= 2.0
+        with pytest.raises(RuntimeError):
+            _ = FontMeasurer("/nonexistent/path/that/cannot/load.ttf").ascent_em
+
+    def test_a_list_marker_sits_on_its_item_s_own_baseline(self) -> None:
+        """A number labels the words beside it, so it shares their baseline.
+
+        The two used to be the same expression, so this held by construction and
+        nothing pinned it. Moving the text's baseline without moving the marker
+        left ordered lists with their numbers riding above the words, growing
+        with the font size and invisible to every golden — none renders a list.
+        """
+        for font_size in (14, 24):
+            renderer = SVGRenderer(style=Style(base_font_size=font_size))
+            svg = renderer.render(parse("1. First item"), width=400, padding=0.0)
+
+            ys = re.findall(r'<text[^>]*\by="([\d.]+)"', svg)
+            assert len(ys) == 2, svg
+            assert float(ys[0]) == pytest.approx(float(ys[1]), abs=0.01), (
+                f"at {font_size}px the marker sits at y={ys[0]} and its item at "
+                f"y={ys[1]}"
+            )
+
+    def test_a_bullet_is_centred_on_its_item_s_text(self) -> None:
+        """A bullet sits at the middle of its item's text.
+
+        It gets there via the line box's middle, which is the same point: the
+        half-leading above the ascent equals the half-leading below the descent,
+        so the two midpoints coincide at any line height. Stated in font terms
+        here so that a baseline model which broke the equality would be caught.
+        """
+        style = Style(base_font_size=14, line_height=1.8)
+        renderer = SVGRenderer(style=style)
+        svg = renderer.render(parse("- First item"), width=400, padding=0.0)
+
+        bullet = re.search(r'<circle[^>]*\bcy="([\d.]+)"', svg)
+        text = re.search(r'<text[^>]*\by="([\d.]+)"', svg)
+        assert bullet and text, svg
+        cy, baseline = float(bullet.group(1)), float(text.group(1))
+        measurer = renderer._measurer
+        expected = baseline - (measurer.ascent_em - measurer.descent_em) / 2 * 14
+        assert cy == pytest.approx(expected, abs=0.01)
+
+
+class TestOpeningBlockMarginCollapse:
+    """A block opening a document draws no leading margin.
+
+    That whitespace separates a heading from text above it. At the top of the
+    box there is no text above it, so there is nothing to separate from -- the
+    same rule ``BlockMetrics.leading_margin`` exists to let a column packer
+    apply, applied to the box the renderer draws for itself.
+    """
+
+    @staticmethod
+    def _baselines(svg: str) -> list[float]:
+        return [float(y) for y in re.findall(r'<text[^>]*\by="([\d.]+)"', svg)]
+
+    def test_a_heading_opening_a_document_sits_at_the_top_of_the_box(self) -> None:
+        style = Style(
+            base_font_size=14, heading_margin_top_px=20.0, heading_margin_bottom_px=10.0
+        )
+        renderer = SVGRenderer(style=style)
+        svg = renderer.render(parse("# Heading"), width=400, padding=0.0)
+
+        assert self._baselines(svg)[0] == pytest.approx(
+            renderer.heading_baseline(1), abs=0.01
+        )
+        wider = SVGRenderer(
+            style=Style(
+                base_font_size=14,
+                heading_margin_top_px=200.0,
+                heading_margin_bottom_px=10.0,
+            )
+        )
+        assert self._baselines(
+            wider.render(parse("# Heading"), width=400, padding=0.0)
+        )[0] == pytest.approx(self._baselines(svg)[0], abs=0.01), (
+            "the opening heading is still carrying its own top margin"
+        )
+
+    def test_a_heading_after_a_paragraph_keeps_its_leading_margin(self) -> None:
+        """Only the opener collapses -- mid-document rhythm is untouched."""
+        style = Style(
+            base_font_size=14, heading_margin_top_px=20.0, heading_margin_bottom_px=10.0
+        )
+        renderer = SVGRenderer(style=style)
+
+        opener = renderer.measure(parse("# Heading"), width=400, padding=0.0).height
+        with_paragraph = renderer.measure(
+            parse("Body text.\n\n# Heading"), width=400, padding=0.0
+        ).height
+        paragraph = renderer.measure(parse("Body text."), width=400, padding=0.0).height
+
+        assert with_paragraph == pytest.approx(paragraph + opener + 20.0, abs=0.01)
+
+    def test_the_collapsed_margin_comes_off_the_block_s_height(self) -> None:
+        """The box shrinks with the ink -- otherwise the gap moves to the bottom."""
+        margin_top = 20.0
+        drawn = Style(
+            base_font_size=14,
+            heading_margin_top_px=margin_top,
+            heading_margin_bottom_px=10.0,
+        )
+        none = Style(
+            base_font_size=14, heading_margin_top_px=0.0, heading_margin_bottom_px=10.0
+        )
+        blocks = parse("# Heading\n\nBody text.")
+
+        assert SVGRenderer(style=drawn).measure(
+            blocks, width=400, padding=0.0
+        ).height == pytest.approx(
+            SVGRenderer(style=none).measure(blocks, width=400, padding=0.0).height,
+            abs=0.01,
+        )
+
+    def test_a_heading_opening_a_blockquote_collapses_too(self) -> None:
+        """A blockquote is a box, and the rule is the box's, not the document's."""
+        style = Style(
+            base_font_size=14, heading_margin_top_px=20.0, heading_margin_bottom_px=10.0
+        )
+        renderer = SVGRenderer(style=style)
+
+        quoted = renderer.measure(parse("> # Heading"), width=400, padding=0.0).height
+        after = renderer.measure(
+            parse("> Body text.\n> # Heading"), width=400, padding=0.0
+        ).height
+        body = renderer.measure(parse("> Body text."), width=400, padding=0.0).height
+
+        assert after - body - quoted == pytest.approx(20.0, abs=0.01)

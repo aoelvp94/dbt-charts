@@ -7,7 +7,7 @@ Package layout (one family per file, mirroring the initiative's anti-mega-module
   _base.py                    — base classes (never instantiated directly)
   _type.py                    — ChartType enum and UI display metadata
   _conditional_formatting.py  — predicate rules and column-scoped rule sets
-  _data_table.py              — chart.data_table attached mini-table primitive
+  _support_table.py              — chart.support_table attached mini-table primitive
   _annotations.py             — ChartSort, ChartTotal
   _layer.py                   — per-layer authored input for layered charts
   bar.py        — BarChart
@@ -66,16 +66,6 @@ from ._conditional_formatting import (
     _PredicateBase,
     match_predicate,
 )
-from ._data_table import (
-    CHART_DATA_TABLE_SUPPORTED_TYPES,
-    ChartDataTable,
-    ChartDataTableAggregate,
-    ChartDataTableAggregateOp,
-    ChartDataTableEntry,
-    ChartDataTablePerSeries,
-    ChartDataTableSource,
-    validate_data_table_shape,
-)
 from ._layer import (
     AreaLayer,
     BarLayer,
@@ -83,6 +73,17 @@ from ._layer import (
     LayerAxisYStyle,
     LineLayer,
     ScatterLayer,
+)
+from ._support_table import (
+    CHART_SUPPORT_TABLE_SUPPORTED_TYPES,
+    ChartSupportTable,
+    ChartSupportTableAggregate,
+    ChartSupportTableAggregateOp,
+    ChartSupportTableEntry,
+    ChartSupportTableOrList,
+    ChartSupportTablePerSeries,
+    ChartSupportTableSource,
+    validate_support_table_shape,
 )
 from ._type import (
     _INTERNAL_CHART_TYPES,
@@ -209,15 +210,16 @@ __all__ = [
     "_PREDICATE_OPS",
     "_PredicateBase",
     "match_predicate",
-    # data_table
-    "CHART_DATA_TABLE_SUPPORTED_TYPES",
-    "ChartDataTable",
-    "ChartDataTableAggregate",
-    "ChartDataTableAggregateOp",
-    "ChartDataTableEntry",
-    "ChartDataTablePerSeries",
-    "ChartDataTableSource",
-    "validate_data_table_shape",
+    # support_table
+    "CHART_SUPPORT_TABLE_SUPPORTED_TYPES",
+    "ChartSupportTable",
+    "ChartSupportTableAggregate",
+    "ChartSupportTableAggregateOp",
+    "ChartSupportTableEntry",
+    "ChartSupportTableOrList",
+    "ChartSupportTablePerSeries",
+    "ChartSupportTableSource",
+    "validate_support_table_shape",
     # annotations
     "ChartSort",
     "ChartTotal",

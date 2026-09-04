@@ -1,6 +1,6 @@
 """Regression for Issue 6: each board-path verb resolves correctly from a subdir.
 
-Each test runs from a fixture subdirectory inside a Dataface project
+Each test runs from a fixture subdirectory inside a dbt charts project
 (containing dbt_charts.yml) and passes only the project-root-relative path.
 Before the fix every verb resolved the board against cwd, producing a
 'File not found' error from inside a nested directory.
@@ -115,7 +115,7 @@ class TestHintFromNoProject:
         assert result.exit_code == 1
         combined = result.output + (result.stderr or "")
         assert "Traceback" not in combined
-        assert "No Dataface project found" in combined
+        assert "No dbt charts project found" in combined
 
     def test_describe_emits_hint(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -125,7 +125,7 @@ class TestHintFromNoProject:
         assert result.exit_code == 1
         combined = result.output + (result.stderr or "")
         assert "Traceback" not in combined
-        assert "No Dataface project found" in combined
+        assert "No dbt charts project found" in combined
 
     def test_query_emits_hint(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -137,7 +137,7 @@ class TestHintFromNoProject:
         assert result.exit_code == 1
         combined = result.output + (result.stderr or "")
         assert "Traceback" not in combined
-        assert "No Dataface project found" in combined
+        assert "No dbt charts project found" in combined
 
 
 class TestExplicitProjectDirRejectsNonProject:
@@ -155,4 +155,4 @@ class TestExplicitProjectDirRejectsNonProject:
         # spans a wrap boundary at narrow CI terminal widths.
         combined = " ".join((result.output + (result.stderr or "")).split())
         assert "Traceback" not in combined
-        assert "is not a Dataface project" in combined
+        assert "is not a dbt charts project" in combined

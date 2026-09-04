@@ -3,7 +3,7 @@
 Raw chart-level `mark`, `encoding`, `spec`, and the eight formerly-passthrough
 fields (`config`, `transform`, `params`, `resolve`, `hconcat`, `vconcat`,
 `concat`, `repeat`) are all off-limits on the authored surface. Authors must
-use top-level Dataface fields and the typed `style:` object exclusively.
+use top-level dbt charts fields and the typed `style:` object exclusively.
 
 PR #1053 removed config/transform/params/spec. PR #1058 accidentally re-added
 them (plus four composition fields) during a rebase. This file pins the
@@ -64,7 +64,7 @@ class TestRemovedVLPassthroughFields:
         assert not result.success
 
     def test_typed_fields_still_allowed(self):
-        """Typed Dataface fields compile normally."""
+        """Typed dbt charts fields compile normally."""
         result = _compile_chart_yaml("")
         assert result.success, result.errors
 

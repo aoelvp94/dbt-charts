@@ -107,7 +107,7 @@ class TestSignatures:
         assert "get_theme_style().frame.margin" not in src
         assert "get_theme_style().frame.card_padding" not in src
         assert "get_theme_style().frame.card_gap" not in src
-        assert "get_theme_style().frame.width" not in src
+        assert "get_theme_style().frame.max_width" not in src
 
 
 # ---------------------------------------------------------------------------

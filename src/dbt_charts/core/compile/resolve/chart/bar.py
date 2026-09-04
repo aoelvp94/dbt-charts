@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from math import ceil
 from typing import Literal
 
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import resolve_label_format
 from dbt_charts.core.compile.merge import merge_onto_base
-from dbt_charts.core.compile.models.chart.authored._data_table import (
-    ChartDataTablePerSeries,
+from dbt_charts.core.compile.models.chart.authored._support_table import (
+    ChartSupportTablePerSeries,
 )
 from dbt_charts.core.compile.models.chart.normalized import (
     BarChart,
@@ -22,19 +21,26 @@ from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedBarStyle
 from dbt_charts.core.compile.models.style.theme import (
-    BarChartStyle,
+    AxisXStyle,
+    AxisYStyle,
     BarLabelsStyle,
 )
 from dbt_charts.core.compile.resolve.chart._axes import (
     _author_asked_for_endpoint_labels,
-    _author_hid_legend,
+    _authored_legend,
     _bake_ay_orient,
     _bake_ay_position_left,
     _edge_or_none,
     _endpoint_labels_off_for_layers,
     _endpoint_labels_off_for_multiples,
     _reject_dual_axis_layered_endpoint_labels,
+    cartesian_color_domain_values,
     cartesian_series_naming,
+    cartesian_top_legend_entries,
+    estimate_cartesian_plot_height,
+    estimate_left_axis_reserve_px,
+    legend_wrap_marginal_height_px,
+    legend_wrap_required_height_px,
 )
 from dbt_charts.core.compile.resolve.chart._channels import (
     _bar_orientation,
@@ -44,7 +50,9 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     ChartDataset,
     ChartRows,
     LayerDatasets,
+    PanelRows,
     fold_panels,
+    partition,
     restamp,
 )
 from dbt_charts.core.compile.resolve.chart._domain import (
@@ -82,13 +90,23 @@ from dbt_charts.core.compile.resolve.chart._palette import (
 from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
     plan_cartesian,
+    quantitative_channel_values,
 )
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
+    WIDE_LABEL_FIELD,
+    WIDE_VALUE_FIELD,
     bake_wide_measures_kwargs,
     resolve_wide_measure_channels,
+    unfold_wide_rows,
+    wide_series_names,
+)
+from dbt_charts.core.compile.resolve.chart.plot_height_floor import (
+    estimate_plot_height,
+    plot_height_floor_px,
 )
 from dbt_charts.core.compile.resolve.chart.tick_values import (
     apply_headroom,
+    numeric_domain_bounds,
     stacked_totals_max,
 )
 from dbt_charts.core.compile.resolve.style.chart_context import (
@@ -98,11 +116,15 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_BAR_LOG_SCALE_NOT_SUPPORTED,
     ERR_BAR_Y_NOT_NUMERIC,
 )
-from dbt_charts.core.numeric import aspect_ratio_height
+from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.text.format_d3 import is_d3_si_spec
 from dbt_charts.core.utils import (
+    DEFAULT_VL_LABEL_LIMIT,
+    cap_padding_to_label_limit,
+    cumulative_stack_midpoints,
     layered_endpoint_rail_fires,
     layered_endpoint_rail_shape,
+    measured_label_padding,
     numeric_column_values,
     stacked_x_domain_order,
 )
@@ -120,6 +142,12 @@ def _bar_endpoint_labels_for_stack(
     stack_mode: str,
     horizontal: bool,
     author_opted_in: bool,
+    width: float,
+    ax_merged: AxisXStyle,
+    ay_merged: AxisYStyle,
+    stack_order: str | None,
+    font_family: str,
+    font_size: float,
 ) -> EndpointLabelsConfig:
     """Direct labelling is the default; the disqualifiers below turn it back off.
 
@@ -134,11 +162,11 @@ def _bar_endpoint_labels_for_stack(
     """
     if author_opted_in:
         return endpoint_labels
-    if normalized.data_table is not None and any(
-        isinstance(entry, ChartDataTablePerSeries) and not entry.by_measure
-        for entry in normalized.data_table.entries
+    if normalized.support_table is not None and any(
+        isinstance(entry, ChartSupportTablePerSeries) and not entry.by_measure
+        for entry in normalized.support_table.entries
     ):
-        # A per-series data table already prints one row per series, labelled
+        # A per-series support table already prints one row per series, labelled
         # in that series' own ink — the rail would name them a second time,
         # and it costs the plot the height and the axis side it needs.
         return endpoint_labels.model_copy(update={"visible": False})
@@ -189,6 +217,19 @@ def _bar_endpoint_labels_for_stack(
         normalized, data, y_fields
     ):
         return endpoint_labels.model_copy(update={"visible": False})
+    if horizontal and _horizontal_rail_labels_would_collide(
+        normalized,
+        data,
+        y_fields,
+        stack_mode,
+        width,
+        ax_merged,
+        ay_merged,
+        stack_order,
+        font_family,
+        font_size,
+    ):
+        return endpoint_labels.model_copy(update={"visible": False})
     return endpoint_labels
 
 
@@ -201,13 +242,16 @@ def _every_series_reaches_the_anchor_row(
 
     The vertical rail can seat a series that is absent from its anchor column on
     the zero-height seam between its neighbours, because the label cascade then
-    pushes it clear. The horizontal rail has no such resolver in V2 — its
-    ``__dodge_row`` tiers are unimplemented (see the skipped collision tests in
-    ``test_horizontal_bar_endpoint_labels.py``) — so a zero-width seam lands
-    hard against the neighbouring segment's label and the two overprint.
+    pushes it clear. The horizontal rail has no such resolver: a series absent
+    from the anchor row anchors on a zero-width seam, sitting exactly at a
+    neighbour's segment edge — a fragile position a later data refresh can
+    turn into an overprint even when today's snapshot happens to have room.
+    This is disqualified unconditionally, independent of what
+    ``_horizontal_rail_labels_would_collide`` measures for the current render:
+    that check only ever sees the one snapshot in front of it, not the shape
+    of the data going forward.
 
-    Steering the default back to a legend is the honest treatment until the
-    dodge resolver lands; delete this the day it does. An explicit
+    Steering the default back to a legend is the honest treatment. An explicit
     ``endpoint_labels.visible: true`` still reaches the seam math, which is
     correct and tested — it is only unsafe to *choose* unprompted.
     """
@@ -222,8 +266,18 @@ def _every_series_reaches_the_anchor_row(
     if not domain:
         return True
     anchor_row = domain[0]
-    every_series: set[str] = set()
-    drawn_at_anchor: set[str] = set()
+    if isinstance(normalized.y, list):
+        # Wide + dimension: the series are the composites, and a measure
+        # null at the anchor row is exactly the missing segment this guards.
+        every_series = set(wide_series_names(y_fields, color, data))
+        drawn_at_anchor = {
+            str(row[WIDE_LABEL_FIELD])
+            for row in unfold_wide_rows(data, y_fields, color)
+            if row.get(x) == anchor_row
+        }
+        return drawn_at_anchor == every_series
+    every_series = set()
+    drawn_at_anchor = set()
     for row in data:
         series = row.get(color)
         if series is None:
@@ -234,6 +288,198 @@ def _every_series_reaches_the_anchor_row(
         ):
             drawn_at_anchor.add(str(series))
     return drawn_at_anchor == every_series
+
+
+def _stacked_measure_domain_span(
+    ay: AxisYStyle,
+    rows: PanelRows,
+    x_field: str,
+    y_fields: list[str],
+) -> tuple[float, float] | None:
+    """The stacked measure axis's rendered ``(lo, hi)`` span — authored domain wins.
+
+    Mirrors the emitter (``emitters/bar.py`` gates every ``domainMax`` on
+    ``authored_measure_domain(ay) is None`` and puts an authored domain
+    straight onto the scale): an author-pinned
+    ``style.axis_y.scale.continuous.domain`` replaces the stacked-total
+    derivation outright, never blends with it. Falls through to ``(0.0,
+    stacked total)`` (headroom-applied) otherwise.
+
+    Used only by the horizontal rail's collision check, which needs the real
+    ``(lo, hi)`` span its pixel math divides by. Deliberately NOT used for
+    ``_resolve_bar``'s own ``stacked_domain_max`` bake — that field feeds
+    render-time hover-band sizing on every stacked bar, vertical included,
+    and widening it to read an authored domain would change that unrelated
+    behavior; the bake keeps its original stacked-total-only derivation.
+
+    ``None`` for a degenerate span: a non-positive authored width (``hi <=
+    lo`` — e.g. ``domain: [0, 0]``) or a non-positive/absent stacked total
+    (an all-null or all-zero top column). Either way, nothing renders a real
+    span to divide by.
+    """
+    if ay.scale is not None and ay.scale.continuous is not None:
+        authored = numeric_domain_bounds(ay.scale.continuous.domain)
+        if authored is not None:
+            lo, hi = min(authored), max(authored)
+            return (lo, hi) if hi > lo else None
+    raw_max = stacked_totals_max(rows, x_field, y_fields)
+    if raw_max is None or raw_max <= 0:
+        return None
+    return 0.0, apply_headroom(raw_max, _axis_headroom(ay))
+
+
+def _categorical_axis_gutter_px(
+    ax: AxisXStyle,
+    data: ChartRows,
+    x_field: str,
+) -> float:
+    """Real width the horizontal bar's left categorical-label gutter eats.
+
+    The rail and chart panes share the x scale, but its own plot span is
+    narrower than the card's outer width by however much the left-hand
+    category axis (VL y for a horizontal bar) spends on its own tick
+    labels — long category names visibly eat into the room left for the
+    rail (and the labels the rail measures against). ``0.0`` when the axis
+    hides its labels entirely (``ax.labels.visible is False``) — no gutter
+    is drawn for it.
+
+    Composes the same two functions the categorical axis's own gutter emit
+    (``emitters/bar.py``'s ``ax_vl["labelPadding"]`` line) calls:
+    ``measured_label_padding`` for the widest label's real text width, then
+    ``cap_padding_to_label_limit`` so a name Vega-Lite would ellipsize past
+    ``labelLimit`` (``ax.labels.max_width``, else Vega-Lite's own
+    ``DEFAULT_VL_LABEL_LIMIT``) doesn't keep growing the estimate for text
+    that never actually renders. Reusing the render-side derivation rather
+    than a second, hand-rolled one means this can never drift from the
+    gutter Vega-Lite actually draws.
+    """
+    if ax.labels.visible is False:
+        return 0.0
+    font = ax.labels.font
+    if font.family is None or font.size is None:
+        return 0.0
+    labels = sorted({str(row[x_field]) for row in data if row.get(x_field) is not None})
+    if not labels:
+        return 0.0
+    padding = measured_label_padding(labels, font.family, font.size)
+    label_limit = (
+        ax.labels.max_width
+        if ax.labels.max_width is not None
+        else DEFAULT_VL_LABEL_LIMIT
+    )
+    return cap_padding_to_label_limit(padding, label_limit)
+
+
+def _horizontal_rail_labels_would_collide(
+    normalized: BarChart,
+    data: ChartRows,
+    y_fields: tuple[str, ...],
+    stack_mode: str,
+    width: float,
+    ax_merged: AxisXStyle,
+    ay_merged: AxisYStyle,
+    stack_order: str | None,
+    font_family: str,
+    font_size: float,
+) -> bool:
+    """True when the top rail's own label text would overlap a neighbour.
+
+    Recomputes the exact positions the rail renders at
+    (``cumulative_stack_midpoints`` — top-row cumulative segment midpoints,
+    un-nudged), converts them to the same pixel scale the chart's own x-axis
+    renders on (``_stacked_measure_domain_span`` for ``stack: zero``; the
+    pinned unit span for ``stack: normalize``), scaled against the plot's
+    real usable width — the card width less the left categorical-label
+    gutter (``_categorical_axis_gutter_px``), since the rail and chart panes
+    share that x scale and long category names visibly shrink it — and
+    measures each series name with the real font the rail paints with
+    (``font_measure``; ``translate.py``'s ``_wrap_vconcat_label_rail``
+    stamps ``series_label``'s font props onto the rail mark the same way the
+    vertical rail's own pane does, so this is the font that actually
+    renders). Adjacent pairs, sorted by pixel x, collide when their half
+    label-widths plus a gap exceed the pixel distance between them — the
+    same adjacent-pair model ``resolve_axis_x_overlap`` uses for axis
+    labels, applied to these real, non-evenly-spaced positions instead of an
+    even tick band.
+
+    Covers both series-color shapes that actually draw a rail: an authored
+    ``color:`` and wide measures (``y: [a, b, ...]``, with or without a
+    ``color:`` dimension). ``resolve_wide_measure_channels`` injects a
+    synthetic series-color channel for the wide-measure shape, and
+    ``EndpointLabelFeature`` folds those rows into the same long form
+    (``unfold_wide_rows``) before naming its series — the same fold is used
+    below, so this check and the render can never disagree on where a wide
+    measure's series come from.
+
+    Real measurement rather than a heuristic: a short-name, many-series rail
+    can be perfectly legible, and a two-series rail with very long names can
+    still collide — series count alone predicts neither.
+    """
+    x = normalized.x
+    if not isinstance(x, str) or not y_fields:
+        return False
+    color = normalized.color
+    if isinstance(color, str) and not isinstance(normalized.y, list):
+        series_field, y_field, measure_data = color, y_fields[0], data
+        series_names = sorted(
+            {str(row[color]) for row in data if row.get(color) is not None}
+        )
+    elif isinstance(normalized.y, list):
+        series_field, y_field = WIDE_LABEL_FIELD, WIDE_VALUE_FIELD
+        measure_data = unfold_wide_rows(data, y_fields, color)
+        series_names = wide_series_names(y_fields, color, data)
+    else:
+        return False
+    if stack_mode == "normalize":
+        domain_lo, domain_hi = 0.0, 1.0
+    else:
+        # data is the whole chart's rows, not a per-panel slice — small
+        # multiples already disqualified the rail earlier in
+        # _bar_endpoint_labels_for_stack, so partition(None, ...) always
+        # yields the single trivial panel. Routed through partition() rather
+        # than constructing PanelRows directly: only _chart_rows.py may do
+        # that (test_panel_rows_construction_boundary.py).
+        panel_rows = partition(None, data).panels[0].rows
+        domain_span = _stacked_measure_domain_span(
+            ay_merged, panel_rows, x, list(y_fields)
+        )
+        if domain_span is None:
+            # A degenerate (zero-width, all-null, or all-zero) span has no
+            # real room to anchor on — every label piles on the same pixel.
+            # That is the collision this check exists to catch, not a reason
+            # to wave the rail through.
+            return True
+        domain_lo, domain_hi = domain_span
+    sort = normalized.sort
+    positions = cumulative_stack_midpoints(
+        measure_data,
+        x,
+        y_field,
+        series_field,
+        series_names,
+        sort.by if sort else "",
+        bool(sort and sort.order == "desc"),
+        stack_mode=stack_mode,
+        stack_order=stack_order,
+    )
+    measurer = get_font_measurer(font_family)
+    gap = get_chart_rendering().bar.top_rail_label_gap_spaces * measurer.measure(
+        " ", font_size
+    )
+    usable_width = max(width - _categorical_axis_gutter_px(ax_merged, data, x), 0.0)
+    domain_span_width = domain_hi - domain_lo
+    pixel = sorted(
+        (
+            (mid - domain_lo) / domain_span_width * usable_width,
+            measurer.measure(series, font_size),
+        )
+        for series, mid in positions
+    )
+    return any(
+        (width_a + width_b) / 2 + gap > x_b - x_a
+        # Adjacent-pair walk: pixel[1:] is intentionally one shorter.
+        for (x_a, width_a), (x_b, width_b) in zip(pixel, pixel[1:], strict=False)
+    )
 
 
 def _any_column_stacks_more_than_one_series(
@@ -261,43 +507,20 @@ def _any_column_stacks_more_than_one_series(
     if not isinstance(color, str) or not isinstance(x, str):
         return True
     drawn: set[tuple[str, str]] = set()
-    for row in data:
-        series = row.get(color)
-        if series is None or not any(row.get(field) is not None for field in y_fields):
-            continue
-        drawn.add((str(row.get(x)), str(series)))
+    if isinstance(normalized.y, list):
+        # Wide + dimension: each measure is its own segment within a column.
+        for row in unfold_wide_rows(data, y_fields, color):
+            drawn.add((str(row.get(x)), str(row[WIDE_LABEL_FIELD])))
+    else:
+        for row in data:
+            series = row.get(color)
+            if series is None or not any(
+                row.get(field) is not None for field in y_fields
+            ):
+                continue
+            drawn.add((str(row.get(x)), str(series)))
     columns = {column for column, _ in drawn}
     return len(drawn) > len(columns)
-
-
-def _estimate_bar_plot_height(
-    normalized: BarChart, bar: BarChartStyle, width: float
-) -> float:
-    """Aspect-ratio-driven card height, needing no query data.
-
-    Shares its clamp arithmetic with render/sizing.py's ``get_chart_content_height``
-    via ``numeric.aspect_ratio_height`` — the two differ only in which min/max
-    height they clamp to (this resolve step's per-family
-    ``chart_local_style_context.bar``, already cascade-resolved with any
-    chart-root override, vs. render's board-global ``resolved_style.chart_defaults``),
-    a cascade-position difference each caller's own inputs express.
-    """
-    if normalized.height is not None:
-        return float(normalized.height)
-    aspect = (
-        normalized.aspect_ratio
-        if normalized.aspect_ratio is not None
-        else bar.aspect_ratio
-    )
-    if width <= 0 or aspect <= 0:
-        return bar.min_height
-    min_h = (
-        normalized.min_height if normalized.min_height is not None else bar.min_height
-    )
-    max_h = (
-        normalized.max_height if normalized.max_height is not None else bar.max_height
-    )
-    return aspect_ratio_height(width, aspect, min_h, max_h)
 
 
 def _distinct_series_count(dataset: ChartDataset, color: str) -> int:
@@ -334,7 +557,9 @@ def _stack_legend_should_yield(
     plot height is governed by its category count, not its series count — it
     never collapses this way), whose legend has actually moved to a top,
     multi-column layout (``legend_is_top``; a side legend costs width, not
-    plot height, and never competes with the plot for it). The row math
+    plot height, and never competes with the plot for it). The height math
+    (``legend_wrap_required_height_px`` -- the legend's *total* footprint at
+    collapse, correct here because nothing else is subtracted alongside it)
     divides entries across ``legend_columns`` — the renderer never lays out
     one row per entry once the legend goes top/compact.
     """
@@ -345,12 +570,8 @@ def _stack_legend_should_yield(
         or not legend_is_top
     ):
         return False
-    entries = min(distinct_series, symbol_limit) if symbol_limit else distinct_series
-    rows = ceil(entries / legend_columns)
-    bar_cfg = get_chart_rendering().bar
-    required = (
-        rows * bar_cfg.stack_legend_row_height_px
-        + bar_cfg.stack_legend_chrome_height_px
+    required = legend_wrap_required_height_px(
+        distinct_series, symbol_limit, legend_columns
     )
     return required > plot_height
 
@@ -398,8 +619,20 @@ def _resolve_bar(
         "quantitative",
         normalized.multiples,
         normalized.y,
+        has_quantitative_axis=True,
     )
     bar = chart_local_style_context.bar
+    # Computed here (rather than at their original, later call sites) because
+    # the plot-height floor check below needs both before axes are built:
+    # the legend the classifier judges must be the legend that actually
+    # renders — chart_style_context.legend (board+chart-level style.legend)
+    # merged with bar.legend (family-scoped style.bar.legend), the same merge
+    # _base_kwargs performs internally. Neither depends on axis/tick
+    # resolution, so hoisting them is a pure reordering. Reused below by the
+    # fit-rule call, `_stack_legend_should_yield`, and the floor check --
+    # one estimate for all three, never recomputed.
+    merged_legend = merge_onto_base(chart_style_context.legend, bar.legend)
+    plot_height_estimate = estimate_cartesian_plot_height(normalized, bar, width)
     # Flat chart.stack overrides style.bar.stack; fall through to the merged bar
     # style (which already applied style.bar.stack → board theme cascade) so that
     # per-chart style overrides are respected even when chart.stack is None.
@@ -441,12 +674,65 @@ def _resolve_bar(
         "none",
     )
     _horizontal_series_rail_fires = not _horizontal_is_grouped
+    # Hoisted above the ResolvedBarStyle construction below (its only other
+    # use) so the horizontal collision disqualifier can measure the same
+    # font the rail actually paints with, without resolving it twice.
+    series_label = _resolved_series_label(chart_style_context, primary, width)
     # Resolved after orientation: the disqualifier chain below is specific to
-    # the horizontal rail.
+    # the horizontal rail. `merged_legend` was hoisted above (with
+    # `plot_height_estimate`) for the floor check; `_base_kwargs` further
+    # down still takes the unmerged `bar.legend` patch (as every other family
+    # resolver does) and repeats the same merge internally.
+    # Bar wants a top legend whenever it isn't stacked -- its own long-
+    # standing default, unconditional, even with an overlay layer to name: a
+    # stacked bar's segments read better against a side legend, and stacking
+    # is orthogonal to whether a layer is present. The colour channel's
+    # real, distinct values are already known from the executed dataset --
+    # not guessed -- via the same accessor _distinct_series_count above reads.
+    # A gradient colour channel's entries still get built here (this tuple
+    # is also wants_top_legend_shape's "this shape has entries to name"
+    # signal, which must survive a gradient), but cartesian_series_naming
+    # ignores them for the two rungs that measure rows -- once, for every
+    # family that calls it (see that function's own docstring), not here.
+    color_domain_values = cartesian_color_domain_values(dataset, normalized.color)
+    top_legend_series = (
+        cartesian_top_legend_entries(
+            normalized.y if isinstance(normalized.y, str) else None,
+            normalized.y_label,
+            normalized.layers,
+            color_domain_values=color_domain_values,
+            has_color=normalized.color is not None,
+        )
+        if not is_stacked
+        else None
+    )
+    # A horizontal bar puts its dimension field on Vega-Lite's y-channel --
+    # the axis a top legend's row actually loses width to (see
+    # estimate_left_axis_reserve_px). Every other orientation keeps that
+    # axis's own quantitative measure on the right (_bake_ay_position_left),
+    # so only the horizontal case has real dimension content to measure.
+    dimension_values = (
+        cartesian_color_domain_values(dataset, normalized.x)
+        if orientation == "horizontal"
+        else None
+    )
+    left_axis_reserve_px = estimate_left_axis_reserve_px(
+        dimension_values, merged_legend
+    )
+    # Only the axis title on the horizontal rail costs the plot height; the
+    # other one is rotated and costs width. `orientation` picks which
+    # channel lands on that rail -- a horizontal bar swaps them
+    # (_emit_horizontal maps ay to VL x). Feeds both rung 2's floor check
+    # below and this function's own floor measurement further down -- the
+    # same fact, computed once.
+    _axis_title_costs_height = (
+        ay_merged if orientation == "horizontal" else ax_merged
+    ).title.visible is not False
     naming = cartesian_series_naming(
         normalized,
         channels,
-        _author_hid_legend(primary),
+        _authored_legend(primary),
+        merged_legend,
         width,
         _bar_endpoint_labels_for_stack(
             bar.endpoint_labels,
@@ -455,15 +741,160 @@ def _resolve_bar(
             resolved_stack,
             orientation == "horizontal",
             _author_asked_for_endpoint_labels(normalized.style),
+            width,
+            ax_merged,
+            ay_merged,
+            bar.stack_order,
+            series_label.font_family,
+            series_label.font_size,
         ),
         endpoint_label_has_layers=endpoint_label_has_layers,
         has_layers=bool(normalized.layers),
         rail_eligible_for_suppression=_horizontal_series_rail_fires,
         suppress_wide_measure_series=wide_measure_series,
         multiples_wide_measure_series=wide_measure_series,
-        layers_route_to_top_legend=False,
-        unconditional_top_legend=not is_stacked,
+        top_legend_series=top_legend_series,
+        plot_height_estimate=plot_height_estimate,
+        left_axis_reserve_px=left_axis_reserve_px,
+        card_padding_px=chart_style_context.card_padding,
+        subtitle_present=bool(normalized.subtitle),
+        axis_title_costs_height=_axis_title_costs_height,
     )
+    # The classifier's series count, not the legend's entry count -- see
+    # `_floor_entry_count` below for the difference and why they are
+    # separate. A wide bar (`y: [m01..m25]`) folds its measures into a colour
+    # channel at render (fold_wide_measures, emitters/_wide.py) and gets one
+    # series per measure, crossed with the colour column's values when it
+    # authors one. A plain (non-list) y contributes no colour-cardinality
+    # series here; it can still draw a legend off its layers, which is the
+    # floor's business below, not the collapse model's.
+    if isinstance(normalized.y, list):
+        legend_entry_count = len(normalized.y) * (
+            _distinct_series_count(dataset, normalized.color)
+            if normalized.color is not None
+            else 1
+        )
+    elif normalized.color is not None:
+        legend_entry_count = _distinct_series_count(dataset, normalized.color)
+    else:
+        legend_entry_count = 0
+    legend_is_top = naming.top_legend == "compact"
+    stack_legend_yield = _stack_legend_should_yield(
+        resolved_stack,
+        orientation,
+        legend_entry_count,
+        merged_legend.symbol_limit,
+        plot_height_estimate,
+        legend_is_top,
+        merged_legend.compact_columns,
+    )
+    # Any legend Vega actually draws above the plot -- `row` as well as
+    # `compact`. `legend_is_top` above stays compact-only because
+    # `_stack_legend_should_yield` is calibrated on that narrower meaning.
+    _legend_renders_on_top = (
+        naming.top_legend in ("compact", "row")
+        and not naming.suppress_legend
+        and not stack_legend_yield
+    )
+    # The legend's own height counts against the floor but is never a
+    # candidate to give way -- see plot_height_floor.py's module docstring:
+    # for bar, the legend is typically the chart's only series-naming
+    # mechanism, and hiding it with nothing to replace it violates the
+    # series-naming invariant (tests/visual/test_series_naming_invariant.py).
+    #
+    # The floor's own entry count, deliberately NOT `legend_entry_count`:
+    # that one feeds `_stack_legend_should_yield`, whose verdict reaches
+    # `suppress_legend` on the resolved chart. A layered bar draws a real
+    # legend (base plus one entry per overlay, sharing a colour scale) that
+    # `legend_entry_count` does not see, but widening that variable moved a
+    # rendered decision -- it un-short-circuited the yield classifier on a
+    # shape its stacked-segment collapse model was never calibrated for, and
+    # suppressed the legend on a short layered card. The layer term belongs
+    # to the legend's *height*, not to the collapse model, so it lives here.
+    #
+    # Vega draws at most `symbol_limit` symbols, so a 60-series legend is 20
+    # symbols tall, not 60 -- the sibling _stack_legend_should_yield clamps
+    # the same way. Unclamped, a high-cardinality legend charges rows that
+    # never render and accuses a plot that is not starved.
+    # A colour-less overlay joins the base's colour scale under its own
+    # label, adding exactly one entry (_overlay.py appends it
+    # unconditionally) -- measured domain ["APAC", "EMEA", "NA", "target"]
+    # for 3 regions and one line layer. A layer that authors its own
+    # `color:` instead contributes only the values not already in the
+    # domain, which can be none of them: a per-region target line draws the
+    # same 4 entries as the bars alone. Charging it +1 anyway bills a row
+    # the legend does not draw and accuses a plot that is not starved, so
+    # only colour-less layers are counted here. The remainder -- a coloured
+    # layer introducing genuinely new values -- is undercharged, which
+    # keeps this a miss rather than a false positive, the direction this
+    # check errs in everywhere else.
+    _unlabelled_layers = sum(1 for layer in normalized.layers if layer.color is None)
+    if legend_entry_count:
+        _floor_entry_count = legend_entry_count + _unlabelled_layers
+    elif normalized.layers:
+        _floor_entry_count = 1 + _unlabelled_layers
+    else:
+        _floor_entry_count = 0
+    _legend_entries_for_floor = (
+        min(_floor_entry_count, merged_legend.symbol_limit)
+        if merged_legend.symbol_limit
+        else _floor_entry_count
+    )
+    # Both top layouts cost height, so both are charged. `compact` (the tiny
+    # tier) stacks entries into columns, so its height tracks the row count --
+    # charged via the shared legend_wrap_marginal_height_px, the same
+    # calculation the fallback ladder's own rung-2 check
+    # (legend_wrap_fits_height_budget) uses, so the two can never disagree
+    # about what a wrapped legend costs. Deliberately NOT
+    # legend_wrap_required_height_px: that one is the legend's *total*
+    # footprint at collapse (fixed chrome included), and this charge feeds
+    # estimate_plot_height below, which already subtracts its own fixed
+    # chrome (irreducible_height_px / axis_titles_height_px) -- summing both
+    # fixed terms would double-count non-legend chrome a second time.
+    # `row` flows entries horizontally in one row of flat height instead --
+    # measured 31px at 2, 5, 16 and 25 series, on 400px and 640px cards
+    # alike. A grouped bar (bar's default with `color:`) emits `row` at
+    # every width, so charging only `compact` left every default grouped
+    # bar above the tiny tier billing 0px for a strip that really takes
+    # ~31px.
+    # No entries, no legend: a bar with no `color:` (and no wide-measure fold)
+    # has nothing to name, and Vega emits no legend element for it even
+    # though the layout policy still reads "row".
+    if not _legend_renders_on_top or _legend_entries_for_floor == 0:
+        legend_height_for_floor = 0.0
+    elif naming.top_legend == "compact":
+        legend_height_for_floor = legend_wrap_marginal_height_px(
+            _legend_entries_for_floor, None, merged_legend.compact_columns
+        )
+    else:
+        legend_height_for_floor = (
+            get_chart_rendering().bar.plot_height_floor_row_legend_total_px
+        )
+    # A measurement, not a mutation -- see plot_height_floor.py's module
+    # docstring for why chrome is never removed automatically. Surfaced to
+    # the author as WARN-PLOT-HEIGHT-BELOW-MINIMUM
+    # (render/warnings/plot_height_below_minimum.py) via the stored fields
+    # below, not acted on here. Measured on the calibration chart at 300px:
+    # hiding the x title moved the plot 44 -> 65px tall at unchanged width,
+    # hiding the y title moved it 216 -> 238px wide at unchanged height --
+    # `_axis_title_costs_height` above (hoisted for rung 2's own floor
+    # check) is that same fact.
+    #
+    # The card the renderer actually draws: the content height above plus
+    # card padding on both sides, matching render/sizing.py's
+    # get_item_content_height. The floor is a fraction of the card's own
+    # height, so it has to be a fraction of that card and not of the
+    # padding-less content box -- measuring the latter set the floor 2 *
+    # card_padding too low and left genuinely starved plots unreported.
+    floor_card_height = plot_height_estimate + 2 * chart_style_context.card_padding
+    estimated_plot_height = estimate_plot_height(
+        floor_card_height,
+        card_padding_px=chart_style_context.card_padding,
+        legend_height_px=legend_height_for_floor,
+        subtitle_present=bool(normalized.subtitle),
+        axis_title_costs_height=_axis_title_costs_height,
+    )
+    plot_starved = estimated_plot_height < plot_height_floor_px(floor_card_height)
     endpoint_labels = naming.endpoint_labels
     _reject_dual_axis_layered_endpoint_labels(
         normalized.id,
@@ -546,14 +977,20 @@ def _resolve_bar(
         tick_values = _bar_ticks.ticks
         bar_domain_max, bar_domain_min = _bar_ticks.domain_max, _bar_ticks.domain_min
     # Bake stacked_domain_max at resolve: emitter reads the pre-baked value.
-    # Only set for regular zero-stacked bars; not normalize, not grouped, not single-series.
-    # Headroom applies to the stacked TOTAL max, same as the plain data max.
-    # Unlike the non-stacked path (which never emitted a domainMax before
-    # headroom existed), stacked bars always pinned the exact stacked total —
-    # VL's nice-rounding would otherwise add accidental top margin — so a
-    # headroom of 0 keeps the flush-exact-total pin rather than dropping it.
-    # A non-positive total (all-negative stacks) is skipped: domainMax 0 on a
-    # zero-anchored scale is a degenerate [0, 0] domain; VL auto-fits instead.
+    # Only set for regular zero-stacked bars; not normalize, not grouped, not
+    # single-series. Headroom applies to the stacked TOTAL max, same as the
+    # plain data max. Unlike the non-stacked path (which never emitted a
+    # domainMax before headroom existed), stacked bars always pinned the
+    # exact stacked total — VL's nice-rounding would otherwise add
+    # accidental top margin — so a headroom of 0 keeps the flush-exact-total
+    # pin rather than dropping it. A non-positive total (all-negative stacks)
+    # is skipped: domainMax 0 on a zero-anchored scale is a degenerate [0, 0]
+    # domain; VL auto-fits instead. Deliberately does NOT read an authored
+    # axis_y domain here — that stays scoped to the horizontal rail's own
+    # collision check (_stacked_measure_domain_span), which calls it
+    # directly; widening this bake too would change hover-band rendering
+    # (render/chart/features/bar_hover_band.py) on every stacked bar,
+    # vertical included, well outside anything this task touches.
     stacked_domain_max: float | None = None
     if is_stacked and resolved_stack != "normalize" and y_fields and x_field:
         # x_field can itself be the multiples field — partition() strips a
@@ -573,6 +1010,7 @@ def _resolve_bar(
     # and forms no column — see build_resolved_axis's column_forming
     # docstring. Every other bar orientation keeps the default (vertical
     # ruler, column-forming).
+    tooltip_format_values = quantitative_channel_values(data, normalized.y)
     ay, style_tail = build_cartesian_axes(
         normalized.id,
         chart_style_context,
@@ -586,9 +1024,26 @@ def _resolve_bar(
         ticks=_CartesianTickResolution(tick_values, bar_domain_max, bar_domain_min),
         column_forming=orientation != "horizontal",
         measure_tooltip_format=_measure_tooltip_format(
-            normalized, primary, chart_style_context
+            normalized, primary, chart_style_context, values=tooltip_format_values
         ),
-        ay_is_quantitative=orientation != "horizontal",
+        tooltip_format_values=tooltip_format_values,
+        ax_is_quantitative=x_ch_type == "quantitative",
+        # Bar semantics fix y=measure regardless of orientation (see the
+        # _bake_cartesian_axes docstring above), so the published channel-type
+        # fact is unconditionally True -- unlike column_forming above, which
+        # tracks the render geometry orientation swaps instead.
+        ay_is_quantitative=True,
+        # The digit-alignment gate still needs the old geometry-based
+        # question (does this axis render as the column-forming measure
+        # axis) since a horizontal bar's measure axis renders on VL's x
+        # channel, not as a right-edge column.
+        ay_quantitative_for_alignment=orientation != "horizontal",
+        zero_anchor=bar_zero,
+        # Bar always zero-anchors and pins axis_x.ticks.visible: false
+        # explicitly -- this axis's baked domain_min is never read for the
+        # tick-stub decision regardless (see the histogram/heatmap comment
+        # on the sibling ticks=... empty-ladder calls).
+        endpoint_rail_may_discard_domain=False,
     )
     axis_is_house = (
         ay.labels.format is not None
@@ -596,28 +1051,6 @@ def _resolve_bar(
         and (not plan.ay_format_authored or plan.ay_format_is_alias)
     )
     _tf = _title_font(normalized, chart_local_style_context, width)
-    # The legend the classifier judges must be the legend that actually
-    # renders: chart_style_context.legend (board+chart-level style.legend)
-    # merged with bar.legend (family-scoped style.bar.legend), the same merge
-    # _base_kwargs performs internally. Computed once here for the
-    # classifier's reads; _base_kwargs still takes the unmerged bar.legend
-    # patch (as every other family resolver does) and repeats the same merge
-    # internally.
-    merged_legend = merge_onto_base(chart_style_context.legend, bar.legend)
-    # A wide bar (`y: [m01..m25]`, no color:) folds its measures into a
-    # colour channel at render (fold_wide_measures, emitters/_wide.py) and
-    # gets one legend entry per measure — normalized.color stays None, so
-    # the color-cardinality read below sees nothing. len(y_fields) is that
-    # fold's entry count; a plain (non-list) y never folds and has no legend
-    # to charge.
-    legend_entry_count = (
-        _distinct_series_count(dataset, normalized.color)
-        if normalized.color is not None
-        else len(y_fields)
-        if isinstance(normalized.y, list)
-        else 0
-    )
-    legend_is_top = naming.top_legend == "compact"
     bkw = _base_kwargs(
         normalized,
         chart_style_context,
@@ -629,17 +1062,10 @@ def _resolve_bar(
         ),
         automatic_link_candidate=automatic_link_candidate,
         layout_padding=bar.padding,
-        suppress_legend=naming.suppress_legend
-        or _stack_legend_should_yield(
-            resolved_stack,
-            orientation,
-            legend_entry_count,
-            merged_legend.symbol_limit,
-            _estimate_bar_plot_height(normalized, bar, width),
-            legend_is_top,
-            merged_legend.compact_columns,
-        ),
+        suppress_legend=naming.suppress_legend or stack_legend_yield,
         top_legend=naming.top_legend,
+        force_legend_visible=naming.force_legend_visible,
+        legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
     )
     resolved_layers = _resolve_layer_list(
         normalized.layers,
@@ -647,6 +1073,7 @@ def _resolve_bar(
         "bar",
         bar,
         normalized.query_name,
+        0.0,
         0.0,
     )
     if authored_y_domain is not None:
@@ -674,6 +1101,14 @@ def _resolve_bar(
     bar_mark = bar.marks.bar.model_copy(
         update={"labels": resolved_labels, "total_label": resolved_total}
     )
+    # support_table.position resolution needs the same orientation facts
+    # already baked above: axis_y_orient falls back to "right" when unset,
+    # mirroring the fallback apply_chart_support_table_post_pass used to
+    # apply at render before this bake closed that reach-back.
+    if ay_merged.position == "left" or ay_merged.position == "right":
+        _ay_orient_for_table: Literal["left", "right"] = ay_merged.position
+    else:
+        _ay_orient_for_table = "right"
     _ck = _cartesian_kwargs(
         normalized,
         chart_local_style_context,
@@ -681,6 +1116,8 @@ def _resolve_bar(
         data,
         "bar",
         panel_axes=dataset.axes,
+        category_axis_vertical=orientation == "horizontal",
+        axis_y_orient=_ay_orient_for_table,
     )
     _ck, wide_measures = bake_wide_measures_kwargs(normalized.y, _ck)
     return ResolvedBarChart(
@@ -692,10 +1129,13 @@ def _resolve_bar(
         stacked_domain_max=stacked_domain_max,
         orientation=orientation,
         style=ResolvedBarStyle(
-            series_label=_resolved_series_label(chart_style_context, primary, width),
+            series_label=series_label,
             stack_order=bar.stack_order,
             mark=bar_mark,
             overlap=bar.overlap,
+            plot_height_below_floor=plot_starved,
+            estimated_plot_height_px=estimated_plot_height,
+            estimated_card_height_px=floor_card_height,
             single_series_fill=_effective_single_series_fill(
                 chart_style_context,
                 primary,
@@ -764,6 +1204,7 @@ def _resolve_histogram(
         "quantitative",
         None,
         None,
+        has_quantitative_axis=True,
     )
     primary = plan.primary
     hist = merge_onto_base(chart_style_context.histogram, primary)
@@ -791,6 +1232,17 @@ def _resolve_histogram(
         ticks=_CartesianTickResolution((), None, None),
         column_forming=True,
         measure_tooltip_format=None,
+        # Histogram's y is a VL-computed row count, not a real column --
+        # nothing to vote the sub-$1 floor on.
+        tooltip_format_values=(),
+        # Histogram's binned x column is always numeric; its y (row count)
+        # is always the measure, regardless of the x column's own type.
+        ax_is_quantitative=x_ch_type == "quantitative",
+        ay_is_quantitative=True,
+        # Inert: ticks is always the empty _CartesianTickResolution above, so
+        # _y_gridline_caps_bottom returns before this bool is ever read.
+        zero_anchor=True,
+        endpoint_rail_may_discard_domain=False,
     )
     hist_axis_is_house = (
         ay.labels.format is not None

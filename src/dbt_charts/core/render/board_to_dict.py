@@ -38,7 +38,7 @@ CHART_FIELDS = (
     # ``label`` is the KPI-only label slot (sibling of ``value``); the
     # chart-type-aware gate keeps it off other chart types.
     "label",
-    "description",
+    "notes",
     # Callout body text — the whole content of that family.
     "message",
     "link",
@@ -69,7 +69,7 @@ CHART_FIELDS = (
     "basemap",
     "sort",
     "multiples",
-    "data_table",
+    "support_table",
     "conditional_formatting",
     "style",
 )
@@ -125,7 +125,7 @@ def chart_to_dict(item: dict[str, Any], query_name: str | None) -> dict[str, Any
         d["query"] = query_name
 
     # Copy known chart fields. ``title``, ``subtitle``, ``label`` and
-    # ``description`` default to ``""`` on Chart; an empty string would emit
+    # ``notes`` default to ``""`` on Chart; an empty string would emit
     # `title: ''` next to the real authored slot, so treat empty as unauthored.
     for field in CHART_FIELDS:
         if field in ("type", "query"):
@@ -133,7 +133,7 @@ def chart_to_dict(item: dict[str, Any], query_name: str | None) -> dict[str, Any
         val = chart.get(field)
         if val is None:
             continue
-        if field in ("title", "subtitle", "label", "description") and val == "":
+        if field in ("title", "subtitle", "label", "notes") and val == "":
             continue
         if field == "collapse" and val is False:
             continue

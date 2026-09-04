@@ -20,7 +20,7 @@ from the text it will actually draw. A control the theme fixes (`text`,
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from dbt_charts.core.compile.models.variable.authored import VariableInputType
 from dbt_charts.core.font_measure import get_font_measurer
@@ -30,17 +30,63 @@ if TYPE_CHECKING:
 
     from dbt_charts.core.compile.models.style.theme.variables import VariablesStyle
 
-# Input kinds whose rendered width follows the text they display. Everything
-# else is sized by the theme, and its box must not move when the value changes.
-_CONTENT_SIZED = frozenset({"select", "multiselect", "radio", "date", "datepicker"})
 
-# Ornaments the chrome draws inside a field's right edge — the one table saying
-# which input gets which glyph. The strip imports these rather than keeping its
-# own copy, and `ornament_width` is added to every control's width regardless of
-# how the field itself was sized, so a glyph can never be drawn outside the
-# field measured to hold it.
-ARROW_ORNAMENT = frozenset({"select", "multiselect", "radio"})
-CALENDAR_ORNAMENT = frozenset({"date", "datepicker", "daterange"})
+@dataclass(frozen=True)
+class InputTraits:
+    """What the strip needs to know about one input kind, in one row.
+
+    ``sizing`` is where the field's width comes from: ``content`` measures the
+    text it will draw, the rest name a theme width or a shape that has its own.
+    ``ornament`` is the glyph the chrome draws inside the field's right edge.
+    ``unset`` is which "no value" affordance the control offers, and whose label
+    vocabulary it reads.
+
+    One row rather than three subsets because the three questions have always
+    been asked of the same fourteen values, and answering them apart is what let
+    them disagree.
+    """
+
+    sizing: Literal["content", "text", "number", "daterange", "checkbox", "slider"]
+    ornament: Literal["arrow", "calendar", "none"]
+    unset: Literal["chooser", "range", "none"]
+
+
+# Every member of `VariableInputType`, and the gate is that it *is* every member
+# — `test_every_variable_input_type_is_classified` compares this table's keys
+# against the enum, so a new input kind cannot render until someone has decided
+# these three things about it.
+#
+# That gate is the point. The three hand-written subsets this replaces shared a
+# silent fall-through: an unclassified kind was sized as text, drew no glyph, and
+# offered no unset, with nothing anywhere observing the omission. Dropping
+# `radio` from two of them passed 3,382 tests.
+#
+# `auto` is carried rather than skipped. `detect_variable_input_type` always
+# resolves it before layout, so its row is unreachable — but a table with a
+# deliberate hole in it is the shape this exists to prevent, and "unreachable"
+# is a claim that stops being true quietly.
+_INPUT_TRAITS: dict[VariableInputType, InputTraits] = {
+    "auto": InputTraits("text", "none", "none"),
+    "select": InputTraits("content", "arrow", "chooser"),
+    "multiselect": InputTraits("content", "arrow", "chooser"),
+    "radio": InputTraits("content", "arrow", "chooser"),
+    "date": InputTraits("content", "calendar", "none"),
+    "datepicker": InputTraits("content", "calendar", "none"),
+    "daterange": InputTraits("daterange", "calendar", "range"),
+    "input": InputTraits("text", "none", "none"),
+    "text": InputTraits("text", "none", "none"),
+    "textarea": InputTraits("text", "none", "none"),
+    "number": InputTraits("number", "none", "none"),
+    "slider": InputTraits("slider", "none", "none"),
+    "range": InputTraits("slider", "none", "none"),
+    "checkbox": InputTraits("checkbox", "none", "none"),
+}
+
+
+def traits_of(input_type: VariableInputType) -> InputTraits:
+    """The row for one input kind. Raises rather than guessing at an absent one."""
+    return _INPUT_TRAITS[input_type]
+
 
 # Widths reach here through several subtractions, so a row that fits exactly can
 # read as overflowing by a fraction of a pixel. Sub-pixel slop gets the benefit
@@ -124,6 +170,7 @@ def lay_out_variables(
             label_width
             + float(variables_style.control_gap)
             + _input_width(spec, variables_style, float(font_size))
+            + ornament_gap(spec.input, float(font_size))
             + ornament_width(spec.input, float(font_size))
         )
         # First control on a row is placed wherever it lands, even when it is
@@ -159,13 +206,41 @@ def ornament_width(input_type: VariableInputType, font_size: float) -> float:
     """Width the type ornament occupies inside a field, in board user units.
 
     Sized from the text beside it — a derivation, not a new theme field to
-    author. The layout reserves this and the chrome draws exactly it.
+    author. The chrome draws exactly this; the layout reserves it plus
+    :func:`ornament_gap`.
     """
-    if input_type in ARROW_ORNAMENT:
+    ornament = traits_of(input_type).ornament
+    if ornament == "arrow":
         return font_size
-    if input_type in CALENDAR_ORNAMENT:
+    if ornament == "calendar":
         return font_size * 0.85
     return 0.0
+
+
+def ornament_gap(input_type: VariableInputType, font_size: float) -> float:
+    """Room between a field's value text and its ornament, in board user units.
+
+    Reserved by the layout on top of ``ornament_width``; the chrome needs no
+    say in it, because it places the glyph from the field's right edge and this
+    is what moves that edge. Without it the glyph's left edge lands exactly on
+    the text's right edge — these widths are measured in Python and drawn by
+    Chromium, so at zero any variance between the two measurers renders as the
+    chevron sitting on the value's final letters.
+
+    Derived from the font like the glyph itself rather than authored: a theme
+    field here would be one more knob nobody sets, and zero is not a value this
+    may legally take. Font-derived rather than a fixed px because the glyph is
+    too -- ``ornament_width`` is a multiple of the font size and every stroke
+    inside it a ratio of that -- so a fixed gap would shrink against the glyph
+    as type grows and bring the collision back at large sizes.
+
+    Half an em, not a quarter: a quarter reads tight against the calendar,
+    whose left edge is solid ink, where the chevron's leading stroke tip has
+    optical air the metric does not show. Half clears both and still sits
+    visibly inside the strip's structural spacing (``control_gap`` 8,
+    inter-control ``gap`` 10), so the field reads as one object.
+    """
+    return font_size * 0.5 if ornament_width(input_type, font_size) > 0.0 else 0.0
 
 
 def _input_width(
@@ -175,9 +250,11 @@ def _input_width(
     widths = variables_style.input.widths
     padding = variables_style.input.padding
 
-    if spec.input == "checkbox":
+    sizing = traits_of(spec.input).sizing
+
+    if sizing == "checkbox":
         return float(widths.checkbox)
-    if spec.input in ("slider", "range"):
+    if sizing == "slider":
         # The track is fixed; the value beside it is what varies.
         return (
             float(widths.range)
@@ -190,7 +267,7 @@ def _input_width(
         + float(padding.left)
         + float(padding.right)
     )
-    if spec.input in _CONTENT_SIZED:
+    if sizing == "content":
         # Sized by what it displays. An unset control still needs a field to be
         # a field, so the text slot floors at one em (handled above).
         return boxed
@@ -199,9 +276,9 @@ def _input_width(
     # resting size, but a value too long for it still gets a box that holds it —
     # the chrome draws the whole value, and the reserved width has to be the
     # drawn width or controls overlap in every static export.
-    if spec.input == "number":
+    if sizing == "number":
         return max(float(widths.number), boxed)
-    if spec.input == "daterange":
+    if sizing == "daterange":
         return max(float(widths.daterange), boxed)
     return max(float(widths.text), boxed)
 

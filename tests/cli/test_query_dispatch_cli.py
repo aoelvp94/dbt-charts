@@ -386,6 +386,8 @@ class TestRawSqlValidate:
         assert fanout[0]["severity"] == "error", (
             f"expected calibrated 'error', got {fanout[0]['severity']!r}"
         )
+        # A populated optional field is present on the exclude_none wire shape.
+        assert "confidence" in fanout[0], fanout[0]
 
 
 # ---------------------------------------------------------------------------
@@ -694,6 +696,10 @@ class TestDispatchErrors:
         data = json.loads(result.output)
         assert isinstance(data, list)
         assert any(d["code"] == "WARN-PARSE-ERROR" for d in data)
+        # --validate --json serializes exclude_none like every other query verb:
+        # unpopulated optional fields are absent, never null.
+        for d in data:
+            assert None not in d.values(), d
 
     def test_validate_and_describe_error_path_json_envelope(
         self, project_dir: Path

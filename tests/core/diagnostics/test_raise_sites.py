@@ -153,7 +153,7 @@ class TestRenderPublicEntryPointPreservesPerSiteCodes:
     one with a mock to lock in the narrow-`except` invariant.
     """
 
-    def test_dataface_error_via_public_render_preserves_code(
+    def test_dbt_charts_error_via_public_render_preserves_code(
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
         from unittest.mock import patch

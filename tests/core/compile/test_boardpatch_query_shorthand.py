@@ -1,14 +1,17 @@
 """Regression: BoardPatch must accept the same authored query shorthand AuthoredBoard does.
 
 BoardPatch is the all-optional overlay of AuthoredBoard. Bare-string query shorthand
-(``queries: {q: "SELECT ..."}``) is authored input the normalizer rewrites to
-``{type: sql, sql: ...}``. That rewrite is a shared ``mode="before"`` model validator,
-so meta files and extends fragments — which are validated as ``BoardPatch`` by the merge
-engine — must accept it too.
+(``queries: {q: "SELECT ..."}``) is authored input ``normalize_query_value`` rewrites to
+``{type: sql, sql: ...}``. That rewrite is declared as a ``BeforeValidator`` directly on
+``QueryOrRef`` (board/authored.py) — ``build_patch_model_ext`` copies a field's
+annotation verbatim when generating ``BoardPatch``, so the coercion reaches meta files
+and extends fragments (validated as ``BoardPatch`` by the merge engine) for free, with
+no mixin involved.
 
-Before the shared-mixin fix, ``build_patch_model_ext`` carried over ``_desugar_theme``
-(it lived on the ``_BoardDesugarMixin`` base) but dropped ``_normalize_queries`` (defined
-directly on ``AuthoredBoard``). So ``BoardPatch`` read the bare string as a query
+Before a since-superseded shared-mixin fix, ``build_patch_model_ext`` carried over
+``_desugar_theme`` (it lived on the ``_BoardDesugarMixin`` base) but dropped
+``_normalize_queries``, an equivalent ``model_validator`` that lived directly on
+``AuthoredBoard`` at the time. So ``BoardPatch`` read the bare string as a query
 *reference* and raised "Invalid query reference 'SELECT ...'", which in turn forced the
 compiler to hand-roll a dict-level meta/board merge instead of using ``merge_patches``.
 """

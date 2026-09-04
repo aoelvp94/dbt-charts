@@ -70,9 +70,9 @@ def _build_layout_item_def() -> dict[str, Any]:
                         "type": "string",
                         "description": "Section title.",
                     },
-                    "description": {
+                    "notes": {
                         "type": "string",
-                        "description": "Section description.",
+                        "description": "AI search/context metadata. Never rendered.",
                     },
                     "details": {
                         "anyOf": [
@@ -124,8 +124,6 @@ def _decorate_for_vscode(base: dict[str, Any]) -> dict[str, Any]:
     # IDE metadata
     schema["title"] = "dbt charts Board"
     schema["fileMatch"] = [
-        "*.dataface.yml",
-        "*.dataface.yaml",
         PROJECT_CONFIG_NAME,
         "dbt_charts.yaml",
         "charts/*.yml",
@@ -143,53 +141,10 @@ def _decorate_for_vscode(base: dict[str, Any]) -> dict[str, Any]:
         {"required": ["content"]},
     ]
 
-    # Override charts → typed additionalProperties (IR has untyped dict[str, Any])
-    _chart_ref_schema = {
-        "type": "string",
-        "pattern": r"^.+\.charts\.\w+$",
-        "description": "Cross-file chart reference: '<file>.charts.<name>'.",
-    }
-    props["charts"] = {
-        "type": "object",
-        "description": _extract_description(props.get("charts", {})),
-        "additionalProperties": {
-            "oneOf": [
-                {"$ref": "#/definitions/AuthoredChart"},
-                _chart_ref_schema,
-            ]
-        },
-    }
-
-    # Override variables/queries → typed additionalProperties with cross-file ref support.
-    # IR emits only the inline model (Variable/AuthoredQuery); the ref form is a string
-    # matching '<file>.<section>.<name>' and is coerced to a typed model at parse time.
-    for key, ref_name, section_label, pattern in (
-        ("variables", "Variable", "variable", r"^.+\.variables\.\w+$"),
-        ("queries", "AuthoredQuery", "query", r"^.+\.queries\.\w+$"),
-    ):
-        if key in props:
-            string_arms: list[dict[str, object]] = [
-                {
-                    "type": "string",
-                    "pattern": pattern,
-                    "description": f"Cross-file {section_label} reference.",
-                },
-            ]
-            # queries also accept bare SQL shorthand ("SELECT …") — add an unconstrained
-            # string arm so IDE validation does not red-squiggle valid SQL strings.
-            # Runtime (Pydantic) already enforces the grammar; the schema arm is advisory only.
-            if key == "queries":
-                string_arms.append({"type": "string"})
-            props[key] = {
-                "type": "object",
-                "description": _extract_description(props[key]),
-                "additionalProperties": {
-                    "oneOf": [
-                        {"$ref": f"#/definitions/{ref_name}"},
-                        *string_arms,
-                    ]
-                },
-            }
+    # charts/variables/queries need no override here — render_yaml_schema's IR
+    # now derives the ref/string arms itself (schema/introspection.py reads
+    # json_schema_input_type off the QueryOrRef/ChartOrRef/VariableOrRef
+    # annotations), so `base`'s properties are already fully typed.
 
     # Override rows/cols → typed items (IR has untyped list[str | dict])
     for key in ("rows", "cols"):

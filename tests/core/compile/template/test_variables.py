@@ -69,6 +69,31 @@ class TestCoerceDate:
 
 
 class TestCoerceDaterange:
+    def test_empty_list_is_unset(self) -> None:
+        # A cleared date picker publishes [] (variables.js's unset spelling for
+        # every list-valued control), which must coerce to None like every
+        # other unset typed input, not raise.
+        reg = _registry(r="daterange")
+        assert coerce_variable_values({"r": []}, reg)["r"] is None
+
+    def test_blank_string_is_unset(self) -> None:
+        # Pins the other half of variable_value_is_absent: a hand-written
+        # `?date_range=` arrives as "", not []. A narrowing that only checks
+        # container emptiness (e.g. `if isinstance(value, (list, tuple)) and
+        # not value`) would miss this and restore the ExecutionError.
+        reg = _registry(r="daterange")
+        assert coerce_variable_values({"r": "  "}, reg)["r"] is None
+
+    @pytest.mark.parametrize("raw", ["2024-01-01", 0])
+    def test_non_absent_scalar_still_raises(self, raw: Any) -> None:
+        # A bare scalar is malformed, not unset — absence is emptiness, not
+        # falsiness. `0` is the case that pins the difference: collapsing the
+        # check to `if not value:` reads it as unset and still passes on the
+        # string alone.
+        reg = _registry(r="daterange")
+        with pytest.raises(ExecutionError):
+            coerce_variable_values({"r": raw}, reg)
+
     def test_pair_of_strings_becomes_dates(self) -> None:
         reg = _registry(r="daterange")
         result = coerce_variable_values({"r": ["2024-01-01", "2024-12-31"]}, reg)

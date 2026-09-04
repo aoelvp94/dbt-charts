@@ -9,21 +9,30 @@ from dbt_charts.core.compile.models.chart.resolved._channel import ResolvedStyle
 from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.style.resolved._marks import ResolvedAreaMarkStyle
 from dbt_charts.core.compile.models.style.resolved.area import ResolvedAreaStyle
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    category_scale_for,
+)
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset, restripe
-from dbt_charts.core.compile.resolve.chart._wide_fields import WIDE_LABEL_FIELD
+from dbt_charts.core.compile.resolve.chart._wide_fields import (
+    WIDE_LABEL_FIELD,
+    WIDE_VALUE_FIELD,
+    unfold_wide_rows,
+    wide_series_names,
+)
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.emitters._cartesian import (
-    NATIVE_STACK_ORDER,
     CartesianXResolution,
     build_cartesian_y_encoding,
     build_palette_config,
     build_x_enc,
     distinct_series_values,
+    multiples_scale_independent,
+    pin_normalize_axis_format,
     resolve_cartesian_x,
     resolve_xy_titles,
+    series_order_expression,
     sorted_series_by_last_value,
-    sorted_series_by_stack_order,
     spatial_color_scale,
     wide_measures_title,
 )
@@ -33,17 +42,20 @@ from dbt_charts.core.render.chart.emitters._channels import (
     gap_fill_ordinal_time_per_panel,
     pin_legend_display_order,
 )
+from dbt_charts.core.render.chart.emitters._endpoint_rail import (
+    resolve_endpoint_rail_span,
+)
 from dbt_charts.core.render.chart.emitters._layers import (
     emit_area_layer,
     sparse_band_transforms,
 )
 from dbt_charts.core.render.chart.emitters._overlay import (
     overlay_uses_band_step,
+    overlay_x_domain_values,
     render_cartesian_overlay,
 )
 from dbt_charts.core.render.chart.emitters._wide import (
     fold_wide_measures,
-    unfold_wide_rows,
 )
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.step_band import (
@@ -64,7 +76,10 @@ from dbt_charts.core.render.utils import normalize_data_types
 from dbt_charts.core.utils import (
     layered_endpoint_rail_fires,
     layered_endpoint_rail_shape,
+    sorted_series_by_stack_order,
 )
+
+_DF_SERIES_ORDER_KEY = "__df_series_order"
 
 
 def _normalize_area_data(
@@ -121,10 +136,8 @@ def _area_spatial_order(
 ) -> tuple[list[str], list[str]]:
     """Resolve area's distinct series and spatial legend order in one pass.
 
-    Returns ``(series, order)``. Stacked: ``order`` mirrors the SAME order
-    Vega-Lite's own default stack sort already paints with (area wires no
-    authored stack_order — NATIVE_STACK_ORDER reproduces that native
-    descending sort without adding a mark-order channel). Unstacked
+    Returns ``(series, order)``. Stacked: ``order`` is top-of-stack first,
+    reversing the chart-global descending-total baseline order. Unstacked
     (overlap): stable order by each series' most-recent non-null value.
     ``order`` is empty when there's no series, or no x/y anchor to order by
     — the caller treats that as "nothing to reorder."
@@ -133,11 +146,11 @@ def _area_spatial_order(
     if not series:
         return series, []
     if chart.stack not in (None, "none"):
-        # Top-of-stack-first: reverse the baseline-first order.
+        y_field = chart.y if isinstance(chart.y, str) else WIDE_VALUE_FIELD
         return series, list(
             reversed(
                 sorted_series_by_stack_order(
-                    series, data, series_field, NATIVE_STACK_ORDER
+                    series, data, series_field, None, y_field=y_field
                 )
             )
         )
@@ -170,7 +183,20 @@ def _apply_area_color_encoding(
             ):
                 series, order = _area_spatial_order(chart, data, color_ch.data_field)
                 if order:
-                    enc["scale"] = spatial_color_scale(series, chart.palette, order)
+                    palette_order = (
+                        list(reversed(order))
+                        if chart.stack not in (None, "none")
+                        else series
+                    )
+                    # A bound scale colors by value, so the palette order it
+                    # is handed no longer decides anything — the stacked
+                    # reversal above still governs the unbound case.
+                    enc["scale"] = spatial_color_scale(
+                        palette_order,
+                        chart.palette,
+                        order,
+                        category_scale_for(chart.category_colors, color_ch.data_field),
+                    )
                     pin_legend_display_order(enc, order)
             top_encoding["color"] = enc
     return color_ch
@@ -195,6 +221,7 @@ def _build_area_top_encoding(
     data: list[dict[str, Any]],
     style: ResolvedAreaStyle,
     box: RenderBox,
+    x_domain: list[Any] | None,  # type-state: explicit_any — raw x values
 ) -> tuple[VLDict, ResolvedStyleChannel | None, str | None, str | None]:
     """Build the VL encoding dict, color channel, and resolved x VL type
     (None when the chart has no x channel at all) for an area chart.
@@ -214,6 +241,8 @@ def _build_area_top_encoding(
             "area",
             style.area_mark.curve,
             overlay_uses_band_step(chart.layers),
+            x_domain,
+            reserved_width=resolve_endpoint_rail_span(chart, data, box.width),
         )
         if chart.x
         else CartesianXResolution("nominal", {}, {})
@@ -238,6 +267,8 @@ def _build_area_top_encoding(
     )
     # Area always needs explicit stack to override VL's implicit stacking default.
     y_enc["stack"] = chart.stack if chart.stack not in (None, "none") else None
+    if chart.stack == "normalize":
+        pin_normalize_axis_format(ay_vl)
     top_encoding: VLDict = {}
     if chart.x:
         top_encoding["x"] = build_x_enc(
@@ -262,7 +293,14 @@ def _emit_multi_metric_area(
     ax, ay = style.axis_x, style.axis_y
     x_res = (
         resolve_cartesian_x(
-            chart.x, data, ax, style.label_usable_ratio, box.width, chart.id, "area"
+            chart.x,
+            data,
+            ax,
+            style.label_usable_ratio,
+            box.width,
+            chart.id,
+            "area",
+            reserved_width=resolve_endpoint_rail_span(chart, data, box.width),
         )
         if chart.x
         else CartesianXResolution("nominal", {}, {})
@@ -274,26 +312,34 @@ def _emit_multi_metric_area(
             "choose a different curve style."
         )
     measures = list(chart.wide_measures)
+    series = wide_series_names(measures, chart.color, data)
     # Same order computation area's authored-color path uses (_area_spatial_order,
-    # above), fed a long-form view of the wide data — a wide area's series order
-    # (both stacked baseline and unstacked/overlap paint order) must match what
-    # an authored color: field of the same data would produce. Area's authored
-    # path never uses a separate WIDE_ORDER_FIELD mark-order channel for either
-    # shape (VL's stack transform reads the color domain order directly), so
-    # baseline_order stays None here — unlike bar, which does need one.
-    folded = unfold_wide_rows(data, measures)
-    _series, order = _area_spatial_order(chart, folded, WIDE_LABEL_FIELD)
-    display_order = order if order else sorted(measures)
+    # above), fed a long-form view of the wide data.
+    folded = unfold_wide_rows(data, measures, chart.color)
     is_stacked = chart.stack not in (None, "none")
+    if is_stacked:
+        baseline_order = sorted_series_by_stack_order(
+            series,
+            folded,
+            WIDE_LABEL_FIELD,
+            None,
+            y_field=WIDE_VALUE_FIELD,
+        )
+        display_order = list(reversed(baseline_order))
+    else:
+        _series, order = _area_spatial_order(chart, folded, WIDE_LABEL_FIELD)
+        display_order = order if order else series
+        baseline_order = None
     wide = fold_wide_measures(
         measures,
+        chart.color,
+        data,
         chart.palette,
         chart.legend,
         display_order=display_order,
-        # Stacked: VL's native stack transform reads color.scale.domain
-        # directly (see the comment above) -- the fold's own row order is
-        # visually inert, keep it as authored. Unstacked/overlap: no such
-        # mechanism exists, so the fold order IS the front-to-back paint order.
+        baseline_order=baseline_order,
+        # Explicit order governs stacked accumulation; unstacked/overlap uses
+        # fold sequence as front-to-back paint order.
         fold_order=measures if is_stacked else display_order,
     )
     ay_vl = measure_axis_to_vl(ay, data, chart.wide_measures)
@@ -301,9 +347,7 @@ def _emit_multi_metric_area(
     # Wide/folded y has no single measure field to title from — fall back to
     # the joined, humanized measure names, same as an authored y_label always
     # would (an authored y_label still wins outright).
-    y_label_effective = chart.y_label or wide_measures_title(
-        chart.wide_measures, ay.title.font
-    )
+    y_label_effective = chart.y_label or wide_measures_title(chart.wide_measures)
     y_title = resolve_xy_titles(
         None, None, None, y_label_effective, ax, ay, box, chart.id
     ).y_title
@@ -311,6 +355,8 @@ def _emit_multi_metric_area(
         wide.value_field, ay, ay_vl, y_title, style.tooltip_format
     )
     y_enc["stack"] = chart.stack if chart.stack not in (None, "none") else None
+    if chart.stack == "normalize":
+        pin_normalize_axis_format(ay_vl)
     top_encoding: VLDict = {}
     if chart.x:
         x_title = resolve_xy_titles(
@@ -375,13 +421,34 @@ class AreaEmitter:
             chart, dataset, data
         )
         if chart.wide_measures:
+            # A folded (wide-measures) chart returns before chart.layers ever
+            # applies (below) — no union to compute here.
             spec = _emit_multi_metric_area(chart, data, box)
             if transformed:
                 spec.data = normalize_data_types(data)
             return spec
         style = chart.style
+        # Overlay layers may carry x buckets the base series doesn't (a
+        # forward goal ramp against actuals). Vega-Lite unions the sub-layer
+        # domains, so the axis must be built against that union — both its
+        # tick values and its crowding measurement — not against the base's
+        # own rows. Mirrors bar.py's identical computation ahead of its own
+        # x encoding.
+        x_domain = (
+            overlay_x_domain_values(
+                chart.layers,
+                data,
+                chart.x,
+                style.axis_x,
+                base_x_authored_temporal,
+                datasets,
+                chart.query_name,
+            )
+            if chart.layers
+            else None
+        )
         top_encoding, color_ch, x_type, y_plain = _build_area_top_encoding(
-            chart, data, style, box
+            chart, data, style, box, x_domain
         )
         step_band_data = _apply_area_step_band(
             chart, data, top_encoding, style.area_mark, x_type
@@ -392,11 +459,34 @@ class AreaEmitter:
         # onto this same spec) is set after emission by StructuredTooltipFeature
         # via VL's description channel. See features/structured_tooltip.py.
         measure_field = chart.y if isinstance(chart.y, str) else None
-        series_field = (
+        raw_series_field = (
             top_encoding["color"].get("field") if color_ch is not None else None
         )
+        series_field = raw_series_field if isinstance(raw_series_field, str) else None
+        _series, display_order = (
+            _area_spatial_order(chart, data, series_field)
+            if is_stacked and series_field
+            else ([], [])
+        )
+        baseline_order = list(reversed(display_order))
+        order_transforms: list[VLDict] = []
+        facet_fields: list[str] = []
+        if series_field:
+            facet_fields.append(series_field)
+        if baseline_order and series_field:
+            top_encoding["order"] = {
+                "field": _DF_SERIES_ORDER_KEY,
+                "sort": "ascending",
+            }
+            order_transforms.append(
+                {
+                    "calculate": series_order_expression(series_field, baseline_order),
+                    "as": _DF_SERIES_ORDER_KEY,
+                }
+            )
+            facet_fields.append(_DF_SERIES_ORDER_KEY)
         band_transforms = (
-            sparse_band_transforms(chart.x, measure_field, [series_field])
+            sparse_band_transforms(chart.x, measure_field, facet_fields)
             if is_stacked and chart.x and measure_field and series_field
             else []
         )
@@ -421,6 +511,7 @@ class AreaEmitter:
             layers=sub_layers,
             config=build_palette_config(chart.palette),
             data=step_band_data,
+            transforms=order_transforms,
         )
         # Stamp transformed rows so the session does not overwrite with raw
         # query data. Preserve step-band-expanded rows when gap-fill also fired.
@@ -438,9 +529,10 @@ class AreaEmitter:
                 chart_id=chart.id,
                 axis_x=style.axis_x,
                 axis_y=style.axis_y,
-                base_y_title_suppressed=(
+                base_measure_title_suppressed=(
                     bool(chart.y_label) and chart.style.axis_y.title.visible is False
                 ),
+                base_orientation="vertical",
                 base_x_authored_temporal=base_x_authored_temporal,
                 tooltip_format=style.tooltip_format,
                 background=chart.background,
@@ -458,6 +550,9 @@ class AreaEmitter:
                 base_mark_type="area",
                 base_label=base_label,
                 datasets=datasets,
+                base_stack_normalize=chart.stack == "normalize",
+                base_stack_center=chart.stack == "center",
+                multiples_scale_independent=multiples_scale_independent(chart),
             )
 
         return spec

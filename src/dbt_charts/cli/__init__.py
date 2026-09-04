@@ -1,3 +1,3 @@
-"""CLI tooling for Dataface."""
+"""CLI tooling for dbt charts."""
 
 __all__ = []

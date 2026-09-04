@@ -782,9 +782,9 @@ rows:
         board = apply_static_layout(result.board)
         expected_content_width = get_theme_style(
             get_default_theme_name()
-        ).frame.width - (2 * get_theme_style().frame.margin)
+        ).frame.max_width - (2 * get_theme_style().frame.margin)
 
-        assert board.layout.width == get_theme_style().frame.width
+        assert board.layout.width == get_theme_style().frame.max_width
         assert board.layout.content_width == expected_content_width
         assert board.layout.items[0].width == expected_content_width
 
@@ -2037,7 +2037,7 @@ class TestAspectRatioDrivenSizing:
         get_config()  # ensure settings initialised
         max_h = float(get_theme_style().charts.max_height)
         aspect = float(get_theme_style().charts.aspect_ratio)
-        board_width = float(get_theme_style().frame.width)
+        board_width = float(get_theme_style().frame.max_width)
 
         # Sanity-check the test premise: aspect-derived height must exceed the cap.
         assert board_width / aspect > max_h, (
@@ -3111,7 +3111,7 @@ rows:
 
         # Compute the expected static_estimate (aspect-ratio path, includes 2*card_pad).
         content_width = max(
-            float(get_theme_style().frame.width)
+            float(get_theme_style().frame.max_width)
             - 2 * float(get_theme_style().frame.margin),
             0.0,
         )
@@ -3650,7 +3650,7 @@ cols:
 
         board = apply_static_layout(result.board)
         expected_gap = float(get_theme_style().layout.cols.gap)
-        content_width = float(get_theme_style().frame.width) - 2 * float(
+        content_width = float(get_theme_style().frame.max_width) - 2 * float(
             get_theme_style().frame.margin
         )
 
@@ -5065,3 +5065,51 @@ rows:
         svg = render(result.board, executor, format="svg").output
         assert isinstance(svg, str)
         assert ">r1<" in svg and ">r2<" in svg
+
+
+class TestTitleCaseMeasurement:
+    """Regression: get_title_height must apply the same case transform as the renderer.
+
+    The draw half (_render_title_svg in boards.py) applies apply_case() before
+    drawing. The measure half must match, otherwise measured height < drawn height
+    when the transform widens glyphs (upper/title case on a lowercase title).
+    """
+
+    def test_get_title_height_applies_case_transform_to_measured_string(
+        self, monkeypatch
+    ):
+        """Measured string must be the case-transformed title, not the raw authored text."""
+        import mdsvg
+        from dbt_charts.core.compile.models.primitives import FontStyle
+        from dbt_charts.core.render.sizing import get_title_height
+
+        captured: list[str] = []
+
+        class FakeSize:
+            height = 30.0
+
+        def fake_measure(text: str, *_args: object, **_kwargs: object) -> FakeSize:
+            captured.append(text)
+            return FakeSize()
+
+        monkeypatch.setattr(mdsvg, "measure", fake_measure)
+
+        base = get_theme_style()
+        # Force case: upper so the transform is unambiguous.
+        seed = base.model_copy(
+            update={
+                "title": base.title.model_copy(update={"font": FontStyle(case="upper")})
+            }
+        )
+        style = resolve_style(seed)
+
+        authored_title = "monthly revenue by region"
+        get_title_height(authored_title, 400.0, resolved_style=style)
+
+        assert captured, "mdsvg.measure was not called"
+        # board_title_markdown wraps the title as "# {title}", so the measured
+        # string must contain the uppercased text, not the authored lowercase.
+        assert "MONTHLY REVENUE BY REGION" in captured[0], (
+            f"Measured string {captured[0]!r} does not contain the upper-cased title; "
+            "get_title_height is not applying the case transform before measuring"
+        )

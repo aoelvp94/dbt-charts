@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path, PurePosixPath
 
 import pytest
 
-from dbt_charts.agent_api.migrate import MigrateError, MigrateSummary, migrate_paths
+from dbt_charts.agent_api.migrate import (
+    MigrateError,
+    MigrateNote,
+    MigrateSummary,
+    migrate_paths,
+)
 from dbt_charts.core.compile.errors import ParseError
 from dbt_charts.core.project import Project
 
@@ -24,6 +31,40 @@ def test_migrate_summary_is_unsuccessful_when_any_file_failed() -> None:
     )
 
     assert summary.success is False
+
+
+def test_migrate_paths_does_not_leak_a_warning_for_a_pending_boundary_construct(
+    tmp_path: Path,
+    in_memory_project: Callable[[Path, dict[str, str]], Project],
+) -> None:
+    """A board with a real frozen-boundary change (`style.board:`, renamed to
+    `style.frame:` at the 0.4.0 -> 0.5.0 boundary) also carries a construct
+    on the pending (unreleased) boundary -- `description:`, still unmigrated
+    after the frozen-capped rewrite. The frozen change is what makes
+    migrate_paths write the file at all (_schema_version is only stamped
+    alongside a real change); the leftover `description:` is what re-triggers
+    the in-memory migration path when migrate_paths re-parses the result to
+    verify it. That path's own SchemaMigrationWarning must be caught here,
+    not leaked to the default warning handler, and must not show up as a
+    MigrateNote (it is not a removed-field reason, and dct migrate already
+    ran)."""
+    project = in_memory_project(
+        tmp_path,
+        {
+            "charts/a.yaml": "title: T\ndescription: p\nstyle:\n  board:\n"
+            "    width: 800\ncharts:\n  c:\n    query: q\n    type: line\n"
+        },
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        summary = migrate_paths(
+            [PurePosixPath("a.yaml")], project=project, dry_run=True
+        )
+
+    assert caught == []
+    assert summary.updated == [PurePosixPath("charts/a.yaml")]
+    assert summary.notes == []
 
 
 def test_migrates_a_project_backed_board_without_a_filesystem_path(
@@ -50,6 +91,152 @@ def test_migrates_a_project_backed_board_without_a_filesystem_path(
 
     assert summary.updated == [PurePosixPath("charts/remote.yaml")]
     assert project.read_text("charts/remote.yaml").endswith("# migrated\n")
+
+
+_BAR_FONT_BOARD = """title: T
+queries:
+  q:
+    source: db
+    sql: SELECT 1 AS m, 2 AS v
+charts:
+  c:
+    type: bar
+    query: q
+    x: m
+    y: v
+rows:
+  - c
+style:
+  charts:
+    bar:
+      font:
+        size: 12
+"""
+
+
+def test_migrate_paths_surfaces_deletion_reason_for_a_real_board(
+    tmp_path: Path,
+    in_memory_project: Callable[[Path, dict[str, str]], Project],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real dct migrate file-rewrite path, end to end -- migrate_paths,
+    migrate_board_yaml_text, and migrate_yaml_text are all real and unstubbed.
+
+    Only ``_board_migration_context`` is replaced, with a synthetic catalog
+    carrying an already-*frozen* Deletion (source and target both real
+    schema-catalog positions, not the pending ``0.5.0 -> current`` boundary)
+    -- `dct migrate` caps at the latest frozen version, so a deletion sourced
+    from the pending boundary would no longer fire and this test would
+    assert nothing. The retired field is real
+    (``style.charts.bar.font``, actually removed from ``AuthoredBoard`` --
+    only its migration *declaration* is presently pending), so the migrated
+    output still validates against the real, current model.
+    """
+    from dbt_charts.core.compile.migrations import migrations as migrations_module
+    from dbt_charts.core.compile.migrations.migrations import (
+        Deletion,
+        MigrationRegistry,
+    )
+    from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
+        YamlSchemaCatalog,
+        YamlSchemaEntry,
+    )
+
+    v1, v2 = "0.1.0", "0.2.0"
+    board_props = {"title": {}, "queries": {}, "charts": {}, "rows": {}}
+    v1_schema = {
+        "type": "object",
+        "properties": {**board_props, "style": {}},
+        "additionalProperties": False,
+    }
+    v2_schema = {
+        "type": "object",
+        "properties": board_props,
+        "additionalProperties": False,
+    }
+    catalog = YamlSchemaCatalog(
+        entries=(
+            YamlSchemaEntry(
+                v2,
+                released_at=date.today(),
+                filename="v2.json",
+                sha256="t",
+                predecessor=v1,
+            ),
+            YamlSchemaEntry(
+                v1,
+                released_at=date.today(),
+                filename="v1.json",
+                sha256="t",
+                predecessor=None,
+            ),
+        ),
+        _schemas={v1: v1_schema, v2: v2_schema},
+        current_schema=v2_schema,
+    )
+    reason = (
+        "bar has no per-chart card to paint it onto (it renders via Vega-Lite "
+        "with no card surface separate from the board frame). The field had "
+        "no effect and has been removed."
+    )
+    registry = MigrationRegistry(
+        moves=[],
+        deletions=[Deletion(v1, v2, ("style",), reason=reason)],
+        catalog=catalog,
+    )
+    monkeypatch.setattr(
+        migrations_module,
+        "_board_migration_context",
+        lambda: (catalog, registry),
+    )
+
+    project = in_memory_project(tmp_path, {"charts/bar.yaml": _BAR_FONT_BOARD})
+
+    summary = migrate_paths([PurePosixPath("bar.yaml")], project=project, dry_run=False)
+
+    assert summary.updated == [PurePosixPath("charts/bar.yaml")]
+    assert summary.notes == [
+        MigrateNote(
+            path=PurePosixPath("charts/bar.yaml"),
+            message=f"`style` was removed: {reason}",
+        )
+    ]
+    rewritten = project.read_text("charts/bar.yaml")
+    assert "style:" not in rewritten
+    # Exercises the stamp on the >=1-iteration path (a real structural
+    # deletion fired before reaching stop_target), not just the early-return
+    # "already current" and "0-iteration, already at target" paths covered
+    # by the migrations.py unit tests.
+    assert f'_schema_version: "{v2}"' in rewritten
+
+
+def test_migrate_paths_never_reports_a_field_removed_that_is_still_in_the_file(
+    tmp_path: Path,
+    in_memory_project: Callable[[Path, dict[str, str]], Project],
+) -> None:
+    """The real dct migrate file-rewrite path, no monkeypatch, real catalog.
+
+    style.charts.bar.font's `_card_style_deletion_reason` Deletion is
+    declared on the pending 0.5.0 -> current boundary, so it is never applied
+    by the capped writer -- the field stays in the file. A real frozen-
+    boundary change (`style.board:`, renamed to `style.frame:` at 0.4.0 ->
+    0.5.0) also fires, which is what makes migrate_paths write the file at
+    all -- _schema_version is only stamped alongside a real change. The
+    verification re-parse still walks the rest of the way to the live schema
+    in memory, which re-triggers the pending font Deletion's reason warning.
+    That warning must never reach MigrateSummary.notes: it would tell the
+    user a field was removed from a file that still contains it.
+    """
+    board = _BAR_FONT_BOARD.replace("style:\n", "style:\n  board:\n    width: 800\n", 1)
+    project = in_memory_project(tmp_path, {"charts/bar.yaml": board})
+
+    summary = migrate_paths([PurePosixPath("bar.yaml")], project=project, dry_run=False)
+
+    assert summary.updated == [PurePosixPath("charts/bar.yaml")]
+    assert summary.notes == []
+    rewritten = project.read_text("charts/bar.yaml")
+    assert "font:" in rewritten, "the pending-boundary deletion must not have applied"
+    assert "frame:" in rewritten, "the frozen-boundary rename must have applied"
 
 
 def test_migrate_paths_records_parse_error_as_migrate_error(

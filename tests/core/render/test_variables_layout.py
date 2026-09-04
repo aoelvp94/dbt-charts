@@ -239,7 +239,7 @@ def test_a_row_that_fits_to_the_last_sub_pixel_stays_one_row() -> None:
 
 def test_a_daterange_is_as_wide_as_the_theme_says() -> None:
     """Fixed-width inputs read `variables.input.widths.*`, never a constant."""
-    from dbt_charts.core.render.variables_layout import ornament_width
+    from dbt_charts.core.render.variables_layout import ornament_gap, ornament_width
 
     style = _style()
     layout = lay_out_variables([_spec("d", "daterange", "Date Range")], _WIDE, style)
@@ -249,6 +249,7 @@ def test_a_daterange_is_as_wide_as_the_theme_says() -> None:
         box.label_width
         + style.control_gap
         + style.input.widths.daterange
+        + ornament_gap("daterange", style.font.size)
         + ornament_width("daterange", style.font.size)
     )
 
@@ -287,3 +288,146 @@ def test_one_table_decides_which_inputs_carry_an_ornament(
     from dbt_charts.core.render.variables_layout import ornament_width
 
     assert (ornament_width(input_type, 11.0) > 0) is has_ornament
+
+
+@pytest.mark.parametrize(
+    ("input_type", "value"),
+    [
+        ("select", "All"),
+        ("select", "Latin America and the Caribbean"),
+        ("multiselect", "North, South"),
+        ("date", "2026-04-10"),
+        ("date", "Any date"),
+    ],
+)
+def test_the_value_text_never_reaches_its_ornament(input_type: str, value: str) -> None:
+    """Every ornamented field reserves breathing room between text and glyph.
+
+    The reserved width used to be ``text + padding + ornament`` exactly, which
+    puts the glyph's left edge on the text's right edge — a zero gap, at every
+    viewport and every value length. Zero is not a rounding error to absorb:
+    the widths here are measured in Python and drawn by Chromium, so any
+    variance between the two measurers shows up as the chevron sitting on the
+    final letters. The arithmetic below is the chrome's own
+    (``variables_strip._draw_text_field`` / ``_draw_arrow``), read through the
+    layout's publics — if the two ever disagree, the drawn glyph is not where
+    this says it is, which is why
+    ``test_variables_chrome.test_the_drawn_value_never_reaches_its_drawn_ornament``
+    asserts the same property off the emitted SVG instead.
+
+    ``daterange`` is deliberately absent: it is theme-sized rather than
+    content-sized, with ~107 units of slack at any value that fits, so it never
+    collided and a parameter for it would pass on unfixed code.
+    """
+    from dbt_charts.core.font_measure import get_font_measurer
+    from dbt_charts.core.render.variables_layout import ornament_width
+
+    style = _style()
+    font_size = float(style.font.size)
+    padding = style.input.padding
+    box = lay_out_variables(
+        [_spec("v", input_type, "When", value)], _WIDE, style
+    ).boxes[0]
+
+    field_x = box.x + box.label_width + float(style.control_gap)
+    field_width = box.width - box.label_width - float(style.control_gap)
+    text_right = (
+        field_x + float(padding.left) + get_font_measurer().measure(value, font_size)
+    )
+    ornament_left = (
+        field_x
+        + field_width
+        - float(padding.right)
+        - ornament_width(input_type, font_size)
+    )
+
+    assert ornament_left > text_right, (
+        f"{input_type} {value!r}: ornament starts at {ornament_left:.2f}, text ends "
+        f"at {text_right:.2f} — the glyph is drawn on top of the value"
+    )
+
+
+def test_an_unornamented_field_reserves_no_gap() -> None:
+    """The gap is the ornament's, not every field's — a text input keeps its width."""
+    from dbt_charts.core.render.variables_layout import ornament_gap
+
+    assert ornament_gap("text", 11.0) == 0.0
+    assert ornament_gap("checkbox", 11.0) == 0.0
+    assert ornament_gap("select", 11.0) > 0.0
+
+
+# --- Every input type is classified, and the classification is observable ---
+#
+# `VariableInputType` has fourteen members and the layout answers two questions
+# of each: how the field is sized, and which glyph the chrome draws inside it.
+# Both used to be hand-written subsets with a silent fall-through, so a new
+# member landed on the text width with no ornament and nothing said so —
+# dropping `radio` from two of those subsets passed 3,382 tests.
+
+
+def test_every_variable_input_type_is_classified() -> None:
+    """A new member of the enum has to be classified before it can render.
+
+    The gate the three hand-written subsets never had. `auto` is carried
+    explicitly rather than skipped: `detect_variable_input_type` always resolves
+    it before layout, and a table with a hole in it is the thing this prevents.
+    """
+    from typing import get_args
+
+    from dbt_charts.core.compile.models.variable.authored import VariableInputType
+    from dbt_charts.core.render.variables_layout import _INPUT_TRAITS
+
+    assert set(_INPUT_TRAITS) == set(get_args(VariableInputType))
+
+
+@pytest.mark.parametrize("input_type", ["select", "multiselect", "radio"])
+def test_a_chooser_reserves_room_for_its_arrow(input_type: str) -> None:
+    """The arrow is drawn inside the field, so the field has to be measured to
+    hold it. A chooser that loses its ornament silently narrows by one em."""
+    from dbt_charts.core.render.variables_layout import ornament_width
+
+    assert ornament_width(input_type, 10.0) == 10.0
+
+
+@pytest.mark.parametrize("input_type", ["date", "datepicker", "daterange"])
+def test_a_date_field_reserves_room_for_its_calendar(input_type: str) -> None:
+    from dbt_charts.core.render.variables_layout import ornament_width
+
+    assert ornament_width(input_type, 10.0) == pytest.approx(8.5)
+
+
+@pytest.mark.parametrize(
+    "input_type",
+    ["auto", "input", "text", "number", "textarea", "slider", "range", "checkbox"],
+)
+def test_every_other_input_draws_no_ornament(input_type: str) -> None:
+    """The mirror, and the half a fall-through gets right by accident. Stated so
+    that a new member cannot join this row without someone choosing it."""
+    from dbt_charts.core.render.variables_layout import ornament_width
+
+    assert ornament_width(input_type, 10.0) == 0.0
+
+
+def test_a_chooser_is_sized_by_what_it_displays_and_a_text_box_has_a_floor() -> None:
+    """Content sizing versus theme sizing, pinned behaviourally.
+
+    A chooser is measured from the text it will draw and nothing else. A
+    theme-sized field takes its width from the theme instead — a floor, not a
+    ceiling, so a long value still gets a box that holds it, but a short one
+    does not shrink below the resting size. The observable difference is at the
+    short end: same value, different width.
+    """
+    select = lay_out_variables(
+        [_spec("r", "select", "R", "All")], _WIDE, _style()
+    ).boxes[0]
+    text = lay_out_variables([_spec("r", "text", "R", "All")], _WIDE, _style()).boxes[0]
+
+    assert select.width < text.width, (
+        "a chooser is measured from its value; a text field floors at the theme width"
+    )
+
+    long_value = "Latin America and the Caribbean"
+    grown = lay_out_variables(
+        [_spec("r", "select", "R", long_value)], _WIDE, _style()
+    ).boxes[0]
+    assert grown.width > select.width, "a chooser grows with its value"

@@ -1,6 +1,6 @@
 <style type="text/css">
 {# SVG Chart Styles
-   These styles are embedded in dataface SVGs for interactive features. #}
+   These styles are embedded in dbt charts SVGs for interactive features. #}
 
 {{ font_face_css }}
 {% if emoji_mode == "monochrome" %}svg text { font-variant-emoji: text; }{% endif %}

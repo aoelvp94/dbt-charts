@@ -183,7 +183,7 @@ def infer_bq_method(
 class BaseSourceConfig(BaseModel):
     """Closed-contract root for all source configurations.
 
-    extra="forbid" — file/HTTP/dbt_profile source configs have defined Dataface
+    extra="forbid" — file/HTTP/dbt_profile source configs have defined dbt charts
     contracts; unknown fields are validation errors, not silent pass-throughs.
     Database source configs inherit the same closed contract through
     DatabaseSourceConfig.
@@ -197,7 +197,7 @@ class BaseSourceConfig(BaseModel):
         default=None,
         description=(
             "Cache policy default for every query against this source, e.g. "
-            "cache: 1h — queries inherit it and may refine it; cache: false "
+            "cache: 1h: queries inherit it and may refine it; cache: false "
             "opts them out."
         ),
     )
@@ -230,8 +230,8 @@ class AttributedSourceConfig(BaseModel):
             "Cost-attribution pairs sent with every query against this source, e.g. "
             "attribution: {team: analytics}. Emitted as BigQuery job labels and as a "
             "query comment elsewhere. Keys and values must match BigQuery's label "
-            "rules ([a-z][a-z0-9_-]{0,62} / [a-z0-9_-]{0,63}). The dft_ prefix and the "
-            "app key are reserved for the engine's own identity."
+            "rules ([a-z][a-z0-9_-]{0,62} / [a-z0-9_-]{0,63}). The dbt_charts_ prefix "
+            "and the app key are reserved for the engine's own identity."
         ),
     )
 
@@ -748,7 +748,7 @@ class BigQuerySourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
 class RedshiftSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
     """Redshift source configuration.
 
-    Field names match dbt profiles.yml exactly, except `autocommit`: Dataface
+    Field names match dbt profiles.yml exactly, except `autocommit`: dbt charts
     only reads on this connection, and a non-autocommit session holds
     AccessShareLock on every table it read until the connection closes,
     blocking any writer that needs ACCESS EXCLUSIVE. `build_adapter` forces
@@ -1151,8 +1151,17 @@ class DuckDBSourceConfig(DatabaseSourceConfig):
     ] = False
     keep_open: Annotated[
         bool,
-        Field(description="Whether dbt-duckdb keeps its connection open."),
-    ] = True
+        Field(
+            description=(
+                "Whether dbt-duckdb holds its connection open between queries. "
+                "Off by default: a held handle pins the database file at one "
+                "DuckDB config, and DuckDB refuses any other connection to a "
+                "pinned file whose config differs. Ignored for ':memory:' and "
+                "MotherDuck, which dbt-duckdb holds open either way; closing "
+                "an in-memory database would destroy it."
+            )
+        ),
+    ] = False
     module_paths: Annotated[
         list[str] | None,
         Field(description="Python module paths dbt-duckdb loads."),
@@ -1241,16 +1250,13 @@ class CsvSourceConfig(BaseSourceConfig):
     type: Literal["csv"] = Field(description="Source type identifier.")
     files: dict[str, str] = Field(
         description=(
-            "Mapping of table_name → relative path or glob pattern. "
-            "Each key is the SQL table name. "
-            "The value is a path relative to the project root, or a glob "
-            "pattern using ``*`` (matches within a directory) and ``?`` "
-            "(matches one character). "
-            "A glob must match at least one file; all matched files must share "
-            "the same column schema and are concatenated into one table. "
-            "The fan-out limit is ``execution.max_glob_file_count`` in "
-            "``dbt_charts.yml`` (default 1000). "
-            "Required and must not be empty."
+            "Mapping of table_name → file path or glob (``*``/``?``), relative "
+            "to the project root. A glob must match at least one file; matched "
+            "files must share one column schema and concatenate into one "
+            "table. Limits: max 1000 files per glob, max 500 tables, max 5 GB "
+            "per table (``execution.max_glob_file_count`` / "
+            "``file_source_max_tables`` / ``file_source_max_bytes``). "
+            "Required, non-empty."
         )
     )
     delimiter: str = Field(default=",", description="Field delimiter character.")
@@ -1289,16 +1295,13 @@ class ParquetSourceConfig(BaseSourceConfig):
     type: Literal["parquet"] = Field(description="Source type identifier.")
     files: dict[str, str] = Field(
         description=(
-            "Mapping of table_name → relative path or glob pattern. "
-            "Each key is the SQL table name. "
-            "The value is a path relative to the project root, or a glob "
-            "pattern using ``*`` (matches within a directory) and ``?`` "
-            "(matches one character). "
-            "A glob must match at least one file; all matched files must share "
-            "the same column schema and are concatenated into one table. "
-            "The fan-out limit is ``execution.max_glob_file_count`` in "
-            "``dbt_charts.yml`` (default 1000). "
-            "Required and must not be empty."
+            "Mapping of table_name → file path or glob (``*``/``?``), relative "
+            "to the project root. A glob must match at least one file; matched "
+            "files must share one column schema and concatenate into one "
+            "table. Limits: max 1000 files per glob, max 500 tables, max 5 GB "
+            "per table (``execution.max_glob_file_count`` / "
+            "``file_source_max_tables`` / ``file_source_max_bytes``). "
+            "Required, non-empty."
         )
     )
 
@@ -1338,16 +1341,12 @@ class JsonSourceConfig(BaseSourceConfig):
     type: Literal["json"] = Field(description="Source type identifier.")
     files: dict[str, str] = Field(
         description=(
-            "Mapping of table_name → relative path or glob pattern. "
-            "Each key is the SQL table name. "
-            "The value is a path relative to the project root, or a glob "
-            "pattern using ``*`` (matches within a directory) and ``?`` "
-            "(matches one character). "
-            "A glob must match at least one file and all matched files are "
-            "concatenated into one table. "
-            "The fan-out limit is ``execution.max_glob_file_count`` in "
-            "``dbt_charts.yml`` (default 1000). "
-            "Required and must not be empty."
+            "Mapping of table_name → file path or glob (``*``/``?``), relative "
+            "to the project root. A glob must match at least one file; matched "
+            "files concatenate into one table. Limits: max 1000 files per "
+            "glob, max 500 tables, max 5 GB per table "
+            "(``execution.max_glob_file_count`` / ``file_source_max_tables`` "
+            "/ ``file_source_max_bytes``). Required, non-empty."
         )
     )
     union_by_name: bool = Field(
@@ -1356,7 +1355,7 @@ class JsonSourceConfig(BaseSourceConfig):
             "When True, rows from different files in a glob set are unified by "
             "column name: columns absent in a particular file are filled with "
             "NULL.  When False (default), all files in a glob set must share the "
-            "same column schema — a mismatch raises an error."
+            "same column schema; a mismatch raises an error."
         ),
     )
 
@@ -1408,7 +1407,7 @@ class DbtProfileSourceConfig(AttributedSourceConfig, BaseSourceConfig):
     profiles_dir: str | None = Field(
         default=None,
         description=(
-            "Directory containing profiles.yml, relative to the dataface project root. "
+            "Directory containing profiles.yml, relative to the dbt charts project root. "
             "Use when profiles.yml is in a subdirectory (e.g. services/dbt). "
             "Resolution order: profiles_dir → $DBT_PROFILES_DIR → project root → ~/.dbt."
         ),

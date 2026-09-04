@@ -29,7 +29,7 @@ with a support row showing the prior-period delta. The visual emphasis signals
 
 - Three or more equally-important metrics → `kpi-row`
 - Trend history is the point, not the current value → `time-series-trend`
-- Sparkline is critical (needs array data) → note this in the board description
+- Sparkline is critical (needs array data) → record this in the chart's `notes:`
 
 ## The pattern
 

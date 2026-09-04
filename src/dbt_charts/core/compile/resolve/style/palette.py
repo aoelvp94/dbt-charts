@@ -45,7 +45,6 @@ from __future__ import annotations
 
 import difflib
 import functools
-import math
 import re
 from collections.abc import Mapping
 from importlib.resources import files
@@ -53,6 +52,12 @@ from typing import Any, Literal
 
 import yaml
 
+from dbt_charts.core.colors import (
+    hex_to_oklch,
+    oklch_to_hex,
+    relative_luminance,
+    wcag_contrast,
+)
 from dbt_charts.core.compile.models.palette import Palette
 
 # ============================================================================
@@ -104,7 +109,7 @@ _spine_cache: dict[str, Palette] = {}
 _HARD_FAIL_NAMES: frozenset[str] = frozenset({"jet", "rainbow", "hsv"})
 
 # RdYlGn/parula resolve (for migration paths) but emit a warning.
-# The mapped substitute is the nearest DFT palette so dashboards don't crash
+# The mapped substitute is the nearest dbt charts palette so dashboards don't crash
 # when users encounter these names from prior tools. Warning text names
 # the substitution explicitly.
 _WARN_ALIASES: dict[str, str] = {
@@ -117,102 +122,10 @@ _WARN_ALIASES: dict[str, str] = {
 # OKLCH math + WCAG helpers for surface="table" carving
 # ============================================================================
 
-# DFT body text ink — used as the contrast reference for table cell backgrounds.
+# dbt charts body text ink — used as the contrast reference for table cell backgrounds.
 WCAG_TABLE_BODY = "#222222"
 # WCAG AA minimum contrast ratio for normal text.
 _WCAG_TABLE_MIN = 4.5
-
-
-def _srgb_to_linear(c: float) -> float:
-    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
-
-
-def _linear_to_srgb(c: float) -> float:
-    if c <= 0.0:
-        return 0.0
-    return c * 12.92 if c <= 0.0031308 else 1.055 * (c ** (1 / 2.4)) - 0.055
-
-
-def _cbrt(x: float) -> float:
-    return x ** (1 / 3) if x >= 0 else -((-x) ** (1 / 3))
-
-
-def _lrgb_to_oklab(r: float, g: float, b: float) -> tuple[float, float, float]:
-    lo = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b
-    m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b
-    s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b
-    lo, m, s = _cbrt(lo), _cbrt(m), _cbrt(s)
-    return (
-        0.2104542553 * lo + 0.7936177850 * m - 0.0040720468 * s,
-        1.9779984951 * lo - 2.4285922050 * m + 0.4505937099 * s,
-        0.0259040371 * lo + 0.7827717662 * m - 0.8086757660 * s,
-    )
-
-
-def _oklab_to_lrgb(L: float, a: float, b: float) -> tuple[float, float, float]:
-    lo = L + 0.3963377774 * a + 0.2158037573 * b
-    m = L - 0.1055613458 * a - 0.0638541728 * b
-    s = L - 0.0894841775 * a - 1.2914855480 * b
-    lo, m, s = lo**3, m**3, s**3
-    return (
-        +4.0767416621 * lo - 3.3077115913 * m + 0.2309699292 * s,
-        -1.2684380046 * lo + 2.6097574011 * m - 0.3413193965 * s,
-        -0.0041960863 * lo - 0.7034186147 * m + 1.7076147010 * s,
-    )
-
-
-def _hex_to_oklch(hex_str: str) -> tuple[float, float, float]:
-    h = hex_str.lstrip("#")
-    r = int(h[0:2], 16) / 255
-    g = int(h[2:4], 16) / 255
-    b = int(h[4:6], 16) / 255
-    rl, gl, bl = _srgb_to_linear(r), _srgb_to_linear(g), _srgb_to_linear(b)
-    L, a, bb = _lrgb_to_oklab(rl, gl, bl)
-    C = math.sqrt(a * a + bb * bb)
-    H = math.degrees(math.atan2(bb, a)) % 360
-    return (L, C, H)
-
-
-def _oklch_to_hex(L: float, C: float, H: float) -> str:
-    """Convert OKLCH to sRGB hex, gamut-clipping via binary search on C."""
-
-    def _try_c(cc: float) -> tuple[float, float, float] | None:
-        a = cc * math.cos(math.radians(H))
-        b = cc * math.sin(math.radians(H))
-        r, g, bb = _oklab_to_lrgb(L, a, b)
-        # Loose bounds tolerate floating-point overshoot; clamp to [0,1] on accept.
-        if -1e-5 <= r <= 1.0001 and -1e-5 <= g <= 1.0001 and -1e-5 <= bb <= 1.0001:
-            return (
-                max(0.0, min(1.0, r)),
-                max(0.0, min(1.0, g)),
-                max(0.0, min(1.0, bb)),
-            )
-        return None
-
-    result = _try_c(C)
-    if result is None:
-        lo, hi = 0.0, C
-        # 30 iterations → precision ~C/2^30 ≈ 1e-9 in C, well below 8-bit rounding.
-        for _ in range(30):
-            mid = (lo + hi) / 2
-            if _try_c(mid):
-                lo = mid
-            else:
-                hi = mid
-        result = _try_c(lo) or (0.0, 0.0, 0.0)
-    r, g, b = result
-    rs = max(0.0, min(1.0, _linear_to_srgb(r)))
-    gs = max(0.0, min(1.0, _linear_to_srgb(g)))
-    bs = max(0.0, min(1.0, _linear_to_srgb(b)))
-    return f"#{int(round(rs * 255)):02x}{int(round(gs * 255)):02x}{int(round(bs * 255)):02x}"
-
-
-def _relative_luminance(hex_str: str) -> float:
-    """WCAG 2.1 relative luminance of an sRGB hex color."""
-    h = hex_str.lstrip("#")
-    r, g, b = int(h[0:2], 16) / 255, int(h[2:4], 16) / 255, int(h[4:6], 16) / 255
-    rl, gl, bl = _srgb_to_linear(r), _srgb_to_linear(g), _srgb_to_linear(b)
-    return 0.2126 * rl + 0.7152 * gl + 0.0722 * bl
 
 
 # A table cell's body text is either clearly dark (light theme) or clearly
@@ -226,15 +139,7 @@ def _is_dark_canvas_text(text_color: str) -> bool:
     The dark-canvas signal for the table palette swap, read from the same
     relative luminance the WCAG carve already computes — no ResolvedStyle flag.
     """
-    return _relative_luminance(text_color) >= _DARK_CANVAS_TEXT_LUMA
-
-
-def _wcag_contrast(hex_a: str, hex_b: str) -> float:
-    """WCAG 2.1 contrast ratio between two sRGB hex colors."""
-    l1, l2 = _relative_luminance(hex_a), _relative_luminance(hex_b)
-    if l1 < l2:
-        l1, l2 = l2, l1
-    return (l1 + 0.05) / (l2 + 0.05)
+    return relative_luminance(text_color) >= _DARK_CANVAS_TEXT_LUMA
 
 
 def _interpolate_oklch_at_t(
@@ -254,7 +159,7 @@ def _interpolate_oklch_at_t(
     C = C0 + seg_t * (C1 - C0)
     d = ((H1 - H0 + 540) % 360) - 180
     H = (H0 + seg_t * d) % 360
-    return _oklch_to_hex(L, C, H)
+    return oklch_to_hex(L, C, H)
 
 
 def _wcag_boundary_t(
@@ -274,7 +179,7 @@ def _wcag_boundary_t(
     for _ in range(iters):
         t_mid = (t_pass + t_fail) / 2
         if (
-            _wcag_contrast(text_color, _interpolate_oklch_at_t(spine_oklch, t_mid))
+            wcag_contrast(text_color, _interpolate_oklch_at_t(spine_oklch, t_mid))
             >= _WCAG_TABLE_MIN
         ):
             t_pass = t_mid
@@ -298,9 +203,9 @@ def _table_surface_seq(
     Output stays in source order (index 0 = domain low). Raises ``ValueError``
     if neither end of the spine meets the threshold against ``text_color``.
     """
-    spine_oklch = [_hex_to_oklch(h) for h in source]
-    c0 = _wcag_contrast(text_color, _interpolate_oklch_at_t(spine_oklch, 0.0))
-    c1 = _wcag_contrast(text_color, _interpolate_oklch_at_t(spine_oklch, 1.0))
+    spine_oklch = [hex_to_oklch(h) for h in source]
+    c0 = wcag_contrast(text_color, _interpolate_oklch_at_t(spine_oklch, 0.0))
+    c1 = wcag_contrast(text_color, _interpolate_oklch_at_t(spine_oklch, 1.0))
     if max(c0, c1) < _WCAG_TABLE_MIN:
         raise ValueError(
             f"No stop of sequential palette meets WCAG {_WCAG_TABLE_MIN}:1 "
@@ -345,10 +250,10 @@ def _table_surface_div(
     For even ``steps`` the midpoint is excluded so stops flank it symmetrically.
     Raises ``ValueError`` if the midpoint fails the threshold against ``text_color``.
     """
-    spine_oklch = [_hex_to_oklch(h) for h in source]
+    spine_oklch = [hex_to_oklch(h) for h in source]
 
     mid_hex = _interpolate_oklch_at_t(spine_oklch, 0.5)
-    if _wcag_contrast(text_color, mid_hex) < _WCAG_TABLE_MIN:
+    if wcag_contrast(text_color, mid_hex) < _WCAG_TABLE_MIN:
         raise ValueError(
             f"Midpoint of diverging palette fails WCAG {_WCAG_TABLE_MIN}:1 "
             f"against table text {text_color!r}."
@@ -358,14 +263,14 @@ def _table_surface_div(
     left_hex = _interpolate_oklch_at_t(spine_oklch, 0.0)
     t_left = (
         0.0
-        if _wcag_contrast(text_color, left_hex) >= _WCAG_TABLE_MIN
+        if wcag_contrast(text_color, left_hex) >= _WCAG_TABLE_MIN
         else _wcag_boundary_t(spine_oklch, 0.5, 0.0, text_color)
     )
 
     right_hex = _interpolate_oklch_at_t(spine_oklch, 1.0)
     t_right = (
         1.0
-        if _wcag_contrast(text_color, right_hex) >= _WCAG_TABLE_MIN
+        if wcag_contrast(text_color, right_hex) >= _WCAG_TABLE_MIN
         else _wcag_boundary_t(spine_oklch, 0.5, 1.0, text_color)
     )
 
@@ -1072,7 +977,7 @@ def select_default_palette(
 # N in the bright palette is the same hue as slot N in the dark palette, just
 # at a darker tone. Used for label ink that sits a notch darker than its mark
 # colour (endpoint labels on multi-series line/area charts, ``per_series``
-# strip labels on data_table-bearing charts).
+# strip labels on support_table-bearing charts).
 #
 # Pairs the engine knows about today:
 #   - vivid-10     → vivid-10-dark      (stark theme)
@@ -1084,7 +989,7 @@ def select_default_palette(
 #
 # Both helpers live here (not in render/) because they are pure palette
 # indexing — no rendering, no spec construction. ``compile/resolve/``
-# and ``render/chart/data_table_attachment.py`` both consume the same
+# and ``render/chart/support_table_attachment.py`` both consume the same
 # companion-pairing path; placing the helpers here removes the inverted
 # compile→render dependency that an earlier draft papered over with a
 # deferred import.
@@ -1192,7 +1097,7 @@ def resolve_dark_companion_stops(
     binding plumbing once compiled-style carries the palette name).
 
     Used by both ``_build_endpoint_label_pane`` (endpoint labels) and the
-    ``per_series`` data-table strip row emitter so the two surfaces share
+    ``per_series`` support-table strip row emitter so the two surfaces share
     the same palette-companion pairing path.
 
     Future direction — slot-keyed lookup. This helper is hex-keyed because

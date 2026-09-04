@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Literal
 
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
 )
@@ -15,12 +16,16 @@ from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedAreaStyle
 from dbt_charts.core.compile.resolve.chart._axes import (
     _author_asked_for_endpoint_labels,
-    _author_hid_legend,
+    _authored_legend,
     _bake_ay_orient,
     _endpoint_labels_off_for_layers,
     _endpoint_labels_off_for_multiples,
     _reject_dual_axis_layered_endpoint_labels,
+    cartesian_color_domain_values,
     cartesian_series_naming,
+    cartesian_top_legend_entries,
+    estimate_cartesian_plot_height,
+    estimate_left_axis_reserve_px,
 )
 from dbt_charts.core.compile.resolve.chart._channels import (
     _classify_to_channel_type,
@@ -68,6 +73,7 @@ from dbt_charts.core.compile.resolve.chart._palette import (
 from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
     plan_cartesian,
+    quantitative_channel_values,
 )
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     bake_wide_measures_kwargs,
@@ -258,6 +264,7 @@ def _resolve_area(
         "quantitative",
         normalized.multiples,
         normalized.y,
+        has_quantitative_axis=True,
     )
     area = chart_local_style_context.area
     primary = plan.primary
@@ -270,10 +277,23 @@ def _resolve_area(
         layered_endpoint_rail_shape(normalized.x, normalized.y),
         [layer.color is None for layer in normalized.layers],
     )
+    color_domain_values = cartesian_color_domain_values(dataset, normalized.color)
+    top_legend_series = (
+        cartesian_top_legend_entries(
+            normalized.y if isinstance(normalized.y, str) else None,
+            normalized.y_label,
+            normalized.layers,
+            color_domain_values=color_domain_values,
+            has_color=normalized.color is not None,
+        )
+        if normalized.layers
+        else None
+    )
     naming = cartesian_series_naming(
         normalized,
         channels,
-        _author_hid_legend(primary),
+        _authored_legend(primary),
+        merge_onto_base(chart_style_context.legend, area.legend),
         width,
         _endpoint_labels_off_for_multiples(
             _endpoint_labels_off_for_layers(
@@ -287,8 +307,25 @@ def _resolve_area(
         rail_eligible_for_suppression=True,
         suppress_wide_measure_series=wide_measure_series,
         multiples_wide_measure_series=wide_measure_series,
-        layers_route_to_top_legend=True,
-        unconditional_top_legend=False,
+        top_legend_series=top_legend_series,
+        plot_height_estimate=estimate_cartesian_plot_height(normalized, area, width),
+        # Line and area never flip the dimension field onto Vega-Lite's
+        # y-channel the way a horizontal bar does, so this reserve is never
+        # dimension-driven for them. Their own measure axis usually keeps
+        # the family default (right) too, but _bake_ay_orient can still
+        # flip it left when the endpoint-label rail fires -- a real
+        # quantitative left axis this reserve does not currently account
+        # for (known gap, not fixed here; see
+        # estimate_left_axis_reserve_px's own docstring).
+        left_axis_reserve_px=estimate_left_axis_reserve_px(
+            None, merge_onto_base(chart_style_context.legend, area.legend)
+        ),
+        card_padding_px=chart_style_context.card_padding,
+        subtitle_present=bool(normalized.subtitle),
+        # Area never flips its dimension field onto Vega-Lite's y-channel
+        # the way a horizontal bar does -- the x-axis is always the
+        # horizontal rail.
+        axis_title_costs_height=plan.ax_merged.title.visible is not False,
     )
     endpoint_labels = naming.endpoint_labels
     _reject_dual_axis_layered_endpoint_labels(
@@ -308,8 +345,14 @@ def _resolve_area(
     )
     _ay_cont_area = ay_merged.scale.continuous if ay_merged.scale is not None else None
     authored_y_domain = _ay_cont_area.domain if _ay_cont_area is not None else None
-    if y_field_area or isinstance(normalized.y, list):
-        ay_merged = _bake_y_zero(ay_merged, primary, _area_floats, "area")
+    _ay_pre_zero_bake = ay_merged
+    # A streamgraph's y=0 is the silhouette's visual centerline, not a
+    # baseline, so a zero anchor is not a weaker opinion there — it is a
+    # meaningless one. VL floats each center-stacked column up by
+    # (max_total - this_total) / 2, so a baked domainMin of 0 happens to clip
+    # nothing; leaving the bake in would make that accident load-bearing.
+    if resolved_stack != "center" and (y_field_area or isinstance(normalized.y, list)):
+        ay_merged = _bake_y_zero(ay_merged, _area_floats, "area")
     _log_y_fields = (
         [y_field_area]
         if y_field_area
@@ -386,9 +429,18 @@ def _resolve_area(
                     )
                 }
             )
-    if _area_floats:
+    if resolved_stack == "center":
+        # A streamgraph's y=0 is the silhouette's visual centerline, not a
+        # floor (mirrors the _bake_y_zero skip above) -- the published fact
+        # must say so too, not report an anchor decision that never ran.
+        zero_anchored_area = False
+    elif _ay_cont_log is not None and _ay_cont_log.type == "log":
+        # A log scale carries no zero anchor -- log(0) is undefined, so no
+        # anchor decision is meaningful (mirrors _bake_y_zero's own log skip).
+        zero_anchored_area = False
+    elif _area_floats:
         _az = resolve_y_zero(
-            primary,
+            _ay_pre_zero_bake,
             min(_area_floats),
             max(_area_floats),
             "area",
@@ -443,6 +495,7 @@ def _resolve_area(
     # No tick_values on the categorical axis -- the non-compacting bake
     # can't fire regardless, but format_authored is required, not defaulted
     # (see build_resolved_axis's docstring).
+    tooltip_format_values = quantitative_channel_values(data, normalized.y)
     ay, area_style_tail = build_cartesian_axes(
         normalized.id,
         chart_style_context,
@@ -458,7 +511,30 @@ def _resolve_area(
         ),
         column_forming=True,
         measure_tooltip_format=_measure_tooltip_format(
-            normalized, primary, chart_style_context
+            normalized, primary, chart_style_context, values=tooltip_format_values
+        ),
+        tooltip_format_values=tooltip_format_values,
+        # Area semantics fix x=dimension, y=value -- see _validate_area_encoding.
+        ax_is_quantitative=x_ch_type == "quantitative",
+        ay_is_quantitative=True,
+        zero_anchor=zero_anchored_area,
+        # A non-stacked, multi-series (color or wide) area with
+        # endpoint_labels.visible renders its label pane as a second,
+        # unscaled view sharing the y-scale -- Vega-Lite's shared-scale
+        # merge then silently drops this axis's baked domain_min (see
+        # _y_domain_floor's docstring). A real stack (normalize/center)
+        # re-pins the domain explicitly at render time (endpoint_labels.py's
+        # own is_stacked branch), so only the non-stacked shape is at risk.
+        # A layered single-series area reaches the same rail through a
+        # different door -- render's gate fires on colorless layers too.
+        endpoint_rail_may_discard_domain=(
+            endpoint_labels.visible
+            and _non_stacked_area
+            and (
+                normalized.color is not None
+                or wide_measure_series
+                or endpoint_label_has_layers
+            )
         ),
     )
     area_mark_merged = area.marks.area
@@ -595,6 +671,8 @@ def _resolve_area(
         layout_padding=area.padding,
         suppress_legend=naming.suppress_legend,
         top_legend=naming.top_legend,
+        force_legend_visible=naming.force_legend_visible,
+        legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
     )
     resolved_layers = _resolve_layer_list(
         normalized.layers,
@@ -603,6 +681,7 @@ def _resolve_area(
         area,
         normalized.query_name,
         _area_adaptive_stroke,
+        0.0,
     )
     if authored_y_domain is not None:
         _check_layers_y_domain(normalized.id, resolved_layers, authored_y_domain)

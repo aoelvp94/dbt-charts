@@ -45,7 +45,7 @@ def reset():
 
 
 def _board() -> Any:
-    return resolve_style_and_context(get_theme_style("editorial"))
+    return resolve_style_and_context(get_theme_style("clarity"))
 
 
 def _v2_vl(norm: Any, data: list[dict[str, Any]]) -> dict[str, Any]:
@@ -130,6 +130,155 @@ class TestReproductionAWireOrderIsChronologicalAcrossPanels:
         spec = _v2_vl(_repro_a_chart(), _repro_a_rows())
         months = [row["month"] for row in spec["data"]["values"]]
         assert months == sorted(months)
+
+
+class TestAuthoredFillKeepsChronologicalWireOrder:
+    """An authored ``fill`` re-bands a chart the scaffold gate sent temporal,
+    and the wire order must still read chronologically.
+
+    ``is_temporal`` is decided on the RAW rows, but only ``fill: null`` lets
+    it short-circuit gap-fill. Any other authored fill enumerates anyway, and
+    the emitter then re-resolves against those deficit-0 filled rows and lands
+    back on ORDINAL. An ordinal band scale takes its domain from encounter
+    order, so gating the pooled chronological re-sort on the pre-fill verdict
+    leaves the axis reading 2020→2021 then 2000→2001. Regression against
+    main, where a fine grain always resolved ordinal and the re-sort ran.
+    """
+
+    @staticmethod
+    def _rows() -> list[dict[str, Any]]:
+        import datetime as dt
+
+        out: list[dict[str, Any]] = []
+        # Later panel first in query order, so panel-order concatenation is
+        # non-chronological unless the pooled re-sort runs.
+        for panel, start in (("b", dt.date(2020, 1, 1)), ("a", dt.date(2000, 1, 1))):
+            for i in range(10):
+                out.append(
+                    {
+                        "day": (start + dt.timedelta(days=40 * i)).isoformat(),
+                        "cnt": i + 1,
+                        "panel": panel,
+                    }
+                )
+        return out
+
+    def test_fill_zero_wire_order_is_chronological(self):
+        chart = BarChart.model_validate(
+            {
+                "id": "c",
+                "type": "bar",
+                "query_name": "q",
+                "x": "day",
+                "y": "cnt",
+                "multiples": {"rows": "panel"},
+                "style": {"axis_x": {"fill": "zero"}},
+            }
+        )
+        days = [row["day"] for row in _v2_vl(chart, self._rows())["data"]["values"]]
+        assert days == sorted(days)
+
+
+class TestFacetedFineGrainGapFillFires:
+    """The scaffold-budget gate must reach ``gap_fill_ordinal_time_per_panel``
+    with the chart's partition fields.
+
+    That call site decides ``is_temporal``, which routes gap-fill. It is a
+    SEPARATE re-derivation from the one ``bar.py`` runs for the encoding, and
+    the two are contracted to agree. Measure the budget on pooled rows there
+    and a faceted fine-grain bar resolves ``is_temporal=True`` — gap-fill
+    early-returns having synthesized nothing — while the emitter resolves the
+    x encoding ordinal, leaving a band axis without the scaffold rows the
+    ordinal branch is contracted to have. Every other gate test drives
+    ``build_cartesian_x_encoding`` directly and cannot see that divergence.
+    """
+
+    @staticmethod
+    def _chart() -> Any:
+        return BarChart.model_validate(
+            {
+                "id": "c",
+                "type": "bar",
+                "query_name": "q",
+                "x": "day",
+                "y": "cnt",
+                "multiples": {"rows": "panel"},
+            }
+        )
+
+    @staticmethod
+    def _rows() -> list[dict[str, Any]]:
+        # Two panels of contiguous dailies twenty years apart: each panel is
+        # individually dense (zero synthesized buckets), so banding stands and
+        # gap-fill must run per panel. A pooled span measurement sees a
+        # ~7,200-bucket deficit and flips the chart continuous instead.
+        import datetime as dt
+
+        # Five interior days are missing from each panel, so gap-fill has
+        # something to synthesize: firing and not firing are distinguishable
+        # in the emitted row count. Contiguous data would look identical
+        # either way and pin nothing.
+        out: list[dict[str, Any]] = []
+        for panel, start in (("a", dt.date(2000, 1, 1)), ("b", dt.date(2020, 1, 1))):
+            for i in range(40):
+                if i in (7, 8, 19, 20, 31):
+                    continue
+                out.append(
+                    {
+                        "day": (start + dt.timedelta(days=i)).isoformat(),
+                        "cnt": i + 1,
+                        "panel": panel,
+                    }
+                )
+        return out
+
+    def test_faceted_dense_daily_bands_and_keeps_every_panel_in_its_own_range(self):
+        spec = _v2_vl(self._chart(), self._rows())
+        data = spec["data"]["values"]
+        panel_a = {row["day"] for row in data if row["panel"] == "a"}
+        panel_b = {row["day"] for row in data if row["panel"] == "b"}
+        # Each panel keeps its own 40-day window and neither is scaffolded
+        # across the twenty-year gap between them.
+        assert panel_a and panel_b
+        assert max(panel_a) < "2001-01-01"
+        assert min(panel_b) > "2019-12-31"
+        # 35 source rows per panel; gap-fill completes each panel's own
+        # 40-day range. A pooled-span measurement resolves the chart temporal
+        # instead, gap-fill early-returns, and this stays at 70.
+        assert len(data) == 80
+        assert "2000-01-08" in panel_a
+        assert "2020-01-08" in panel_b
+        # The emitted encoding, not just the row set: bar.py re-resolves the x
+        # type on the filled rows through its OWN call site, and every
+        # assertion above is decided upstream in _channels.py. Without the
+        # panel fields there, this silently reads "temporal" — each panel's
+        # 40-day window collapsing onto a shared twenty-year continuous
+        # domain — while the row count and per-panel membership stay correct.
+        x_enc = spec["spec"]["encoding"]["x"]
+        assert x_enc["type"] == "ordinal", x_enc
+        assert x_enc.get("timeUnit") in (None, "yearmonthdate"), x_enc
+
+    def test_faceted_sparse_daily_resolves_temporal_in_the_emitted_encoding(self):
+        # The flip direction: each panel individually sparser than its detected
+        # grain is over budget in every panel, so the chart genuinely belongs on
+        # a continuous scale. Pins that the gate still fires through bar.py's
+        # call site rather than being disabled wholesale by the panel fix.
+        import datetime as dt
+
+        rows: list[dict[str, Any]] = []
+        for panel, start in (("a", dt.date(2000, 1, 1)), ("b", dt.date(2020, 1, 1))):
+            for i in range(10):
+                rows.append(
+                    {
+                        "day": (start + dt.timedelta(days=45 * i)).isoformat(),
+                        "cnt": i + 1,
+                        "panel": panel,
+                    }
+                )
+        spec = _v2_vl(self._chart(), rows)
+        x_enc = spec["spec"]["encoding"]["x"]
+        assert x_enc["type"] == "temporal", x_enc
+        assert "timeUnit" not in x_enc, x_enc
 
 
 class TestPooledResortSkippedForNonFacetedChart:
@@ -947,7 +1096,7 @@ def test_width_dependent_decision_uses_panel_width(monkeypatch):
     resolved = resolve(chart, rows, chart_style_context=ctx, width=600.0)
     n_columns = len(resolved.panel_axes[0].values)
     expected_width = facet_panel_width(
-        600.0, n_columns, bool(resolved.style.axis_y.mirror)
+        600.0, n_columns, bool(resolved.style.axis_y.mirror), 0.0
     )
 
     captured: list[float] = []
@@ -996,7 +1145,7 @@ def test_scatter_or_heatmap_columns_uses_panel_width(monkeypatch):
     resolved = resolve(chart, rows, chart_style_context=ctx, width=600.0)
     n_columns = len(resolved.panel_axes[0].values)
     expected_width = facet_panel_width(
-        600.0, n_columns, bool(resolved.style.axis_y.mirror)
+        600.0, n_columns, bool(resolved.style.axis_y.mirror), 0.0
     )
 
     captured: list[float] = []
@@ -1024,6 +1173,7 @@ def test_horizontal_bar_panel_height_floor():
         min_height_for_horizontal_bar_categories,
     )
     from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
+    from dbt_charts.core.render.chart.vl_field_maps import effective_bar_size
 
     categories = [f"cat{i}" for i in range(8)]
     chart = BarChart.model_validate(
@@ -1045,7 +1195,7 @@ def test_horizontal_bar_panel_height_floor():
     board_rs, ctx = _board()
     resolved = resolve(chart, rows, chart_style_context=ctx)
     min_h = min_height_for_horizontal_bar_categories(
-        len(categories), resolved.style.axis_x, resolved.style.mark.size
+        len(categories), resolved.style.axis_x, effective_bar_size(resolved.style.mark)
     )
     vl = generate_vega_lite_spec(
         chart,
@@ -1094,7 +1244,7 @@ def test_render_time_width_not_resolve_time_width(monkeypatch):
     render_width = 900.0
     n_columns = len(resolved.panel_axes[0].values)
     expected_width = facet_panel_width(
-        render_width, n_columns, bool(resolved.style.axis_y.mirror)
+        render_width, n_columns, bool(resolved.style.axis_y.mirror), 0.0
     )
 
     captured: list[float] = []

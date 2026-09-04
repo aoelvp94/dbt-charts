@@ -261,7 +261,7 @@ class TestVariablesPlaceholderSubstyle:
 
     def test_editorial_cream_placeholder_resolves_to_disabled_cream(self):
         """cream: placeholder color resolves to dbt-creams.disabled (#B2A691)."""
-        rs = resolve_style(get_theme_style("cream"))
+        rs = resolve_style(get_theme_style("paper"))
         assert rs.variables.placeholder.font.color is not None
         assert rs.variables.placeholder.font.color.lower() == "#b2a691"
 

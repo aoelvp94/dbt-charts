@@ -223,9 +223,7 @@ def test_grouped_bar_scale_padding_set_by_emitter(
 
 def test_sorted_series_alphabetical() -> None:
     """stack_order='alphabetical' → sorted alphabetically."""
-    from dbt_charts.core.render.chart.emitters._cartesian import (
-        sorted_series_by_stack_order,
-    )
+    from dbt_charts.core.utils import sorted_series_by_stack_order
 
     candidates = ["Zebra", "Apple", "Mango"]
     result = sorted_series_by_stack_order(candidates, [], "series", "alphabetical")
@@ -234,9 +232,7 @@ def test_sorted_series_alphabetical() -> None:
 
 def test_sorted_series_data_order() -> None:
     """stack_order='data' → first-encounter order."""
-    from dbt_charts.core.render.chart.emitters._cartesian import (
-        sorted_series_by_stack_order,
-    )
+    from dbt_charts.core.utils import sorted_series_by_stack_order
 
     data = [
         {"series": "C"},
@@ -251,9 +247,7 @@ def test_sorted_series_data_order() -> None:
 
 def test_sorted_series_value_order() -> None:
     """stack_order=None/'value' → largest global sum at baseline (descending)."""
-    from dbt_charts.core.render.chart.emitters._cartesian import (
-        sorted_series_by_stack_order,
-    )
+    from dbt_charts.core.utils import sorted_series_by_stack_order
 
     data = [
         {"series": "A", "y": 10.0},

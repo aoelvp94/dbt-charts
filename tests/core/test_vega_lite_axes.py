@@ -144,7 +144,7 @@ class TestYAxisOrientation:
         self, make_chart
     ):
         """Chart-local style.axis_x.labels.padding flows to horizontal bar's
-        categorical y-axis.  Under dataface semantics axis_x = categorical axis;
+        categorical y-axis.  Under dbt charts semantics axis_x = categorical axis;
         for horizontal bar the categorical axis is VL y, so axis_x cascade drives
         encoding.y directly — labelPadding reaches the y-axis from the start.
 
@@ -208,7 +208,7 @@ class TestYAxisOrientation:
         ]
         _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
         spec = generate_vega_lite_spec(chart, data)
-        # Dataface 'desc' translates to VL canonical 'descending' at emit time.
+        # dbt charts 'desc' translates to VL canonical 'descending' at emit time.
         assert spec["encoding"]["y"]["sort"] == {
             "field": "revenue",
             "order": "descending",
@@ -274,10 +274,10 @@ class TestAxisYLabelAlignInvasion:
     unset). Explicitly setting ``label.align`` to the axis's OWN side
     (``"right"`` on a right-orient axis, ``"left"`` on a left-orient axis)
     flips the text-anchor so labels grow back toward the plot instead.
-    Dataface computes an explicit ``labelPadding`` from the real (baked)
+    dbt charts computes an explicit ``labelPadding`` from the real (baked)
     tick values and font metrics, which the same vl-convert probe found
     widens the reserved gutter 1:1 regardless of align direction — so the
-    combination renders correctly provided Dataface has baked tick content
+    combination renders correctly provided dbt charts has baked tick content
     to measure from. When it doesn't (no format, no baked ticks, an authored
     labelExpr, or an upper/lower font.case), own-side align falls back to
     the away-side default instead of reserving an unmeasured gutter — the
@@ -444,7 +444,7 @@ class TestAxisYLabelAlignInvasion:
         assert unauthored_padding > authored_si_padding
 
     def test_own_side_align_without_baked_format_falls_back(self):
-        """No exact-string guarantee without a concrete format means Dataface
+        """No exact-string guarantee without a concrete format means dbt charts
         can't safely measure a labelPadding — falls back to the away-side
         default rather than guessing at VL's own auto-format derivation. The
         theme cascade always supplies a concrete format for a real
@@ -547,7 +547,7 @@ class TestAxisYLabelAlignInvasion:
     def test_own_side_align_without_baked_ticks_estimates_from_data(self):
         """No baked tick_values (e.g. a theme like ``stark`` that leaves
         ``axis.ticks.count`` unset) no longer means an automatic reject — as
-        long as the actual data domain is known, Dataface can still bound the
+        long as the actual data domain is known, dbt charts can still bound the
         widest label Vega-Lite could plausibly render and compute a
         labelPadding from that estimate.
         """
@@ -689,7 +689,7 @@ class TestAxisYLabelAlignInvasion:
         """No explicit align — VL's own per-orient default — is always safe.
 
         Uses an explicit RAW (non-predefined) format: the theme's own
-        unauthored default format is a predefined name (number_default),
+        unauthored default format is a predefined name (number),
         which now gets an explicit forced labelAlign regardless of whether
         anything was authored -- that's this task's own deliberate feature,
         not the "no override at all" case this test means to check.
@@ -919,7 +919,7 @@ class TestHorizontalBarCategoricalLabelAlignInvasion:
     categorical axis (``chart.x``, rendered on VL's y channel at the
     resolved ``axis_y.position`` — "left" by default, matching the deleted
     ``categorical_orient`` field's static default). Category tick content is
-    always Dataface's own (the literal per-row field values, in query row
+    always dbt charts' own (the literal per-row field values, in query row
     order) — no format uncertainty at all, unlike the quantitative case.
     """
 
@@ -1086,7 +1086,9 @@ class TestChartFormatApplied:
             "bar",
             x="month",
             y="revenue",
-            style=BarChartStylePatch(orientation="vertical", number_format="currency"),
+            style=BarChartStylePatch(
+                orientation="vertical", number_format="currency_full"
+            ),
         )
         data = [{"month": "Jan", "revenue": 1000}, {"month": "Feb", "revenue": 2000}]
         _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
@@ -1123,7 +1125,7 @@ class TestChartFormatApplied:
     def test_custom_alias_resolves_through_board_formats(self, make_chart):
         """End-to-end: board-level style.formats alias flows to VL axis.format AND Python paths.
 
-        Regression guard for DFT_CORE-ALLOW_THEMES_AND_BOARDS_TO_DEFINE_CUSTOM_FORMAT_PRESETS.
+        Regression guard for DFT_CORE-ALLOW_THEMES_AND_FACES_TO_DEFINE_CUSTOM_FORMAT_PRESETS.
         Board overrides theme; "revenue" alias resolves via cascade, not code fallback.
         Checks both the VL render path (axis.format in spec) and the Python format_value path.
         """
@@ -1172,7 +1174,7 @@ class TestChartFormatApplied:
         from dbt_charts.core.compile.format import resolve_format
 
         # The resolve_format contract: None input always returns "".
-        assert resolve_format(None, {"currency": "$,.2f", "compact": "~s"}) == ""
+        assert resolve_format(None, {"currency": "$,.2f", "number": "~s"}) == ""
         assert resolve_format(None) == ""
 
         # VL path: use a known D3 spec alias to confirm the mechanism, then verify None clears it.
@@ -1248,19 +1250,28 @@ class TestTimeFormatOnOrdinalAxis:
         assert x_axis.get("formatType") != "time"
 
     def test_non_time_format_on_ordinal_x_no_format_type(self, make_chart):
-        """Non-time formats (d3-format strings) must NOT get formatType='time'."""
+        """Non-time formats (d3-format strings) must NOT get formatType='time'.
+
+        A numeric column pinned ordinal by ``axis_x.type`` is the shape that
+        keeps both halves true: the scale is a band, and the ticks are numbers
+        d3 can actually format. Over category strings the same authoring is
+        its own error now — every tick would render NaN.
+        """
         chart = make_chart(
             "bar",
-            x="category",
+            x="bucket",
             y="revenue",
             style=BarChartStylePatch(
                 orientation="vertical",
-                axis_x=AxisXStylePatch(labels=DimensionLabelStylePatch(format=".2f")),
+                axis_x=AxisXStylePatch(
+                    type="ordinal", labels=DimensionLabelStylePatch(format=".2f")
+                ),
             ),
         )
-        data = [{"category": "A", "revenue": 10}, {"category": "B", "revenue": 15}]
+        data = [{"bucket": 1, "revenue": 10}, {"bucket": 2, "revenue": 15}]
         _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
         spec = generate_vega_lite_spec(chart, data)
+        assert spec["encoding"]["x"]["type"] == "ordinal"
         x_axis = spec["encoding"]["x"].get("axis", {})
         assert x_axis.get("format") == ".2f"
         assert "formatType" not in x_axis
@@ -1301,15 +1312,21 @@ class TestTimeFormatOnOrdinalAxis:
 
         chart = make_chart(
             "line",
-            x="category",
+            x="bucket",
             y="revenue",
             style=LineChartStylePatch(
-                axis_x=AxisXStylePatch(labels=DimensionLabelStylePatch(format="%%Y"))
+                axis_x=AxisXStylePatch(
+                    type="ordinal", labels=DimensionLabelStylePatch(format="%%Y")
+                )
             ),
         )
-        data = [{"category": "A", "revenue": 10}, {"category": "B", "revenue": 15}]
+        data = [{"bucket": 1, "revenue": 10}, {"bucket": 2, "revenue": 15}]
         _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
         spec = generate_vega_lite_spec(chart, data)
+        # An ordinal band keeps is_time_format's verdict load-bearing: on a
+        # temporal x the injection site is skipped outright, so the guard this
+        # test exists for would never execute.
+        assert spec["encoding"]["x"]["type"] == "ordinal"
         x_axis = spec["encoding"]["x"].get("axis", {})
         assert x_axis.get("format") == "%%Y"
         assert "formatType" not in x_axis, (
@@ -1392,34 +1409,16 @@ class TestTimeFormatOnOrdinalAxis:
         assert y_axis.get("labelExpr") == "utcFormat(toDate(datum.value), '%b %Y')", (
             f"y-axis time-format must route through UTC labelExpr; got {y_axis}"
         )
-        assert "format" not in y_axis, f"format must be popped; got {y_axis}"
-        assert y_axis.get("formatType") != "time"
+        assert "format" not in y_axis, f"format must be removed; got {y_axis}"
 
 
 class TestAxisTitleNull:
-    """axis.title must be null (not titleFontSize:0) when no authored label is present.
+    """axis.title must be null (not titleFontSize:0) when a title is suppressed.
 
     Finding: font.size:0 hides the text visually but the title still occupies
     layout space and fires a11y events.  The correct VL mechanism is
     ``encoding.x.axis.title: null``.
     """
-
-    def test_bar_without_labels_emits_axis_title_null(self, make_chart):
-        """Bar with no authored labels → axis.title: null on both axes."""
-        chart = make_chart("bar", x="month", y="revenue")
-        data = [{"month": "Jan", "revenue": 100}]
-        _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-        spec = generate_vega_lite_spec(chart, data)
-        x_axis = spec["encoding"]["x"].get("axis", {})
-        y_axis = spec["encoding"]["y"].get("axis", {})
-        assert "title" in x_axis and x_axis["title"] is None, (
-            f"x-axis without authored label must carry axis.title:null; "
-            f"got axis={x_axis}"
-        )
-        assert "title" in y_axis and y_axis["title"] is None, (
-            f"y-axis without authored label must carry axis.title:null; "
-            f"got axis={y_axis}"
-        )
 
     @pytest.mark.parametrize("chart_type", ["bar"])
     def test_with_authored_labels_no_axis_title_null(self, make_chart, chart_type):
@@ -1728,3 +1727,54 @@ class TestAxisTitleNull:
         x_axis = spec["encoding"]["x"].get("axis", {})
         assert "title" in x_axis and x_axis["title"] is None
         assert spec["encoding"]["x"]["title"] == "Month (fiscal)"
+
+
+class TestDefaultAxisTitleCasing:
+    """Default axis titles derive from the bound column name and preserve its
+    casing — they read like a column name (``order month``), not a title-cased
+    headline (``Order Month``). Authored ``x_label``/``y_label`` (chart title,
+    legend title) are untouched by this: those still resolve through the
+    axis-title font's ``case`` (title-case by default).
+    """
+
+    def test_default_axis_titles_lowercase_snake_case_fields(self, make_chart):
+        """order_month / total_revenue → lowercase 'order month' / 'total revenue',
+        matching the bound column names rather than a title-cased headline."""
+        chart = make_chart("line", x="order_month", y="total_revenue")
+        data = [{"order_month": "2026-01", "total_revenue": 123}]
+        _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, data)
+        assert spec["encoding"]["x"]["title"] == "order month"
+        assert spec["encoding"]["y"]["title"] == "total revenue"
+
+    def test_default_axis_titles_preserve_casing_after_orientation_routing(
+        self, make_chart
+    ):
+        """department / user_count on a bar auto-routes horizontal (nominal x),
+        so user_count lands on VL x and department on VL y — casing must be
+        preserved on whichever channel each field actually renders on."""
+        chart = make_chart("bar", x="department", y="user_count")
+        data = [
+            {"department": "Sales", "user_count": 10},
+            {"department": "Eng", "user_count": 20},
+        ]
+        _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, data)
+        assert spec["encoding"]["x"]["title"] == "user count"
+        assert spec["encoding"]["y"]["title"] == "department"
+
+    def test_authored_labels_pass_through_unchanged(self, make_chart):
+        """An authored x_label/y_label is never touched by the default-axis-title
+        casing rule — it renders exactly as authored, including title case."""
+        chart = make_chart(
+            "line",
+            x="order_month",
+            y="total_revenue",
+            x_label="Order Month",
+            y_label="Total Revenue",
+        )
+        data = [{"order_month": "2026-01", "total_revenue": 123}]
+        _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
+        spec = generate_vega_lite_spec(chart, data)
+        assert spec["encoding"]["x"]["title"] == "Order Month"
+        assert spec["encoding"]["y"]["title"] == "Total Revenue"

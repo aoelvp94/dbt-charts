@@ -1,6 +1,6 @@
 """Tests for Vega-Lite map chart generation.
 
-Tests the map rendering functionality in dataface.render.vega_lite module:
+Tests the map rendering functionality in dbt_charts.core.render.vega_lite module:
 - generate_map_spec() for choropleth rendering
 - generate_point_map_spec() for point/bubble maps
 - Data joining/lookup transforms
@@ -896,7 +896,7 @@ class TestMapColorSchemes:
 
         Reads which `dbt-seq-*` palette the theme currently configures
         (rather than pinning e.g. `dbt-seq-blue` literally — a theme's
-        specific palette choice is tunable, `dataface/AGENTS.md`: "don't pin
+        specific palette choice is tunable, `dbt-charts/AGENTS.md`: "don't pin
         theme/default values") and asserts the render actually carries that
         palette's hex stops end to end. The structural claim that every
         theme picks a `dbt-seq-*` palette (never a raw Vega scheme) is

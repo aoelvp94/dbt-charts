@@ -1,9 +1,9 @@
 title: Monthly Revenue Trend
-description: Time-series trend pattern — line chart with date on x, metric on y
+notes: Time-series trend pattern — line chart with date on x, metric on y
 
 queries:
   monthly_revenue:
-    description: Monthly revenue totals, ordered chronologically
+    notes: Monthly revenue totals, ordered chronologically
     columns: [month, revenue]
     values:
       - ["2025-07-01", 182000]
@@ -15,7 +15,7 @@ queries:
 
 charts:
   revenue_trend:
-    description: Monthly revenue trajectory over the last six months
+    notes: Monthly revenue trajectory over the last six months
     type: line
     query: monthly_revenue
     x: month

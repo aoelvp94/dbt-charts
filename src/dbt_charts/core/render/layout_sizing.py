@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from types import EllipsisType
 from typing import TYPE_CHECKING, Any
 
+from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.models.board.normalized import (
     Board,
     Layout,
@@ -34,6 +35,7 @@ from dbt_charts.core.compile.models.board.resolved import (
     ChartIdentity,
     ChartResolveFailure,
 )
+from dbt_charts.core.compile.models.chart.authored import ChartSupportTable
 from dbt_charts.core.compile.models.chart.normalized import (
     NON_ASPECT_RATIO_TYPES,
     Chart,
@@ -44,14 +46,17 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedPieChart,
     ResolvedTableChart,
 )
+from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.resolve.style.typography import board_is_prose
 from dbt_charts.core.compile.sizing import board_container_width, get_board_gap
+from dbt_charts.core.diagnostics import ERR_INPUT_INVALID
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.chart_resolution import resolve_chart_with_runtime_inputs
 from dbt_charts.core.render.chart.spec_builders import additive_padding
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
+from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.sizing import (
     HeightProvider,
     active_layout_items,
@@ -90,6 +95,18 @@ RenderCache = dict[tuple[str, float, float], tuple[str, float]]
 ResolvedChartVariantKey = tuple[str, float, int]
 ResolvedChartVariants = dict[ResolvedChartVariantKey, ResolvedChart]
 ResolvedChartCanonicalKey = tuple[str, int]
+
+
+def _support_table_of(chart: Chart | ResolvedChart) -> ChartSupportTable | None:
+    """The chart's support_table attachment, or None when it declares no slot.
+
+    Layout walks heterogeneous chart types and only the cartesian families
+    declare this slot at all, so a missing attribute is the ordinary case here
+    rather than bad input.
+    """
+    return getattr(
+        chart, "support_table", None
+    )  # type-state: silent_fallback — optional slot
 
 
 def resolved_chart_variant_key(
@@ -145,11 +162,11 @@ class SizingRenderCtx:
     resolve_errors: dict[str, ChartResolveFailure] = field(default_factory=dict)
     executor: Executor | None = None
     variables: dict[str, Any] = field(default_factory=dict)
-    # Maps chart_id → corrected spec.width for data_table charts.
+    # Maps chart_id → corrected spec.width for support_table charts.
     # autosize:pad makes outer SVG wider than spec.width by a constant overhead;
     # the render-first pass measures this and stores the shrunk spec.width here so
     # _align_cols_heights can reuse it instead of item.width (which would re-overflow).
-    data_table_corrected_widths: dict[str, float] = field(default_factory=dict)
+    support_table_corrected_widths: dict[str, float] = field(default_factory=dict)
     # Maps (chart_id, slot_width) → natural rendered height.
     # Populated during the sizing pass; used to deduplicate renders of the same
     # chart at the same width and to drive the close-enough skip in _align_cols_heights.
@@ -191,7 +208,7 @@ def _nested_render_ctx(
         chart_style_context=nested_board.chart_style_context,
         executor=render_ctx.executor,
         variables=render_ctx.variables,
-        data_table_corrected_widths=render_ctx.data_table_corrected_widths,
+        support_table_corrected_widths=render_ctx.support_table_corrected_widths,
     )
 
 
@@ -233,6 +250,15 @@ def _require_resolved(
     # failure at one placement is a failure at all of them. If a check ever
     # becomes width- or style-conditional this is wrong — the first probe to
     # fail would poison placements that would have rendered fine.
+    #
+    # spark_bar's render-time numeric check (below, in the "spark_bar" branch)
+    # writes into this same dict from outside this function and used to be
+    # exactly that violation: it read the cascaded style.spark_bar.max_bars
+    # to decide which rows to validate, so two placements of the same chart
+    # under different max_bars could disagree, and whichever resolved first
+    # would poison the other. It now validates the full query result — a
+    # property of the data, never of width or style — so the invariant this
+    # comment describes holds for it too.
     if chart_id in render_ctx.resolve_errors:
         return None
     variant_key = resolved_chart_variant_key(chart_id, width, resolved_style)
@@ -457,9 +483,15 @@ def _get_table_height_from_data(
         and row_count > resolved_page_rows + _PAGINATION_GROW_CAP
     ):
         multi_page = True
+        # Ceil division: the real page count this row_count/resolved_page_rows
+        # split will produce, before row_count is overwritten below. Needed
+        # only to decide whether the static-export cap note reservation
+        # below applies -- not otherwise used for sizing.
+        estimated_total_pages = -(-row_count // resolved_page_rows)
         row_count = resolved_page_rows
     else:
         multi_page = False
+        estimated_total_pages = 1
     height = (
         title_height
         + header_height
@@ -469,9 +501,28 @@ def _get_table_height_from_data(
         + bottom_padding
     )
     if multi_page:
-        from dbt_charts.core.render.chart.table import _PAGINATION_CONTROL_HEIGHT
+        from dbt_charts.core.render.chart.table import (
+            _PAGINATION_CAP_NOTE_HEIGHT,
+            _PAGINATION_CONTROL_HEIGHT,
+            _STATIC_MULTI_PAGE_MAX_PAGES,
+        )
 
         height += _PAGINATION_CONTROL_HEIGHT
+        # A static export whose real page count exceeds the pre-render cap
+        # draws a "Showing pages 1-N of M" note on its own line below the
+        # pager (see static_multi_page in table.py) -- unlike the pager
+        # itself, which _PAGINATION_CONTROL_HEIGHT above reserves for and
+        # draws in BOTH modes, this note is static-export-only. Reserved
+        # unconditionally anyway: this pass has no way to know whether the
+        # eventual render is interactive (dct serve/Cloud, never emits the
+        # note) or static (dct render, might) -- controls_are_interactive()
+        # only becomes meaningful once renderer.py opens that scope around
+        # the MAIN pass, after sizing has finished. The cost is an unused
+        # 20px band on an interactive table past the cap; the alternative
+        # (never reserving it) is the explicit-slot invariant break this
+        # code exists to fix.
+        if estimated_total_pages > _STATIC_MULTI_PAGE_MAX_PAGES:
+            height += _PAGINATION_CAP_NOTE_HEIGHT
     return height
 
 
@@ -574,12 +625,12 @@ def _measure_vl_title_plot_gap(svg: str) -> float | None:
     return -(role_title_group_y + text_y)
 
 
-def _data_table_title_corrected_offset(
+def _support_table_title_corrected_offset(
     chart_svg: str, probe_title_offset: float
 ) -> float | None:
     """Compute the corrected title.offset given the probe SVG and its title.offset.
 
-    apply_chart_data_table_post_pass sets title.offset = strip_h (the probe
+    apply_chart_support_table_post_pass sets title.offset = strip_h (the probe
     value; passed here as ``probe_title_offset``). VL adds a baseline gap on
     top so actual gap = baseline + probe_title_offset. This function measures
     the gap from the probe SVG and returns the corrected total title.offset that
@@ -623,9 +674,9 @@ def _render_chart_to_svg(
 
     ``probe_title_offset`` is the spec's title.offset BEFORE any
     ``title_offset_override`` is applied — it equals the value set by
-    apply_chart_data_table_post_pass (= strip_h for titled top data_table charts,
+    apply_chart_support_table_post_pass (= strip_h for titled top support_table charts,
     None for charts without a title.offset block). Callers use this to drive
-    title-offset calibration without re-running data_table_strip_height.
+    title-offset calibration without re-running support_table_strip_height.
 
     When ``title_offset_override`` is set, the VL spec's title.offset is patched
     to that value before vl-convert converts the spec to SVG.
@@ -646,7 +697,7 @@ def _render_chart_to_svg(
         padding=padding,
         datasets=datasets,
     )
-    # Read the probe title.offset BEFORE any override (set by apply_chart_data_table_post_pass).
+    # Read the probe title.offset BEFORE any override (set by apply_chart_support_table_post_pass).
     probe_title_offset: float | None = None
     if artifact.kind == "vega_spec" and isinstance(artifact.payload, dict):
         spec_root = artifact.payload
@@ -781,6 +832,16 @@ def _make_data_aware_height_provider(
                     width=width,
                 ) + _vertical_inset(resolved_table)
 
+            # callout has no try/except around _render_chart_to_svg, unlike
+            # spark_bar just below. This is latent, not dead: callout renders
+            # from a static authored `message:` and does no data-shape
+            # validation today, so nothing here raises ChartDataError yet.
+            # The moment callout gains data-driven validation, one bad
+            # callout will return output=None from renderer.py's board-level
+            # handler and take down the whole board — the same failure mode
+            # the spark_bar branch below is guarded against. Add the same
+            # try/except DbtChartsError guard then; don't assume it was
+            # considered and declined.
             if item.chart.type == "callout":
                 resolved_callout = _require_resolved(
                     render_ctx,
@@ -825,14 +886,36 @@ def _make_data_aware_height_provider(
                 )
                 if resolved_spark_bar is None:
                     return _unresolved_height(item.chart, width, resolved_style)
-                _chart_svg, _, actual_height, _ = _render_chart_to_svg(
-                    resolved_spark_bar,
-                    executor,
-                    variables,
-                    width,
-                    height=None,
-                    resolved_style=resolved_style,
-                )
+                # spark_bar validates its data at RENDER time, not resolve time
+                # (whether x holds numbers is a property of the rows, which the
+                # resolver never inspects), so _require_resolved's catch above
+                # cannot see it. Degrade the same way it does: record the
+                # per-chart failure and fall back to the unresolved slot height,
+                # letting the main pass paint an error card. Without this a
+                # single bad spark_bar escapes to renderer.py's board-level
+                # handler and takes down every chart on the board.
+                try:
+                    _chart_svg, _, actual_height, _ = _render_chart_to_svg(
+                        resolved_spark_bar,
+                        executor,
+                        variables,
+                        width,
+                        height=None,
+                        resolved_style=resolved_style,
+                    )
+                except DbtChartsError as exc:
+                    _log.warning(
+                        "Chart %r failed to render during sizing: %s",
+                        item.chart.id,
+                        exc,
+                    )
+                    render_ctx.resolve_errors[item.chart.id] = ChartResolveFailure(
+                        diagnostic=stamp_chart_diagnostic(
+                            exc, item.chart.id, item.chart.source_path
+                        ),
+                        identity=ChartIdentity.from_normalized(item.chart),
+                    )
+                    return _unresolved_height(item.chart, width, resolved_style)
                 return actual_height + _vertical_inset(resolved_spark_bar)
 
             # Render-first Vega sizing.
@@ -945,7 +1028,7 @@ def _make_data_aware_height_provider(
                             if actual_height - static_estimate <= 2.0:
                                 actual_height = static_estimate
 
-                        # autosize:pad (set by attach_data_table) makes the outer
+                        # autosize:pad (set by attach_support_table) makes the outer
                         # SVG wider than render_inner_width by the y-axis label +
                         # padding + legend overhead. Measure the first render's
                         # actual outer width, compute the overhead, and re-render
@@ -956,13 +1039,74 @@ def _make_data_aware_height_provider(
                         # plot rect, so Vega adds strip/axis on top — using
                         # actual_height as spec.height would inflate the output by
                         # ~strip_height on every re-render.
-                        # Store the shrunk width in data_table_corrected_widths so
+                        # Store the shrunk width in support_table_corrected_widths so
                         # _align_cols_heights can reuse it instead of item.width,
                         # preventing the overhead from being re-applied on alignment.
-                        if getattr(item.chart, "data_table", None) is not None:
+                        if _support_table_of(item.chart) is not None:
                             overhead = actual_width - render_inner_width
                             if overhead > 0:
-                                shrunk_width = max(render_inner_width - overhead, 1.0)
+                                would_be_width = render_inner_width - overhead
+                                # The width floor is the column block's own
+                                # mechanism (plot_width_floor.py: "reserves
+                                # pixel width beside a horizontal bar's
+                                # plot") — a top/bottom row strip reserves no
+                                # width at all, so this measured overhead is
+                                # ordinary axis-label/legend chrome any chart
+                                # carries, support_table or not. Gate the
+                                # raise on the same category-axis-vertical
+                                # condition apply_chart_support_table_post_pass
+                                # uses to pick the column path, so a narrow
+                                # card with a long legend and a strip that
+                                # never competed for width can't trip a floor
+                                # meant for a block that isn't there.
+                                category_axis_vertical = (
+                                    isinstance(resolved_chart, ResolvedBarChart)
+                                    and resolved_chart.orientation == "horizontal"
+                                )
+                                floor_px = (
+                                    render_inner_width
+                                    * get_chart_rendering().support_table.plot_width_floor_ratio
+                                )
+                                if category_axis_vertical and would_be_width < floor_px:
+                                    # Record and degrade like the spark_bar
+                                    # render-time failure above: an uncaught
+                                    # raise here escapes this chart's own
+                                    # provider call and is caught at board
+                                    # level, blanking every sibling chart and
+                                    # dropping every other diagnostic. This
+                                    # chart alone gets an error card instead.
+                                    width_floor_exc = RenderError.from_code(
+                                        ERR_INPUT_INVALID,
+                                        message=(
+                                            f"chart {item.chart.id!r}: attaching "
+                                            "support_table leaves the plot an "
+                                            f"estimated {would_be_width:.0f}px wide "
+                                            f"on a {render_inner_width:.0f}px card, "
+                                            f"below the {floor_px:.0f}px floor it "
+                                            "needs to stay readable. A plot this "
+                                            "narrow is a missing chart, not a "
+                                            "squeezed one, and would paint values "
+                                            "beside nothing. Drop a support_table "
+                                            "column, widen the card, or move the "
+                                            "block to `position: right`."
+                                        ),
+                                    )
+                                    render_ctx.resolve_errors[item.chart.id] = (
+                                        ChartResolveFailure(
+                                            diagnostic=stamp_chart_diagnostic(
+                                                width_floor_exc,
+                                                item.chart.id,
+                                                item.chart.source_path,
+                                            ),
+                                            identity=ChartIdentity.from_normalized(
+                                                item.chart
+                                            ),
+                                        )
+                                    )
+                                    return _unresolved_height(
+                                        item.chart, width, resolved_style
+                                    )
+                                shrunk_width = max(would_be_width, 1.0)
                                 # Resolve at the corrected spec width so title
                                 # typography matches the emitted chart.
                                 canonical_key = item.chart.id, id(resolved_style)
@@ -1021,22 +1165,24 @@ def _make_data_aware_height_provider(
                                     render_ctx.resolved_variants[original_key] = (
                                         corrected_resolved
                                     )
-                                    render_ctx.data_table_corrected_widths[
+                                    render_ctx.support_table_corrected_widths[
                                         item.chart.id
                                     ] = shrunk_width
 
-                        # Calibrate title.offset for titled top data_table charts.
+                        # Calibrate title.offset for titled top support_table charts.
                         # probe_title_offset (from the initial render's spec) is the
-                        # value set by apply_chart_data_table_post_pass using the
+                        # value set by apply_chart_support_table_post_pass using the
                         # real series_count. Re-render with a corrected offset so
                         # VL's baseline gap is cancelled. Runs after width correction
                         # so the SVG being measured has the correct slot width.
-                        effective_width = render_ctx.data_table_corrected_widths.get(  # type-state: silent_fallback — render_inner_width is the correct default when no width correction was done for this chart
+                        effective_width = render_ctx.support_table_corrected_widths.get(  # type-state: silent_fallback — render_inner_width is the correct default when no width correction was done for this chart
                             item.chart.id, render_inner_width
                         )
                         if probe_title_offset is not None:
-                            title_offset_override = _data_table_title_corrected_offset(
-                                chart_svg, probe_title_offset
+                            title_offset_override = (
+                                _support_table_title_corrected_offset(
+                                    chart_svg, probe_title_offset
+                                )
                             )
                             if title_offset_override is not None:
                                 effective_resolved = _require_resolved(
@@ -1253,7 +1399,7 @@ def _align_board_charts(
     _align_cols_heights(board.layout.items, effective, render_ctx)
 
 
-def _correct_data_table_height(
+def _correct_support_table_height(
     render_ctx: SizingRenderCtx,
     item: LayoutItem,
     chart_id: str,
@@ -1268,18 +1414,18 @@ def _correct_data_table_height(
     log_msg: str,
     title_offset_override: float | None = None,
 ) -> tuple[str, float]:
-    """Correct autosize:pad height overhead and/or title.offset for a data_table chart.
+    """Correct autosize:pad height overhead and/or title.offset for a support_table chart.
 
-    A no-op when the chart has no data_table, no height correction is needed,
+    A no-op when the chart has no support_table, no height correction is needed,
     and no title calibration is required. Otherwise re-renders once with the
     corrected height and/or corrected title.offset.
 
     Shared by ``_align_cols_heights`` and ``_fix_slot_heights_in_tree``.
     ``title_offset_override`` is the calibrated title.offset from
-    ``_data_table_title_corrected_offset``; None means skip title calibration.
+    ``_support_table_title_corrected_offset``; None means skip title calibration.
     """
-    assert item.chart is not None, "_correct_data_table_height requires a chart item"
-    if getattr(item.chart, "data_table", None) is None:
+    assert item.chart is not None, "_correct_support_table_height requires a chart item"
+    if _support_table_of(item.chart) is None:
         return chart_svg, actual_height
     overhead = actual_height - target
     needs_height_correction = overhead > 0
@@ -1372,10 +1518,12 @@ def _align_cols_heights(
             continue
 
         # Vega-family: render at item width (or the corrected shrunk width for
-        # data_table charts). autosize:pad (activated by attach_data_table) makes
+        # support_table charts). autosize:pad (activated by attach_support_table) makes
         # the outer SVG wider than spec.width by a constant overhead; using item.width
         # as spec.width would re-apply that overhead and overflow the allocated slot.
-        slot_width = render_ctx.data_table_corrected_widths.get(chart_id, item.width)
+        slot_width = render_ctx.support_table_corrected_widths.get(
+            chart_id, item.width
+        )  # type-state: silent_fallback — a chart with no support_table has no width correction to look up; item.width is the real slot, not a guess
         # A chart that failed to resolve has no alignment to do — it will be
         # drawn as an error tile at the height already assigned to its slot.
         resolved_chart = _require_resolved(
@@ -1414,15 +1562,15 @@ def _align_cols_heights(
             continue
 
         # Calibrate title.offset using probe_title_offset from the render spec
-        # (set by apply_chart_data_table_post_pass with the real series_count).
+        # (set by apply_chart_support_table_post_pass with the real series_count).
         title_offset_override = (
-            _data_table_title_corrected_offset(chart_svg, probe_title_offset)
+            _support_table_title_corrected_offset(chart_svg, probe_title_offset)
             if probe_title_offset is not None
             else None
         )
 
         # Correct height overhead and/or title.offset in a single combined re-render.
-        chart_svg, actual_height = _correct_data_table_height(
+        chart_svg, actual_height = _correct_support_table_height(
             render_ctx,
             item,
             chart_id,
@@ -1499,7 +1647,9 @@ def _fix_slot_heights_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> No
             continue
 
         # Slot height differs from the rendered height — re-render at item.height.
-        slot_width = render_ctx.data_table_corrected_widths.get(chart_id, item.width)
+        slot_width = render_ctx.support_table_corrected_widths.get(
+            chart_id, item.width
+        )  # type-state: silent_fallback — a chart with no support_table has no width correction to look up; item.width is the real slot, not a guess
         # A chart that failed to resolve has nothing to re-render — its slot
         # already holds the height its error tile will be drawn at.
         resolved_chart = _require_resolved(
@@ -1535,15 +1685,15 @@ def _fix_slot_heights_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> No
             continue
 
         # Calibrate title.offset using probe_title_offset from the render spec
-        # (set by apply_chart_data_table_post_pass with the real series_count).
+        # (set by apply_chart_support_table_post_pass with the real series_count).
         title_offset_override = (
-            _data_table_title_corrected_offset(chart_svg, probe_title_offset)
+            _support_table_title_corrected_offset(chart_svg, probe_title_offset)
             if probe_title_offset is not None
             else None
         )
 
         # Correct height overhead and/or title.offset in a single combined re-render.
-        chart_svg, actual_height = _correct_data_table_height(
+        chart_svg, actual_height = _correct_support_table_height(
             render_ctx,
             item,
             chart_id,

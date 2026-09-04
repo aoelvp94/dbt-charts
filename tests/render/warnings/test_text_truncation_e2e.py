@@ -111,6 +111,99 @@ rows:
     assert WARN_KPI_LABEL_TRUNCATED.code not in clean_codes
 
 
+# ── KPI inline fallback ──────────────────────────────────────────────────────
+
+
+def test_kpi_inline_fallback_fires_warning(tmp_path, local_project) -> None:
+    """variant: inline whose run overflows the card -> WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED.
+
+    HIGH-4 (review): the fallback from inline to stacked must be reported,
+    not silent. Mirrors the label-truncation test above — same real-render
+    path (not a synthetic re-render), so a deleted `record_text_truncation`
+    call at the fallback site fails this test.
+
+    `type: kpi` doesn't accept a chart-level `width:` (`ERR-EXTRA-FIELD`), so
+    both boards size the card off the theme's default `preferred_width`
+    (300px) — the overflow board's content is long enough to exceed it, the
+    clean board's is short enough to fit inside it.
+    """
+    from dbt_charts.core.board import render_dashboard
+    from dbt_charts.core.diagnostics import WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED
+    from dbt_charts.core.project import InMemoryBoard
+
+    project = local_project(tmp_path)
+    registry = _mock_adapter([{"value": 84.33, "delta": -10.23}])
+
+    overflow_board = InMemoryBoard(
+        """
+source: examples_db
+queries:
+  q: SELECT value, delta FROM t
+charts:
+  k:
+    query: q
+    type: kpi
+    variant: inline
+    value: value
+    label: "Label, Value and Support"
+    support:
+      value: delta
+      label: vs. prior period
+rows:
+  - k
+""",
+        path=project.path("charts/_t.yml"),
+    )
+    result = render_dashboard(
+        board=overflow_board,
+        adapter_registry=registry,
+        format="svg",
+        project=project,
+        result_cache=None,
+    )
+    codes = {w.code for w in result.warnings}
+    assert WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED.code in codes, (
+        f"Expected WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED; got: {codes}"
+    )
+    fallback_warn = next(
+        w
+        for w in result.warnings
+        if w.code == WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED.code
+    )
+    assert fallback_warn.path == "charts.k.variant"
+
+    # A run short enough to fit the default 300px card must NOT fire.
+    clean_board = InMemoryBoard(
+        """
+source: examples_db
+queries:
+  q: SELECT value, delta FROM t
+charts:
+  k:
+    query: q
+    type: kpi
+    variant: inline
+    value: value
+    label: "Revenue"
+    support:
+      value: delta
+      label: vs LQ
+rows:
+  - k
+""",
+        path=project.path("charts/_t.yml"),
+    )
+    clean = render_dashboard(
+        board=clean_board,
+        adapter_registry=registry,
+        format="svg",
+        project=project,
+        result_cache=None,
+    )
+    clean_codes = {w.code for w in clean.warnings}
+    assert WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED.code not in clean_codes
+
+
 # ── chart title ──────────────────────────────────────────────────────────────
 
 
@@ -487,3 +580,89 @@ rows:
         "Double-space title that fits after whitespace normalization must not warn; "
         f"got warnings: {codes}"
     )
+
+
+def test_kpi_align_overflow_fires_warning(tmp_path, local_project) -> None:
+    """align: right on a value too wide for the card -> WARN_KPI_ALIGN_OVERFLOW.
+
+    Real-render path, not a synthetic re-render, so deleting the
+    `record_text_truncation` call at the clamp site fails this test. The clean
+    board pins the other half: a value that fits must apply align silently.
+    """
+    from dbt_charts.core.board import render_dashboard
+    from dbt_charts.core.diagnostics import WARN_KPI_ALIGN_OVERFLOW
+    from dbt_charts.core.project import InMemoryBoard
+
+    project = local_project(tmp_path)
+    registry = _mock_adapter([{"value": 1234567890123.0, "delta": -10.23}])
+
+    overflow_board = InMemoryBoard(
+        """
+source: examples_db
+queries:
+  q: SELECT value, delta FROM t
+charts:
+  k:
+    query: q
+    type: kpi
+    variant: compact
+    value: value
+    label: "Revenue"
+    style:
+      align: right
+      value:
+        format: ",.0f"
+    support:
+      value: delta
+      label: vs. prior period
+rows:
+  - k
+""",
+        path=project.path("charts/_t.yml"),
+    )
+    result = render_dashboard(
+        board=overflow_board,
+        adapter_registry=registry,
+        format="svg",
+        project=project,
+        result_cache=None,
+    )
+    codes = {w.code for w in result.warnings}
+    assert WARN_KPI_ALIGN_OVERFLOW.code in codes, (
+        f"Expected WARN_KPI_ALIGN_OVERFLOW; got: {codes}"
+    )
+    warn = next(w for w in result.warnings if w.code == WARN_KPI_ALIGN_OVERFLOW.code)
+    assert warn.path == "charts.k.style.align"
+
+    clean_board = InMemoryBoard(
+        """
+source: examples_db
+queries:
+  q: SELECT value, delta FROM t
+charts:
+  k:
+    query: q
+    type: kpi
+    variant: compact
+    value: value
+    label: "Revenue"
+    style:
+      align: right
+      value:
+        format: currency
+    support:
+      value: delta
+      label: vs LQ
+rows:
+  - k
+""",
+        path=project.path("charts/_t.yml"),
+    )
+    clean = render_dashboard(
+        board=clean_board,
+        adapter_registry=registry,
+        format="svg",
+        project=project,
+        result_cache=None,
+    )
+    assert WARN_KPI_ALIGN_OVERFLOW.code not in {w.code for w in clean.warnings}

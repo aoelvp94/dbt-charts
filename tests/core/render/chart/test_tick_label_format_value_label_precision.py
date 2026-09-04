@@ -39,7 +39,7 @@ def _reset():
 
 
 def _board_with_bar_labels():
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     new_labels = compiled.charts.marks.bar.labels.model_copy(update={"visible": True})
     new_bar = compiled.charts.marks.bar.model_copy(update={"labels": new_labels})
     new_marks = compiled.charts.marks.model_copy(update={"bar": new_bar})

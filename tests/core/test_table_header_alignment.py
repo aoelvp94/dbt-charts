@@ -85,8 +85,6 @@ def _style(**overrides):
             summary_updates["rule_width"] = value
         elif key == "summary_font_weight":
             summary_updates["font_weight"] = value
-        elif key == "border_color":
-            table_updates["border"] = tc.border.model_copy(update={"color": value})
         elif key == "background":
             table_updates["background"] = value
         elif key == "color":
@@ -209,7 +207,7 @@ class TestLanePositionsAnchorAtMidpoint:
                 padding_x=padding_x,
                 cell_pad=12,
                 cell_font=FontStyle(size=float(font_size)),
-                formats={"number_default": ".3~s"},
+                formats={"number": ".3~s"},
                 column_when_rules={},
             ),
             padding_x,
@@ -313,7 +311,7 @@ class TestLanePositionsAnchorAtMidpoint:
             padding_x=padding_x,
             cell_pad=cell_pad,
             cell_font=FontStyle(size=14.0),
-            formats={"number_default": ".3~s"},
+            formats={"number": ".3~s"},
             column_when_rules={},
         )
         assert "D" in positions
@@ -355,7 +353,7 @@ class TestLanePositionsAnchorAtMidpoint:
             "padding_x": 16,
             "cell_pad": 12,
             "cell_font": FontStyle(size=14.0),
-            "formats": {"number_default": ".3~s"},
+            "formats": {"number": ".3~s"},
         }
         positions_align_left = _compute_lane_positions(
             column_configs={"D": ResolvedTableColumnConfig(align="left")},
@@ -454,7 +452,7 @@ class TestLanePositionsAnchorAtMidpoint:
             padding_x=16,
             cell_pad=12,
             cell_font=FontStyle(size=14.0),
-            formats={"number_default": ".3~s"},
+            formats={"number": ".3~s"},
             column_when_rules={},
         )
         prefix_x, number_x, _suffix_x, *_ = positions["Revenue"]
@@ -1162,7 +1160,7 @@ class TestDateCellsUseLanePositions:
             "table",
             x=None,
             y=None,
-            style={"columns": {"Last Close": {"align": "left"}}},
+            style={"columns": {"Last Close": {"align": "left", "visible": True}}},
         )
         chart = resolve(chart, data, chart_style_context=_style())
         assert chart.columns is not None
@@ -1208,7 +1206,14 @@ class TestDateCellsUseLanePositions:
             "table",
             x=None,
             y=None,
-            style={"columns": {"Last Close": {"align": "center"}}},
+            # Region hidden: the 600px center pin below assumes Last Close is
+            # the only rendered column at width=1200.
+            style={
+                "columns": {
+                    "Last Close": {"align": "center"},
+                    "Region": {"visible": False},
+                }
+            },
         )
         chart = resolve(chart, data, chart_style_context=_style())
         assert chart.columns is not None
@@ -1303,7 +1308,7 @@ class TestDateColumnMixedSpellingPerCellBug:
             "table",
             x=None,
             y=None,
-            style={"columns": {"Last Close": {"align": "left"}}},
+            style={"columns": {"Last Close": {"align": "left", "visible": True}}},
         )
         chart = resolve(chart, self._MIXED_SPELLING_DATA, chart_style_context=_style())
         svg = render_table_svg(
@@ -1339,7 +1344,7 @@ class TestDateColumnMixedSpellingPerCellBug:
             "table",
             x=None,
             y=None,
-            style={"columns": {"Last Close": {"align": "right"}}},
+            style={"columns": {"Last Close": {"align": "right", "visible": True}}},
         )
         chart = resolve(chart, self._MIXED_SPELLING_DATA, chart_style_context=_style())
         svg = render_table_svg(

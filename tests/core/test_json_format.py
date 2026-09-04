@@ -152,7 +152,7 @@ class TestJsonFormat:
     def test_chart_item_excludes_removed_mark_and_encoding_passthrough(
         self, make_chart
     ):
-        """JSON output reflects the authored Dataface surface, not removed VL passthrough."""
+        """JSON output reflects the authored dbt charts surface, not removed VL passthrough."""
         data = [{"date": "2024-01-01", "value": 10, "series": "A"}]
         chart = make_chart("line", x="date", y="value")
         board = _make_board([chart])

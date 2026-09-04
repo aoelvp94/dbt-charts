@@ -285,10 +285,15 @@ def test_charts_v2_rhythm_slot_synced_across_cols_wrappers():
     tree instances, but the flat-dict instances (and thus charts_v2, synced
     from the flat dict) stayed at the default 0 — every single-series chart
     under a cols: wrapper rendered with the same color.
+
+    Uses ``theme: paper`` — the default theme's single_series_palette is one
+    fixed ink (no rotation), so distinct rhythm slots would resolve to the
+    same color regardless of this bug; paper keeps a multi-ink rotation.
     """
     board = _compile(
         f"""\
 title: T
+theme: paper
 charts:
   a: {{type: bar, x: month, y: revenue, {_QUERY_FRAGMENT}}}
   b: {{type: bar, x: month, y: revenue, {_QUERY_FRAGMENT}}}

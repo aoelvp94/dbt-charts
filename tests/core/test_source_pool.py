@@ -89,6 +89,13 @@ _BIGQUERY_SOURCE: dict[str, Any] = {
     "threads": 1,
 }
 
+_DATABRICKS_SOURCE: dict[str, Any] = {
+    "type": "databricks",
+    "host": "h.cloud.databricks.com",
+    "http_path": "/sql/1.0/warehouses/x",
+    "token": "t",
+}
+
 _BUILD_ADAPTER = "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter"
 
 
@@ -172,6 +179,42 @@ class TestSourcePoolCache:
         pool_a = sa._get_source_pool({**_POSTGRES_SOURCE, "attribution": {"team": "a"}})
         pool_b = sa._get_source_pool({**_POSTGRES_SOURCE, "attribution": {"team": "b"}})
         assert pool_a is pool_b
+
+
+class TestConnectFailureDetection:
+    def test_databricks_connect_failure_raises_connection_setup_failed(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """databricks has no statement_timeout_sql and isn't bigquery, so
+        _ensure_connected() previously never touched the lazy connection
+        handle for it — a connect failure (bad token, unreachable host) leaked
+        past _ConnectionSetupFailed and was only raised later from _run(),
+        landing in classify_warehouse_error as a false "warehouse rejected
+        the query" outcome. _ensure_connected() must force the handle open
+        for every dialect so this is caught here instead.
+        """
+        from dbt_charts.core.execute.adapters.sql_adapter import (
+            _ConnectionSetupFailed,
+        )
+
+        class _FailingHandleConnection:
+            @property
+            def handle(self) -> object:
+                raise RuntimeError("Invalid access token")
+
+        def _build(*_a: Any, **_k: Any) -> MagicMock:
+            adapter = _make_adapter_mock()
+            adapter.connections.get_thread_connection.return_value = (
+                _FailingHandleConnection()
+            )
+            return adapter
+
+        sa = _make_sql_adapter(tmp_path, local_project)
+        with patch(_BUILD_ADAPTER, side_effect=_build):
+            pool = sa._get_source_pool(_DATABRICKS_SOURCE)
+            with pytest.raises(_ConnectionSetupFailed, match="Invalid access token"):
+                pool.execute("SELECT 1", setup_sql=None)
+            pool.close()
 
 
 # ---------------------------------------------------------------------------
@@ -271,7 +314,7 @@ class TestSourcePoolConcurrency:
             pool.execute("SELECT 1", setup_sql=None)
             pool.close()
 
-        assert run_threads and run_threads[0].startswith("dft-srcpool")
+        assert run_threads and run_threads[0].startswith("dct-srcpool")
         assert run_threads[0] != threading.current_thread().name
 
     def test_pool_adapters_skip_factory_macro_registration(

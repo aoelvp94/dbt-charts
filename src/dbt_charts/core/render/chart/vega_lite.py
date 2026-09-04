@@ -54,17 +54,22 @@ from dbt_charts.core.diagnostics import (
     ERR_RESOLVED_PIE_WIDTH_MISMATCH,
     ERR_VEGA_LITE_UNSUPPORTED_TYPE,
 )
+from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData, RenderArtifact
-from dbt_charts.core.render.chart.data_table_attachment import (
-    apply_chart_data_table_post_pass,
-)
 from dbt_charts.core.render.chart.emitters._cartesian import (
-    count_horizontal_bar_categories,
+    effective_horizontal_bar_category_count,
+    extra_axis_is_affordable,
+    facet_extra_axis_width_px,
     min_height_for_horizontal_bar_categories,
 )
-from dbt_charts.core.render.chart.serialization import build_dataface_json
+from dbt_charts.core.render.chart.serialization import build_dbt_charts_json
 from dbt_charts.core.render.chart.spec import RenderBox
+from dbt_charts.core.render.chart.support_table_attachment import (
+    apply_chart_support_table_post_pass,
+)
 from dbt_charts.core.render.chart.title_overflow import apply_title_overflow_to_spec
+from dbt_charts.core.render.chart.translate import _in_chart_pane
+from dbt_charts.core.render.chart.vl_field_maps import effective_bar_size
 from dbt_charts.core.render.converters.chart import render_chart_artifact
 from dbt_charts.core.render.errors import RenderError
 
@@ -127,6 +132,8 @@ def _render_vl_artifact(
     row_cardinality = 1
     col_cardinality = 1
     has_mirror = False
+    extra_axis_px = 0.0
+    unnarrowed_panel_width: float | None = None
     if is_faceted:
         assert isinstance(resolved, _CartesianResolvedChartFields)
         assert resolved.multiples is not None  # panel_axes is non-empty only then
@@ -137,6 +144,21 @@ def _render_vl_artifact(
             resolved.panel_axes, resolved.multiples.columns
         )
         has_mirror = bool(resolved.style.axis_y.mirror)
+        # The panel width with no extra axis reserved — the same "affordable
+        # or not" baseline `facet_bound_position_channels` (called inside
+        # `emit_chart` below, via `FacetFeature`) must compare the measured
+        # reservation against, from `box.facet_unnarrowed_panel_width`.
+        # Computed once here so both sides of the narrow/don't-narrow
+        # decision (this width budget, and FacetFeature's resolve.scale)
+        # read the identical number rather than each re-deriving it.
+        unnarrowed_panel_width = facet_panel_width(
+            width, col_cardinality, has_mirror, extra_axis_px=0.0
+        )
+        candidate_extra_axis_px = facet_extra_axis_width_px(
+            resolved, resolved.multiples, render_data
+        )
+        if extra_axis_is_affordable(unnarrowed_panel_width, candidate_extra_axis_px):
+            extra_axis_px = candidate_extra_axis_px
 
     effective_height = height
     if (
@@ -146,19 +168,27 @@ def _render_vl_artifact(
         and height is not None
         and height > 0
     ):
-        n = count_horizontal_bar_categories(resolved.x, render_data)
+        n = effective_horizontal_bar_category_count(
+            resolved, render_data, unnarrowed_panel_width
+        )
         min_h = min_height_for_horizontal_bar_categories(
-            n, resolved.style.axis_x, resolved.style.mark.size
+            n, resolved.style.axis_x, effective_bar_size(resolved.style.mark)
         )
         if min_h > 0:
-            # Multiply the whole-set floor by the row count BEFORE dividing
+            # Multiply the per-panel floor by the row count BEFORE dividing
             # by it below — otherwise every panel gets min_h / row_cardinality
             # and lands under its own floor (a height-axis instance of the
             # same card-width-not-panel-width bug this task exists to fix).
-            # The facet operator resolves the category ordinal scale as
-            # shared, so every panel paints the union of every panel's
-            # categories regardless of which rows landed in it — the
-            # whole-set count is what each panel actually needs room for.
+            # Ordinarily the facet operator resolves the category ordinal
+            # scale as shared, so every panel paints the union of every
+            # panel's categories regardless of which rows landed in it — the
+            # whole-set count is what each panel needs room for. When a
+            # panel's own categories are a proper subset of the whole domain
+            # AND the extra per-panel axis is affordable,
+            # `effective_horizontal_bar_category_count` narrows `n` to the
+            # widest panel's own count — which can be any size, not always
+            # one — matching what `facet_bound_position_channels` narrows the
+            # rendered axis to.
             effective_height = max(height, min_h * row_cardinality)
 
     # effective_height stays None-able for the *spec* below — that's a real
@@ -180,18 +210,19 @@ def _render_vl_artifact(
     )
     box = RenderBox(
         width=(
-            facet_panel_width(width, col_cardinality, has_mirror)
+            facet_panel_width(width, col_cardinality, has_mirror, extra_axis_px)
             if is_faceted
             else width
         ),
         height=box_height_full,
+        facet_unnarrowed_panel_width=unnarrowed_panel_width,
     )
     # emit_chart resolves the chart's own rows from `datasets` by query_name —
     # the caller's `datasets` (layer overrides only, for older callers) may not
     # carry the base entry, so it's added here if missing. `render_data` is
     # this function's own (data, datasets) contract, unrelated to emit_chart's
     # collapsed single-datasets one; kept as-is (used above for the arc/bar
-    # dispatch checks and the data_table strip after this call).
+    # dispatch checks and the support_table strip after this call).
     full_datasets: dict[str | None, ChartRenderData] = (
         dict(datasets) if datasets else {}
     )
@@ -206,16 +237,37 @@ def _render_vl_artifact(
     if "facet" in vl:
         # Small multiples: per-panel width/height go on the inner unit spec, while
         # padding and title frame the whole set at the facet root. Facet is mutually
-        # exclusive with hconcat/data_table (FacetFeature refuses those combos).
+        # exclusive with hconcat/support_table (FacetFeature refuses those combos).
         if padding is not None:
             vl["padding"] = padding
         assert isinstance(
             resolved, _CartesianResolvedChartFields
         )  # is_faceted implies this
         _apply_facet_layout(
-            vl, resolved.panel_axes, has_mirror, width, effective_height
+            vl,
+            resolved.panel_axes,
+            has_mirror,
+            width,
+            effective_height,
+            extra_axis_px,
         )
-        apply_title_overflow_to_spec(vl, resolved.title_style, chart_id=resolved.id)
+        # $df_target_width/height give render_vega_spec's overshoot probe
+        # (_correct_facet_overshoot) the composite's real card boundary to
+        # check the rendered scenegraph against — see that function's
+        # docstring for why vl-convert needs this told to it explicitly.
+        if width > 0:
+            vl["$df_target_width"] = width
+        if effective_height is not None and effective_height > 0:
+            vl["$df_target_height"] = effective_height
+        # A facet composite carries no top-level `width` (only the inner unit
+        # spec does), so without an explicit basis the title wrap bails and an
+        # over-long subtitle reports its full natural width — inflating the
+        # overshoot probe in `_correct_facet_overshoot` and over-shrinking every
+        # panel. Every non-facet path already bounds its title against the
+        # width it stamps; this passes the same card width by hand.
+        apply_title_overflow_to_spec(
+            vl, resolved.title_style, chart_id=resolved.id, available_width=width
+        )
         _trace_vl_spec(resolved.id, "v2", vl)
         return RenderArtifact(kind="vega_spec", payload=vl)
     if "hconcat" in vl:
@@ -303,8 +355,50 @@ def _render_vl_artifact(
         apply_title_overflow_to_spec(
             size_target, resolved.title_style, chart_id=resolved.id
         )
+    _stamp_axis_label_kind_sentinel(resolved, vl)
     _trace_vl_spec(resolved.id, "v2", vl)
     return RenderArtifact(kind="vega_spec", payload=vl)
+
+
+def _stamp_axis_label_kind_sentinel(
+    resolved: ResolvedChart,
+    vl: dict[str, Any],  # type-state: explicit_any — foreign VL JSON spec
+) -> None:
+    """Which authored label key each *rendered* axis carries, as a sentinel.
+
+    vl_convert's axis aria text names the Vega layout channel, not the
+    authored key — a horizontal bar draws the authored ``x`` on the Y axis,
+    and faceting rearranges further. The converter must not guess, so the
+    identity is decided here, where both the resolved chart and the emitted
+    encoding are in hand: the channel whose field is the authored ``x``
+    column carries ``x_label``, the other carries ``y_label``. No confident
+    match — a facet (which returned above), a transformed field, a missing
+    channel — plants no sentinel, and the converter then stamps nothing:
+    an axis title that is not editable beats one that edits the wrong key.
+    A plain dict for the same JSON-safety reason as ``$df_title_style``.
+    """
+    if not isinstance(resolved, _CartesianResolvedChartFields):
+        return
+    x_column = resolved.x
+    if not isinstance(x_column, str) or not x_column:
+        return
+    view = vl["hconcat"][0] if "hconcat" in vl else vl
+    encoding = view.get("encoding")
+    if not isinstance(encoding, dict) and isinstance(view.get("layer"), list):
+        first = view["layer"][0] if view["layer"] else None
+        encoding = first.get("encoding") if isinstance(first, dict) else None
+    if not isinstance(encoding, dict):
+        return
+
+    def _field(channel: str) -> str | None:
+        node = encoding.get(channel)
+        field = node.get("field") if isinstance(node, dict) else None
+        return field if isinstance(field, str) else None
+
+    if _field("x") == x_column and _field("y") != x_column:
+        vl["$df_axis_label_kinds"] = {"X": "x_label", "Y": "y_label"}
+    elif _field("y") == x_column and _field("x") != x_column:
+        vl["$df_axis_label_kinds"] = {"X": "y_label", "Y": "x_label"}
 
 
 def _apply_facet_layout(
@@ -313,6 +407,7 @@ def _apply_facet_layout(
     has_mirror: bool,
     width: float,
     height: float | None,
+    extra_axis_px: float,
 ) -> None:
     """Size small-multiples panels on the inner unit spec of a facet ``vl``.
 
@@ -324,8 +419,11 @@ def _apply_facet_layout(
     construction above key off, so all three can never drift); a chrome gutter
     is reserved for the row-header label and, when the measure axis is
     mirrored to the far edge (``has_mirror``, resolve's baked
-    ``resolved.style.axis_y.mirror`` verdict), the opposite-edge axis. Mutates
-    ``vl["spec"]`` in place.
+    ``resolved.style.axis_y.mirror`` verdict), the opposite-edge axis.
+    ``extra_axis_px`` (the caller's ``facet_extra_axis_width_px()`` verdict)
+    reserves further, measured width when narrowing forces a whole new axis
+    into every column panel — see ``facet_bound_position_channels``'s
+    docstring in ``emitters/_cartesian.py``. Mutates ``vl["spec"]`` in place.
     """
     # _wrap_facet builds the inner spec and at least one of facet.row/column, so
     # index directly — a missing key is a builder bug, not a runtime input to
@@ -337,9 +435,14 @@ def _apply_facet_layout(
     panel_rows = panel_axis_cardinality(axes, row_field)
     panel_cols = panel_axis_cardinality(axes, col_field)
     if width > 0:
-        unit["width"] = facet_panel_width(width, panel_cols, has_mirror)
+        unit["width"] = facet_panel_width(width, panel_cols, has_mirror, extra_axis_px)
     if height is not None and height > 0:
         unit["height"] = height / panel_rows
+    # Read back by render_vega_spec's overshoot probe (_correct_facet_overshoot)
+    # to divide a measured overshoot evenly across panels — the same counts
+    # this function itself just used to divide width/height.
+    vl["$df_facet_panel_cols"] = panel_cols
+    vl["$df_facet_panel_rows"] = panel_rows
 
 
 def _render_arc_attached_table(
@@ -466,7 +569,7 @@ def render_resolved_chart(
         padding=padding,
     )
     if artifact.kind == "vega_spec" and isinstance(artifact.payload, dict):
-        vl = _apply_data_table_strip(
+        vl = _apply_support_table_strip(
             artifact.payload, resolved, resolved_style.chart_defaults, render_data
         )
         if vl is not None:
@@ -475,54 +578,69 @@ def render_resolved_chart(
     return artifact
 
 
-def _apply_data_table_strip(
+def _apply_support_table_strip(
     vl: dict[str, Any],
     resolved: ResolvedChart,
     charts_style: ResolvedChartDefaults,
     render_data: ChartRenderData,
 ) -> dict[str, Any] | None:
-    """Attach the chart.data_table strip to a cartesian VL spec.
+    """Attach the chart.support_table strip to a cartesian VL spec.
 
     Single call site for the validate → resolve-style → attach →
     reserve-padding sequence every VL-spec caller (board render,
     render_chart, generate_vega_lite_spec) must apply when the resolved
-    chart carries a data_table. Returns None (no-op) for chart families the
+    chart carries a support_table. Returns None (no-op) for chart families the
     primitive doesn't support (pie/kpi/table/...) or charts without one.
     """
     if (
         not isinstance(resolved, _CartesianResolvedChartFields)
-        or resolved.data_table is None
+        or resolved.support_table is None
     ):
         return None
-    size_target = vl["hconcat"][0] if "hconcat" in vl else vl
-    if "padding" not in size_target:
-        size_target["padding"] = {"left": 0, "right": 0, "top": 0, "bottom": 0}
-    size_target, _ = apply_chart_data_table_post_pass(
-        size_target,
-        resolved,
-        charts_style,
-        render_data,
-        None,
-        resolved.chart_type,
-    )
+
+    def stamp(pane: VLDict) -> VLDict:
+        if "padding" not in pane:
+            pane["padding"] = {"left": 0, "right": 0, "top": 0, "bottom": 0}
+        stamped, _ = apply_chart_support_table_post_pass(
+            pane, resolved, charts_style, render_data, None, resolved.chart_type
+        )
+        return stamped
+
+    if "hconcat" not in vl and "vconcat" not in vl:
+        return stamp(vl)
+    # An endpoint-label rail wraps the chart in hconcat (right_pane — the row
+    # strip's own geometry, category-on-x) or vconcat (top_rail — a stacked
+    # horizontal bar, the only chart the column-block geometry ever attaches
+    # to). _in_chart_pane descends to the actual chart pane in either shape;
+    # apply_chart_support_table_post_pass reads/writes top-level `encoding`,
+    # which only exists on that pane, never on the concat wrapper itself.
+    vl = _in_chart_pane(vl, stamp)
     if "hconcat" in vl:
-        vl["hconcat"][0] = size_target
-        # The strip's layers are pixel literals anchored to spec.height, and its
-        # out-of-plot marks extend the scenegraph past that height (autosize:pad
-        # on the concat child keeps them rather than shrinking the plot).
-        # $df_target_height would have _correct_concat_overshoot shrink the pane
-        # to absorb that excess, sliding the plot bottom out from under the
-        # strip. Height fits the slot via a pre-shrunk re-render instead
-        # (layout_sizing._correct_data_table_height), which re-bakes the literals.
+        # The row strip's layers are pixel literals anchored to spec.height,
+        # and its out-of-plot marks extend the scenegraph past that height
+        # (autosize:pad on the concat child keeps them rather than shrinking
+        # the plot). $df_target_height would have _correct_concat_overshoot
+        # shrink the pane to absorb that excess, sliding the plot bottom out
+        # from under the strip. Height fits the slot via a pre-shrunk
+        # re-render instead (layout_sizing._correct_support_table_height),
+        # which re-bakes the literals.
         #
-        # Width keeps its sentinel, and NOT because the pre-shrink covers it: for
-        # a concat spec the converter has already equalized outer width against
-        # render_inner_width, so layout_sizing's `if overhead > 0` width
-        # pre-shrink never fires. The post-hoc pane shrink is the only width
-        # fitter these specs get — dropping it would leave the overflow.
+        # Width keeps its sentinel, and NOT because the pre-shrink covers it:
+        # for a concat spec the converter has already equalized outer width
+        # against render_inner_width, so layout_sizing's `if overhead > 0`
+        # width pre-shrink never fires. The post-hoc pane shrink is the only
+        # width fitter these specs get — dropping it would leave the overflow.
         vl.pop("$df_target_height", None)
-        return vl
-    return size_target
+    else:
+        # The transpose of the case above: the column block's cells are
+        # pixel-literal x positions (on `position: right`, measured from
+        # spec.width itself — see _column_edges), so shrinking the pane's
+        # width post-hoc here would detach them from the plot the same way
+        # shrinking height would detach the row strip. Height keeps its
+        # sentinel — the column path never extends past spec.height, so the
+        # normal correction is safe.
+        vl.pop("$df_target_width", None)
+    return vl
 
 
 def generate_vega_lite_spec(
@@ -595,7 +713,9 @@ def generate_vega_lite_spec(
             ERR_VEGA_LITE_UNSUPPORTED_TYPE, chart_type=chart.type
         )
     assert isinstance(artifact.payload, dict)
-    vl = _apply_data_table_strip(artifact.payload, resolved, style.chart_defaults, data)
+    vl = _apply_support_table_strip(
+        artifact.payload, resolved, style.chart_defaults, data
+    )
     result = vl if vl is not None else artifact.payload
     # $df_title_style is an internal hand-off to render_vega_spec's deferred
     # hconcat title wrap (converters/chart.py) — this entry point returns the
@@ -622,7 +742,7 @@ def render_chart(
     if format == "json":
         artifact: RenderArtifact = RenderArtifact(
             kind="json",
-            payload=build_dataface_json(chart, data, width=width, height=height),
+            payload=build_dbt_charts_json(chart, data, width=width, height=height),
         )
         return render_chart_artifact(
             artifact,
@@ -671,7 +791,7 @@ def render_chart(
         datasets=datasets or None,
         padding=padding,
     )
-    # Data_table strip (when the resolved chart has one) is applied inside
+    # Support_table strip (when the resolved chart has one) is applied inside
     # render_resolved_chart — the single call site every VL-spec caller
     # (board render, this function, generate_vega_lite_spec) shares.
     return render_chart_artifact(

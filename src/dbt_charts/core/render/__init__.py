@@ -8,7 +8,7 @@ and data (from the execute stage) and produces output in various formats
 (SVG, HTML, PNG, PDF, Terminal).
 
 Main Entry Points:
-    render(): Render a full dataface
+    render(): Render a full board
 
 The render stage:
 1. Takes a Board (from compile stage)

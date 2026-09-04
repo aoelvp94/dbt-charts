@@ -284,7 +284,11 @@ def test_axis_quantitative_unauthored_field_never_clobbers_axis_x() -> None:
         rs, "axis_x", "quantitative", chart_type="", label_authored=False
     )
     assert emitted.grid.width == rs.axis_x.grid.width
-    assert emitted.ticks.visible == rs.axis_x.ticks.visible
+    # axis_x.ticks.visible is "auto" (resolved to a concrete bool, never the
+    # literal string) rather than a value directly comparable to the raw
+    # theme field -- assert the resolved bool still reflects axis_x's own
+    # deviation (a clobber would produce axis's shared False instead).
+    assert emitted.ticks.visible != rs.axis.ticks.visible
 
 
 def test_axis_quantitative_authored_field_still_wins_over_axis_x() -> None:

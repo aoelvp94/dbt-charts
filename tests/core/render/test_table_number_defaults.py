@@ -1,11 +1,11 @@
 """Default numeric formatting for table cells lacking an explicit ``format:``.
 
 When a numeric cell has no explicit column format, ``default_number_format()``
-returns the predefined name ``"number_default"``, which the engine resolves to
+returns the predefined name ``"number"``, which the engine resolves to
 ``.3~s`` — big numbers read as SI (``452 M``), fractions as ``671m``) — instead
 of full float or full-precision-string output.
 
-``"number_default"`` is an engine-owned predefined name. It does not need to
+``"number"`` is an engine-owned predefined name. It does not need to
 live in the theme's ``formats`` dict, and a user alias under the same name
 cannot shadow it (the compile step raises ``ERR-FORMAT-INVALID`` for any user
 alias that shadows a predefined name). An explicit column format always wins.
@@ -17,7 +17,7 @@ from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.render.chart.table_support import format_table_cell_value
 from dbt_charts.core.render.format_utils import format_kpi_parts
 
-# Any non-empty formats dict — number_default absent because it is predefined.
+# Any non-empty formats dict — number absent because it is predefined.
 _FORMATS = {
     "number": ",.2f",
     "date_short": "%-d %b %Y",
@@ -67,8 +67,8 @@ class TestUnformattedNumericDefault:
         assert format_table_cell_value(0.67109, "percent", _FORMATS) == "67.1%"
         assert format_kpi_parts(0.67109, "percent", _FORMATS) == ("", "67.1", "%")
 
-    def test_number_default_works_without_formats_dict(self) -> None:
-        # "number_default" is predefined — no formats dict needed.
+    def test_number_works_without_formats_dict(self) -> None:
+        # "number" is predefined — no formats dict needed.
         assert format_table_cell_value(452342060.0, None, None) == "452 M"
         assert format_table_cell_value(452342060.0, None, {}) == "452 M"
 
@@ -81,8 +81,8 @@ class TestUnformattedNumericDefault:
 
 
 class TestThemeCascadeSuppliesDefault:
-    def test_predefined_number_default_independent_of_theme_formats(self) -> None:
-        # "number_default" is predefined; themes need not include it in formats.
+    def test_predefined_number_independent_of_theme_formats(self) -> None:
+        # "number" is predefined; themes need not include it in formats.
         # Stark has no formats dict but numeric defaults still work.
         assert get_theme_style("stark").formats is None
         assert format_table_cell_value(452342060.0, None, None) == "452 M"

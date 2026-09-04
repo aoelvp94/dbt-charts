@@ -142,7 +142,7 @@ def test_implicit_variable_defaults_do_not_warn() -> None:
     yaml = """
 variables:
   region:
-    description: Region filter
+    notes: Region filter
 queries:
   q:
     type: values

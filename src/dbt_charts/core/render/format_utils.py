@@ -14,7 +14,7 @@ parity with d3.js across the whole grammar. A spec that renders on a chart
 axis (real d3, inside vl-convert) therefore renders identically here, which is
 what lets compile validate every format slot against one grammar.
 
-Dataface-specific extensions over d3-format:
+dbt charts-specific extensions over d3-format:
 - ``analytic`` notation: SI ``k/M/G/T`` suffixes mapped to ``K/M/B/T`` with a
   space separator (e.g. d3's ``"1.5G"`` becomes ``"1.5 B"``).
 - ``narrative`` notation: ``k/M/G/T`` mapped to ``k/mn/bn/trn`` (no space,
@@ -32,10 +32,11 @@ from typing import Any
 
 from d3_format import format as _d3_format
 
-# resolve_format lives in the compile layer (format-alias resolution is a
-# cascade concern); imported here for internal use by format_value/format_kpi_parts.
-# Render callers must import from dbt_charts.core.compile.format directly.
-from dbt_charts.core.compile.format import resolve_format
+# resolve_format / get_format_prefix_suffix live in the compile layer
+# (format-alias resolution is a cascade concern); imported here for internal
+# use by format_value/format_kpi_parts. Render callers must import from
+# dbt_charts.core.compile.format directly.
+from dbt_charts.core.compile.format import get_format_prefix_suffix, resolve_format
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.style.resolved.table import (
     ResolvedColumnSharedScale,
@@ -54,8 +55,11 @@ from dbt_charts.core.text.numeral_scale import SuffixMode, suffix_at_register
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_NATIVE,
     PREDEFINED_NUMBER_NAMES,
+    PREDEFINED_SPECS,
+    PREDEFINED_SUB_UNIT_FALLBACK,
     PredefinedNumberFormat,
     _with_minus,
+    si_sub_unit_floor,
 )
 
 # Magnitude heuristic: 0-100-shaped data stored at board value lands at 10x+
@@ -86,29 +90,6 @@ def _check_percent_range(value: int | float, format_spec: str) -> None:
         raise RenderError.from_code(
             ERR_PERCENT_RANGE, value=value, format_spec=format_spec
         )
-
-
-def get_format_prefix_suffix(
-    format_input: str | FormatConfig | dict[str, Any] | None,
-) -> tuple[str, str]:
-    """Extract prefix and suffix from format configuration.
-
-    Args:
-        format_input: Format specification
-
-    Returns:
-        Tuple of (prefix, suffix) strings
-    """
-    if format_input is None:
-        return "", ""
-
-    if isinstance(format_input, FormatConfig):
-        return format_input.prefix or "", format_input.suffix or ""
-    elif isinstance(format_input, dict):
-        return format_input.get("prefix", ""), format_input.get("suffix", "")
-
-    # String format has no prefix/suffix
-    return "", ""
 
 
 def _get_notation(
@@ -148,12 +129,12 @@ MAGNITUDE_SUFFIXES: frozenset[str] = frozenset(
 def default_number_format() -> str:
     """Engine default format name for a numeric value carrying no explicit format.
 
-    Returns the predefined name ``"number_default"`` so callers that pass it to
+    Returns the predefined name ``"number"`` so callers that pass it to
     ``format_value``/``format_kpi_parts`` preserve the house-notation signal.
     Resolution (spec + round-aware trim + analytic notation) happens inside
     those callers via the normal three-way contract.
     """
-    return PredefinedNumberFormat.number_default
+    return PredefinedNumberFormat.number
 
 
 def format_value(
@@ -184,9 +165,17 @@ def format_value(
     if format_spec in PREDEFINED_NATIVE:
         number, unit = PREDEFINED_NATIVE[format_spec](value)
         return f"{number}{unit}"
+    prefix, suffix = get_format_prefix_suffix(format_input)
+    if value is not None and _raw in PREDEFINED_SUB_UNIT_FALLBACK:
+        floor = si_sub_unit_floor(format_spec, prefix, suffix)
+        # Strict floor: zero is exactly representable, not "below the minor
+        # unit", so it must not take the fallback (si_sub_unit_floor's money
+        # floor is 0.0 -- `<` excludes zero there; the non-money floor is
+        # 1.0, where this comparison is always false either way).
+        if floor < abs(value) < 1.0:
+            format_spec = PREDEFINED_SPECS[PREDEFINED_SUB_UNIT_FALLBACK[_raw]]
     if value is not None:
         _check_percent_range(value, format_spec)
-    prefix, suffix = get_format_prefix_suffix(format_input)
     notation = _get_notation(format_input)
     effective_notation = (
         notation if notation is not None else ("analytic" if _is_house else None)
@@ -214,7 +203,7 @@ def format_kpi_parts(
         format_input: Format specification
         formats: Theme format alias dict from compiled_style.formats
         default_number: when ``format_input`` resolves to no spec, apply the
-            theme's ``number_default`` (SI) instead of the exact-digit fallback.
+            theme's ``number`` (SI) instead of the exact-digit fallback.
             Table cells pass True; KPI callers leave it False to keep their
             below-threshold exact-digit contract.
         shared_scale: a table column's resolved shared SI/compact magnitude
@@ -245,9 +234,24 @@ def format_kpi_parts(
     _is_house = _raw is not None and _raw in PREDEFINED_NUMBER_NAMES
     format_spec = resolve_format(format_input, formats)
     if not format_spec and default_number:
-        # number_default is always a predefined (house) format.
+        # number is always a predefined (house) format. _raw must follow
+        # format_spec here, or the sub-unit-floor guard below (keyed on
+        # _raw) never sees this row as PREDEFINED_SUB_UNIT_FALLBACK's
+        # "number" member and a money-prefixed cell keeps its SI spec.
         _is_house = True
-        format_spec = resolve_format(default_number_format(), formats)
+        _raw = default_number_format()
+        format_spec = resolve_format(_raw, formats)
+
+    # Money below $1 has no sub-cent unit to name and must not take the SI
+    # spec (see si_sub_unit_floor). Only meaningful when this row picks its
+    # own spec -- shared_scale has already baked the column's one magnitude,
+    # so a per-row floor decision here would second-guess that vote.
+    if shared_scale is None and _raw in PREDEFINED_SUB_UNIT_FALLBACK:
+        floor = si_sub_unit_floor(format_spec, explicit_prefix, explicit_suffix)
+        # See the strict-floor note in format_value: zero must not take the
+        # fallback.
+        if floor < abs(value) < 1.0:
+            format_spec = PREDEFINED_SPECS[PREDEFINED_SUB_UNIT_FALLBACK[_raw]]
 
     # Predefined native formatters bypass D3 and know their own unit.
     if format_spec in PREDEFINED_NATIVE:
@@ -290,7 +294,7 @@ def format_kpi_parts(
                 # `effective_notation`: the latter also carries the house
                 # format's own "default to analytic" fallback (below), which
                 # would silently override REPEAT mode's narrative register on
-                # every plain `number_default` column -- shared_scale's own
+                # every plain `number` column -- shared_scale's own
                 # mode-based register is the smarter default here and must
                 # not be shadowed by that generic one.
                 register = notation if notation is not None else shared_scale.register

@@ -48,9 +48,10 @@ The detector mirrors each emitter's preprocessing pipeline exactly:
 
   A wide (y: [a, b]) chart's pipeline is identical to a regular chart's --
   gap_fill_ordinal_time_per_panel runs before the wide/long-form dispatch in
-  every emitter, called with chart.color (always None for a wide chart),
-  which degenerates its dim-cross-join to a plain per-bucket fill; there is
-  no separate wide-only preprocessing branch left to mirror.
+  every emitter, called with chart.color (the authored dimension a wide
+  chart's measures are grouped by, or None), so the dim-cross-join fills the
+  same (bucket, dimension) cells for both shapes; there is no separate
+  wide-only preprocessing branch left to mirror.
 
 The _ISO_UTC_SAFE_RE gate mirrors _ordinal_bucket_key (complete_ordinal_time_series
 canonicalizes x to date-only ISO; '2024-04-15 00:00:00' → '2024-04-15'), same
@@ -84,6 +85,7 @@ from dbt_charts.core.render.chart.step_band import BAND_STEP_CURVE
 from dbt_charts.core.render.chart.time_unit_detect import (
     BUCKETED_CALENDAR_UNITS,
     _ordinal_bucket_key,
+    detect_time_unit,
     normalize_labeled_temporal,
 )
 from dbt_charts.core.render.chart.type_inference import (
@@ -190,7 +192,28 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
                 chart.style.axis_x,
                 mark_type,
                 is_band_step,
+                tuple(axis.field for axis in chart.panel_axes),
             )
+            if (
+                detected_tu is None
+                and vl_type == "temporal"
+                and chart.style.axis_x.time_unit is None
+            ):
+                # The scaffold-budget gate drops an over-budget fine grain when
+                # it flips a bar onto a continuous temporal scale. The hazard
+                # this detector exists for belongs to the DOMAIN — date-only
+                # ISO values a bare accessor coerces through local time — not
+                # to whether the axis bands, so recover the detected grain
+                # instead of reading the drop as "not a calendar axis". Without
+                # this, promoting a chart onto the continuous lane silently
+                # disarms the warning on exactly the charts it was written for.
+                # Scoped to a temporal vl_type — the gate's own signature — so
+                # a column that merely samples as nominal in
+                # infer_vega_type_from_data's first 10 rows does not gain a
+                # warning main never raised.
+                detected_tu = detect_time_unit(
+                    [row.get(chart.x) for row in pipeline_rows if chart.x in row]
+                )
         except ValueError:
             continue
         if detected_tu is None or detected_tu not in BUCKETED_CALENDAR_UNITS:

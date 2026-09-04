@@ -300,13 +300,18 @@ class TestRemovedDbtModelType:
     """
 
     def test_model_and_columns_keys_do_not_infer_dbt_model(self) -> None:
-        """A type-less dict with model+columns falls through to 'sql' inference."""
+        """A type-less dict with model+columns infers 'values' (columns wins).
+
+        `model` stopped being a declared key anywhere when the MetricFlow
+        surface was removed, so inference no longer special-cases it; the
+        stray key then fails values-query validation loudly.
+        """
         from dbt_charts.core.compile.models.refs import infer_query_type_from_keys
 
         result = infer_query_type_from_keys(
             {"model": "stg_customers", "columns": ["id"]}
         )
-        assert result == "sql"
+        assert result == "values"
 
     def test_explicit_dbt_model_type_is_unknown(self) -> None:
         """type: dbt_model hits the unknown-type branch and the valid-types list omits it."""
@@ -320,50 +325,28 @@ class TestRemovedDbtModelType:
         assert "unknown type 'dbt_model'" in msg
         assert "Valid types" in msg
 
-    def test_typeless_model_columns_dict_fails_as_sql_not_dbt_model(self) -> None:
-        """Without type:, model+columns normalizes as sql and fails on the missing sql key."""
-        with pytest.raises(CompilationError) as exc_info:
-            normalize_query(
-                "customers", {"model": "stg_customers", "columns": ["id"]}, sources={}
+    def test_typeless_model_columns_dict_fails_as_values_not_dbt_model(self) -> None:
+        """Without type:, model+columns infers values and board validation rejects it loudly."""
+        from pydantic import ValidationError
+
+        from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+
+        with pytest.raises(ValidationError) as exc_info:
+            AuthoredBoard.model_validate(
+                {
+                    "queries": {
+                        "customers": {"model": "stg_customers", "columns": ["id"]}
+                    },
+                    "rows": [],
+                }
             )
         assert "dbt_model" not in str(exc_info.value)
-
-
-class TestMetricflowSourceDiagnostics:
-    """A metricflow query naming an unknown source is an ordinary authoring
-    mistake, so it must carry the registered code — not the ERR-INTERNAL
-    fallback, which `dataface/AGENTS.md` treats as a defect signal. The SQL
-    path in this same module already raises ERR-SOURCE-NOT-FOUND here.
-    """
-
-    def test_unknown_source_carries_the_registered_code(self) -> None:
-        with pytest.raises(CompilationError) as exc_info:
-            normalize_query(
-                "revenue",
-                {"type": "metricflow", "source": "no_such_source", "metrics": ["x"]},
-                sources={"analytics": {"type": "dbt_profile"}},
-            )
-
-        err = exc_info.value
-        assert err.code is not None
-        assert err.code.code == "ERR-SOURCE-NOT-FOUND"
-
-    def test_unknown_source_names_the_available_ones(self) -> None:
-        """The registry template lists what the author could have meant."""
-        with pytest.raises(CompilationError) as exc_info:
-            normalize_query(
-                "revenue",
-                {"type": "metricflow", "source": "no_such_source", "metrics": ["x"]},
-                sources={"analytics": {"type": "dbt_profile"}},
-            )
-
-        assert "analytics" in str(exc_info.value)
 
 
 class TestMutatingSqlCodePropagation:
     """`MutatingSqlError` already carries ERR-MUTATING-SQL. Wrapping it in a
     bare CompilationError drops that code and the user sees the ERR-INTERNAL
-    fallback instead — the "wrapped raise site" `dataface/AGENTS.md` names.
+    fallback instead — the "wrapped raise site" `dbt-charts/AGENTS.md` names.
     """
 
     def test_mutating_sql_keeps_its_code_through_the_wrapper(self) -> None:

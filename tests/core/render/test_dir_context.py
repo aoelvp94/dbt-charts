@@ -129,7 +129,7 @@ class TestListDirEntries:
     ) -> None:
         """SKIP_SCAN_DIRS directory names are hidden from nav — pins the
         documented intent (project.py: "a dbt project root is a valid
-        Dataface root" and target/dbt_packages/logs/etc. are full of
+        dbt charts root" and target/dbt_packages/logs/etc. are full of
         .yml/.md files that must not be enumerated as boards) as behavior,
         not just a comment. A normal subdir alongside them still surfaces."""
         from dbt_charts.core.project import SKIP_SCAN_DIRS

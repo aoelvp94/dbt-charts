@@ -4,6 +4,9 @@ YAML → normalized document. Parses board/config YAML, resolves the meta/extend
 cascade, validates, and emits the normalized document that `execute/` and
 `render/` trust. Pydantic models live in `compile/models/` (see its `AGENTS.md`).
 
+A field rename, move, or removal is a grammar change and ships its migration
+in the same PR — see `migrations/AGENTS.md`.
+
 Read `docs/guides/dbt-charts-yaml-schemas-and-migrations.md` before changing
 authored board models, schema generation, or the board-loading pipeline.
 
@@ -39,7 +42,7 @@ mechanism).
 Everything left at the package root is the orchestrator (`compiler.py`) plus a
 primitive every stage needs: `config.py` (engine config), `errors.py`,
 `merge.py` (cross-stage patch-merge engine), `format.py` (format resolution),
-`sizing.py` and `data_table.py` (both import from `resolve/`, so must sit
+`sizing.py` and `support_table.py` (both import from `resolve/`, so must sit
 above it), `sql_guard.py` (cross-cutting SQL primitive with no single owning
 stage), and `board_artifact.py` (resolved-style codec — serialization, not
 pipeline, kept flat as a one-file exception). A new file belongs in a stage or
@@ -91,6 +94,18 @@ obviously screaming*. Hold these when touching `compile/`:
   imported chart resolves `query:` names — bare, `#`-external, and the chains behind
   them — against the *source* file's `queries:`, anchored at its own directory, under
   reserved-prefix keys. `{{ filter(...) }}` resolves against the importer's.
+- **Board width is two keys: `frame.width` binds, `frame.max_width` bounds.**
+  `width` authored anywhere in the cascade (board, extends template,
+  meta.yaml; root `width:` sugar) is the board's exact width. With no
+  `width`, the board hugs its charts' `preferred_width` measurement up to
+  `max_width` — so a lone generated chart stays a small card, never a
+  full-width one. Never reintroduce a provenance split ("binds if the board's
+  own file wrote it") — that design was built and deleted; the key is the
+  intent. Corollaries: `rows:` slots pin an authored item/chart width (a
+  percentage means a fraction of the row and never feeds the hug), and
+  `chart_focus` sets the focused board's `width` to the pinned slot plus
+  margins — WYSIWYG even when the slot exceeds `max_width`.
+  Pinned by `tests/core/compile/test_authored_board_width.py`.
 - **The type ladder is coupled to board geometry.** Object-title width tiers
   (`resolve/style/typography.py`) derive from the default board's 24-column grid via a single
   global reference. Changing `frame.width` / `frame.margin` in `_base.yaml` moves the
@@ -114,18 +129,21 @@ Presentation keys (`board:`, `style:`, `theme:`) in `dbt_charts.yml` raise a
 
 `extends:` is a board's inheritance list. The normaliser scans it for a built-in theme
 name (`_theme_from_extends`, **last match wins** — it scans reversed) and applies it;
-other entries are board path refs (`./_template.yaml`) or board names resolved in
-`charts/`, merged via `merge_extends`. Later entries have higher style-merge priority,
+other entries are board path refs (`./_template.yaml`) or board names resolved at
+the *project root* (`compiler.py` passes `boards_root=project.directory(".")`),
+merged via `merge_extends`. Later entries have higher style-merge priority,
 so a template listed after a theme overrides it — put the theme first:
 
 ```yaml
 extends:
-  - cream               # base style, lower priority; also the resolved theme
-  - ./_report-base.yml  # overrides specific style fields
+  - paper                # base style, lower priority; also the resolved theme
+  - ./_report-base.yml   # overrides specific style fields
 ```
 
 Built-in theme names are the YAML stems under `defaults/themes/` (user-facing:
-`stark`, `editorial`, `cream`, `plain`, `vivid`, `neon`). The chain bottoms out at
-`stark`; `_base.yaml` is the hidden completeness floor beneath it. `editorial` is the
-configured default. Working example: `examples/playground/charts/composition/`; unit
-test: `test_merge_extends_relative_path_title`.
+`clarity`, `paper`, `vivid`, `neon`, `stark`). The chain bottoms out at
+`stark`, the structural root every other built-in theme transitively
+extends; `_base.yaml` is the hidden completeness floor beneath that.
+`clarity` is the configured default. Working example:
+`examples/playground/charts/composition/`; unit test:
+`test_merge_extends_relative_path_title`.

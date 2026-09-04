@@ -26,6 +26,7 @@ from dbt_charts.core.compile.resolve.style.board import resolve_cascaded_font
 from dbt_charts.core.compile.template.variables import (
     UNSET_MULTISELECT,
     coerce_multiselect,
+    variable_value_is_absent,
 )
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.render.conditions import eval_bool_condition
@@ -309,7 +310,7 @@ def _select_value_is_unset(value: Any) -> bool:
 
 
 def _daterange_is_unset(value: Any) -> bool:
-    if value is None:
+    if variable_value_is_absent(value):
         return True
     if not isinstance(value, (list, tuple)):
         return False

@@ -44,7 +44,7 @@ def _omit(model: _ModelT, field_name: str) -> _ModelT:
 
 def test_axis_grid_color_cascades_to_axis_x():
     """axis.grid.color reaches axis_x when axis_x.grid.color is omitted."""
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     axis_patch = base.charts.axis.model_copy(
         update={"grid": base.charts.axis.grid.model_copy(update={"color": "#aabbcc"})}
     )
@@ -77,7 +77,7 @@ def test_axis_grid_zero_color_cascades_to_measure_axis():
     """
     from dbt_charts.core.compile.models.style.theme import AxisGridZeroStyle
 
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     new_zero = AxisGridZeroStyle(color="#ff0000", width=1)
     axis_y_patch = base.charts.axis_y.model_copy(
         update={"grid": base.charts.axis_y.grid.model_copy(update={"zero": new_zero})}
@@ -114,7 +114,7 @@ def test_axis_grid_zero_color_cascades_to_measure_axis():
 
 def test_axis_grid_visible_cascades_to_child_axes():
     """axis.grid.visible cascades to child axes when omitted."""
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     axis_patch = base.charts.axis.model_copy(
         update={"grid": base.charts.axis.grid.model_copy(update={"visible": False})}
     )
@@ -147,7 +147,7 @@ def test_axis_grid_visible_cascades_to_child_axes():
 
 def test_child_axis_explicit_value_wins_over_cascade():
     """An explicit value in axis_x beats the cascaded value from axis."""
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     axis_patch = base.charts.axis.model_copy(
         update={"grid": base.charts.axis.grid.model_copy(update={"color": "#parent"})}
     )
@@ -170,7 +170,7 @@ def test_child_axis_explicit_value_wins_over_cascade():
 
 def test_axis_line_visible_cascades():
     """axis.line.visible cascades to child axes."""
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     axis_patch = base.charts.axis.model_copy(
         update={"line": base.charts.axis.line.model_copy(update={"visible": True})}
     )
@@ -200,9 +200,38 @@ def test_axis_line_visible_cascades():
     assert emitted_y.line.visible is True
 
 
+@pytest.mark.parametrize("theme", ["stark", "clarity", "paper", "vivid", "neon"])
+def test_axis_line_color_is_not_transparent_when_visible(theme: str) -> None:
+    """A board authoring `style.charts.axis.line.visible: true` must draw a
+    real, visible domain line under every shipped theme -- including
+    `stark`, the structural root every user-facing theme extends and one
+    of the five that lost its own bound color.
+
+    `axis.line.color` is a hidden-chrome default `_base.yaml` keeps
+    `transparent` only for the line's *own* inert, invisible-by-default
+    state (`visible: false`) -- every theme used to bind its own real color
+    for the moment an author turns the line on. Losing that binding makes
+    an authored, documented field (`line.visible`) silently no-op instead
+    of drawing anything.
+    """
+    base = get_theme_style(theme)
+    axis_patch = base.charts.axis.model_copy(
+        update={"line": base.charts.axis.line.model_copy(update={"visible": True})}
+    )
+    patched = base.model_copy(
+        update={"charts": base.charts.model_copy(update={"axis": axis_patch})}
+    )
+    resolved = resolve_chart_style_context(patched)
+    emitted = resolved_axis_style(
+        resolved, "axis_x", "ordinal", chart_type="", label_authored=False
+    )
+    assert emitted.line.visible is True
+    assert emitted.line.color != "transparent"
+
+
 def test_axis_ticks_visible_cascades():
     """axis.ticks.visible cascades to child axes."""
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
     axis_patch = base.charts.axis.model_copy(
         update={"ticks": base.charts.axis.ticks.model_copy(update={"visible": True})}
     )
@@ -236,7 +265,7 @@ def test_base_axis_with_null_grid_color_raises():
     without a grid.color, which build_resolved_axis (called by resolved_axis_style)
     rejects at emit time.
     """
-    base = get_theme_style("editorial")
+    base = get_theme_style("clarity")
 
     def _null_color(ax):
         return ax.model_copy(
@@ -269,7 +298,7 @@ def test_editorial_cream_resolves_without_error():
     axis_y.grid.zero.color; the resolved y-axis carries it through.
     X-axis has no zero (BaseAxisGridStyle — zero is structurally absent).
     """
-    resolved = resolve_chart_style_context(get_theme_style("cream"))
+    resolved = resolve_chart_style_context(get_theme_style("paper"))
     # axis_y.grid is MeasureGridStyle — zero is available on the raw theme slot.
     axis_y_zero_color = (
         resolved.axis_y.grid.zero.color

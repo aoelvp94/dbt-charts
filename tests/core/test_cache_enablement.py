@@ -12,9 +12,9 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import reset_config, resolve_cache_boot
 
 
-def _project(tmp_path: Path, dataface_yml: str | None = None) -> FilesystemProject:
-    if dataface_yml is not None:
-        (tmp_path / "dbt_charts.yml").write_text(dataface_yml)
+def _project(tmp_path: Path, dbt_charts_yml: str | None = None) -> FilesystemProject:
+    if dbt_charts_yml is not None:
+        (tmp_path / "dbt_charts.yml").write_text(dbt_charts_yml)
     return FilesystemProject(tmp_path)
 
 

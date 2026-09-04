@@ -186,7 +186,7 @@ class TestStyleNamespacePositivePath:
 
         glyph_tspan = re.search(r"<tspan[^>]*>●\s*</tspan>", svg)
         assert glyph_tspan is not None
-        assert es.kpi.tones.positive not in glyph_tspan.group(0)
+        assert es.tones.positive not in glyph_tspan.group(0)
 
     def test_no_glyph_character_no_glyph_in_svg(self):
         """When style.glyph.character is absent, no glyph tspan is emitted."""

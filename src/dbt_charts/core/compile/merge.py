@@ -34,6 +34,7 @@ from __future__ import annotations
 import dataclasses
 import types
 import typing
+import warnings
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from functools import cache
@@ -47,6 +48,7 @@ from dbt_charts.core.compile.errors import CompilationError, MergeValidationErro
 from dbt_charts.core.compile.models.markers import Merge, Strategy
 from dbt_charts.core.compile.models.style.authored import PaddingStylePatch
 from dbt_charts.core.compile.models.style.theme import PaddingStyle
+from dbt_charts.core.diagnostics.codes_compile import ERR_EXTENDS_UNRESOLVED
 
 if TYPE_CHECKING:
     from dbt_charts.core.project import ProjectDirectory, ProjectPath
@@ -406,22 +408,29 @@ def merge_onto_base(base: P, patch: BaseModel | None) -> P:
 # ---------------------------------------------------------------------------
 
 # Fields stripped from a fragment before building its own-field patch.
-# Identity fields (id, aliases) must not propagate; extends is consumed here.
-_EXTENDS_STRIP: set[str] = {"id", "aliases", "extends"}
+# Identity fields (id, aliases, schema_version) must not propagate; extends is
+# consumed here.
+_EXTENDS_STRIP: set[str] = {"id", "aliases", "schema_version", "extends"}
 
 
 @cache
-def _get_theme_names() -> frozenset[str]:
-    """Cached frozenset of built-in theme stems."""
+def get_theme_names() -> frozenset[str]:
+    """Cached frozenset of built-in theme stems.
+
+    Public because the extends vocabulary is shared: normalization reads it to
+    pick the effective theme, validation to reject a name nothing resolves.
+    """
     from dbt_charts.core.compile.config import list_built_in_themes
 
     return frozenset(list_built_in_themes())
 
 
-def _is_path_ref(entry: str) -> bool:
+def is_path_ref(entry: str) -> bool:
     """True when entry looks like a file path rather than a plain name.
 
-    A path ref contains ``/`` or ends with ``.yaml`` / ``.yml``.
+    A path ref contains ``/`` or ends with ``.yaml`` / ``.yml``. Public for the
+    same reason as :func:`get_theme_names` — it is the rule that separates a
+    board reference from a theme name, and validation applies it too.
     """
     return "/" in entry or entry.endswith((".yaml", ".yml"))
 
@@ -522,13 +531,30 @@ def _fragment_own_patch(fragment: BaseModel) -> BaseModel:
     return BoardPatch.model_validate(data)
 
 
+def _named_board_path(entry: str, ctx: _ExtendCtx) -> ProjectPath | None:
+    """Project board file a plain (non-path, non-theme) ``extends:`` entry
+    names, if one exists at the project root — ``None`` otherwise.
+
+    The one lookup both a named-board resolution and the retired-theme
+    redirect need, so they can never drift into disagreeing about whether a
+    project board shadows a name.
+    """
+    if ctx.boards_root is None:
+        return None
+    for ext in (".yaml", ".yml"):
+        candidate = ctx.boards_root / f"{entry}{ext}"
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def _resolve_fragment_file(entry: str, ctx: _ExtendCtx) -> ProjectPath:
     """Resolve an extends entry to a ProjectPath handle.
 
     Raises:
         CompilationError: Entry is not a known theme, relative path, or named board.
     """
-    if _is_path_ref(entry):
+    if is_path_ref(entry):
         # Relative path — anchored to the authoring file's own directory.
         if ctx.board_dir is None:
             raise CompilationError(
@@ -537,22 +563,56 @@ def _resolve_fragment_file(entry: str, ctx: _ExtendCtx) -> ProjectPath:
             )
         return ctx.board_dir / entry
 
+    from dbt_charts.core.compile.config import user_facing_theme_names
+
     if ctx.boards_root is not None:
         # Named board — look up in the project root.
-        for ext in (".yaml", ".yml"):
-            candidate = ctx.boards_root / f"{entry}{ext}"
-            if candidate.exists():
-                return candidate
-        raise CompilationError(
-            f"extends: {entry!r} is not a known theme name or a board file in "
-            f"{ctx.boards_root.relpath}. "
-            f"Known themes: {sorted(ctx.theme_names)}"
+        candidate = _named_board_path(entry, ctx)
+        if candidate is not None:
+            return candidate
+        # The caller already ruled out every theme name, and the board lookup
+        # just failed too — the one site that can offer the board arm as a fix.
+        raise CompilationError.from_code(
+            ERR_EXTENDS_UNRESOLVED,
+            entry=entry,
+            available=user_facing_theme_names(),
         )
 
+    # Theme-build lane only (no project): a shipped theme YAML extends
+    # something that isn't a theme, which is broken package data, not authoring.
     raise CompilationError(
         f"extends: {entry!r} is not a known theme name or a relative path. "
         f"Known themes: {sorted(ctx.theme_names)}"
     )
+
+
+def _retired_theme_redirect(entry: str, ctx: _ExtendCtx) -> str | None:
+    """Return the migrated theme name for a retired ``extends:`` entry, or
+    ``None`` if *entry* is not retired or a same-named project board shadows it.
+
+    ``extends:``'s authored type (``ThemeName | str | list[str]``) accepts
+    theme names, board names, and paths alike, so a retired builtin name is
+    ambiguous with a real project board of the same name in a way ``theme:``
+    never is — unlike ``theme:``'s identity-path Move
+    (``migrations.py``'s ``_apply_identity_moves``), which runs unconditionally
+    on the raw mapping before any board lookup is even possible. This redirect
+    is asked first in ``_resolve_entry``, before ``_resolve_fragment_file``
+    ever runs, so it re-checks the same named-board condition itself (via
+    ``_named_board_path``, shared with ``_resolve_fragment_file``) rather
+    than relying on order — a real project board must win either way.
+    """
+    from dbt_charts.core.compile.migrations.versions.current import THEME_RENAMES
+
+    replacement = THEME_RENAMES.get(entry)
+    if replacement is None:
+        return None
+    # THEME_RENAMES's declared value type (MappedScalar) is shared with
+    # Move.value_map's generic contract; every entry it actually holds is a
+    # theme-name string.
+    assert isinstance(replacement, str)
+    if _named_board_path(entry, ctx) is not None:
+        return None
+    return replacement
 
 
 def _resolve_entry(
@@ -579,7 +639,23 @@ def _resolve_entry(
     Raises:
         CompilationError: Unresolvable entry, cycle detected, or I/O / parse error.
     """
-    if not _is_path_ref(entry) and entry in ctx.theme_names:
+    if not is_path_ref(entry):
+        redirect = _retired_theme_redirect(entry, ctx)
+        if redirect is not None:
+            from dbt_charts.core.compile.migrations.migrations import (
+                SchemaMigrationWarning,
+            )
+
+            warnings.warn(
+                f"dbt charts resolved retired `extends:` theme name {entry!r} "
+                f"to {redirect!r} in memory. `dct migrate` does not rewrite "
+                "this position — update the YAML by hand.",
+                SchemaMigrationWarning,
+                stacklevel=2,
+            )
+            return _resolve_entry(redirect, ctx, seen, theme_sink)
+
+    if not is_path_ref(entry) and entry in ctx.theme_names:
         if theme_sink is not None:
             # Board-compile lane: record the theme name for the compiler to inject
             # as the effective extends so the normalizer applies it exactly once.
@@ -659,7 +735,7 @@ def resolve_built_in_theme(name: str) -> BaseModel:
     from dbt_charts.core.compile.models.board.patch import BoardPatch
 
     node = BoardPatch.model_validate({"extends": name})
-    ctx = _ExtendCtx(board_dir=None, boards_root=None, theme_names=_get_theme_names())
+    ctx = _ExtendCtx(board_dir=None, boards_root=None, theme_names=get_theme_names())
     return _merge_extends_inner(node, ctx, frozenset(), theme_sink=None)
 
 
@@ -699,7 +775,7 @@ def merge_extends(
     ctx = _ExtendCtx(
         board_dir=board_path.parent,
         boards_root=boards_root,
-        theme_names=_get_theme_names(),
+        theme_names=get_theme_names(),
     )
     return _merge_extends_inner(node, ctx, frozenset(), theme_sink)
 
@@ -782,7 +858,7 @@ def merge_metas(
         meta_ctx = _ExtendCtx(
             board_dir=meta_path.parent,
             boards_root=boards_root,
-            theme_names=_get_theme_names(),
+            theme_names=get_theme_names(),
         )
         extends_patch = _merge_extends_inner(
             fragment, meta_ctx, frozenset(), theme_sink

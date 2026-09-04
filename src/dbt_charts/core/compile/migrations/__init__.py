@@ -1,6 +1,7 @@
 from .migrations import (
     ConditionalMove,
     Deletion,
+    IncompleteMigrationError,
     MigrationConflictError,
     MigrationError,
     MigrationRegistry,
@@ -17,6 +18,7 @@ from .migrations import (
 __all__ = [
     "ConditionalMove",
     "Deletion",
+    "IncompleteMigrationError",
     "MigrationConflictError",
     "MigrationError",
     "MigrationRegistry",

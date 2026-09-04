@@ -3,7 +3,12 @@
 # defaults (layout, spacing, sizing, chart geometry) but intentionally omits
 # font families and color values — those are supplied by each named theme.
 # Not meant for direct use; extend this via a named theme that fills in
-# font and color.
+# font and color. Exception: a hidden element's color (frame.border) is set
+# here as a literal "transparent" — resolve requires a concrete value even
+# for chrome nothing ever draws, and that fact belongs in one place, not six.
+# axis.line.color is NOT one of these: `line.visible` is an authored,
+# documented field (`style.charts.axis.line.visible`), so each theme binds
+# its own real color for the moment an author turns the line on.
 
 style:
   # Palette role assignments.
@@ -22,6 +27,16 @@ style:
     sequence: dbt-seq-blue
     diverge: dbt-div-blue-red
 
+  # Semantic tone palette for KPI support rows and table conditional glyphs —
+  # shared board-level slot, not one chart family's. Four tones: positive,
+  # negative, warning, info. Tokens resolved via palette role dispatch
+  # (positive.solid → palettes.positive → positive.yml).
+  tones:
+    positive: positive.solid
+    negative: negative.solid
+    warning: warning.solid
+    info: info.solid
+
   # Top-level theme role shortcuts. Bare alias → role.alias.
   roles:
     ink: chrome.heading
@@ -29,7 +44,7 @@ style:
   opacity: 1.0
 
   frame:
-    width: 1200.0
+    max_width: 1200.0
     min_height: 0.0
     # Outer edge inset only — independent of card_padding/card_gap. Hosts that
     # render the board edge-to-edge (Cloud) have no chrome of their own, so this
@@ -127,6 +142,10 @@ style:
       line:
         visible: false
         width: 1
+        # No color here: unlike frame.border, this is an authored, documented
+        # field (`style.charts.axis.line.visible`) an author can turn on, so
+        # each theme binds its own real color below rather than a shared
+        # inert default.
       ticks:
         visible: false
         length: 6  # default tick length cascades to all axes; matches VL's geometric idiom
@@ -144,6 +163,18 @@ style:
         min_gap: 16       # 16px minimum gap between adjacent labels
         # bound, flush, offset intentionally absent — VL per-axis defaults apply.
       title:
+        # Hidden by default. An axis whose own labels name the dimension —
+        # temporal (Jan 2025, Apr) or nominal (North, South) — gains nothing
+        # from a title repeating the column slug, and the chart title usually
+        # names the measure already. The families that DO need one opt back in:
+        # scatter (both axes quantitative, so neither self-names) and
+        # histogram's y. An authored `x_label`/`y_label` also forces a title on
+        # via Layer 5 in compile/resolve/style/axis_cascade.py.
+        #
+        # Default (unlabeled) title TEXT bypasses this font's `case: title`
+        # transform — see render/chart/emitters/_cartesian.py's
+        # default_axis_title use. That is independent of visibility and applies
+        # wherever a default title does render.
         visible: false
         font:
           size: *size_label
@@ -156,7 +187,10 @@ style:
       grid:
         width: 1      # lighter weight than horizontal grid (axis.grid.width=1.5)
       ticks:
-        visible: true
+        # "auto": shown only when the vertical gridlines can't reach the
+        # labels on their own (hidden gridlines, or a y-gridline capping
+        # them short of the bottom edge) -- see build_cartesian_axes.
+        visible: auto
         width: 1
         offset: 1
       labels:
@@ -165,6 +199,10 @@ style:
         # When no angle fits, the strategy walk continues to the next step
         # (skip → parity-drop, or allow if skip is absent).
         tilt_increments: [0, -30, -45, -60, -90]
+        # House sub-day clock register: the Noon/Midnight 12-hour vocabulary,
+        # not the meridiem-free 24-hour clock. x-only — see
+        # DimensionLabelStyle.clock.
+        clock: 12
       scale:
         padding: 0  # band/point padding around categorical x-axis values
       # Engine fills missing time buckets on ordinal bucketed-time x-axes.
@@ -207,12 +245,12 @@ style:
         width: 1.5
       labels:
         font: {}
-        # References the shared number_default alias (.3~s) so quantitative axes
+        # References the shared `number` name (.3~s) so quantitative axes
         # AND the value labels that inherit this format read a bounded 3-sig-fig
         # SI number (9.18, 21.5M) — not the unbounded 6-sig-fig 9.18039 a bare ~s
         # gives on real data. Axis ticks are round, so the bound is invisible there.
         # Authors override per-chart via chart.format or style.axis_y.labels.format.
-        format: "number_default"
+        format: "number"
 
     tooltip:
       format: ",.2~f"
@@ -296,9 +334,6 @@ style:
       # title->subtitle baseline gap at all three width-tiered title sizes
       # typography.py can produce (11px, 14px, 18px) — not fitted to one size.
       title_subtitle_gap: 3.3
-      border:
-        width: 1.0
-        radius: 4.0
       column_layout:
         default_width: 100.0
         cell_padding: 8.0
@@ -344,8 +379,6 @@ style:
           padding: 2.0
           min_bar_height: 1.0
           border:
-            width: 0.0
-            color: transparent
             radius: 1.0
         column:
           # Geometric defaults for the single vertical `column` spark mark.
@@ -358,8 +391,6 @@ style:
         bar:
           default_max: 100.0
           border:
-            width: 0.0
-            color: transparent
             radius: 0.0
           label:
             inset_x: 4.0
@@ -429,7 +460,13 @@ style:
         # scale gutter (padding) stays at 0 so the two layers don't compound.
         padding: 0
         band_width: 0.8
-        size: 20.0
+        # size is unset here on purpose: it is the author's fixed-width
+        # override (see its Field description), so it must stay None until
+        # a board/chart actually authors it. A continuous (quantitative) x/y
+        # scale sizes itself from gap/min_size/max_size below instead.
+        gap: 3.0
+        min_size: 4.0
+        max_size: 20.0
       line:
         stroke:
           # Fallback width; fires only when the resolve layer cannot determine
@@ -480,15 +517,23 @@ style:
             join: "round"
           halo_multiplier: 0.0
       point:
-        size: 0
+        # No size default here (model default is None/unset) — a line chart's
+        # point markers are density-driven (bake_point_companions), not a
+        # themed literal. A literal 0 here would be indistinguishable from
+        # "no tier authored a size", silently discarding a board- or
+        # theme-tier size (including an explicit 0 to turn points off).
+        # scatter/point_map set their own family-tier size (non-zero,
+        # visible dots by default) below.
         opacity: 1
         filled: true
         fill: theme.background
-        # Tracks marks.line.stroke.width — hollow ring overlays should read
-        # with the same weight as the line. For adaptive charts the resolve
-        # layer bakes both together; this fallback applies to the same
-        # narrow cases where marks.line.stroke.width is a fallback.
-        stroke_width: 2.5
+        # No stroke_width default here, for the same reason size has none
+        # above: a line's point ring tracks its stroke (bake_point_companions),
+        # and a literal here would be indistinguishable from "no tier authored
+        # a ring", silently discarding a board- or theme-tier pin. The
+        # families that render points with no line to track — scatter,
+        # point_map, and area (whose marks.point is pass-through, see
+        # resolve/chart/area.py) — carry their own below.
       slice:
         # gap 0 lets the stroke (canvas-color knockout) be the only
         # visible separator between slices.
@@ -573,6 +618,13 @@ style:
       axis_y:
         ticks:
           visible: true
+      marks:
+        point:
+          # Tracks marks.line.stroke.width — hollow rings should read with the
+          # same weight as a line. Family-tier, not global: the global slot
+          # must stay unset so bake_point_companions can detect an authored
+          # ring on the families that do track a line.
+          stroke_width: 2.5
 
     histogram:
       bin_maxbins: 20
@@ -596,9 +648,9 @@ style:
     kpi:
       # KPI uses the tabular sans by default — digits aligned across cards
       # in a row matter more than text-prose readability for a value card.
-      # The editorial parent theme overrides `kpi.value.font.family` to a
+      # The clarity parent theme overrides `kpi.value.font.family` to a
       # serif value while keeping support/affixes on the tabular sans
-      # (see `themes/editorial.yaml`).
+      # (see `themes/clarity.yaml`).
       # Weight 500 (heading-tier) for the whole card text — the per-tier
       # hierarchy is carried by size + color, not weight. This cascades
       # into every slot (value, label, affix, glyph) unless overridden.
@@ -643,14 +695,6 @@ style:
         width: 0.0
         color: transparent
         radius: 0.0
-      # Semantic tone palette for KPI value/glyph and table conditional glyphs.
-      # Four tones: positive, negative, warning, info. Tokens resolved via
-      # palette role dispatch (positive.solid → palettes.positive → positive.yml).
-      tones:
-        positive: positive.solid
-        negative: negative.solid
-        warning: warning.solid
-        info: info.solid
 
     spark_bar:
       preferred_width: 200.0
@@ -676,14 +720,12 @@ style:
         font:
           size: 10
       border:
-        width: 0.0
-        color: transparent
         radius: 2.0
 
-    # Attached chart.data_table primitive (spec §4, ADR-002).
+    # Attached chart.support_table primitive (spec §4, ADR-002).
     # Universal tier-1 defaults. Per-chart-type tier-2 lives nested under
-    # bar/line/area as data_table: {...}.
-    data_table:
+    # bar/line/area as support_table: {...}.
+    support_table:
       font:
         size: 11
       # No divider rule by default — strip flows directly from the x-axis.
@@ -708,9 +750,11 @@ style:
       # ticks (e.g. ['Jan', '2024']) don't overlap the strip top edge.  Themes
       # that use a year-only label cadence (single line always) can set 1.
       label_max_lines: 2
-      # Pre-launch intentional flip: "top" is the universal default.
-      # Boards that require below-plot layout set position: bottom explicitly.
-      position: top
+      # position is left unset: it's a cascade-managed sentinel (see the
+      # field docstring on SupportTableStyle.position) resolved at render
+      # time from the chart's category-axis orientation — "top" on a
+      # horizontal category axis, the label side on a vertical one. Boards
+      # that require a different layout set position explicitly.
 
     # build_patch_model_ext-based types: TYPE_CHECKING stub shows required fields from
     # _ChartStyleBase, so mypy can't verify zero-arg construction. These stay required.
@@ -742,15 +786,23 @@ style:
         visible: true
       marks:
         point:
-          # Global marks.point.size is 0 (hides line-chart point overlays). Scatter
-          # needs visible dots — 60 sq px ≈ 4.4px radius, a clean unobtrusive dot.
+          # Global marks.point.size is unset (a line's points are density-
+          # driven, see bake_point_companions). Scatter needs visible dots —
+          # 60 sq px, diameter = sqrt(size) ≈ 7.75px (≈3.9px radius), a clean
+          # unobtrusive dot.
           size: 60
+          # Tracks marks.line.stroke.width — hollow rings should read with the
+          # same weight as a line. Family-tier, not global: the global slot
+          # must stay unset so bake_point_companions can detect an authored
+          # ring on the families that do track a line.
+          stroke_width: 2.5
 
     pie:
       aspect_ratio: 1.0
       # Donut center total — the big number on top, smaller caption below.
-      # Authors opt in via ``chart.total: { label, format }``; this slot
-      # only contributes typography.
+      # The engine auto-fills `chart.total` label and format independently,
+      # supplying whichever an author left unset; `chart.total: { label,
+      # format }` overrides either. This slot only contributes typography.
       total:
         value:
           font:
@@ -771,7 +823,7 @@ style:
           palette: blues
       # Choropleth color channel carries the whole measure — a reader can't
       # decode dark-vs-light without a key. Keep this a family default so
-      # themes that globally suppress legends (editorial direct-labeling)
+      # themes that globally suppress legends (clarity direct-labeling)
       # still inherit an honest gradient legend here, just as heatmap and
       # scatter opt back in.
       legend:
@@ -784,10 +836,16 @@ style:
         type: mercator
       marks:
         point:
-          # Global marks.point.size is 0 (hides line-chart point overlays).
-          # Point maps need visible dots — matches scatter's own 60 sq px
-          # (≈4.4px radius) so a bare point_map isn't invisible by default.
+          # Global marks.point.size is unset (a line's points are density-
+          # driven, see bake_point_companions). Point maps need visible dots —
+          # matches scatter's own 60 sq px (diameter = sqrt(size) ≈ 7.75px,
+          # ≈3.9px radius) so a bare point_map isn't invisible by default.
           size: 60
+          # Tracks marks.line.stroke.width — hollow rings should read with the
+          # same weight as a line. Family-tier, not global: the global slot
+          # must stay unset so bake_point_companions can detect an authored
+          # ring on the families that do track a line.
+          stroke_width: 2.5
           # No opacity override: point maps inherit the global point mark's
           # opacity: 1, the same as scatter. A translucent default would make
           # every map pay for an overlap that most maps do not have, and
@@ -811,7 +869,7 @@ style:
           visible: false
       # Heatmap's color channel carries the whole measure — a reader can't
       # decode dark-vs-light without a key. Keep this a family default so
-      # themes that globally suppress legends (editorial direct-labeling)
+      # themes that globally suppress legends (clarity direct-labeling)
       # still inherit an honest gradient legend here, just as scatter opts
       # back in.
       legend:
@@ -892,6 +950,11 @@ style:
     # than the rest of the type system).
     bold:
       weight: *weight_bold
+    # Markdown `---` rules and markdown-table gridlines. Previously reached
+    # mdsvg via charts.table.border.color, a slot that never bordered the table
+    # chart; this value is that slot's resolved color, carried over unchanged.
+    rule:
+      color: '#e0e0e0'
 
   layout:
     rows:
@@ -983,7 +1046,6 @@ style:
         default_max: 100.0
         default_step: 1.0
       border:
-        width: 1.0
         radius: 4.0
 
   placeholder:

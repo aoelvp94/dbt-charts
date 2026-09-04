@@ -82,7 +82,7 @@ def test_chart_entry_carries_identity_and_encoding(
                 x="month",
                 y="revenue",
                 title="Revenue",
-                description="Monthly revenue",
+                notes="Monthly revenue",
             )
         ]
     )
@@ -92,7 +92,7 @@ def test_chart_entry_carries_identity_and_encoding(
 
     assert chart["type"] == "bar"
     assert chart["title"] == "Revenue"
-    assert chart["description"] == "Monthly revenue"
+    assert chart["notes"] == "Monthly revenue"
     assert chart["x"] == "month"
     assert chart["y"] == "revenue"
 

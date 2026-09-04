@@ -26,10 +26,10 @@ __all__ = [
 ]
 
 # Chart types where zero anchoring is optional; the smart-auto heuristic applies.
-# Bar always extends to zero (absolute-magnitude encoding; truncated bars mislead).
-# Area returns explicit zero:True at ratio ≤ threshold (not None) so the render-side
-# domainMin pin fires and prevents blank space between 0 and the first tick.
-_OPTIONAL_ZERO_CHART_TYPES = frozenset({"line", "scatter", "area"})
+# Bar and area always extend to zero — both are absolute-magnitude encodings
+# (a bar's length and an area's fill both misstate the quantity when truncated),
+# so neither is in this set.
+_OPTIONAL_ZERO_CHART_TYPES = frozenset({"line", "scatter"})
 
 # Threshold for smart-auto zero extension.  When data_min/data_max <= this value,
 # data starts in the bottom 25% of [0, max] and extending to zero adds honest
@@ -194,20 +194,25 @@ def _pick_scale(
     to extend to zero, or ``None`` when zero is not relevant (data spans or
     touches zero, or no data profiled).
 
-    Optional-zero chart types (line, scatter, area): smart-auto heuristic.
-    Extend to zero when data_min/data_max <= 0.25 (data starts in the bottom
-    quarter of [0, max]).  Return zero:False when data lives far from zero.
-    Area at ratio ≤ threshold returns an explicit True (not None) so that the
-    render-side domainMin pin fires and prevents a blank gap below the first
-    tick when VL extends the domain to 0.
+    Optional-zero chart types (line, scatter): smart-auto heuristic. Extend
+    to zero when data_min/data_max <= 0.25 (data starts in the bottom quarter
+    of [0, max]) — returns ``None`` there, not an explicit ``True``. ``None``
+    only means the explicit ``scale.continuous.zero`` override stays unset;
+    it is not a no-op. Each family separately re-derives the same
+    close-to-zero-so-anchor verdict for its own tick ladder (the
+    ``zero_anchor`` argument to ``_resolve_cartesian_ticks``); on its own that
+    argument only feeds tick placement and headroom-expanded ``domainMax``,
+    never a ``domainMin`` floor. Line's multi-metric path is the exception:
+    it feeds the same re-derived verdict into ``_bake_zero_flag``, which
+    bakes ``scale.continuous.zero`` explicitly and does produce a
+    ``domainMin`` floor at emit. The visible baseline itself comes from
+    ``BaselineFeature``'s render-time ``datum: 0`` rule.
 
-    Non-optional-zero types (bar only): always extend to zero for all-positive
-    data — bar marks encode absolute magnitude and suppressing zero produces
-    truncated bars (a known misleading chart pattern).
-
-    Returning an explicit True/False here means resolved_chart.zero carries
-    the full intent; the render layer does not need to know chart-type
-    defaults in VL.
+    Non-optional-zero types (bar, area) with all-positive data: always
+    extend to zero — both encode absolute magnitude (a bar's length, an
+    area's fill), and truncating either misstates the quantity. Returns an
+    explicit True so resolved_chart.zero carries the intent and the render
+    layer needs no chart-type knowledge to decide domain pinning.
 
     All-negative data (max < 0): out of scope — skip the heuristic.
     """
@@ -224,15 +229,9 @@ def _pick_scale(
         ratio = profile.min_val / profile.max_val
         if ratio > _ZERO_EXTEND_THRESHOLD:
             return {"zero": False}
-        # Data is close to zero — extend to zero.
-        # Area charts need an explicit True (not None) so that the render-side
-        # domainMin pin fires and closes the blank gap between 0 and the first tick.
-        # Line/scatter have no zero:true VL default so None is safe there.
-        if chart_type == "area":
-            return {"zero": True}
         return None
 
-    # Non-optional-zero types (bar only) with all-positive data: return
+    # Non-optional-zero types (bar, area) with all-positive data: return
     # explicit True so resolved_chart.zero carries the intent and the render
     # layer needs no chart-type knowledge to decide domain pinning.
     if profile.min_val > 0:

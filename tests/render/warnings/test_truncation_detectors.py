@@ -1,8 +1,9 @@
-"""Tests for the five new text-truncation detector modules.
+"""Tests for the text-truncation detector modules.
 
-One detector per surface: chart_title, kpi_label, table_header, table_cell,
-callout_text, spark_label.  Each test builds a WarningContext with a
-TextTruncation record for the relevant surface and asserts the detector fires.
+One detector per surface: chart_title, kpi_label, kpi_inline_fallback,
+table_header, table_cell, callout_text, spark_label.  Each test builds a
+WarningContext with a TextTruncation record for the relevant surface and
+asserts the detector fires.
 """
 
 from __future__ import annotations
@@ -12,6 +13,8 @@ from typing import Any
 from dbt_charts.core.diagnostics import (
     WARN_CALLOUT_TEXT_TRUNCATED,
     WARN_CHART_TITLE_TRUNCATED,
+    WARN_KPI_ALIGN_OVERFLOW,
+    WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED,
     WARN_KPI_LABEL_TRUNCATED,
     WARN_SPARK_LABEL_TRUNCATED,
     WARN_TABLE_TEXT_TRUNCATED,
@@ -20,6 +23,8 @@ from dbt_charts.core.render.chart.text_truncation import TextTruncation
 from dbt_charts.core.render.warnings import (
     callout_text_truncated,
     chart_title_truncated,
+    kpi_align_overflow,
+    kpi_inline_fallback,
     kpi_label_truncated,
     spark_label_truncated,
     table_text_truncated,
@@ -132,6 +137,41 @@ def test_kpi_label_detector_ignores_other_surfaces() -> None:
         ],
     )
     assert kpi_label_truncated.detect(ctx) == []
+
+
+# ── kpi_inline_fallback ───────────────────────────────────────────────────────
+
+
+def test_kpi_inline_fallback_detector_fires_on_fallback() -> None:
+    ctx = _ctx(
+        "k3",
+        [
+            TextTruncation(
+                surface="kpi_inline_fallback",
+                authored_field="variant",
+                authored_text="inline",
+            )
+        ],
+    )
+    warnings = kpi_inline_fallback.detect(ctx)
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert w.code == WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED.code
+    assert w.chart == "k3"
+    assert "k3" in w.message
+    assert w.path == "charts.k3.variant"
+
+
+def test_kpi_inline_fallback_detector_ignores_other_surfaces() -> None:
+    ctx = _ctx(
+        "k4",
+        [
+            TextTruncation(
+                surface="kpi_label", authored_field="label", authored_text="Long Label"
+            )
+        ],
+    )
+    assert kpi_inline_fallback.detect(ctx) == []
 
 
 # ── table_text ────────────────────────────────────────────────────────────────
@@ -288,3 +328,49 @@ def test_spark_label_detector_ignores_other_surfaces() -> None:
         ],
     )
     assert spark_label_truncated.detect(ctx) == []
+
+
+def test_kpi_align_overflow_detector_fires_on_overflow() -> None:
+    ctx = _ctx(
+        "k9",
+        [
+            TextTruncation(
+                surface="kpi_align_overflow",
+                authored_field="value",
+                authored_text="Revenue",
+            )
+        ],
+    )
+    warnings = kpi_align_overflow.detect(ctx)
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert w.code == WARN_KPI_ALIGN_OVERFLOW.code
+    assert w.chart == "k9"
+    assert "k9" in w.message
+    assert w.path == "charts.k9.style.align"
+
+
+def test_kpi_align_overflow_detector_ignores_other_surfaces() -> None:
+    ctx = _ctx(
+        "k10",
+        [
+            TextTruncation(
+                surface="kpi_label", authored_field="label", authored_text="Long"
+            )
+        ],
+    )
+    assert kpi_align_overflow.detect(ctx) == []
+
+
+def test_kpi_align_overflow_detector_fires_once_per_chart() -> None:
+    """Three overflowing runs on one card are one authoring mistake, not three."""
+    ctx = _ctx(
+        "k11",
+        [
+            TextTruncation(
+                surface="kpi_align_overflow", authored_field="value", authored_text="a"
+            )
+            for _ in range(3)
+        ],
+    )
+    assert len(kpi_align_overflow.detect(ctx)) == 1

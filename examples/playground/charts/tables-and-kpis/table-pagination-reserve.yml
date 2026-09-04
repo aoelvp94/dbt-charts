@@ -1,0 +1,90 @@
+title: Table Pagination Reserve
+notes: |
+  Pins the height a paginated table reserves against the content its current
+  page actually paints. The reserve spans every page in the dataset, so a
+  single wrapping row anywhere in the data sets the card height for all of
+  them -- page 1 renders short and the leftover falls below the pager.
+
+  Row 34 (page 4 of 6) carries the long value. No other golden has this shape:
+  every existing paginated table either fits one page or has uniform rows, so
+  the reserve and the painted content agree and the gap is invisible.
+# Inline `columns`/`values` keep this specimen runnable anywhere.
+queries:
+  renewals:
+    notes: 60 rows, one of which wraps, paginated 10 to a page.
+    columns: [account, model_arr, renewal_note]
+    values:
+      - [Account 01, 102000, Standard renewal]
+      - [Account 02, 100300, Standard renewal]
+      - [Account 03, 98600, Standard renewal]
+      - [Account 04, 96900, Standard renewal]
+      - [Account 05, 95200, Standard renewal]
+      - [Account 06, 93500, Standard renewal]
+      - [Account 07, 91800, Standard renewal]
+      - [Account 08, 90100, Standard renewal]
+      - [Account 09, 88400, Standard renewal]
+      - [Account 10, 86700, Standard renewal]
+      - [Account 11, 85000, Standard renewal]
+      - [Account 12, 83300, Standard renewal]
+      - [Account 13, 81600, Standard renewal]
+      - [Account 14, 79900, Standard renewal]
+      - [Account 15, 78200, Standard renewal]
+      - [Account 16, 76500, Standard renewal]
+      - [Account 17, 74800, Standard renewal]
+      - [Account 18, 73100, Standard renewal]
+      - [Account 19, 71400, Standard renewal]
+      - [Account 20, 69700, Standard renewal]
+      - [Account 21, 68000, Standard renewal]
+      - [Account 22, 66300, Standard renewal]
+      - [Account 23, 64600, Standard renewal]
+      - [Account 24, 62900, Standard renewal]
+      - [Account 25, 61200, Standard renewal]
+      - [Account 26, 59500, Standard renewal]
+      - [Account 27, 57800, Standard renewal]
+      - [Account 28, 56100, Standard renewal]
+      - [Account 29, 54400, Standard renewal]
+      - [Account 30, 52700, Standard renewal]
+      - [Account 31, 51000, Standard renewal]
+      - [Account 32, 49300, Standard renewal]
+      - [Account 33, 47600, Standard renewal]
+      - [Account 34, 45900, Renewal blocked pending a security review that the account team escalated twice this quarter and has not yet cleared]
+      - [Account 35, 44200, Standard renewal]
+      - [Account 36, 42500, Standard renewal]
+      - [Account 37, 40800, Standard renewal]
+      - [Account 38, 39100, Standard renewal]
+      - [Account 39, 37400, Standard renewal]
+      - [Account 40, 35700, Standard renewal]
+      - [Account 41, 34000, Standard renewal]
+      - [Account 42, 32300, Standard renewal]
+      - [Account 43, 30600, Standard renewal]
+      - [Account 44, 28900, Standard renewal]
+      - [Account 45, 27200, Standard renewal]
+      - [Account 46, 25500, Standard renewal]
+      - [Account 47, 23800, Standard renewal]
+      - [Account 48, 22100, Standard renewal]
+      - [Account 49, 20400, Standard renewal]
+      - [Account 50, 18700, Standard renewal]
+      - [Account 51, 17000, Standard renewal]
+      - [Account 52, 15300, Standard renewal]
+      - [Account 53, 13600, Standard renewal]
+      - [Account 54, 11900, Standard renewal]
+      - [Account 55, 10200, Standard renewal]
+      - [Account 56, 8500, Standard renewal]
+      - [Account 57, 6800, Standard renewal]
+      - [Account 58, 5100, Standard renewal]
+      - [Account 59, 3400, Standard renewal]
+      - [Account 60, 1700, Standard renewal]
+charts:
+  renewals_table:
+    query: renewals
+    type: table
+    style:
+      pagination:
+        enabled: true
+        page_rows: 10
+      columns:
+        account: {label: Account}
+        model_arr: {label: Model ARR, format: currency_whole, align: right}
+        renewal_note: {label: Note, width: 180}
+rows:
+  - renewals_table

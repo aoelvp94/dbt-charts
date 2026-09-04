@@ -573,6 +573,40 @@ class TestValidateBrokenMetaYamlTransitive:
 class TestValidateContentInMemory:
     """validate_content() validates unsaved YAML with no path on disk."""
 
+    def test_validate_content_checks_model_columns(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """The agent-facing arm (Playground, MCP validate_board) runs the
+        model-column drift check too."""
+        import json
+
+        from dbt_charts.agent_api.validate import validate_content
+
+        (tmp_path / "target").mkdir()
+        (tmp_path / "target" / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "metadata": {"adapter_type": "postgres"},
+                    "nodes": {
+                        "model.p.orders": {
+                            "resource_type": "model",
+                            "name": "orders",
+                            "schema": "main",
+                            "raw_code": "SELECT month, revenue FROM raw",
+                        }
+                    },
+                }
+            )
+        )
+        board = _VALID_BOARD.replace(
+            "SELECT month, SUM(revenue) FROM orders GROUP BY 1",
+            "SELECT month, SUM(gross) AS revenue FROM {{ ref('orders') }} GROUP BY 1",
+        )
+        result = validate_content(board, project=local_project(tmp_path))
+
+        assert result.success is False
+        assert any(e.code == "ERR-DBT-MODEL-COLUMN-MISSING" for e in result.errors)
+
     def test_validate_content_success_on_valid_yaml(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
@@ -675,7 +709,7 @@ class TestValidateCredentialLiteralBecomesError:
     callers get a clean diagnostic rather than an unhandled exception.
     """
 
-    def test_literal_password_in_dataface_yml_returns_error(
+    def test_literal_password_in_dbt_charts_yml_returns_error(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         from dbt_charts.agent_api.validate import validate

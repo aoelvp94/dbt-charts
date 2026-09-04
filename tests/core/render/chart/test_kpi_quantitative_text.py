@@ -234,7 +234,7 @@ class TestKpiSupportBlock:
         )
         # Tone "positive" resolves through the theme palette — assert that
         # whatever the theme has set for `positive` is present on the row.
-        assert es.kpi.tones.positive in svg
+        assert es.tones.positive in svg
 
     def test_support_explainer_remains_neutral_under_negative_tone(self):
         support = KpiSupportConfig(
@@ -255,7 +255,7 @@ class TestKpiSupportBlock:
             board_style=resolve_style(get_theme_style()),
         )
         # Negative tone resolves to whatever the theme has for `negative`.
-        assert es.kpi.tones.negative in svg
+        assert es.tones.negative in svg
         # Explainer text is neutral (muted secondary text from theme).
         assert "last month" in svg
 
@@ -315,7 +315,7 @@ class TestKpiTonePrecedence:
 
         value_tspan = re.search(r"<tspan[^>]*>1\.5[^<]*</tspan>", svg)
         assert value_tspan is not None
-        assert es.kpi.tones.warning not in value_tspan.group(0)
+        assert es.tones.warning not in value_tspan.group(0)
 
     def test_value_color_rejected_at_chart_root(self):
         """value_color is no longer accepted at chart root — extra=forbid rejects it."""
@@ -595,11 +595,11 @@ class TestKpiNewFieldsRoundTripThroughSerializers:
         )
 
     def test_json_emit_preserves_all_kpi_fields(self):
-        from dbt_charts.core.render.chart.serialization import build_dataface_json
+        from dbt_charts.core.render.chart.serialization import build_dbt_charts_json
 
         chart = self._kpi()
         data = [{"revenue": 1_500_000, "delta_pct": 0.124}]
-        out = build_dataface_json(chart, data)
+        out = build_dbt_charts_json(chart, data)
         assert out["value"] == "revenue"
         # glyph and tone are now in style.kpi.*, not at chart root
         assert "glyph" not in out
@@ -953,10 +953,10 @@ def test_kpi_label_color_no_longer_inherits_style_title_font_color():
     the legacy coupling would silently flip from body to title color across
     the whole label corpus on any theme.
 
-    The right path forward is a typed ``style.label.font.color`` slot
-    (not the title slot). Until that follow-up lands, KPI label uses body
-    color unconditionally; this test pins that and prevents a future
-    refactor from re-introducing the silent coupling.
+    The typed slot an author wants is ``style.label.font.color`` (not the
+    title slot); it reads on the label now. What stays pinned here is that the
+    *title* slot is not that slot, so a future refactor cannot re-introduce
+    the silent coupling.
     """
     from dbt_charts.core.compile.models.primitives import FontStyle
     from dbt_charts.core.compile.models.style.authored import (
@@ -991,8 +991,8 @@ def test_kpi_label_color_no_longer_inherits_style_title_font_color():
     # The authored title color must NOT show up on the label — body color owns it.
     assert "#ff00ff" not in svg, (
         "KPI label color leaked from style.kpi.title.font.color — this coupling "
-        "was deliberately removed during the cascade rename. Authors who want "
-        "a label-specific color need a typed style.label.font.color slot."
+        "was deliberately removed during the cascade rename. A label-specific "
+        "color is authored on style.label.font.color."
     )
 
 
@@ -1264,7 +1264,7 @@ class TestKpiVariantInline:
         # The number tspan carries y = value_baseline explicitly.
         number_tspans = [
             t for t in tspans if t.text and "1.5" in t.text
-        ]  # currency_compact renders 1.5M
+        ]  # currency renders 1.5M
         assert number_tspans, "value tspan missing"
         assert float(number_tspans[0].attrib["y"]) == value_baseline
 
@@ -1281,18 +1281,30 @@ class TestKpiVariantInline:
         assert "▲" not in text_content
 
     def test_does_not_wrap_label(self):
-        # Inline never wraps; a long label stays on the single row. Stacked's
-        # label slot wrap helper (`_wrap_label_lines`) emits one tspan per
-        # wrapped line with its own `x=`. Inline must not.
+        # Inline never wraps; a long label that still fits the row stays on
+        # it. Stacked's label slot wrap helper (`_wrap_label_lines`) emits
+        # one tspan per wrapped line with its own `x=`. Inline must not.
+        # The label is long but chosen to fit the 320px card at this size —
+        # a label long enough to overflow now falls back to stacked (which
+        # does wrap), a distinct, separately-tested contract.
         svg = _render_kpi(
             variant="inline",
             value="revenue",
-            label="Net new monthly recurring revenue, enterprise tier customers",
+            label="Net new monthly recurring revenue, enterprise",
             _data=_KPI_DATA,
         )
         root = ET.fromstring(svg)
-        text = root.find("svg:text", _NS)
-        assert text is not None
+        texts = root.findall("svg:text", _NS)
+        # Confirms the fixture actually stayed inline (one <text>) rather
+        # than silently taking the overflow fallback (two-plus <text>s) —
+        # the wrap-tspan check below is meaningless against a fallen-back
+        # stacked render.
+        assert len(texts) == 1, (
+            f"expected the fixture label to fit inline, got {len(texts)} <text> "
+            "elements — the label may have grown past the overflow fallback "
+            "threshold; shorten it back to a fitting length"
+        )
+        text = texts[0]
         # No tspan carries an `x=` attribute (that's the wrap marker).
         wrap_tspans = [t for t in text.findall("svg:tspan", _NS) if "x" in t.attrib]
         assert not wrap_tspans, (

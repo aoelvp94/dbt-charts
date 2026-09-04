@@ -149,7 +149,7 @@ def render_board_data(
     """Render a compiled board to flat, slug-keyed JSON data.
 
     Emits ``queries`` (name → sql + rows, each result set exactly once) and
-    ``charts`` (slug → title, description, type, and encoding, referencing its
+    ``charts`` (slug → title, notes, type, and encoding, referencing its
     query by name). A row cap truncates a query's rows and is declared on that
     query as ``rows_truncated: {head, tail, total}`` — never silently.
 

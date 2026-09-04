@@ -1,6 +1,6 @@
-theme: stark
+theme: clarity
 title: "Callout Charts: tone palette roles"
-description: >
+notes: >
   Authored callout cards for status messages. Use `type: callout` with
   `style.tone` to communicate pipeline health, migration warnings, or
   required actions.

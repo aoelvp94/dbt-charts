@@ -13,7 +13,7 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.execute.adapters import AdapterRegistry, build_adapter_registry
 
 
-def test_build_adapter_registry_reads_sources_from_project_dataface_yml(
+def test_build_adapter_registry_reads_sources_from_project_dbt_charts_yml(
     tmp_path: Path,
     local_project: Callable[..., FilesystemProject],
 ) -> None:

@@ -14,16 +14,21 @@ from typing import Any
 import pytest
 from pydantic import TypeAdapter
 
-from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.compiler import compile as compile_board
+from dbt_charts.core.compile.config import get_chart_rendering, get_theme_style
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.compile.models.style.theme.marks import PointMarkStyle
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.chart.adaptive_stroke import (
     adaptive_stroke,
+    bake_point_companions,
     facet_panel_width,
     max_points_per_series,
+    stroke_from_px_per_point,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
+from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 _QUERY = SqlQuery(sql="SELECT 1", source="src")
@@ -43,6 +48,7 @@ def _line_chart(
     point_size: float | None = None,
     point_stroke_width: float | None = None,
     multiples_columns: str | None = None,
+    with_line_layer: bool = False,
 ) -> tuple[Chart, list[dict[str, Any]], float]:
     """Return (chart, data, width) for a simple line chart."""
     marks_patch: dict[str, Any] = {}
@@ -75,6 +81,8 @@ def _line_chart(
         chart_dict["style"] = style_dict
     if multiples is not None:
         chart_dict["multiples"] = multiples
+    if with_line_layer:
+        chart_dict["layers"] = [{"type": "line", "y": "y2"}]
 
     chart = TypeAdapter(Chart).validate_python(chart_dict)
 
@@ -88,6 +96,8 @@ def _line_chart(
         data = [{"x": i, "y": float(i), "facet": "cat0"} for i in range(n_points)] + [
             {"x": i, "y": float(i), "facet": "cat1"} for i in range(n_points)
         ]
+    elif with_line_layer:
+        data = [{"x": i, "y": float(i), "y2": float(i) * 2} for i in range(n_points)]
     else:
         data = [{"x": i, "y": float(i)} for i in range(n_points)]
 
@@ -205,6 +215,23 @@ class TestAdaptiveStrokeFormula:
         assert widths == sorted(widths)
 
 
+class TestStrokeFromPxPerPoint:
+    """The one leaf both density_adaptive_stroke and line.py's own resolver
+    call to turn a px-per-point density signal into a stroke width -- the
+    consolidation point for what was a hand-rolled duplicate in line.py."""
+
+    def test_non_positive_returns_zero(self) -> None:
+        assert stroke_from_px_per_point(0.0) == 0.0
+        assert stroke_from_px_per_point(-5.0) == 0.0
+
+    def test_positive_matches_adaptive_stroke_with_configured_clamp(self) -> None:
+        clamp = get_chart_rendering().stroke
+        px = 30.0
+        assert stroke_from_px_per_point(px) == adaptive_stroke(
+            px, clamp.min_width, clamp.max_width
+        )
+
+
 # ---------------------------------------------------------------------------
 # Unit tests: max_points_per_series()
 # ---------------------------------------------------------------------------
@@ -241,7 +268,10 @@ class TestFacetedDensityFoldsPerPanel:
 
         resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE, width=width)
         panel_width = facet_panel_width(
-            card_width, 2, has_mirror=bool(resolved.style.axis_y.mirror)
+            card_width,
+            2,
+            has_mirror=bool(resolved.style.axis_y.mirror),
+            extra_axis_px=0.0,
         )
         per_panel = adaptive_stroke(panel_width / n_per_panel, _MIN_W, _MAX_W)
         pooled = adaptive_stroke(panel_width / (n_per_panel * 2), _MIN_W, _MAX_W)
@@ -293,14 +323,16 @@ class TestFacetPanelWidth:
         from dbt_charts.core.compile.config import get_chart_rendering
 
         cfg = get_chart_rendering().facet
-        result = facet_panel_width(600.0, 3, has_mirror=False)
+        result = facet_panel_width(600.0, 3, has_mirror=False, extra_axis_px=0.0)
         expected = (600.0 - cfg.chrome_px) / 3
         assert result == pytest.approx(expected)
 
     def test_mirror_adds_gutter(self) -> None:
         """With mirror, extra mirror_axis_px is subtracted → narrower panels."""
-        result_no_mirror = facet_panel_width(600.0, 2, has_mirror=False)
-        result_mirror = facet_panel_width(600.0, 2, has_mirror=True)
+        result_no_mirror = facet_panel_width(
+            600.0, 2, has_mirror=False, extra_axis_px=0.0
+        )
+        result_mirror = facet_panel_width(600.0, 2, has_mirror=True, extra_axis_px=0.0)
         assert result_mirror < result_no_mirror
 
     def test_panel_shrinks_below_floor_rather_than_exceeding_card_width(self) -> None:
@@ -318,7 +350,7 @@ class TestFacetPanelWidth:
 
         cfg = get_chart_rendering().facet
         # Very narrow width, 5 columns → panels must shrink well below the floor.
-        result = facet_panel_width(10.0, 5, has_mirror=False)
+        result = facet_panel_width(10.0, 5, has_mirror=False, extra_axis_px=0.0)
         assert result < cfg.min_panel_px
         assert result == pytest.approx(0.0)
 
@@ -327,7 +359,7 @@ class TestFacetPanelWidth:
         from dbt_charts.core.compile.config import get_chart_rendering
 
         cfg = get_chart_rendering().facet
-        result = facet_panel_width(600.0, 1, has_mirror=False)
+        result = facet_panel_width(600.0, 1, has_mirror=False, extra_axis_px=0.0)
         expected = 600.0 - cfg.chrome_px
         assert result == pytest.approx(expected)
 
@@ -340,8 +372,70 @@ class TestFacetPanelWidth:
         cfg = get_chart_rendering().facet
         width = 600.0
         for panel_cols in (1, 2, 4, 6, 10):
-            panel_w = facet_panel_width(width, panel_cols, has_mirror=False)
+            panel_w = facet_panel_width(
+                width, panel_cols, has_mirror=False, extra_axis_px=0.0
+            )
             assert panel_w * panel_cols + cfg.chrome_px <= width + 1e-9
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: bake_point_companions() -- the density on/off trigger and the
+# diameter-ratio sizing, tested directly rather than only through resolve().
+# ---------------------------------------------------------------------------
+
+
+class TestBakePointCompanions:
+    _BASE_POINT = PointMarkStyle()
+
+    def test_ring_tracks_stroke_when_not_authored(self) -> None:
+        result = bake_point_companions(
+            self._BASE_POINT, 4.0, 100.0, size_authored=True, ring_authored=False
+        )
+        assert result.stroke_width == 4.0
+
+    def test_ring_preserved_when_authored(self) -> None:
+        pinned = self._BASE_POINT.model_copy(update={"stroke_width": 1.5})
+        result = bake_point_companions(
+            pinned, 4.0, 100.0, size_authored=True, ring_authored=True
+        )
+        assert result.stroke_width == 1.5
+
+    def test_size_preserved_when_authored_regardless_of_density(self) -> None:
+        """An author-pinned size must survive even at a density that would
+        otherwise turn points off -- the density trigger only governs the
+        UNauthored default, never overrides an explicit author choice."""
+        pinned = self._BASE_POINT.model_copy(update={"size": 99.0})
+        result = bake_point_companions(
+            pinned, 4.0, 1.0, size_authored=True, ring_authored=True
+        )
+        assert result.size == 99.0
+
+    def test_size_off_below_threshold(self) -> None:
+        threshold = get_chart_rendering().point.min_px_per_point
+        result = bake_point_companions(
+            self._BASE_POINT,
+            4.0,
+            threshold - 0.01,
+            size_authored=False,
+            ring_authored=True,
+        )
+        assert result.size == 0.0
+
+    def test_size_on_at_threshold_matches_diameter_ratio(self) -> None:
+        """At/above the threshold, size == (diameter_ratio * stroke)**2 -- the
+        empirically-measured diameter = sqrt(size) relationship, not the
+        textbook circle-area pi*r**2 reading."""
+        threshold = get_chart_rendering().point.min_px_per_point
+        ratio = get_chart_rendering().point.diameter_ratio
+        stroke = 4.0
+        result = bake_point_companions(
+            self._BASE_POINT,
+            stroke,
+            threshold,
+            size_authored=False,
+            ring_authored=True,
+        )
+        assert result.size == pytest.approx((ratio * stroke) ** 2)
 
 
 # ---------------------------------------------------------------------------
@@ -384,37 +478,74 @@ class TestLineChartAdaptiveStroke:
         line_stroke = resolved.style.line_mark.stroke.width
         assert resolved.style.point_mark.stroke_width == line_stroke
 
-    def test_companion_point_size_when_visible(self) -> None:
-        """When adaptive fires and points are visible (size>0), size ≈ π·stroke²."""
-        # Default theme has point.size=0 (disabled). Build a board_style where
-        # point.size > 0 so we exercise the companion scaling path.
-        theme = get_theme_style()
-        line_style = theme.charts.line
-        point_with_size = line_style.marks.point.model_copy(update={"size": 16.0})
-        marks_with_point = line_style.marks.model_copy(
-            update={"point": point_with_size}
-        )
-        line_with_marks = line_style.model_copy(update={"marks": marks_with_point})
-        board_style_with_points = resolve_chart_style_context(
-            theme.model_copy(
-                update={
-                    "charts": theme.charts.model_copy(update={"line": line_with_marks})
-                }
-            )
-        )
-        chart, data, w = _line_chart(20, width=600.0)
-        resolved = resolve(
-            chart, data, chart_style_context=board_style_with_points, width=w
-        )
-        stroke = resolved.style.line_mark.stroke.width
-        expected_size = math.pi * stroke**2
-        assert resolved.style.point_mark.size == pytest.approx(expected_size, rel=1e-3)
-
-    def test_default_disabled_points_stay_disabled(self) -> None:
-        """Default point.size=0 (disabled) is never resurrected by adaptive."""
+    def test_sparse_default_auto_enables_points_sized_off_stroke(self) -> None:
+        """At low x density the default theme (point.size=0) auto-enables points,
+        sized as (diameter_ratio * stroke)**2 -- never the theme's own 0 literal
+        and never the textbook pi*stroke**2 reading (diameter = sqrt(size) here,
+        confirmed by direct SVG measurement, not the circle-area formula)."""
+        # n=20 at width=600 -> px_per_point=30, comfortably above the density
+        # trigger -- this is the DEFAULT theme, no author or theme override.
         chart, data, w = _line_chart(20, width=600.0)
         resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE, width=w)
+        stroke = resolved.style.line_mark.stroke.width
+        ratio = get_chart_rendering().point.diameter_ratio
+        expected_size = (ratio * stroke) ** 2
+        assert resolved.style.point_mark.size == pytest.approx(expected_size, rel=1e-9)
+
+    def test_dense_default_keeps_points_disabled(self) -> None:
+        """At high x density, points stay off (0.0) -- a caterpillar of beads
+        past the spacing trigger helps nobody, so the default theme's disabled
+        point stays disabled rather than being resurrected unconditionally."""
+        # n=140 at width=600 -> px_per_point=4.3, well below the density trigger.
+        chart, data, w = _line_chart(140, width=600.0)
+        resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE, width=w)
         assert resolved.style.point_mark.size == 0.0
+
+    def test_trigger_is_pixel_spacing_not_point_count(self) -> None:
+        """The same N must flip on/off purely by changing card width -- proving
+        the trigger reads pixel spacing between points, not a point count that
+        would travel incorrectly across card widths.
+        """
+        n = 40
+        chart_narrow, data_narrow, w_narrow = _line_chart(n, width=500.0)
+        resolved_narrow = resolve(
+            chart_narrow, data_narrow, chart_style_context=_BOARD_STYLE, width=w_narrow
+        )
+        chart_wide, data_wide, w_wide = _line_chart(n, width=1400.0)
+        resolved_wide = resolve(
+            chart_wide, data_wide, chart_style_context=_BOARD_STYLE, width=w_wide
+        )
+        assert resolved_narrow.style.point_mark.size == 0.0
+        assert resolved_wide.style.point_mark.size > 0.0
+
+    def test_pinned_line_stroke_does_not_disable_point_density_trigger(self) -> None:
+        """Authoring marks.line.stroke.width must not couple to the point
+        trigger -- regression for the two knobs being wired together, which
+        left points permanently off (at any density) once the line stroke
+        was pinned."""
+        chart, data, w = _line_chart(20, width=600.0, stroke_width=3.7)
+        resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE, width=w)
+        assert resolved.style.line_mark.stroke.width == 3.7
+        assert resolved.style.point_mark.size > 0.0
+
+    def test_layered_line_overlay_gets_point_companions_matching_base(self) -> None:
+        """A line-type layer on a line chart must bake its own point
+        companions from the same density signal as the base series --
+        regression for layers being skipped by bake_point_companions
+        entirely, which left overlay lines with no points while the base
+        series grew them."""
+        from dbt_charts.core.compile.models.chart.resolved._layer import (
+            ResolvedLineLayer,
+        )
+
+        chart, data, w = _line_chart(20, width=600.0, with_line_layer=True)
+        resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE, width=w)
+        assert resolved.style.point_mark.size > 0.0
+        assert len(resolved.layers) == 1
+        layer = resolved.layers[0]
+        assert isinstance(layer, ResolvedLineLayer)
+        assert layer.point_mark.size == resolved.style.point_mark.size
+        assert layer.point_mark.stroke_width == layer.line_mark.stroke.width
 
     def test_author_pin_point_size_preserved(self) -> None:
         """Explicit marks.point.size → baked verbatim, adaptive doesn't override."""
@@ -487,12 +618,23 @@ class TestLineChartAdaptiveStroke:
         resolved = resolve(chart, [], chart_style_context=_BOARD_STYLE, width=w)
         # Should not raise; stroke should be the theme literal (positive)
         assert resolved.style.line_mark.stroke.width > 0.0
+        # The ring tracks that stroke even with no density to measure — the
+        # base-series half of the same rule TestUnbakedLineOverlayRing pins
+        # for overlay layers.
+        assert (
+            resolved.style.point_mark.stroke_width
+            == resolved.style.line_mark.stroke.width
+        )
 
     def test_fallback_when_no_width(self) -> None:
         """Width of 0 cannot determine px_per_point; falls back to theme literal."""
         chart, data, _ = _line_chart(20, width=0.0)
         resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE, width=0.0)
         assert resolved.style.line_mark.stroke.width > 0.0
+        assert (
+            resolved.style.point_mark.stroke_width
+            == resolved.style.line_mark.stroke.width
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -629,8 +771,12 @@ class TestFacetedLineChartAdaptiveStroke:
         # when chart has shared scale — but default is columns + shared scale → auto-mirror
         # may fire. Check the resolved ay.mirror to know has_mirror.)
         # We check against the formula for 2 panels, both mirror and no-mirror cases.
-        panel_w_no_mirror = facet_panel_width(card_width, 2, has_mirror=False)
-        panel_w_mirror = facet_panel_width(card_width, 2, has_mirror=True)
+        panel_w_no_mirror = facet_panel_width(
+            card_width, 2, has_mirror=False, extra_axis_px=0.0
+        )
+        panel_w_mirror = facet_panel_width(
+            card_width, 2, has_mirror=True, extra_axis_px=0.0
+        )
         expected_no_mirror = adaptive_stroke(
             panel_w_no_mirror / n_dense, _MIN_W, _MAX_W
         )
@@ -638,3 +784,288 @@ class TestFacetedLineChartAdaptiveStroke:
 
         # Baked stroke must equal one of the two, depending on mirror resolution
         assert stroke_facet in (expected_no_mirror, expected_mirror)
+
+
+class TestBoardTierPointRingAuthoring:
+    """A board-authored point ring width must survive the adaptive bake at
+    every authoring tier."""
+
+    _BOARD = """\
+title: Board point ring
+{style_block}queries:
+  q1:
+    columns: [day, visits, target]
+    values:
+      - ["2024-01-01", 120, 110]
+      - ["2024-01-02", 145, 130]
+      - ["2024-01-03", 132, 140]
+      - ["2024-01-04", 178, 150]
+      - ["2024-01-05", 165, 160]
+      - ["2024-01-06", 190, 170]
+      - ["2024-01-07", 172, 180]
+charts:
+  c1:
+    query: q1
+    type: line
+    x: day
+    y: visits
+{layers_block}rows:
+  - c1
+"""
+
+    _LAYERS = """\
+    layers:
+      - type: line
+        y: target
+        label: Target
+"""
+
+    _AUTHORED_RING = 8.0
+
+    @staticmethod
+    def _spec(style_block: str, layers_block: str = "") -> dict[str, Any]:
+        """Compile a board from the template and render chart c1's VL spec."""
+        return TestBoardTierPointRingAuthoring._spec_for_source(
+            TestBoardTierPointRingAuthoring._BOARD.format(
+                style_block=style_block, layers_block=layers_block
+            )
+        )
+
+    @staticmethod
+    def _spec_for_source(
+        source: str, measures: tuple[str, str] = ("visits", "target")
+    ) -> dict[str, Any]:
+        """Render chart c1's VL spec from whole board source.
+
+        ``measures`` names the board's two value columns.
+        """
+        result = compile_board(source)
+        assert result.success, result.errors
+        board = result.board
+        chart = board.charts["c1"]
+        first, second = measures
+        data = [
+            {"day": f"2024-01-0{i}", first: v, second: t}
+            for i, (v, t) in enumerate(
+                zip(
+                    [120, 145, 132, 178, 165, 190, 172],
+                    [110, 130, 140, 150, 160, 170, 180],
+                    strict=True,
+                ),
+                start=1,
+            )
+        ]
+        return generate_vega_lite_spec(
+            chart,
+            data,
+            board_style=board.resolved_style,
+            chart_style_context=board.chart_style_context,
+            width=400,
+        )
+
+    @staticmethod
+    def _visible_marks(spec: dict[str, Any], mark_type: str) -> list[dict[str, Any]]:
+        """Every visible mark of a type, in spec order.
+
+        A layered line chart nests one layer group per series, so the marks are
+        not all at ``spec["layer"][*]`` -- walk to them. Zero-opacity marks are
+        the invisible hover targets, never a rendered mark.
+        """
+        found: list[dict[str, Any]] = []
+
+        def _collect(node: Any) -> None:
+            if isinstance(node, dict):
+                mark = node.get("mark")
+                if (
+                    isinstance(mark, dict)
+                    and mark.get("type") == mark_type
+                    and mark.get("opacity", 1) != 0
+                ):
+                    found.append(mark)
+                for value in node.values():
+                    _collect(value)
+            elif isinstance(node, list):
+                for value in node:
+                    _collect(value)
+
+        _collect(spec)
+        assert found, spec
+        return found
+
+    @staticmethod
+    def _ring_widths(spec: dict[str, Any]) -> list[float | None]:
+        """Every visible point mark's ``strokeWidth``, in spec order.
+
+        A layered line chart emits one halo point mark for the chart, ahead of
+        the per-series rings and carrying no ``strokeWidth`` of its own -- that
+        is the single leading ``None`` in the expected lists below.
+        """
+        return [
+            mark.get("strokeWidth")
+            for mark in TestBoardTierPointRingAuthoring._visible_marks(spec, "point")
+        ]
+
+    def test_global_marks_tier_ring_width_survives_the_bake(self) -> None:
+        spec = self._spec(
+            "style:\n"
+            "  charts:\n"
+            "    marks:\n"
+            "      point:\n"
+            f"        stroke_width: {self._AUTHORED_RING}\n"
+        )
+        assert self._ring_widths(spec) == [None, self._AUTHORED_RING]
+
+    def test_family_tier_ring_width_survives_the_bake(self) -> None:
+        spec = self._spec(
+            "style:\n"
+            "  charts:\n"
+            "    line:\n"
+            "      marks:\n"
+            "        point:\n"
+            f"          stroke_width: {self._AUTHORED_RING}\n"
+        )
+        assert self._ring_widths(spec) == [None, self._AUTHORED_RING]
+
+    def test_overlay_layer_ring_width_survives_the_bake(self) -> None:
+        """The line-layer call site in _layers.py, not just the base series."""
+        spec = self._spec(
+            "style:\n"
+            "  charts:\n"
+            "    marks:\n"
+            "      point:\n"
+            f"        stroke_width: {self._AUTHORED_RING}\n",
+            layers_block=self._LAYERS,
+        )
+        # Base series + overlay, both at the authored width; leading halo ring
+        # carries no strokeWidth of its own.
+        assert self._ring_widths(spec) == [
+            None,
+            self._AUTHORED_RING,
+            self._AUTHORED_RING,
+        ]
+
+    def test_unauthored_ring_still_tracks_the_baked_line_stroke(self) -> None:
+        """The bake must still fire when no tier above the theme authored a
+        ring — otherwise this fix would freeze every chart at the theme literal.
+
+        Asserted against the line stroke in the same spec, not against the theme
+        literal: "ring tracks the line" is the actual contract, and it stays
+        true however ``chart_rendering.stroke`` is retuned.
+        """
+        spec = self._spec("")
+        baked_line = self._visible_marks(spec, "line")[-1].get("strokeWidth")
+        assert baked_line is not None
+        assert self._ring_widths(spec)[-1] == baked_line
+
+    def test_chart_root_ring_pin_reaches_its_overlay_layers(self) -> None:
+        """One chart must not render two ring weights.
+
+        A pin on the chart's own ``style:`` block reaches the base series
+        through the cascade; the overlay layer inherits the same cascaded mark
+        (``base_family_style`` is the chart-local family style), so it must
+        land at the same width rather than keeping the baked stroke.
+        """
+        board = self._BOARD.format(
+            style_block="",
+            layers_block=self._LAYERS,
+        ).replace(
+            "    y: visits\n",
+            "    y: visits\n"
+            "    style:\n"
+            "      marks:\n"
+            "        point:\n"
+            f"          stroke_width: {self._AUTHORED_RING}\n",
+        )
+        assert self._ring_widths(self._spec_for_source(board)) == [
+            None,
+            self._AUTHORED_RING,
+            self._AUTHORED_RING,
+        ]
+
+
+class TestUnbakedLineOverlayRing:
+    """A line layer on a non-line base has no density signal at all.
+
+    ``bar.py`` / ``scatter.py`` / ``area.py`` pass ``line_px_per_point=0.0``
+    into ``_resolve_layer_list``, so the size half of the companion derivation
+    has no input. The ring half must still fire: without it the ring falls
+    through to Vega-Lite's hardcoded 2px, a value no theme can name and no
+    author can move.
+    """
+
+    _BOARD = """\
+title: Combo ring
+queries:
+  q1:
+    columns: [day, actual, target]
+    values:
+      - ["2024-01-01", 120, 110]
+      - ["2024-01-02", 145, 130]
+      - ["2024-01-03", 132, 140]
+charts:
+  c1:
+    query: q1
+    type: bar
+    x: day
+    y: actual
+    layers:
+      - type: line
+        y: target
+        label: Target
+        style:
+          marks:
+            line:
+              stroke:
+                width: {stroke}
+            point:
+              size: 48
+rows:
+  - c1
+"""
+
+    @staticmethod
+    def _rings(source: str) -> list[float | None]:
+        return TestBoardTierPointRingAuthoring._ring_widths(
+            TestBoardTierPointRingAuthoring._spec_for_source(
+                source, measures=("actual", "target")
+            )
+        )
+
+    @pytest.mark.parametrize("stroke", [2.0, 4.0])
+    def test_ring_tracks_the_layer_stroke_without_a_density_signal(
+        self, stroke: float
+    ) -> None:
+        """Parametrised because one case cannot tell a mechanism from a
+        coincidence: VL's own point default is 2, so a lone ``stroke: 2`` case
+        passes just as well with no ring logic at all."""
+        rings = self._rings(self._BOARD.format(stroke=stroke))
+        assert stroke in rings, rings
+
+    def test_layer_authored_ring_still_wins(self) -> None:
+        """The tracking must not overwrite an authored ring on this path."""
+        rings = self._rings(
+            self._BOARD.format(stroke=4.0).replace(
+                "              size: 48\n",
+                "              size: 48\n              stroke_width: 1.5\n",
+            )
+        )
+        assert 1.5 in rings and 4.0 not in rings, rings
+
+    def test_no_density_signal_leaves_size_alone(self) -> None:
+        """The size half must be skipped, not zeroed."""
+        source = self._BOARD.format(stroke=4.0).replace("              size: 48\n", "")
+        result = compile_board(source)
+        assert result.success, result.errors
+        data = [
+            {"day": f"2024-01-0{i}", "actual": a, "target": t}
+            for i, (a, t) in enumerate(
+                zip([120, 145, 132], [110, 130, 140], strict=True), start=1
+            )
+        ]
+        resolved = resolve(
+            result.board.charts["c1"],
+            data,
+            chart_style_context=result.board.chart_style_context,
+            width=400,
+        )
+        assert resolved.layers[0].point_mark.size is None

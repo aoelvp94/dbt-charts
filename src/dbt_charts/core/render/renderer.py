@@ -41,6 +41,7 @@ from dbt_charts.core.compile.models.board.resolved import (
     ResolvedLayout,
 )
 from dbt_charts.core.compile.models.chart.normalized import NON_ASPECT_RATIO_TYPES
+from dbt_charts.core.compile.models.chart.resolved._layer import LayeredResolvedChart
 from dbt_charts.core.compile.template.variables import (
     normalize_multiselect_values,
     parse_variable_json_strings,
@@ -56,18 +57,29 @@ from dbt_charts.core.execute.collect import (
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.execute.parallel import execute_queries_parallel
 from dbt_charts.core.render.board_to_dict import NO_ROW_CAP
+from dbt_charts.core.render.board_variables import board_variables
 from dbt_charts.core.render.boards import render_board_svg
 from dbt_charts.core.render.chart.endpoint_label_overflow import (
     EndpointLabelGapOverflow,
     collect_endpoint_label_gap_overflows,
+)
+from dbt_charts.core.render.chart.plot_width_floor_record import (
+    PlotWidthShareWarning,
+    collect_plot_width_share_warnings,
 )
 from dbt_charts.core.render.chart.series_label_truncation import (
     collect_series_label_truncations,
 )
 from dbt_charts.core.render.chart.table import strip_pagination_chrome
 from dbt_charts.core.render.chart.table_overflow import (
+    TableCramping,
     TableOverflow,
+    collect_table_crampings,
     collect_table_overflows,
+)
+from dbt_charts.core.render.chart.table_page_squeeze import (
+    TablePageSqueeze,
+    collect_table_page_squeezes,
 )
 from dbt_charts.core.render.chart.table_static_pagination import (
     StaticPaginationCap,
@@ -76,6 +88,10 @@ from dbt_charts.core.render.chart.table_static_pagination import (
 from dbt_charts.core.render.chart.text_truncation import (
     TextTruncation,
     collect_text_truncations,
+)
+from dbt_charts.core.render.chart.x_domain_paint_order import (
+    XDomainPaintOrder,
+    collect_x_domain_paint_orders,
 )
 from dbt_charts.core.render.controls import interactive_controls
 from dbt_charts.core.render.converters import to_html, to_pdf, to_png
@@ -94,6 +110,7 @@ from dbt_charts.core.render.warnings import (
     registry as _warnings_registry,
     run_all,
 )
+from dbt_charts.core.utils import Rows
 
 # Formats that produce SVG output (require vl-convert chart rendering).
 _SVG_FORMATS = frozenset({"svg", "html", "png", "pdf"})
@@ -140,9 +157,9 @@ def _data_format_renderer(format: str) -> DataFormatRenderer:
 
 def _collect_active_layout_charts(
     board: ResolvedBoard, variables: VariableValues
-) -> dict[str, tuple["ResolvedChart", float]]:
-    """Map chart_id -> (the chart instance, its real laid-out width) for the
-    active-tab subtree.
+) -> dict[str, tuple["ResolvedChart", float, float]]:
+    """Map chart_id -> (the chart instance, its laid-out width and height) for
+    the active-tab subtree.
 
     Reads each ``ResolvedLayoutItem`` directly rather than looking a chart id
     up in ``board.charts`` — the catalog holds one entry per id, but a shared
@@ -161,7 +178,7 @@ def _collect_active_layout_charts(
     the active subtree keeps its narrowest placement — that is where
     crowding shows.
     """
-    charts: dict[str, tuple[ResolvedChart, float]] = {}
+    charts: dict[str, tuple[ResolvedChart, float, float]] = {}
 
     def _walk(layout: ResolvedLayout) -> None:
         items = layout.items
@@ -178,7 +195,7 @@ def _collect_active_layout_charts(
             if item.chart is not None and item.width:
                 existing = charts.get(item.chart.id)
                 if existing is None or item.width < existing[1]:
-                    charts[item.chart.id] = (item.chart, item.width)
+                    charts[item.chart.id] = (item.chart, item.width, item.height)
             if item.board is not None:
                 _walk(item.board.layout)
 
@@ -192,17 +209,18 @@ def _collect_render_warnings(
     executor: Executor,
     variables: VariableValues,
     table_overflows: dict[str, TableOverflow],
+    table_crampings: dict[str, TableCramping],
     text_truncations: dict[str, list[TextTruncation]],
     static_pagination_caps: dict[str, StaticPaginationCap],
+    table_page_squeezes: dict[str, TablePageSqueeze],
     endpoint_label_gap_overflows: dict[str, EndpointLabelGapOverflow],
+    x_domain_paint_orders: dict[str, XDomainPaintOrder],
+    plot_width_share_warnings: dict[str, PlotWidthShareWarning],
 ) -> list[Diagnostic]:
     """Build WarningContext from cached query results and run all detectors.
 
     Called after queries have already executed (results are in the executor
-    cache). Only charts reachable from the layout tree are included — orphan
-    charts (present in board.charts but absent from the layout) were never
-    pre-executed and are intentionally excluded so this function never
-    triggers a fresh adapter call.
+    cache), so every query run from here is a cache hit.
 
     This is warning diagnostics only, not the board render path — but a
     *geometry* detector must judge a chart against the width it actually
@@ -224,8 +242,8 @@ def _collect_render_warnings(
 
     # Restrict to charts the layout actually renders — same set that
     # execute_queries_parallel pre-executed.
-    # Orphan charts (in board.charts but absent from the layout) were never
-    # pre-cached; including them would trigger a fresh adapter call.
+    # Base-chart queries only: this walk never sees a layer's own `query:`, so
+    # it is not a usable gate for one (see the layer_results loop below).
     pre_executed_query_names = collect_layout_chart_query_names(board)
 
     # A tabs layout's inactive-tab charts are data-resolved (ResolvedBoard.charts
@@ -244,7 +262,7 @@ def _collect_render_warnings(
     # detector-kind split this gate exists to preserve.
     active_charts = _collect_active_layout_charts(board, variables)
 
-    chart_results: dict[str, list[dict[str, Any]]] = {}
+    chart_results: dict[str, Rows] = {}
     for chart_id, chart in board.charts.items():
         if chart.query_name not in pre_executed_query_names:
             continue
@@ -257,6 +275,30 @@ def _collect_render_warnings(
                 # Re-use cached execute_query result; no re-execution.
                 chart_results[chart_id] = executor.execute_query(
                     chart.query_name, variables
+                )
+
+    # chart id → layer query name → rows, for typed overlay layers whose own
+    # `query:` differs from the base chart's (the shape the deterministic
+    # migrator emits: one query per layer). chart_results holds only the base
+    # query's rows, so a detector comparing series across layers has nowhere
+    # else to read them. Every execute_query here is a cache hit — the
+    # pre-execution pass walks `collect_all_query_names`, which descends into
+    # layers, so every layout-reachable layer query has already run.
+    layer_results: dict[str, dict[str, Rows]] = {}
+    for chart_id in chart_results:
+        chart = board.charts[chart_id]
+        if not isinstance(chart, LayeredResolvedChart):
+            continue
+        for layer in chart.layers:
+            # A layer with no authored override bakes query_name to the base
+            # chart's own (see _resolve_one_layer) — those rows are already in
+            # chart_results, so only a genuinely distinct query lands here.
+            query_name = layer.query_name
+            if query_name is None or query_name == chart.query_name:
+                continue
+            with contextlib.suppress(Exception):  # noqa: BLE001 — query failure already recorded elsewhere
+                layer_results.setdefault(chart_id, {})[query_name] = (
+                    executor.execute_query(query_name, variables)
                 )
 
     # chart id → truncation record, for every chart whose query was cut by
@@ -293,8 +335,9 @@ def _collect_render_warnings(
     with (
         collect_series_label_truncations() as series_label_truncations,
         collect_text_truncations() as _detection_truncations,
+        collect_plot_width_share_warnings() as _detection_plot_width_share_warnings,
     ):
-        for chart_id, (chart, layout_width) in active_charts.items():
+        for chart_id, (chart, layout_width, _layout_height) in active_charts.items():
             if chart.query_name not in pre_executed_query_names:
                 continue
             # Non-VL families (kpi, table, spark_bar, callout) never produce a
@@ -330,15 +373,29 @@ def _collect_render_warnings(
     ctx = WarningContext(
         board_spec=board,
         chart_results=chart_results,
+        layer_results=layer_results,
         vega_specs=vega_specs,
         table_overflows=table_overflows,
+        table_crampings=table_crampings,
         static_pagination_caps=static_pagination_caps,
+        table_page_squeezes=table_page_squeezes,
         authored_chart_heights=authored_chart_heights,
+        layout_chart_heights={
+            chart_id: height for chart_id, (_c, _w, height) in active_charts.items()
+        },
+        layout_charts={
+            chart_id: chart for chart_id, (chart, _w, _h) in active_charts.items()
+        },
         series_label_truncations=series_label_truncations,
         text_truncations=merged_truncations,
         endpoint_label_gap_overflows=endpoint_label_gap_overflows,
+        x_domain_paint_orders=x_domain_paint_orders,
         chart_truncations=chart_truncations,
         unattributed_truncations=unattributed_truncations,
+        plot_width_share_warnings={
+            **plot_width_share_warnings,
+            **_detection_plot_width_share_warnings,
+        },
     )
     return run_all(ctx)
 
@@ -438,7 +495,7 @@ def render(
             MissingVariable(
                 key=key,
                 label=var.label,
-                description=var.description,
+                notes=var.notes,
                 input_type=var.input,
             )
             for key, var in variable_registry.items()
@@ -507,6 +564,10 @@ def render(
     error_collector: list[Diagnostic] = []
     authored_chart_heights: dict[str, float] = {}
     _sizing_truncations: dict[str, list[TextTruncation]] = {}
+    _sizing_endpoint_label_gap_overflows: dict[
+        str, EndpointLabelGapOverflow | None
+    ] = {}
+    _sizing_plot_width_share_warnings: dict[str, PlotWidthShareWarning] = {}
 
     def _reset_contexts() -> None:
         _set_link_context(None)
@@ -528,12 +589,37 @@ def render(
     from dbt_charts.core.render.board_resolve import build_resolved_board
 
     render_cache: RenderCache
-    # Open the sizing-pass sink before build_resolved_board so that VL chart
+    # Open the sizing-pass sinks before build_resolved_board so that VL chart
     # title truncations (apply_title_overflow_to_spec) and callout overflow
     # (height cap) detected during render-first sizing are captured. Callout
     # is cached after the sizing pass; KPI/table/spark_bar re-render in the
     # main pass and are caught by the inner sink below.
-    with collect_text_truncations() as _sizing_truncations:
+    # The x-domain verdict is recorded by the VL emitter, which for a Vega
+    # family runs *only* here — the main pass serves those charts from the
+    # render cache — so this is the sink that has to catch it.
+    # Endpoint-label gap overflow is recorded by the same emitter call, for
+    # the same reason: a chart-root `height:` makes the sizing pass's render
+    # fully authoritative (no clamping — see sizing.py's
+    # get_chart_content_height), so the main pass reuses its cached SVG
+    # instead of re-rendering, and a sink opened only around the main pass
+    # never sees the recording.
+    # Row-level `height:` and chart-root `height:` differ in exactly how many
+    # times the chart renders, not just which pass records: row-level height
+    # produces a main-pass cache miss (a genuine re-render, one recascade
+    # call, landing in the main-pass sink below), while chart-root height's
+    # sizing-pass render is also retried at more than one candidate height
+    # before the main pass ever runs (aspect-ratio estimate, slot-height fix,
+    # cols-alignment) — each retry recascades again, and only the *last* one
+    # is the render that ships. `record_endpoint_label_gap_overflow` records
+    # every recascade (including `fit`, as None) so the sink always reflects
+    # only the most recent one — see endpoint_label_overflow.py.
+    with (
+        collect_text_truncations() as _sizing_truncations,
+        collect_x_domain_paint_orders() as _sizing_x_domain_paint_orders,
+        collect_endpoint_label_gap_overflows() as _sizing_endpoint_label_gap_overflows,
+        collect_plot_width_share_warnings() as _sizing_plot_width_share_warnings,
+        board_variables(merged_variables),
+    ):
         try:
             resolved_board, render_cache = build_resolved_board(
                 board,
@@ -579,9 +665,13 @@ def render(
 
     def _finalize_warnings(
         table_overflows: dict[str, TableOverflow],
+        table_crampings: dict[str, TableCramping],
         text_truncations: dict[str, list[TextTruncation]],
         static_pagination_caps: dict[str, StaticPaginationCap],
+        table_page_squeezes: dict[str, TablePageSqueeze],
         endpoint_label_gap_overflows: dict[str, EndpointLabelGapOverflow],
+        x_domain_paint_orders: dict[str, XDomainPaintOrder],
+        plot_width_share_warnings: dict[str, PlotWidthShareWarning],
     ) -> tuple[list[Diagnostic], list[Diagnostic]]:
         all_warnings = _collect_render_warnings(
             resolved_board,
@@ -589,9 +679,13 @@ def render(
             executor,
             merged_variables,
             table_overflows,
+            table_crampings,
             text_truncations,
             static_pagination_caps,
+            table_page_squeezes,
             endpoint_label_gap_overflows,
+            x_domain_paint_orders,
+            plot_width_share_warnings,
         )
         return _partition_warnings(
             all_warnings,
@@ -626,7 +720,7 @@ def render(
                 error_collector=error_collector,
                 max_rows_per_query=max_rows_per_query,
             )
-            _active, _suppressed = _finalize_warnings({}, {}, {}, {})
+            _active, _suppressed = _finalize_warnings({}, {}, {}, {}, {}, {}, {}, {})
             return RenderResult(
                 output=output,
                 chart_errors=error_collector,
@@ -640,9 +734,12 @@ def render(
         # rail that couldn't fit its intended gap, so warnings can be finalized
         # against what actually rendered.
         _table_overflows: dict[str, TableOverflow] = {}
+        _table_crampings: dict[str, TableCramping] = {}
         _text_truncations: dict[str, list[TextTruncation]] = {}
         _static_pagination_caps: dict[str, StaticPaginationCap] = {}
-        _endpoint_label_gap_overflows: dict[str, EndpointLabelGapOverflow] = {}
+        _endpoint_label_gap_overflows: dict[str, EndpointLabelGapOverflow | None] = {}
+        _x_domain_paint_orders: dict[str, XDomainPaintOrder] = {}
+        _plot_width_share_warnings: dict[str, PlotWidthShareWarning] = {}
         grid_enabled = options.get("grid", False)
         margins_enabled = options.get("margins", False)
         # Interactivity is opt-in and only meaningful on a host that can re-run
@@ -667,12 +764,21 @@ def render(
         embed_fonts = format in ("html", "svg") and bool(options.get("standalone"))
         with (
             collect_table_overflows() as _table_overflows,
+            collect_table_crampings() as _table_crampings,
             collect_text_truncations() as _text_truncations,
             collect_static_pagination_caps() as _static_pagination_caps,
+            collect_table_page_squeezes() as _table_page_squeezes,
             collect_endpoint_label_gap_overflows() as _endpoint_label_gap_overflows,
+            collect_x_domain_paint_orders() as _x_domain_paint_orders,
+            collect_plot_width_share_warnings() as _plot_width_share_warnings,
             collect_painted_italic_families(),
             interactive_controls(options.get("controls", False)),
         ):
+            # No board_variables() scope here: render_board_svg opens its own
+            # (boards.py), which also covers dct artifact render's replay
+            # path (board_replay.py) -- both call render_board_svg directly,
+            # so scoping there instead of here is what covers both callers,
+            # not just this one.
             svg_content = render_board_svg(
                 resolved_board,
                 executor,
@@ -691,7 +797,7 @@ def render(
         _reset_contexts()
         # Render failed before a table could rasterize: finalize with an empty
         # capture so detector warnings still surface alongside the board error.
-        _active, _suppressed = _finalize_warnings({}, {}, {}, {})
+        _active, _suppressed = _finalize_warnings({}, {}, {}, {}, {}, {}, {}, {})
         return RenderResult(
             output=None,
             chart_errors=error_collector,
@@ -704,7 +810,7 @@ def render(
 
         _reset_contexts()
         wrapped = RenderError.from_code(ERR_INTERNAL, message=str(e))
-        _active, _suppressed = _finalize_warnings({}, {}, {}, {})
+        _active, _suppressed = _finalize_warnings({}, {}, {}, {}, {}, {}, {}, {})
         return RenderResult(
             output=None,
             chart_errors=error_collector,
@@ -720,11 +826,29 @@ def render(
     # The render pass (_text_truncations) wins per chart-id when both passes
     # record the same chart (e.g. spark_bar). All SVG-family outputs below derive
     # from this same svg_content, so they share this capture.
+    # Endpoint-label overflow entries are `None`-able (a chart's most recent
+    # recascade fit): the merge lets a main-pass verdict — fit or not — fully
+    # replace a sizing-pass one for a chart the main pass actually touched,
+    # then None entries (nothing overflowed, or a stale sizing-pass trial
+    # that a later fit cleared) are dropped before the detector ever sees
+    # this dict, since WarningContext expects only genuine overflows.
+    _merged_endpoint_label_gap_overflows = {
+        **_sizing_endpoint_label_gap_overflows,
+        **_endpoint_label_gap_overflows,
+    }
     render_warnings, suppressed_warnings = _finalize_warnings(
         _table_overflows,
+        _table_crampings,
         {**_sizing_truncations, **_text_truncations},
         _static_pagination_caps,
-        _endpoint_label_gap_overflows,
+        _table_page_squeezes,
+        {
+            chart_id: overflow
+            for chart_id, overflow in _merged_endpoint_label_gap_overflows.items()
+            if overflow is not None
+        },
+        {**_sizing_x_domain_paint_orders, **_x_domain_paint_orders},
+        {**_sizing_plot_width_share_warnings, **_plot_width_share_warnings},
     )
 
     # Convert to requested format

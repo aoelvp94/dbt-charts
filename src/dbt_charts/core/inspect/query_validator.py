@@ -110,17 +110,6 @@ class QueryDiagnostic:
                 f"code. Must be one of: {', '.join(sorted(_QUERY_CODES))}."
             )
 
-    def to_dict(self) -> dict[str, str | float | list[str] | None]:
-        return {
-            "code": self.code,
-            "severity": self.severity,
-            "message": self.message,
-            "detail": self.detail,
-            "recommendation": self.recommendation,
-            "confidence": self.confidence,
-            "evidence": list(self.evidence),
-        }
-
 
 @dataclass(frozen=True)
 class RelationshipHint:

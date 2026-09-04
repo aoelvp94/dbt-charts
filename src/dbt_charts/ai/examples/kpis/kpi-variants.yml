@@ -1,0 +1,187 @@
+# Mirrors examples/playground/charts/tables-and-kpis/kpi-variants.yml,
+# with its warehouse query replaced by the same rows inline.
+title: KPI Variants
+notes: |
+  Layout variants for the KPI card. Each variant is shown across the same four
+  field configurations (full, label-only, support-only, value-only): `stacked`
+  fits all four on one row, while `inline` and `compact` split theirs two and
+  two. Use as the canonical visual surface for the kpi `variant` field.
+text: |
+  KPI authors pick a layout via `variant:` — `stacked` (default, three lines),
+  `inline` (single row, baseline-aligned), or `compact` (2-col, bottom-right
+  shares baseline with value). `label` and `support` are each independently
+  optional in every variant. Compact splits a lone `support` block across its
+  two right-column lines.
+# Inline `columns`/`values` keep this specimen runnable anywhere. In your own
+# board, replace them with `source:` + `sql:` — see `dct docs queries`.
+queries:
+  q:
+    notes: One aggregate row — current values plus prior-period deltas.
+    columns: [revenue, units, growth_pct, decline_pct, margin, aov, status, delta_pct]
+    values:
+      - [21730000, 145200, 0.125, -0.081, 0.328, 4.5, "On track", 0.1241]
+charts:
+  # ──────── stacked (default) ────────
+  stacked_full:
+    type: kpi
+    query: q
+    variant: stacked
+    label: Potential savings
+    value: revenue
+    style:
+      value:
+        format: currency
+    support:
+      value: delta_pct
+      label: of Opus spend
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  stacked_label_only:
+    type: kpi
+    query: q
+    variant: stacked
+    label: Potential savings
+    value: revenue
+    style:
+      value:
+        format: currency
+  stacked_support_only:
+    type: kpi
+    query: q
+    variant: stacked
+    value: revenue
+    style:
+      value:
+        format: currency
+    support:
+      value: delta_pct
+      label: of Opus spend
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  stacked_value_only:
+    type: kpi
+    query: q
+    variant: stacked
+    value: revenue
+    style:
+      value:
+        format: currency
+
+  # ──────── inline ────────
+  inline_full:
+    type: kpi
+    query: q
+    variant: inline
+    label: Potential savings
+    value: revenue
+    style:
+      value:
+        format: currency
+    support:
+      value: delta_pct
+      label: of Opus spend
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  inline_label_only:
+    type: kpi
+    query: q
+    variant: inline
+    label: Potential savings
+    value: revenue
+    style:
+      value:
+        format: currency
+  inline_support_only:
+    type: kpi
+    query: q
+    variant: inline
+    value: revenue
+    style:
+      value:
+        format: currency
+    support:
+      value: delta_pct
+      label: of Opus spend
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  inline_value_only:
+    type: kpi
+    query: q
+    variant: inline
+    value: revenue
+    style:
+      value:
+        format: currency
+
+  # ──────── compact ────────
+  compact_full:
+    type: kpi
+    query: q
+    variant: compact
+    label: Potential savings
+    value: revenue
+    style:
+      value:
+        format: currency
+    support:
+      value: delta_pct
+      label: of Opus spend
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  compact_label_only:
+    type: kpi
+    query: q
+    variant: compact
+    label: Potential savings
+    value: revenue
+    style:
+      value:
+        format: currency
+  compact_support_only:
+    type: kpi
+    query: q
+    variant: compact
+    value: revenue
+    style:
+      value:
+        format: currency
+    support:
+      value: delta_pct
+      label: of Opus spend
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  compact_value_only:
+    type: kpi
+    query: q
+    variant: compact
+    value: revenue
+    style:
+      value:
+        format: currency
+rows:
+  - title: "stacked (default) — three lines, fixed slot widths"
+    cols:
+      - stacked_full
+      - stacked_label_only
+      - stacked_support_only
+      - stacked_value_only
+  - title: "inline — value · label · support, baseline-aligned on one row"
+    cols:
+      - inline_full
+      - inline_label_only
+  - cols:
+      - inline_support_only
+      - inline_value_only
+  - title: "compact — 2-col, bottom right shares value baseline; support splits when alone"
+    cols:
+      - compact_full
+      - compact_label_only
+  - cols:
+      - compact_support_only
+      - compact_value_only

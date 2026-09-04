@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.normalize.dispatch import normalize_board
+from dbt_charts.core.diagnostics.codes_compile import ERR_VALIDATION_FIELD
 
 _NESTED_YAML = """\
 title: Root
@@ -382,14 +383,14 @@ class TestBoardSetTheme:
 
     def test_set_theme_recomputes_resolved_style(self):
         """set_theme changes the resolved_style background when switching to a
-        provably different theme (editorial vs dark have different backgrounds)."""
+        provably different theme (clarity vs neon have different backgrounds)."""
         board = _compile_nested()
-        board.set_theme("editorial")
-        editorial_bg = board.resolved_style.background
+        board.set_theme("clarity")
+        clarity_bg = board.resolved_style.background
 
         board.set_theme("neon")
 
-        assert board.resolved_style.background != editorial_bg
+        assert board.resolved_style.background != clarity_bg
 
     def test_set_theme_on_root_propagates_to_nested_boards(self):
         """Root.set_theme must update every nested board's resolved_style.
@@ -540,27 +541,40 @@ class TestRootBoardWidth:
     def test_root_width_percent_is_rejected(self):
         from dbt_charts.core.compile.errors import CompilationError
 
-        with pytest.raises(CompilationError, match="width"):
+        with pytest.raises(CompilationError, match="width") as exc:
             normalize_board(
                 AuthoredBoard.model_validate(
                     {"width": "50%", "text": "hello"},
                 )
             )
+        assert exc.value.code is ERR_VALIDATION_FIELD
+
+    def test_root_width_unparseable_is_rejected(self):
+        from dbt_charts.core.compile.errors import CompilationError
+
+        with pytest.raises(CompilationError, match="not a valid dimension") as exc:
+            normalize_board(
+                AuthoredBoard.model_validate(
+                    {"width": "wide", "text": "hello"},
+                )
+            )
+        assert exc.value.code is ERR_VALIDATION_FIELD
 
     def test_root_width_zero_is_rejected(self):
         from dbt_charts.core.compile.errors import CompilationError
 
-        with pytest.raises(CompilationError, match="positive"):
+        with pytest.raises(CompilationError, match="positive") as exc:
             normalize_board(
                 AuthoredBoard.model_validate(
                     {"width": 0, "text": "hello"},
                 )
             )
+        assert exc.value.code is ERR_VALIDATION_FIELD
 
     def test_root_width_conflicting_with_board_width_style_is_rejected(self):
         from dbt_charts.core.compile.errors import CompilationError
 
-        with pytest.raises(CompilationError, match="Cannot specify both"):
+        with pytest.raises(CompilationError, match="Cannot specify both") as exc:
             normalize_board(
                 AuthoredBoard.model_validate(
                     {
@@ -570,6 +584,8 @@ class TestRootBoardWidth:
                     }
                 )
             )
+        assert exc.value.code is ERR_VALIDATION_FIELD
+        assert "style.frame.width" in str(exc.value)
 
     def test_root_width_survives_set_theme(self):
         """width: sugar must survive set_theme like style.frame.width does."""
@@ -577,7 +593,7 @@ class TestRootBoardWidth:
             AuthoredBoard.model_validate({"width": 900, "text": "hello"})
         )
         assert board.resolved_style.frame.width == 900.0
-        board.set_theme("cream")
+        board.set_theme("paper")
         assert board.resolved_style.frame.width == 900.0
 
     def test_nested_board_width_still_means_layout_width_not_board_width(self):

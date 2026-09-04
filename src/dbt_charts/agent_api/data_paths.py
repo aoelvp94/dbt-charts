@@ -19,7 +19,7 @@ def validate_data_aliases(
 ) -> list[str]:
     """Lint /data/ prefixed aliases against configured source names.
 
-    Called at dft-validate time (connection-free). Checks that every
+    Called at `dct validate` time (connection-free). Checks that every
     /data/ URL references a known source, and errors with available
     sources as a hint when not.
 

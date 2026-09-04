@@ -72,7 +72,7 @@ def test_table_carve_keeps_stops_legible_for_light_text(name: str):
     stops = palette.palette(name, surface="table", text_color=light)
     assert stops
     for s in stops:
-        assert palette._wcag_contrast(light, s) >= palette._WCAG_TABLE_MIN, (name, s)
+        assert palette.wcag_contrast(light, s) >= palette._WCAG_TABLE_MIN, (name, s)
 
 
 # --------------------------------------------------------------------------
@@ -102,7 +102,7 @@ def test_pinned_palette_swaps_to_dark_twin_for_light_text(
     twin = palette.palette(dark_name, surface="table", text_color=_NEON_TEXT)
     assert swapped == twin, f"{light_name} did not swap to {dark_name}"
     for s in swapped:
-        assert palette._wcag_contrast(_NEON_TEXT, s) >= palette._WCAG_TABLE_MIN
+        assert palette.wcag_contrast(_NEON_TEXT, s) >= palette._WCAG_TABLE_MIN
 
 
 @pytest.mark.parametrize(("light_name", "_dark_name"), LIGHT_TO_DARK)
@@ -124,7 +124,7 @@ def test_no_double_swap_when_already_dark_twin():
     )
     assert stops
     for s in stops:
-        assert palette._wcag_contrast(_NEON_TEXT, s) >= palette._WCAG_TABLE_MIN
+        assert palette.wcag_contrast(_NEON_TEXT, s) >= palette._WCAG_TABLE_MIN
 
 
 def test_swap_only_applies_to_table_surface():

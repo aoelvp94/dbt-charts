@@ -1,4 +1,4 @@
-"""Letter-case transform dispatcher for DFT typography.
+"""Letter-case transform dispatcher for dbt charts typography.
 
 Applies at render time — after Jinja resolution but before the string reaches
 an SVG <text> node or a Vega-Lite spec string field.
@@ -53,7 +53,7 @@ _EXTRA_SMALL_WORDS: frozenset[str] = frozenset(
 
 # Tokens that must never be uppercased by the library's all-consonant
 # acronym heuristic. "dbt" is stylized lowercase always (dbt Labs' own
-# convention, e.g. "dbt Cloud") — never an acronym, but its three
+# convention, e.g. "dbt charts") — never an acronym, but its three
 # consonants otherwise trip the same rule that promotes "mrr"/"sql".
 _FORCE_LOWERCASE: frozenset[str] = frozenset({"dbt"})
 
@@ -207,6 +207,28 @@ def format_display_text(
     """
     normalized = slug_to_text(text) if from_slug else text
     return apply_font_case(normalized, font)
+
+
+def default_axis_title(field: str) -> str:
+    """Default title for an axis whose title an author never set.
+
+    Tokenizes the bound column name (``order_month`` → ``order month``) but
+    skips the font's case transform — a default axis title should read like
+    the column it encodes, not like a title-cased headline. That's what makes
+    it distinct from ``format_display_text``, which every OTHER slug-derived
+    label (chart title, legend title, series/tooltip labels) still goes
+    through: an author who wants title case on an axis writes ``x_label``/
+    ``y_label`` explicitly.
+
+    Args:
+        field: The bound column name (never an authored label — callers pass
+            an authored ``x_label``/``y_label`` straight through instead of
+            calling this).
+
+    Returns:
+        The tokenized, case-preserved default title text.
+    """
+    return slug_to_text(field)
 
 
 def inferred_display_name(

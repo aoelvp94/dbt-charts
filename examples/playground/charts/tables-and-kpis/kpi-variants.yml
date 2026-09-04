@@ -1,5 +1,5 @@
 title: KPI Variants
-description: |
+notes: |
   Layout variants for the KPI card. Three rows, one variant each, four columns
   per row showing how the variant renders across field configurations (full,
   label-only, support-only, value-only). Use as the canonical visual surface for
@@ -26,7 +26,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
     support:
       value: delta_pct
       label: of Opus spend
@@ -41,7 +41,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
   stacked_support_only:
     type: kpi
     query: q
@@ -49,7 +49,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
     support:
       value: delta_pct
       label: of Opus spend
@@ -63,7 +63,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
 
   # ──────── inline ────────
   inline_full:
@@ -74,7 +74,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
     support:
       value: delta_pct
       label: of Opus spend
@@ -89,7 +89,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
   inline_support_only:
     type: kpi
     query: q
@@ -97,7 +97,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
     support:
       value: delta_pct
       label: of Opus spend
@@ -111,7 +111,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
 
   # ──────── compact ────────
   compact_full:
@@ -122,7 +122,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
     support:
       value: delta_pct
       label: of Opus spend
@@ -137,7 +137,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
   compact_support_only:
     type: kpi
     query: q
@@ -145,7 +145,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
     support:
       value: delta_pct
       label: of Opus spend
@@ -159,7 +159,7 @@ charts:
     value: revenue
     style:
       value:
-        format: currency_compact
+        format: currency
 rows:
 - title: 'stacked (default) — three lines, fixed slot widths'
   cols:

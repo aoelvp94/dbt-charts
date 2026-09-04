@@ -40,6 +40,7 @@ def _series_label() -> ResolvedSeriesLabelStyle:
         font_family="Inter",
         font_size=11.0,
         font_weight="400",
+        font_style="normal",
         dark_companion_palette=(),
         gap_px=18.2,
     )
@@ -124,13 +125,19 @@ def _bake_axes(chart_type: str, x_type: str, y_type: str):
 
 @pytest.fixture
 def bar_style() -> ResolvedBarStyle:
-    """Minimal valid ResolvedBarStyle with all required fields populated."""
+    """Minimal valid ResolvedBarStyle with all required fields populated.
+
+    gap/min_size/max_size are populated (not left at the model's own None
+    default) because a resolved chart's mark is always cascade-complete in
+    production — a quantitative-x bar with an unauthored size reads them
+    unconditionally (``continuous_bar_size_prop``).
+    """
     from dbt_charts.core.compile.models.style.theme import BarMarkStyle
 
     ax, ay = _bake_axes("bar", "ordinal", "quantitative")
     return ResolvedBarStyle(
         series_label=_series_label(),
-        mark=BarMarkStyle(),
+        mark=BarMarkStyle(gap=3.0, min_size=4.0, max_size=20.0),
         endpoint_labels=_endpoint_labels(),
         single_series_fill=SINGLE_SERIES_FILL,
         tooltip_format="",

@@ -3,8 +3,7 @@
 
 name: dbt-seq-blue-dark
 family: sequential
-description: "Single-hue blue \u2014 default sequential. Sits between cat-10 blue and editorial-10 denim\
-  \ via chroma alone. Dark-canvas fork."
+description: "Single-hue blue \u2014 default sequential. Harmonizes with vivid-10 blue and editorial-10 blue. Dark-canvas fork."
 design_notes: "Dark-canvas fork of dbt-seq-blue. Luminance-monotonic recede\u2192pop; recede end is a\
   \ low-chroma dark neutral above canvas void, pop end high-chroma with capped lightness so it glows on\
   \ dark. Hue 206\xB0 from source.\n"

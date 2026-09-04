@@ -1,7 +1,7 @@
 """Install-command hints surfaced from runtime error messages.
 
 Centralized here so every CLI/runtime hint stays in lock-step with
-``dataface/README.md`` and the wheel-shipped MCP-setup skill.
+``dbt-charts/README.md`` and the wheel-shipped MCP-setup skill.
 
 This module only ever runs from an install that already exists (a
 missing extra, a missing optional dependency like ``uvicorn``) — so the
@@ -54,11 +54,11 @@ def _is_uv_tool_install() -> bool:
 
 
 def install_hint(extra: str | None = None) -> str:
-    """Return the install one-liner that matches how this Dataface got installed.
+    """Return the install one-liner that matches how this dbt charts got installed.
 
     ``extra`` is an optional optional-dependency group (``"mcp"``,
     ``"playground"``, ``"bigquery"``); when set, the returned command
-    installs Dataface with that extras bracket.
+    installs dbt charts with that extras bracket.
     """
     spec = f"dbt-charts[{extra}]" if extra else "dbt-charts"
     if _is_uv_tool_install():

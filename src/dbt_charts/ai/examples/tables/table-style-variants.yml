@@ -1,0 +1,149 @@
+# Mirrors examples/playground/charts/tables-and-kpis/table-style-variants.yml,
+# with its warehouse query replaced by the same rows inline.
+title: Table Style Variants
+notes: |
+  Same data rendered under three explicit table style profiles. Each variant
+  applies per-chart style overrides to demonstrate distinct table aesthetics
+  side-by-side in a single board.
+style:
+  charts:
+    table:
+      title_row:
+        height: 52
+        font:
+          color: '#222222'
+text: |
+  Three variants applied to the same Company Revenue table — Minimal (no rules,
+  no header fill, uniform weight), BI (apparatus-tier header, the current
+  default), and Classic (Source Serif, per-column rule gaps, no header fill).
+# Inline `columns`/`values` keep this specimen runnable anywhere. In your own
+# board, replace them with `source:` + `sql:` — see `dct docs queries`.
+queries:
+  company_revenue_total:
+    notes: Per-company revenue with a trailing total row.
+    columns: [company, quarterly_revenue, growth_rate, margin, row_role]
+    values:
+      - ["Apex Technologies", 24730000, 0.125, 0.382, value]
+      - ["Bright Solutions", 8460000, 0.089, 0.296, value]
+      - ["Cascade Systems", 41290000, -0.023, 0.410, value]
+      - ["Delta Analytics", 3890000, 0.216, 0.185, value]
+      - ["Echo Networks", 67120000, 0.057, 0.329, value]
+      - ["Focal Point Inc", 12550000, -0.081, 0.257, value]
+      - ["Granite Data", 29850000, 0.163, 0.371, value]
+      - ["Horizon Labs", 5630000, 0.304, 0.192, value]
+      - ["Total", 193520000, null, null, total]
+charts:
+  variant_minimal:
+    type: table
+    query: company_revenue_total
+    title: Company Revenue
+    subtitle: Minimal — no rules, no bg, uniform weight
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      row:
+        role: row_role
+        stripe:
+          color: transparent
+        rule:
+          width: 0
+        roles:
+          summary:
+            rule_width: 0
+            font:
+              weight: '400'
+      header:
+        background: transparent
+        font:
+          color: '#222222'
+          weight: '400'
+        rule:
+          width: 0
+  variant_bi:
+    type: table
+    query: company_revenue_total
+    title: Company Revenue
+    subtitle: BI — apparatus-tier header (11/600/gray)
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      header:
+        font:
+          size: 11
+          weight: '600'
+          color: '#313233'
+      row:
+        role: row_role
+  variant_classic:
+    type: table
+    query: company_revenue_total
+    title: Company Revenue
+    subtitle: Classic — Source Serif, per-column rule gaps, no header fill
+    style:
+      columns:
+        company:
+          label: Company
+        quarterly_revenue:
+          label: Revenue
+          format: currency
+        growth_rate:
+          label: Growth
+          format: percent
+        margin:
+          label: Margin
+          format: percent
+      font:
+        family: '''Source Serif 4'', Georgia, ''Times New Roman'', serif'
+      header:
+        background: transparent
+        font:
+          weight: '400'
+          color: '#222222'
+        rule:
+          width: 1
+          continuous: false
+      row:
+        role: row_role
+        stripe:
+          color: transparent
+        rule:
+          width: 0
+        roles:
+          summary:
+            rule_width: 1
+            font:
+              weight: '400'
+rows:
+- title: Variants — Minimal / BI / Classic (3-up)
+  cols:
+  - variant_minimal
+  - variant_bi
+  - variant_classic
+- title: Minimal vs BI
+  cols:
+  - variant_minimal
+  - variant_bi
+- title: BI vs Classic
+  cols:
+  - variant_bi
+  - variant_classic

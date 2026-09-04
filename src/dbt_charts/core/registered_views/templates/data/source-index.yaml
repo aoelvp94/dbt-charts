@@ -3,6 +3,7 @@ title: [[ path.source | tojson ]]
 queries:
   schemas:
     type: schema
+    fields: [name]
     source: [[ path.source | tojson ]]
 
 charts:

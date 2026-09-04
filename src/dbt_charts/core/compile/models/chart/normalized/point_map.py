@@ -23,7 +23,7 @@ class PointMapChart(_GeoChartFields):
     )
     size: str | None = Field(
         default=None,
-        description="Field used to size-encode bubble markers (bubble_map only).",
+        description="Quantitative column that scales point area. Mutually exclusive with `collapse`.",
     )
     collapse: bool = Field(
         default=False,

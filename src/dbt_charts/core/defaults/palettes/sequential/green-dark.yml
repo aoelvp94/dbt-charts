@@ -3,7 +3,7 @@
 
 name: dbt-seq-green-dark
 family: sequential
-description: Single-hue green. Sits between cat-10 green and editorial-10 sage via chroma alone. Dark-canvas
+description: Single-hue green. Harmonizes with vivid-10 green and editorial-10 green. Dark-canvas
   fork.
 design_notes: "Dark-canvas fork of dbt-seq-green. Luminance-monotonic recede\u2192pop; recede end is a\
   \ low-chroma dark neutral above canvas void, pop end high-chroma with capped lightness so it glows on\

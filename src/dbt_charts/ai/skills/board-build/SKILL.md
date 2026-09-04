@@ -2,7 +2,7 @@
 name: board-build
 kind: workflow
 description: >
-  Build-test-iterate workflow for Dataface boards and reports: edit board YAML,
+  Build-test-iterate workflow for dbt charts boards and reports: edit board YAML,
   add charts, write parameterized queries, duplicate an existing board. Use for
   'build a dashboard', 'add a chart', 'duplicate this dashboard'. Do NOT use for
   errors after something breaks (dct-troubleshooting) or for chart-type and
@@ -20,6 +20,8 @@ metadata:
 - `{{ s_render_board }}` delivers the dashboard — call it and let the result stand. Do not also paste the rendered output or the full YAML back as prose; that just duplicates the deliverable as an unreadable dump.
 - Act, don't ask. Apply edits and render directly — do not ask for permission to do the work you were handed ("if you want, I can save this", "would you like me to…"). This bans permission-seeking, not commentary — see `{{ s_skill_analyst_runbook }}` for what to deliver alongside the render.
 - Fail loud. If a tool returns an error, report it and either fix the input and call the tool again, or stop and say what's blocking. Never route around a failed tool by fabricating output, dumping query rows as a text table in place of a chart, or improvising a different format. A failed render is a failure to report, not to paper over.
+- **dbt charts is the only visualization tool you may use.** Your environment may offer other ways to draw a chart — a plotting library, an HTML or SVG canvas, a notebook, a document/artifact builder, a bundled charting skill. None of them is an acceptable substitute here, however good the result would look. The deliverable is board YAML rendered by dbt charts; anything else is the wrong artifact even when the picture is right. If dbt charts genuinely cannot express what was asked, say so and stop — do not quietly reach for another renderer.
+- **A single chart is just a board with one chart in it.** There is no separate "only a chart" artifact, and no reason to leave dbt charts to produce one. Write the `queries` / `charts` / `rows` triple, leave `title:` off, and the render is the chart with no board title above it.
 - Never claim a render, query, or save succeeded unless the tool returned success. Never invent columns, tables, or data — if a schema or query call fails, fix it against the real schema.
 - **A clean render is not evidence the edit was right.** It says the YAML compiles and the queries ran — nothing about whether the thing the user asked for is now true. Before reporting an edit as done, check the *specific* claim against the rendered result: the axis really is a percentage, the legend really is gone, the series really is the one they named. If you cannot see it in the result you have, say what you verified and what you did not. "It rendered" answers a question nobody asked.
 - **Say what you are about to do, then do it in the same turn.** Naming the plan is a preface to the work, never a substitute for it — a turn that ends on "I'll compare X and then render Y" has delivered nothing and hands the user a step they now have to ask for. Never close on "here's how I could solve it"; solve it and report what happened.
@@ -53,14 +55,15 @@ Copy a dashboard with `{{ s_read_file }}` then `{{ s_write_file }}` to the new p
 
 ## Metadata Requirement
 
-Fill `description` on every named object — agents downstream rely on it for context and search:
+Fill `notes` on every named object — agents downstream rely on it for context and
+search. It never renders:
 
-- `queries.*.description` — what the query returns and why it exists
-- `charts.*.description` — what question the chart answers
-- `variables.*.description` — how the variable should be used
+- `queries.*.notes` — what the query returns and why it exists
+- `charts.*.notes` — what question the chart answers
+- `variables.*.notes` — how the variable should be used
 - Layout objects (`rows`/`cols`/`grid.items`/`tabs.items`) — section intent when useful
 
-Keep each description short and factual (one sentence).
+Keep each note short and factual (one sentence).
 
 Labels and titles are inferred from object keys, and schema defaults are applied automatically. Omit `label`, `title`, `input: auto`, `required: false`, and `visible: true` unless you are intentionally changing the inferred/default value.
 
@@ -125,9 +128,28 @@ Once all charts work individually, arrange them in `rows:` / `cols:`. The layout
 ```yaml
 rows:
   - cols: [kpi_revenue, kpi_users, kpi_orders]
-  - cols: [revenue_trend, 2]    # 2 = column span
+  - revenue_trend
   - cols: [by_region, by_product]
 ```
+
+`cols:` entries are chart names or nested layouts, and share the row equally by
+default — a bare number in the list (`cols: [revenue_trend, 2]`) is not a span
+and does not validate. For an uneven split, wrap each side and give the wrapper
+a `width:` — `"70%"` or `"300px"`. A bare number is **pixels**, not a share, and
+nothing rejects it: `width: 2` renders a 2-pixel column, so reach for a
+percentage whenever you mean a proportion:
+
+```yaml
+rows:
+  - cols:
+      - width: "70%"
+        rows: [revenue_trend]
+      - width: "30%"
+        rows: [by_region]
+```
+
+Reach for `grid:` when you need explicit row/column placement, not merely
+uneven widths.
 
 Don't put a `title:` on every row. A section heading over already-labeled charts is repetition, not structure — group with proximity instead. Reach for a row `title:` only when the dashboard is becoming more of a narrative — when there's accompanying `text:` prose, or the heading genuinely says something the charts don't (a shared scope like "Last 30 days", a real mode boundary). A title with no text alongside it usually means the title and the sectioning weren't needed — drop it. (This is dashboard guidance — in a **report**, sections are good: narrative `## …` headings in `text:` blocks carry the prose between charts — see `{{ s_skill_design_report }}`.)
 
@@ -187,7 +209,7 @@ queries:
 ```
 **Do not use `rows: [{col: val}, ...]`** — that format is not supported. `type: values` is optional and changes nothing; omit it.
 
-Each chart type expects data in a specific shape. Dataface validates this and errors fast — no silent magic.
+Each chart type expects data in a specific shape. dbt charts validates this and errors fast — no silent magic.
 
 | Chart Type | Expected Data | Key Fields |
 |------------|---------------|------------|
@@ -203,20 +225,46 @@ Each chart type expects data in a specific shape. Dataface validates this and er
 **Critical rules:**
 
 - **KPI charts require exactly 1 row.** Aggregate to a single row: `SELECT SUM(amount) AS total FROM orders`. Multiple KPIs need separate single-row queries (or one query with multiple columns).
-- **Pie and heatmap expect pre-aggregated data.** Use `GROUP BY` in the query. Dataface does NOT aggregate for you.
+- **Pie and heatmap expect pre-aggregated data.** Use `GROUP BY` in the query. dbt charts does NOT aggregate for you.
 - **Don't mix metrics with very different magnitudes on one y-axis.** Metrics like churn (2–7%) and NRR (90–110%) on a shared axis will crush the smaller series flat. Use separate charts instead — there is no dual-axis support.
 - **Multi-series line/bar/area: use `y: [col1, col2, col3]`.** Pass a list of column names to `y:` for multiple series on the same axis. Use `layers:` directly on a `bar`/`line`/`area`/`scatter` chart only when layers need different chart types (e.g., bar base + line overlay).
+- **Trend lines are computed in SQL, not configured on the chart.** Fit the line with a regression aggregate (`REGR_SLOPE`/`REGR_INTERCEPT`, supported in DuckDB, Postgres, and Snowflake) and overlay the fitted series as a `line` layer on the base chart — the query layer owns computed series, same as any other aggregation.
 - **Bar `color` creates grouped bars.** Setting `color` to a different field than `x` allocates one sub-band per color value per x-band. If each x-value belongs to only one color group (e.g. each person is in one team), all other sub-bands are empty and every bar is razor-thin. Only use a different `color` field when each x-value truly has multiple rows with different color values. Otherwise set `color` to the same field as `x`, or omit it.
 
 ## Formatting Numbers
 
-Dataface does not auto-detect format from column names at compile time. Set formatting explicitly wherever the number type matters — **in the slot for that chart family**, not at chart root.
+dbt charts does not auto-detect format from column names at compile time. Set formatting explicitly wherever the number type matters — **in the slot for that chart family**, not at chart root.
 
 ### Where format goes
 
+`axis_x`/`axis_y` name the channel, not the visual edge: on every cartesian family the measure is `axis_y`, including a horizontal bar that draws it along the bottom. A number preset belongs on the measure.
+
+Put a number preset on an axis whose ticks can't carry it and the engine raises `ERR-LABEL-FORMAT-AXIS-MISMATCH` — on `axis_x` or `axis_y`, the mirror ghost (`axis_y.mirror.format`), or heatmap's y, whichever axis the format actually lives on. Two cases raise:
+
+- The axis resolves to a **band** scale (nominal/ordinal) and its ticks are not already readable as numbers. Numeric categories (`stage_id: 1, 2, 3`), numeric strings and booleans format cleanly and stay legal — a bar over `stage_id` paints `$1 $2 $3` and never raises.
+- The axis resolves to a **temporal** scale at all — dates get no numeric-tick exemption, since there's no reading of `$,.0f` over a date the author wanted.
+
+| Shape | Dimension scale |
+|---|---|
+| `bar` over a category | band |
+| `bar` over `yearweek` / `yearmonthdate` buckets | band, always |
+| `bar` over `year` / `yearquarter` / `yearmonth` buckets | band, up to 60 distinct buckets (`max_ordinal_buckets`); temporal at 61+ |
+| `line` / `area` / `scatter` over a text category | band |
+| `line` / `area` / `scatter` over bucketed dates | temporal |
+| `line` / `area` with `curve: step` over bucketed dates | band — the step plateau needs a band scale |
+| `heatmap` x/y | band, always nominal |
+| `scatter` over a genuinely numeric x, or its usual numeric y | quantitative — applies normally |
+| `scatter` over a categorical y (a dot plot) | band |
+
+A temporal x — `line`/`area`/`scatter` over dates, or a bar past 60 buckets — raises the same code; use a time token (`"%b %Y"`) or `style.time_format` there instead. A `heatmap` has no measure axis at all: both axes are grid dimensions and the value lives on the color channel, which carries no label format of its own, so a number preset on either axis — including its `y` — raises too. `style.axis_y.mirror.format` follows the same rule whenever the mirrored edge is categorical — a dot plot's y, and also a default-orientation (horizontal) bar, where the rotation puts the category on that edge. Every one of these used to render something wrong instead of raising.
+
 | Chart family | YAML slot | Example |
 |--------------|-----------|---------|
-| `line`, `bar`, `area`, `scatter`, `heatmap` | `style.number_format` (or `style.axis_y.format`) | `style.number_format: currency_whole` |
+| `line`, `bar`, `area`, `scatter` — the measure | `style.number_format` (or `style.axis_y.labels.format`) | `style.number_format: currency_whole` |
+| same — the dimension, when it is a **date** | `style.time_format`, or a time token on `style.axis_x.labels.format` | `style.axis_x.labels.format: "%b %Y"` |
+| same — the dimension, when it is a **category** | no format applies — the tick text *is* the label | — |
+| same — the dimension, when it is genuinely **numeric** (e.g. a scatter's x column) | `style.axis_x.labels.format` — `number_format` never reaches the dimension axis | `style.axis_x.labels.format: integer` |
+| `heatmap` | no axis format applies — the value is on the color channel | — |
 | `kpi` headline value | `style.value.format` | `style.value.format: currency_whole` |
 | `kpi` support delta | `support.format` | `support.format: percent_delta` |
 | `table` column | `style.columns.<col>.format` | `style.columns.revenue.format: currency_whole` |
@@ -245,11 +293,15 @@ charts:
     query: deals
     style:
       columns:
+        # styling-only: every query column renders whether listed or not.
+        # Hide a column with `visible: false`.
         amount:
           label: Amount
           format: currency_whole
           align: right
 ```
+
+To change a non-pivot table's column order, reorder the query's `SELECT` list — `style.columns` key order is inert (except a zero-row result, which falls back to `style.columns`' own key order). A `visible: false` column doesn't render at all; the remaining columns close up around it.
 
 Named presets (prefer these over raw D3 strings):
 
@@ -258,7 +310,10 @@ Named presets (prefer these over raw D3 strings):
 | `integer` | `1,234` | |
 | `year` | `2025` — no grouping, no SI scaling | an identifier, not a quantity |
 | `currency_whole` | `$1,234` | |
-| `currency_compact` | `$1.2M` | |
+| `currency` | `$1.2M` | compacts; the name to reach for on a dashboard |
+| `currency_full` | `$1,234.56` | cents at every magnitude |
+| `number` | `1.2M` | compacts; also the engine default when no format is set |
+| `number_full` | `1,234.56` | every digit at every magnitude |
 | `percent` | `2.3%` — input is decimal fraction (0.023) | line/bar/area/scatter via `style.number_format` |
 | `percent_number` | `2.3%` — input is whole-number percent (2.3) | **KPI only** (`style.value.format`) |
 | `percent_delta` | `+2.3%` — input is decimal fraction | |
@@ -281,9 +336,11 @@ Named presets (prefer these over raw D3 strings):
 | KPI query returns multiple rows | Use `SUM()`/`COUNT()`/`AVG()` to aggregate to 1 row |
 | Pie with raw unaggregated data | `GROUP BY` in query to aggregate before charting |
 | Putting `height:` or `aspect_ratio:` under `style:` | Move them to chart root: `charts.my_chart.height: 400` — `style:` is paint only |
-| Writing raw D3 format strings (`"$,.2s"`, `".1%"`) | Use a named preset (`currency_compact`, `percent`) — clearer and theme-consistent |
+| Writing raw D3 format strings (`"$,.2s"`, `".1%"`) | Use a named preset (`currency`, `percent`) — clearer and theme-consistent |
+| Scaling values for display in SQL (`/1000`, `_k`/`_m` columns) | Query in natural units; compacting is the chart format's job (`currency`) |
 | Writing a raw hex in a color slot (`color: "#4C78A8"`) | Author a palette token — `{{ s_docs_color }}` — or no color at all, and let the theme pick |
-| Putting `format:` on a line/bar/area/scatter chart | Use `style.number_format:` — chart-root `format:` is rejected on cartesian chart families |
+| Putting `format:` on a line/bar/area/scatter chart | Use `style.number_format:` for the measure — chart-root `format:` is rejected on cartesian chart families |
+| Putting a number preset on `style.axis_x.labels.format` | `axis_x` is the dimension channel regardless of chart orientation. It raises `ERR-LABEL-FORMAT-AXIS-MISMATCH` on a band scale whose ticks are not already numbers, and on a temporal x too (dates get no exemption). Format the measure (`style.number_format` / `style.axis_y.labels.format`) instead — a number preset belongs on the dimension only when its ticks are themselves numbers |
 | Using `percent_number` or `percent_number_delta` on a line/bar/area chart | These are KPI-only — use `percent` or `percent_delta` instead (input must be decimal fraction 0–1) |
 | Nesting `columns`/`values` under `sql:` for inline data | `sql:` is a string — inline data lives directly under the query name: `queries.my_data.columns: [...]` and `queries.my_data.values: [[...]]` |
 | Using `type: values` + `rows:` for inline data | Not a valid query format — use `columns: [col1, col2]` + `values: [[row1val1, row1val2], ...]` directly under the query key |

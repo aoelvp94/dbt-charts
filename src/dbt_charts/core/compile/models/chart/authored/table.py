@@ -17,10 +17,10 @@ class TableChart(_SharedChartFields, _ConditionalFormattingField):
 
     model_config = ConfigDict(extra="forbid")
 
-    type: Annotated[Literal["table"], Field(description="Table chart type.")]
+    type: Annotated[Literal["table"], Field(description="Selects the chart family.")]
     style: Annotated[
         TableChartStylePatch | None,
-        Field(default=None, description="Chart-local style overrides."),
+        Field(default=None, description="Appearance overrides for this chart alone."),
     ]
     rows: Annotated[
         list[str] | None,

@@ -38,7 +38,7 @@ _DUMMY_QUERY = SqlQuery(sql="SELECT 1", source="test")
 _RESOLVED_STYLE = resolve_style(get_theme_style())
 _CHART_CTX = resolve_chart_style_context(get_theme_style())
 _SVG_OPEN_TAG = re.compile(r"<svg\b")
-_DFT_CHART_CLASS = re.compile(r'class="[^"]*\bdbt-chart\b[^"]*"')
+_DBT_CHART_CLASS = re.compile(r'class="[^"]*\bdbt-chart\b[^"]*"')
 
 
 def _executor(data: list[dict[str, Any]]) -> Executor:
@@ -95,7 +95,7 @@ def test_internal_renderer_has_no_nested_svg(
         render_cache={},
     )
     assert not _SVG_OPEN_TAG.search(svg)
-    assert _DFT_CHART_CLASS.search(svg)
+    assert _DBT_CHART_CLASS.search(svg)
     assert f'data-chart-width="{width}' in svg
 
 
@@ -178,7 +178,7 @@ def test_vega_chart_retains_standalone_nested_svg(chart_type: str) -> None:
             render_cache={},
         )
     assert _SVG_OPEN_TAG.search(svg)
-    assert _DFT_CHART_CLASS.search(svg)
+    assert _DBT_CHART_CLASS.search(svg)
     assert 'class="mark-rect role-mark"' in svg
 
 
@@ -254,14 +254,14 @@ def test_kpi_render_chart_item_uses_aria_label_not_title() -> None:
     assert 'aria-label="Total Revenue"><title>' not in svg
 
 
-def test_chart_description_not_in_aria_label() -> None:
-    """Description must not appear in aria-label on the chart wrapper <g>.
+def test_chart_notes_not_in_aria_label() -> None:
+    """Note must not appear in aria-label on the chart wrapper <g>.
 
     Browsers (Firefox) render aria-label on SVG <g> elements as a native hover
-    tooltip. The accessible label carries only the chart title; description is
-    stored solely in data-chart-description for programmatic access.
+    tooltip. The accessible label carries only the chart title; the note is
+    stored solely in data-chart-notes for programmatic access.
     """
-    chart = _chart("kpi", value="revenue", label="Revenue", description="some text")
+    chart = _chart("kpi", value="revenue", label="Revenue", notes="some text")
     svg, _ = render_chart_item(
         _rc(chart),
         _executor([{"revenue": 42000}]),
@@ -273,11 +273,11 @@ def test_chart_description_not_in_aria_label() -> None:
     )
     import re
 
-    # aria-label carries the title only — no description.
+    # aria-label carries the title only — no notes.
     assert 'aria-label="Revenue"' in svg
     aria_labels = re.findall(r'aria-label="([^"]*)"', svg)
     assert not any("some text" in lbl for lbl in aria_labels), (
-        f"Description leaked into aria-label: {[lbl for lbl in aria_labels if 'some text' in lbl]}"
+        f"Note leaked into aria-label: {[lbl for lbl in aria_labels if 'some text' in lbl]}"
     )
     # No <title> tooltip either.
     assert "<title>Revenue — some text</title>" not in svg
@@ -285,17 +285,17 @@ def test_chart_description_not_in_aria_label() -> None:
 
 
 # ---------------------------------------------------------------------------
-# render_layout_item with description: no <title>, has data-layout-description
+# render_layout_item with notes: no <title>, has data-layout-notes
 # and aria-label on the wrapper.
 # ---------------------------------------------------------------------------
 
 
-def test_render_layout_item_description_no_tooltip() -> None:
-    """Layout-item description must be stored in data-layout-description only.
+def test_render_layout_item_notes_no_tooltip() -> None:
+    """Layout-item notes must be stored in data-layout-notes only.
 
     aria-label on a bare SVG <g> causes Firefox to render a native hover tooltip.
-    The layout-item wrapper must NOT carry aria-label or <title> when description
-    is set — those both trigger the browser tooltip. data-layout-description is
+    The layout-item wrapper must NOT carry aria-label or <title> when notes
+    is set — those both trigger the browser tooltip. data-layout-notes is
     the right carrier for programmatic access.
     """
     import re
@@ -313,7 +313,7 @@ def test_render_layout_item_description_no_tooltip() -> None:
         y=0.0,
         width=300.0,
         height=200.0,
-        description="Quarterly revenue KPI",
+        notes="Quarterly revenue KPI",
     )
     svg, _ = render_layout_item(
         item,
@@ -325,12 +325,12 @@ def test_render_layout_item_description_no_tooltip() -> None:
         resolved_style=_RESOLVED_STYLE,
         render_cache={},
     )
-    assert 'data-layout-description="Quarterly revenue KPI"' in svg
+    assert 'data-layout-notes="Quarterly revenue KPI"' in svg
     # No tooltip sources on the layout-item wrapper.
     assert "<title>Quarterly revenue KPI</title>" not in svg
     aria_labels = re.findall(r'aria-label="([^"]*)"', svg)
     assert not any("Quarterly revenue KPI" in lbl for lbl in aria_labels), (
-        f"Layout item description leaked into aria-label: "
+        f"Layout item notes leaked into aria-label: "
         f"{[lbl for lbl in aria_labels if 'Quarterly revenue KPI' in lbl]}"
     )
 

@@ -1,24 +1,23 @@
 """Neutral-leaf dbt manifest loader.
 
-Owns: Project-seam reads, schema-version validation gate, RefIndex
-derivation, and per-process content-addressed memo.
+Owns: Project-seam reads, RefIndex derivation, and per-process
+content-addressed memo.
 
 LoadedManifest.raw (the plain json.loads dict) is the data contract for all
-downstream consumers. WritableManifest.is_compatible_version gates on schema
-version; the typed round-trip (upgrade_schema_version / from_dict) is NOT
-called on the runtime path because from_dict requires top-level keys
-(macros, docs, exposures, …) that no consumer reads, and a manifest missing
-any one of them would turn a routine degrade (no lineage, no FK links) into
-a hard ERR-DBT-MANIFEST-INCOMPATIBLE. The round-trip belongs in the test
-canary that pins the dbt-core version range (see test_dbt_manifest.py).
+downstream consumers. Nothing here deserialises through dbt's typed
+WritableManifest, so metadata.dbt_schema_version is not read: the handful of
+node keys this module touches (resource_type, name, schema, alias,
+relation_name, source_name) have been stable across every manifest version,
+and gating on the version string only turns a manifest we read correctly into
+a hard error. A node whose shape has genuinely drifted is skipped, so the
+board author sees ERR-DBT-REF-UNKNOWN-NODE / ERR-DBT-SOURCE-UNKNOWN-TABLE
+naming the ref they wrote rather than a KeyError.
 
 Public symbols:
   MANIFEST_CANDIDATES             tuple of candidate relpaths, in order
   load_manifest(project)          -> LoadedManifest | None
   load_manifest_at(project, rel)  -> LoadedManifest
   ref_index(loaded)               -> RefIndex
-
-The dbt.contracts import is function-local — `dct --help` pays nothing.
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from dbt_charts.core.diagnostics.codes_execute import ERR_DBT_MANIFEST_INCOMPATIBLE
+from dbt_charts.core.diagnostics.codes_execute import ERR_DBT_MANIFEST_UNREADABLE
 from dbt_charts.core.diagnostics.execution import ExecutionError
 
 if TYPE_CHECKING:
@@ -57,10 +56,15 @@ class LoadedManifest:
              SingularTest, so test_metadata is inaccessible on typed nodes;
              raw dict access is the only reliable path.
     relpath: Which candidate path was used to load this manifest.
+    version: ``project.file_version(relpath)`` at load time — the stable
+             identity downstream memos key on (``id(raw)`` can be reused
+             after GC, silently serving one manifest's derivation for
+             another).
     """
 
     raw: dict[str, Any]
     relpath: str
+    version: str
 
 
 @dataclass(frozen=True)
@@ -85,8 +89,8 @@ def load_manifest(project: Project) -> LoadedManifest | None:
     Checks candidates in order, returns the first one that exists. Returns
     None when no candidate exists.
 
-    Raises ExecutionError (ERR-DBT-MANIFEST-INCOMPATIBLE) when a candidate
-    exists but is corrupt or incompatible with the installed dbt-core.
+    Raises ExecutionError (ERR-DBT-MANIFEST-UNREADABLE) when a candidate
+    exists but is unreadable or corrupt.
     """
     for relpath in MANIFEST_CANDIDATES:
         if not project.exists(relpath):
@@ -107,8 +111,10 @@ def ref_index(loaded: LoadedManifest) -> RefIndex:
     for node in loaded.raw.get("nodes", {}).values():
         if node.get("resource_type") not in _REFABLE_RESOURCE_TYPES:
             continue
-        name: str = node["name"]
-        schema: str = node["schema"]
+        name = node.get("name")
+        schema = node.get("schema")
+        if not name or not schema:
+            continue
         if node.get("relation_name"):
             rel = str(node["relation_name"])
         else:
@@ -119,9 +125,9 @@ def ref_index(loaded: LoadedManifest) -> RefIndex:
     for node in loaded.raw.get("sources", {}).values():
         source_name = node.get("source_name")
         table_name = node.get("name")
-        if not source_name or not table_name:
+        schema = node.get("schema")
+        if not source_name or not table_name or not schema:
             continue
-        schema = str(node["schema"])
         if node.get("relation_name"):
             rel = str(node["relation_name"])
         else:
@@ -145,11 +151,9 @@ def load_manifest_at(project: Project, relpath: str) -> LoadedManifest:
     a caller needs to load a specific path independently of which candidate
     was used for the dev load.
 
-    Raises ExecutionError (ERR-DBT-MANIFEST-INCOMPATIBLE) on corrupt JSON,
-    unreadable file, or incompatible schema version.
+    Raises ExecutionError (ERR-DBT-MANIFEST-UNREADABLE) on an unreadable file
+    or corrupt JSON.
     """
-    from dbt.contracts.graph.manifest import WritableManifest  # noqa: PLC0415
-
     try:
         version = project.file_version(relpath)
         memo_key = (relpath, version)
@@ -157,33 +161,23 @@ def load_manifest_at(project: Project, relpath: str) -> LoadedManifest:
             return _memo[memo_key]
 
         raw_text = project.read_text(relpath)
-        raw: dict[str, Any] = json.loads(raw_text)
-
-        metadata = raw.get("metadata")
-        schema_version = metadata.get("dbt_schema_version") if metadata else None
-        # WritableManifest.is_compatible_version carries no type annotations in
-        # dbt-core (no py.typed marker); Any is the honest boundary type here,
-        # not a laundered ignore.
-        is_compatible_version: Any = WritableManifest.is_compatible_version
-        if schema_version and not is_compatible_version(schema_version):
+        raw = json.loads(raw_text)
+        if not isinstance(raw, dict):
             raise ExecutionError.from_code(
-                ERR_DBT_MANIFEST_INCOMPATIBLE,
+                ERR_DBT_MANIFEST_UNREADABLE,
                 relpath=relpath,
-                detail=(
-                    f"schema version {schema_version!r} is not compatible "
-                    "with the installed dbt-core"
-                ),
+                detail=f"top-level JSON is {type(raw).__name__}, not an object",
             )
     except ExecutionError:
         raise
-    except Exception as exc:  # noqa: BLE001 — OSError/JSONDecodeError/AttributeError
+    except Exception as exc:  # noqa: BLE001 — OSError/JSONDecodeError from the seam
         raise ExecutionError.from_code(
-            ERR_DBT_MANIFEST_INCOMPATIBLE,
+            ERR_DBT_MANIFEST_UNREADABLE,
             relpath=relpath,
             detail=str(exc),
         ) from exc
 
-    loaded = LoadedManifest(raw=raw, relpath=relpath)
+    loaded = LoadedManifest(raw=raw, relpath=relpath, version=version)
     if len(_memo) >= _MEMO_MAXSIZE:
         _memo.pop(next(iter(_memo)))
     _memo[memo_key] = loaded

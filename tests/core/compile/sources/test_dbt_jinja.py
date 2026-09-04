@@ -1,6 +1,6 @@
 """dbt Jinja rendering of source/profile config values.
 
-These pin the contract that dataface resolves `{{ env_var(...) }}` (and the rest
+These pin the contract that dbt charts resolves `{{ env_var(...) }}` (and the rest
 of dbt's profile-rendering Jinja) through dbt's own ``ProfileRenderer`` — exactly
 as dbt would — rather than a hand-rolled regex.
 """

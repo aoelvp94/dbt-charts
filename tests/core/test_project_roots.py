@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from dbt_charts.core.project_roots import (
-    DFT_ROOT_MARKERS,
+    DCT_ROOT_MARKERS,
     find_dct_root,
     find_project_root,
     find_repo_root,
@@ -44,7 +44,7 @@ def test_find_root_returns_nearest_marker(tmp_path: Path) -> None:
     assert find_root(deeper, ("marker",)) == inner
 
 
-@pytest.mark.parametrize("marker", DFT_ROOT_MARKERS)
+@pytest.mark.parametrize("marker", DCT_ROOT_MARKERS)
 def test_find_dct_root_returns_dir_with_each_marker(
     tmp_path: Path, marker: str
 ) -> None:

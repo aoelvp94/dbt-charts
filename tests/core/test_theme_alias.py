@@ -32,9 +32,9 @@ class TestThemeAliasDesugars:
 
     def test_extends_still_works_without_theme(self) -> None:
         board = AuthoredBoard.model_validate(
-            {"title": "test", "rows": [], "extends": "cream"}
+            {"title": "test", "rows": [], "extends": "paper"}
         )
-        assert board.extends == "cream"
+        assert board.extends == "paper"
 
     def test_theme_and_extends_conflict_raises(self) -> None:
         from pydantic import ValidationError

@@ -154,7 +154,6 @@ def test_validation_error_footer_links_to_the_resolved_docs_site(
         resp = client.get(f"/{two_error_board.stem}")
     body = resp.text
     assert f'href="{docs_site_url()}/guides/error-handling/"' in body
-    assert "dataface.dev" not in body
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +303,7 @@ def test_inspect_template_not_found_returns_404(tmp_path: Path) -> None:
     assert "text/html" in resp.headers.get("content-type", "")
 
 
-def test_escaped_dataface_error_returns_structured_html(valid_board: Path) -> None:
+def test_escaped_dbt_charts_error_returns_structured_html(valid_board: Path) -> None:
     """Raw DbtChartsError escaping the render envelope still reaches the browser."""
     from fastapi.testclient import TestClient
 
@@ -315,7 +314,7 @@ def test_escaped_dataface_error_returns_structured_html(valid_board: Path) -> No
 
     escaped = DbtChartsError.from_code(
         ERR_INTERNAL,
-        message="escaped dataface boom",
+        message="escaped renderer boom",
     )
 
     app = create_server(FilesystemProject(valid_board.parent.parent))
@@ -329,7 +328,7 @@ def test_escaped_dataface_error_returns_structured_html(valid_board: Path) -> No
     assert "text/html" in resp.headers.get("content-type", "")
     assert resp.text != "Internal Server Error"
     assert "ERR-INTERNAL" in resp.text
-    assert "escaped dataface boom" in resp.text
+    assert "escaped renderer boom" in resp.text
 
 
 def test_unexpected_exception_uses_starlette_debugger(valid_board: Path) -> None:

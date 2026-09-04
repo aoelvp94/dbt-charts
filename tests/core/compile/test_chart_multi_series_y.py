@@ -2,9 +2,9 @@
 
 Each case here used to reach a render emitter and raise a bare-message
 ``ChartDataError``, which the diagnostics layer stamps ``ERR-INTERNAL`` — so a
-board passed ``dft validate`` and then died at render with the engine's
+board passed ``dct validate`` and then died at render with the engine's
 "this is a bug" code. They are data-free, so they belong on the authored model
-alongside ``_validate_data_table``.
+alongside ``_validate_support_table``.
 """
 
 from __future__ import annotations
@@ -38,29 +38,11 @@ def test_spark_bar_accepts_single_element_y_list():
 
 
 # =============================================================================
-# bar / area — color: and layers: are single-series-only with a y list
+# bar / area — layers: and conditional_formatting: are single-series-only with a y list; color: composes
 # =============================================================================
 
 
 _CONDITIONAL_FORMATTING = {"revenue": {"when": [{"gt": 100, "background": "#ff0000"}]}}
-
-
-@pytest.mark.parametrize("chart_type", ["bar", "area"])
-def test_rejects_color_with_multi_field_y(chart_type: str):
-    with pytest.raises(
-        ValidationError, match="color is not supported with multi-metric"
-    ):
-        _validate(type=chart_type, x="month", y=["revenue", "cost"], color="region")
-
-
-@pytest.mark.parametrize("chart_type", ["bar", "area"])
-def test_rejects_color_with_single_element_y_list(chart_type: str):
-    # The emitters branch on isinstance(y, list), not on length — `y: [revenue]`
-    # takes the same folded path, so it must be rejected the same way.
-    with pytest.raises(
-        ValidationError, match="color is not supported with multi-metric"
-    ):
-        _validate(type=chart_type, x="month", y=["revenue"], color="region")
 
 
 @pytest.mark.parametrize("chart_type", ["bar", "area"])
@@ -101,6 +83,25 @@ def test_accepts_conditional_formatting_with_single_y(chart_type: str):
         conditional_formatting=_CONDITIONAL_FORMATTING,
     )
     assert chart.conditional_formatting is not None
+
+
+@pytest.mark.parametrize("fields", [{}, {"color": "region"}, {"y": []}, {"y": ""}])
+def test_bar_rejects_x_without_y(fields: dict[str, object]):
+    """A bar with an x and no measure has nothing to draw. Left to the
+    emitter, it hands Vega-Lite a null field and dies as ERR-INTERNAL; an
+    empty list or name reaches the resolver's own validation error instead."""
+    with pytest.raises(ValidationError, match="Bar chart: x requires a y field"):
+        _validate(type="bar", x="month", **fields)
+
+
+def test_bar_without_x_or_y_still_parses():
+    chart = _validate(type="bar")
+    assert chart.x is None and chart.y is None
+
+
+def test_histogram_with_x_and_no_y_still_parses():
+    chart = _validate(type="histogram", x="amount")
+    assert chart.type == "histogram"
 
 
 def test_bar_rejects_multi_field_y_without_x():
@@ -158,8 +159,10 @@ def test_accepts_plain_multi_field_y(chart_type: str):
     assert chart.y == ["revenue", "cost"]
 
 
-@pytest.mark.parametrize("chart_type", ["line", "scatter", "heatmap"])
+@pytest.mark.parametrize("chart_type", ["bar", "area", "line", "scatter", "heatmap"])
 def test_accepts_color_with_multi_field_y_on_supporting_families(chart_type: str):
+    """A color: column is the dimension a wide fold crosses its measures with
+    (resolve/chart/_wide_fields.py), so no family rejects the pair at parse."""
     chart = _validate(type=chart_type, x="month", y=["revenue", "cost"], color="region")
     assert chart.color == "region"
 

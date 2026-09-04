@@ -376,7 +376,7 @@ rows:
         """{{ this }} is a bare Name token — never a call — and IS an undefined variable.
 
         In dbt, 'this' refers to the current model's relation, but dbt compiles
-        models before Dataface sees them. A bare {{ this }} in a Dataface board
+        models before dbt charts sees them. A bare {{ this }} in a dbt charts board
         query SQL is an error, not a dbt-builtin pass-through.
         """
         yaml_content = """
@@ -502,9 +502,9 @@ rows:
 
 
 class TestReservedVariableNameRejected:
-    """Declaring a variable whose name collides with a Dataface runtime helper must fail.
+    """Declaring a variable whose name collides with a dbt charts runtime helper must fail.
 
-    'filter', 'filter_date_range', and 'queries' are Dataface-specific Jinja
+    'filter', 'filter_date_range', and 'queries' are dbt charts-specific Jinja
     names that users would never intentionally use as variable names. Declaring a
     variable with one of these names shadows the helper, making the helper
     unreachable in templates — so we block them at declaration time.
@@ -512,7 +512,7 @@ class TestReservedVariableNameRejected:
     dbt SQL builtins (ref, source, var, etc.) are intentionally NOT reserved:
     they are common English words that authors legitimately use as variable names
     (e.g. a "source" dropdown filter), and they appear only in dbt model SQL
-    that Dataface embeds, not in user-authored Jinja expressions.
+    that dbt charts embeds, not in user-authored Jinja expressions.
     """
 
     @pytest.mark.parametrize(

@@ -3,7 +3,7 @@
 
 name: dbt-seq-teal-dark
 family: sequential
-description: Single-hue teal/turquoise. Anchored between cat-10 cyan and editorial-10 teal; replaces dbt-seq-cyan.
+description: Single-hue teal/turquoise. Harmonizes with vivid-10 cyan and editorial-10 teal.
   Dark-canvas fork.
 design_notes: "Dark-canvas fork of dbt-seq-teal. Luminance-monotonic recede\u2192pop; recede end is a\
   \ low-chroma dark neutral above canvas void, pop end high-chroma with capped lightness so it glows on\

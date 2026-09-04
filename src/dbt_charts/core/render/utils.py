@@ -12,8 +12,38 @@ from typing import TYPE_CHECKING, Any
 from dbt_charts.core.utils import Rows
 
 if TYPE_CHECKING:
-    from dbt_charts.core.compile.models.primitives import ToneLiteral
+    from dbt_charts.core.compile.models.primitives import FontStyle, ToneLiteral
     from dbt_charts.core.compile.models.style.theme import KpiTonesStyle
+
+
+def font_style_to_mark(
+    font: FontStyle, *, color_key: str | None = "fill"
+) -> dict[str, str | float]:
+    """Copy non-None ``FontStyle`` fields into a VL text-mark dict fragment.
+
+    The one family/size/weight/style/color → VL-mark copier shared by every
+    emitter that paints a ``FontStyle`` onto a text mark (pie totals and
+    slice labels, support-table row/label text) — the duplication of this copy
+    across sites is what let ``style`` (italic) go unemitted in some of them
+    while working in others.
+
+    ``color_key`` names the VL mark property that receives ``font.color``:
+    marks use ``"fill"``. Pass ``None`` when the caller resolves color
+    itself (e.g. pie's no-color-channel dark-companion fallback) — nothing
+    is written for color in that case.
+    """
+    mark: dict[str, str | float] = {}
+    if font.family is not None:
+        mark["font"] = font.family
+    if font.size is not None:
+        mark["fontSize"] = font.size
+    if font.weight is not None:
+        mark["fontWeight"] = font.weight
+    if font.style is not None:
+        mark["fontStyle"] = font.style
+    if color_key is not None and font.color is not None:
+        mark[color_key] = font.color
+    return mark
 
 
 def resolve_tone_color(tone: ToneLiteral, tones: KpiTonesStyle) -> str:

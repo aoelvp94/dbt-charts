@@ -201,8 +201,9 @@ class TestNonCircularityInvariant:
     The two panes share one y-scale. If a re-cascaded label position could sit
     outside the raw data domain, it would widen the shared scale, which would
     change the very slope the re-cascade measured itself against — circular.
-    ``_apply_label_cascade``'s clamp is what keeps this from happening; pin it
-    here so a future change that lets a label escape the clamp is caught.
+    ``_apply_label_cascade`` keeps every kept position inside the domain (an
+    anchor that cannot fit is dropped rather than clamped past the bound);
+    pin it here so a future change that lets a label escape is caught.
     """
 
     def test_recascade_clamps_into_raw_domain(self):
@@ -327,9 +328,10 @@ class TestNonCircularityInvariant:
         """
         anchors = {f"s{i}": 0.0 for i in range(5)}
         distributed = _distribute_evenly(anchors, 0.0, 500.0, "no_slope")
-        cascaded = _apply_label_cascade(
+        cascaded, dropped = _apply_label_cascade(
             anchors, min_data_gap=20.0, y_domain_min=0.0, y_domain_max=500.0
         )
+        assert dropped == []
         assert [name for name, _ in distributed.positions] == [
             name for name, _ in cascaded
         ], "even distribution and the greedy cascade disagree on series order"
@@ -367,4 +369,138 @@ class TestNonCircularityInvariant:
         )
         assert max(values) - min(values) < 50.0, (
             "the cluster must stay near its shared endpoint, not span the domain"
+        )
+
+
+class TestRailOverflowDrop:
+    """Acceptance: past a series count the plot height cannot hold, the
+    cascade drops the labels that do not fit instead of clamping them all
+    onto the same pixel.
+
+    Regression for series-label-rail-stacks-every-overflow-label-on-one-y-
+    past-20-entries: the global ``(n - 1) * data_gap > domain_span`` check in
+    ``recascade_endpoint_labels`` only catches the case where the *whole*
+    block cannot fit anywhere in the domain. It says nothing about anchors
+    clustered away from the domain's own edge, where the greedy cascade in
+    ``_apply_label_cascade`` walks past the bound before exhausting the
+    series list — that "already have room" arithmetic is what silently
+    clamped every remaining label onto ``y_domain_max``/``y_domain_min``.
+    """
+
+    def _clustered_anchors(self, n: int) -> dict[str, float]:
+        # Real endpoints clustered near the top of a domain with slack below
+        # them — the shape that makes (n-1)*gap <= domain_span true globally
+        # while the ascending walk still runs out of room locally.
+        return {f"s{i:02d}": 100.0 + i * 1.0 for i in range(n)}
+
+    def test_local_overflow_drops_instead_of_clamping(self) -> None:
+        anchors = self._clustered_anchors(25)
+        y_domain_min, y_domain_max = -50.0, 331.0
+        gap = 14.72
+        domain_span = y_domain_max - y_domain_min
+        assert (len(anchors) - 1) * gap <= domain_span, (
+            "fixture must pass the global (n-1)*gap <= domain_span check, or "
+            "this exercises _distribute_evenly instead of the local overflow"
+        )
+
+        result = recascade_endpoint_labels(
+            anchors=anchors,
+            pixel_gap=gap,
+            y_domain_min=y_domain_min,
+            y_domain_max=y_domain_max,
+            # slope -1.0 px/unit -> data_gap == pixel_gap == 14.72, matching
+            # the fixture's own min_data_gap assumption above.
+            label_mark_leaves=[
+                {"text": name, "y": 1000.0 - value * 1.0}
+                for name, value in anchors.items()
+            ],
+            height_correction_ratio=1.0,
+            emitted=anchors,
+        )
+
+        ys = [y for _, y in result.positions]
+        assert len(set(ys)) == len(ys), (
+            f"no two rail labels may share a y position; got {sorted(ys)}"
+        )
+        assert result.outcome == "rail_overflow"
+        assert result.dropped, "some labels must not fit at this count"
+        assert len(result.positions) + len(result.dropped) == len(anchors)
+        assert set(result.dropped).isdisjoint(name for name, _ in result.positions)
+        for y in ys:
+            assert y_domain_min <= y <= y_domain_max
+
+    def test_counts_that_fit_are_unaffected(self) -> None:
+        """Below the fitted maximum, output must be byte-identical to before."""
+        anchors = {"a": 59.0, "b": 58.5, "c": 58.0, "d": 57.5, "e": 57.0}
+        result = recascade_endpoint_labels(
+            anchors=anchors,
+            pixel_gap=18.0,
+            y_domain_min=50.0,
+            y_domain_max=60.0,
+            label_mark_leaves=[
+                {"text": name, "y": 1000.0 - value * 10.0}
+                for name, value in anchors.items()
+            ],
+            height_correction_ratio=1.0,
+            emitted=anchors,
+        )
+        assert result.outcome == "fit"
+        assert result.dropped == []
+        assert len(result.positions) == len(anchors)
+
+    def test_isolated_anchor_is_not_dropped_for_a_distant_clusters_overflow(
+        self,
+    ) -> None:
+        """A label with genuine room keeps its place regardless of cascade
+        order — the drop rule is need-based, not positional.
+
+        Regression: 20 anchors clustered at 30.0-31.9 plus one ``TOP`` anchor
+        sitting alone at the domain's own edge (100.0), gap 5.0. Ascending
+        cascade order processes the cluster first and, once it exhausts the
+        gap between them, was dropping *everything after the first failure*
+        — including ``TOP``, which never collided with anything. That left a
+        *different* series' label sitting exactly where TOP's line ends: the
+        rail replaces the color legend, so a reader would confidently
+        attribute the chart's most prominent series to the wrong name. The
+        old clamp-pile was an obviously broken smear; this was a clean,
+        plausible, wrong render.
+        """
+        anchors = {f"s{i:02d}": 30.0 + i * 0.1 for i in range(20)}
+        anchors["TOP"] = 100.0
+        positions, dropped = _apply_label_cascade(
+            anchors, min_data_gap=5.0, y_domain_min=0.0, y_domain_max=100.0
+        )
+        by_series = dict(positions)
+        assert "TOP" not in dropped, (
+            f"TOP has no real collision and must not be dropped; dropped={dropped}"
+        )
+        assert by_series["TOP"] == 100.0, (
+            "an isolated anchor with room must keep its own true position, "
+            f"not a forced/pushed one; got {by_series['TOP']}"
+        )
+        ys = [y for _, y in positions]
+        assert len(set(ys)) == len(ys)
+        for y in ys:
+            assert 0.0 <= y <= 100.0
+
+    def test_anchor_outside_the_domain_is_clamped_not_dropped(self) -> None:
+        """An anchor outside ``[y_domain_min, y_domain_max]`` is a domain
+        mismatch, not a collision — it is clamped into the domain the same
+        way Vega-Lite clips the mark there, never dropped.
+
+        Regression: an authored ``style.axis_y.scale.domain`` can sit
+        narrower than the raw data extent (``_y_domain``'s explicit-domain
+        short-circuit), so a real endpoint can legitimately fall outside
+        ``[y_domain_min, y_domain_max]`` with zero crowding involved.
+        """
+        anchors = {"A": 95.0, "B": 92.0, "C": -20.0}
+        positions, dropped = _apply_label_cascade(
+            anchors, min_data_gap=6.0, y_domain_min=0.0, y_domain_max=100.0
+        )
+        by_series = dict(positions)
+        assert dropped == [], f"no crowding here — nothing should be dropped: {dropped}"
+        assert set(by_series) == {"A", "B", "C"}
+        assert by_series["C"] == 0.0, (
+            "C's raw anchor (-20.0) is outside the domain and must clamp to "
+            f"y_domain_min, not vanish; got {by_series['C']}"
         )

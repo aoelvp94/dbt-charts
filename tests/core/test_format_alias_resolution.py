@@ -4,9 +4,9 @@ Covers sites where format aliases bypassed resolve_format() and were emitted
 as raw alias strings into Vega-Lite specs.
 
 Gap sites fixed in PR #2872:
-1. data_table source row  — _vl_format_calc (data_table_attachment.py)
-2. data_table aggregate row — inline calculate (data_table_attachment.py)
-3. data_table per_series row — inline calculate (data_table_attachment.py)
+1. support_table source row  — _vl_format_calc (support_table_attachment.py)
+2. support_table aggregate row — inline calculate (support_table_attachment.py)
+3. support_table per_series row — inline calculate (support_table_attachment.py)
 4. pie chart total.format   — compile/resolve/chart/pie.py
 5. axis.format               — compile/resolve/chart/_axes.py
 
@@ -40,17 +40,17 @@ _BOARD_CONTEXT = resolve_chart_style_context(get_theme_style())
 # All these aliases live in the default theme (stark.yaml).
 # Tests use them to verify resolution: the VL output must contain the d3 spec,
 # not the alias name.
-_ALIAS_CURRENCY = "currency"  # → "$,.2f"
+_ALIAS_CURRENCY = "currency_full"  # → "$,.2f"
 _RESOLVED_CURRENCY = "$,.2f"
 
 _ALIAS_INTEGER = "integer"  # → ",.0f"
 _RESOLVED_INTEGER = ",.0f"
 
-_ALIAS_NUMBER = "number"  # → ",.2f"
+_ALIAS_NUMBER = "number_full"  # → ",.2f"
 _RESOLVED_NUMBER = ",.2f"
 
-_ALIAS_COMPACT = "compact"  # → "~s" (trim flag set; round_aware_spec is a no-op)
-_RESOLVED_COMPACT = "~s"
+_ALIAS_COMPACT = "number"  # → ".3~s" (trim flag set; round_aware_spec is a no-op)
+_RESOLVED_COMPACT = ".3~s"
 
 _ALIAS_PERCENT = "percent"  # → ".1%"
 _RESOLVED_PERCENT = ".1%"
@@ -95,10 +95,10 @@ def _all_calculate_exprs(spec: dict[str, Any]) -> list[str]:
     return exprs
 
 
-# ── Gap site 1: data_table source row ────────────────────────────────────────
+# ── Gap site 1: support_table source row ────────────────────────────────────────
 
 
-def test_data_table_source_format_alias_resolves():
+def test_support_table_source_format_alias_resolves():
     """Source row: 'currency' must resolve to '$,.2f' in the VL calculate expression."""
     chart = TypeAdapter(Chart).validate_python(
         {
@@ -109,7 +109,9 @@ def test_data_table_source_format_alias_resolves():
             "query": SqlQuery(sql="SELECT 1", source="test_db"),
             "query_name": "q",
             "style": {"orientation": "vertical"},
-            "data_table": [{"source": "revenue", "format": _ALIAS_CURRENCY}],
+            "support_table": {
+                "entries": [{"source": "revenue", "format": _ALIAS_CURRENCY}]
+            },
         }
     )
     _rc = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
@@ -124,10 +126,10 @@ def test_data_table_source_format_alias_resolves():
     )
 
 
-# ── Gap site 2: data_table aggregate row ─────────────────────────────────────
+# ── Gap site 2: support_table aggregate row ─────────────────────────────────────
 
 
-def test_data_table_aggregate_format_alias_resolves():
+def test_support_table_aggregate_format_alias_resolves():
     """Aggregate row: 'integer' must resolve to ',.0f' in the VL calculate expression."""
     chart = TypeAdapter(Chart).validate_python(
         {
@@ -138,9 +140,11 @@ def test_data_table_aggregate_format_alias_resolves():
             "query": SqlQuery(sql="SELECT 1", source="test_db"),
             "query_name": "q",
             "style": {"orientation": "vertical"},
-            "data_table": [
-                {"aggregate": "sum", "source": "revenue", "format": _ALIAS_INTEGER}
-            ],
+            "support_table": {
+                "entries": [
+                    {"aggregate": "sum", "source": "revenue", "format": _ALIAS_INTEGER}
+                ]
+            },
         }
     )
     _rc = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
@@ -155,10 +159,10 @@ def test_data_table_aggregate_format_alias_resolves():
     )
 
 
-# ── Gap site 3: data_table per_series row ────────────────────────────────────
+# ── Gap site 3: support_table per_series row ────────────────────────────────────
 
 
-def test_data_table_per_series_format_alias_resolves():
+def test_support_table_per_series_format_alias_resolves():
     """Per-series row: 'number' must resolve to ',.2f' in the VL calculate expression."""
     chart = TypeAdapter(Chart).validate_python(
         {
@@ -171,7 +175,9 @@ def test_data_table_per_series_format_alias_resolves():
             "query_name": "q",
             "stack": "zero",
             "style": {"orientation": "vertical"},
-            "data_table": [{"per_series": "revenue", "format": _ALIAS_NUMBER}],
+            "support_table": {
+                "entries": [{"per_series": "revenue", "format": _ALIAS_NUMBER}]
+            },
         }
     )
     _rc = resolve(chart, _STACKED_DATA, chart_style_context=_BOARD_CONTEXT)
@@ -190,7 +196,7 @@ def test_data_table_per_series_format_alias_resolves():
 
 
 def test_pie_total_format_alias_resolves():
-    """Pie total.format: 'compact' must resolve to '~s' in VL encoding.text.format."""
+    """Pie total.format: 'number' must resolve to '.3~s' in VL encoding.text.format."""
     chart = TypeAdapter(Chart).validate_python(
         {
             "id": "t",
@@ -216,7 +222,7 @@ def test_pie_total_format_alias_resolves():
             break
 
     assert total_fmt == _RESOLVED_COMPACT, (
-        f"Expected '{_RESOLVED_COMPACT}' (resolved 'compact' alias) in pie total "
+        f"Expected '{_RESOLVED_COMPACT}' (resolved 'number' alias) in pie total "
         f"encoding.text.format; got: {total_fmt!r}"
     )
 
@@ -306,7 +312,7 @@ def test_tooltip_format_alias_resolves_in_measure_encoding():
     # Merged onto the board's real formats dict (not replaced) -- a real
     # compile() only ever merges into formats key-wise (merge_onto_base's
     # dict rule), so it always carries the full theme alias vocabulary,
-    # including axis_quantitative's own "number_default". Replacing it here
+    # including axis_quantitative's own "number". Replacing it here
     # manufactures a state ordinary authoring can't reach (short of an
     # explicit `style.formats: null`, a different, deliberate scenario this
     # test isn't exercising) and would otherwise fail on the unrelated
@@ -351,9 +357,9 @@ def test_tooltip_format_alias_resolves_in_measure_encoding():
 def test_predefined_format_member_gets_house_rules_inline_d3_gets_native() -> None:
     """The whole three-way contract in one test.
 
-    "compact" is an engine-owned predefined name that resolves with house rules:
+    "number" is an engine-owned predefined name that resolves with house rules:
     round-aware trim + analytic notation register (1.5 M with space before M).
-    Writing the resolved spec "~s" directly as an inline d3 string is a
+    Writing the resolved spec ".3~s" directly as an inline d3 string is a
     different authoring choice and must produce different output: the predefined
     name gets notation registers (analytic "1.5 M"), the inline d3 string gets
     native d3 output ("1.5M" — no space, lowercase m for mega).
@@ -361,16 +367,17 @@ def test_predefined_format_member_gets_house_rules_inline_d3_gets_native() -> No
     from dbt_charts.core.render.format_utils import format_value
 
     # Predefined member: house rules apply (analytic notation register).
-    enum_output = format_value(1_500_000.0, "compact")
+    enum_output = format_value(1_500_000.0, "number")
     # Inline d3 with same trimmed spec: native d3, no house notation.
     # The space distinguishes house analytic ("1.5 M") from native d3 ("1.5M").
-    inline_output = format_value(1_500_000.0, "~s")
+    inline_output = format_value(1_500_000.0, _RESOLVED_COMPACT)
 
     assert enum_output == "1.5 M", (
-        f"predefined member 'compact' must apply analytic notation; got {enum_output!r}"
+        f"predefined member 'number' must apply analytic notation; got {enum_output!r}"
     )
     assert inline_output == "1.5M", (
-        f"inline '~s' must return native d3 (no space, lowercase); got {inline_output!r}"
+        f"inline {_RESOLVED_COMPACT!r} must return native d3 (no space, lowercase); "
+        f"got {inline_output!r}"
     )
     assert enum_output != inline_output, (
         "enum member and inline d3 with the same spec must produce different output"

@@ -21,6 +21,7 @@ from dbt_charts.core.compile.resolve.style.board import resolve_style_and_contex
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 from dbt_charts.core.render.chart.vl_field_maps import (
     area_mark_to_vl,
+    bar_mark_to_vl,
     line_mark_to_vl,
     scatter_mark_to_vl,
 )
@@ -38,12 +39,17 @@ SAMPLE_DATA = [{"month": "Jan", "revenue": 100}, {"month": "Feb", "revenue": 200
 
 def _base_line_mark():
     """Return the compiled global LineMarkStyle from the default theme."""
-    return get_theme_style("editorial").charts.marks.line
+    return get_theme_style("clarity").charts.marks.line
 
 
 def _base_area_mark():
     """Return the compiled global AreaMarkStyle from the default theme."""
-    return get_theme_style("editorial").charts.marks.area
+    return get_theme_style("clarity").charts.marks.area
+
+
+def _base_bar_mark():
+    """Return the compiled global BarMarkStyle from the default theme."""
+    return get_theme_style("clarity").charts.marks.bar
 
 
 # ---------------------------------------------------------------------------
@@ -116,13 +122,35 @@ class TestAreaMark:
         assert "strokeDash" not in result
 
 
+class TestBarMark:
+    def test_opacity_emits_fill_opacity_not_whole_mark_opacity(self):
+        # BarMarkStyle.opacity is documented as fill opacity. VL's top-level
+        # `opacity` multiplies fill AND stroke together, which would hide an
+        # authored `border` right along with the fill on an opacity:0 bar
+        # (an outline-only bar needs the two isolated) -- `fillOpacity` is the
+        # native VL property that does that, leaving stroke at its own opacity.
+        mark = _base_bar_mark().model_copy(update={"opacity": 0.85})
+        result = bar_mark_to_vl(mark, "vertical", True)
+        assert result["fillOpacity"] == 0.85
+        assert "opacity" not in result
+
+    def test_opacity_absent_not_emitted(self):
+        # Default theme bar mark has no opacity override — must not appear.
+        # This is the untested-by-default path this field previously had no
+        # coverage for at all (there was no opacity field to test).
+        mark = _base_bar_mark()
+        result = bar_mark_to_vl(mark, "vertical", True)
+        assert "fillOpacity" not in result
+        assert "opacity" not in result
+
+
 # ---------------------------------------------------------------------------
 # Helpers to build board overrides (mirrors pattern from test_per_chart_style_promotions)
 # ---------------------------------------------------------------------------
 
 
 def _board_with_global_line_stroke(**stroke_overrides):
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     line_mark = compiled.charts.marks.line
     new_stroke = line_mark.stroke.model_copy(update=stroke_overrides)
     new_line_mark = line_mark.model_copy(update={"stroke": new_stroke})
@@ -138,7 +166,7 @@ def _board_with_global_area_stroke(**stroke_overrides):
     compiles it that way) — its geometry lives on the global marks.line
     tier, not marks.area (fill-only: opacity/curve).
     """
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     line_mark = compiled.charts.marks.line
     new_stroke = line_mark.stroke.model_copy(update=stroke_overrides)
     new_line_mark = line_mark.model_copy(update={"stroke": new_stroke})
@@ -149,7 +177,7 @@ def _board_with_global_area_stroke(**stroke_overrides):
 
 def _board_no_halo_line(**stroke_overrides):
     """Line board with halo_multiplier=0 so spec uses a single mark dict."""
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     line_mark = compiled.charts.marks.line
     new_stroke = line_mark.stroke.model_copy(update=stroke_overrides)
     new_line_mark = line_mark.model_copy(
@@ -166,7 +194,7 @@ def _board_no_halo_area(**stroke_overrides):
     Area's top-edge stroke/halo geometry lives on the global marks.line
     tier (a genuine separate line mark), not marks.area (fill-only).
     """
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     line_mark = compiled.charts.marks.line
     new_stroke = line_mark.stroke.model_copy(update=stroke_overrides)
     new_line_mark = line_mark.model_copy(
@@ -324,7 +352,7 @@ class TestAreaHaloPath:
 
 def _board_with_point_override(**point_overrides):
     """Board with halo enabled and point.size > 0 so the point layers are emitted."""
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     # Enable points at the family tier (line.marks.point.size = 0 in theme → override).
     line_style = compiled.charts.line
     family_point = line_style.marks.point or compiled.charts.marks.point
@@ -382,7 +410,7 @@ class TestPointMarkMapper:
     def test_theme_default_fill_emitted_when_filled_false(self):
         # theme sets fill: theme.background on the global point; overriding
         # filled=false must expose that default fill in the VL output.
-        theme_point = get_theme_style("editorial").charts.marks.point
+        theme_point = get_theme_style("clarity").charts.marks.point
         assert theme_point.fill is not None, "theme must supply a default fill"
         hollow = theme_point.model_copy(update={"filled": False})
         result = scatter_mark_to_vl(hollow)
@@ -402,22 +430,26 @@ class TestPointMarkMapper:
         result = scatter_mark_to_vl(point)
         assert "strokeWidth" not in result
 
-    def test_theme_default_stroke_width_matches_line_stroke(self):
-        # The base theme sets a default point stroke width so hollow ring
-        # overlays inherit the line family's stroke weight rather than falling
-        # back to VL's hardcoded 2 px. The default tracks
+    @pytest.mark.parametrize("family", ["scatter", "point_map", "area"])
+    def test_family_default_stroke_width_matches_line_stroke(self, family):
+        # Families whose point ring is not density-baked supply their own
+        # default so hollow rings inherit the line family's stroke weight
+        # rather than falling back to VL's hardcoded 2 px. The default tracks
         # ``marks.line.stroke.width`` for visual coherence.
-        editorial = get_theme_style("editorial")
-        theme_point = editorial.charts.marks.point
+        editorial = get_theme_style("clarity")
+        theme_point = getattr(editorial.charts, family).marks.point
         theme_line_stroke = editorial.charts.marks.line.stroke
-        assert theme_point.stroke_width is not None, (
-            "theme must supply a default point stroke_width"
-        )
         assert theme_point.stroke_width == theme_line_stroke.width, (
-            f"point.stroke_width ({theme_point.stroke_width}) should match "
-            f"line.stroke.width ({theme_line_stroke.width}) so hollow rings "
-            f"read with the same weight as the line itself"
+            f"{family}.marks.point.stroke_width ({theme_point.stroke_width}) "
+            f"should match line.stroke.width ({theme_line_stroke.width}) so "
+            f"hollow rings read with the same weight as the line itself"
         )
+
+    def test_global_stroke_width_stays_unset_for_the_bake(self):
+        # The global slot is deliberately empty (like marks.point.size):
+        # bake_point_companions reads "no tier authored a ring" off the
+        # cascaded value, so a literal here would shadow a board-tier pin.
+        assert get_theme_style("clarity").charts.marks.point.stroke_width is None
 
 
 class TestLineHaloPointPath:
@@ -469,7 +501,7 @@ class TestLineHaloPointPath:
 
 def _board_with_global_bar_size(size: float):
     """Board with charts.marks.bar.size set at the global tier (tier 1)."""
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     new_bar_mark = compiled.charts.marks.bar.model_copy(update={"size": size})
     new_marks = compiled.charts.marks.model_copy(update={"bar": new_bar_mark})
     charts = compiled.charts.model_copy(update={"marks": new_marks})
@@ -478,7 +510,7 @@ def _board_with_global_bar_size(size: float):
 
 def _board_with_global_bar_corner_radius(radius: float):
     """Board with charts.marks.bar.border.radius at the global tier (tier 1)."""
-    compiled = get_theme_style("editorial")
+    compiled = get_theme_style("clarity")
     assert compiled.charts.marks.bar.border is not None
     new_border = compiled.charts.marks.bar.border.model_copy(update={"radius": radius})
     new_bar_mark = compiled.charts.marks.bar.model_copy(update={"border": new_border})
@@ -502,8 +534,10 @@ class TestBarGlobalMarkPropagation:
             chart, SAMPLE_DATA, board_style=board[0], chart_style_context=board[1]
         )
         mark = spec.get("mark") or (spec.get("layer") or [{}])[0].get("mark", {})
-        assert mark.get("continuousBandSize") == 55.0, (
-            f"Global bar.size must reach mark.continuousBandSize, got {mark!r}"
+        # A fixed-width bar.size is a literal mark.width (vertical) or
+        # mark.height (horizontal) — it overrides band_width on any scale.
+        assert mark.get("width") == 55.0 or mark.get("height") == 55.0, (
+            f"Global bar.size must reach mark.width/height, got {mark!r}"
         )
 
     def test_global_bar_corner_radius_reaches_spec(self, make_chart):

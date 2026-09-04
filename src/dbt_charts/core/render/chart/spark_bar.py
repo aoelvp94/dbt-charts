@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html as html_module
+import math
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -18,6 +19,12 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedStyle,
 )
 from dbt_charts.core.compile.models.style.theme import SparkBarChartStyle
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_render import (
+    ERR_SPARK_BAR_VALUE_FIELD_NOT_FOUND,
+    ERR_SPARK_BAR_VALUE_NOT_NUMERIC,
+)
+from dbt_charts.core.render.chart.spark import _signed_fraction
 from dbt_charts.core.render.chart.text_truncation import record_text_truncation
 from dbt_charts.core.render.utils import normalize_data_types
 from dbt_charts.core.text.case import apply_case
@@ -71,6 +78,72 @@ def _auto_detect_spark_bar_fields(
     return x_field, y_field
 
 
+def _validate_spark_bar_value_field(
+    chart_id: str,
+    x_field: str | None,
+    data: list[dict[str, Any]],  # type-state: explicit_any — query rows
+) -> None:
+    """Raise unless the resolved x (magnitude) field is a real numeric column.
+
+    spark_bar reverses the cartesian x/y convention every other family uses —
+    x is the magnitude, y is the label. Four routes lead to the same silent
+    all-zero chart if left unguarded: (1) x names a column that is not in the
+    query result at all (a typo), (2) x names a wholly non-numeric column
+    (the cartesian-order authoring mistake), (3) x names a column that is
+    numeric for some rows and something else for others (a data-shape bug,
+    not sparse NULLs), (4) no x was authored and auto-detection found no
+    numeric column at all — there is no legitimate spark_bar with no
+    magnitude field. NULL cells are legitimate sparse data and are skipped,
+    counted as neither numeric nor invalid.
+
+    Case (1) gets its own code. A missing column makes every ``row.get()``
+    return None, which is indistinguishable from an all-NULL column by value
+    alone — so without the key check a typo would be told to swap x and y,
+    confidently prescribing a reordering of already-correct YAML.
+
+    Takes the FULL query result, not the max_bars-limited slice the chart
+    displays — "is this column numeric?" is a property of the dataset, not
+    of a display cap. The verdict must be identical at any max_bars value.
+    """
+    if not data:
+        return
+    if not x_field:
+        raise ChartDataError.from_code(
+            ERR_SPARK_BAR_VALUE_NOT_NUMERIC,
+            chart_id=chart_id,
+            field="<none>",
+            reason="no x is authored and no numeric column could be auto-detected",
+        )
+    if not any(x_field in row for row in data):
+        raise ChartDataError.from_code(
+            ERR_SPARK_BAR_VALUE_FIELD_NOT_FOUND,
+            chart_id=chart_id,
+            field=x_field,
+            available=sorted({key for row in data for key in row}),
+        )
+    has_numeric_value = False
+    for row in data:
+        value = row.get(x_field)
+        if value is None:
+            continue
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            has_numeric_value = True
+            continue
+        raise ChartDataError.from_code(
+            ERR_SPARK_BAR_VALUE_NOT_NUMERIC,
+            chart_id=chart_id,
+            field=x_field,
+            reason=f"row value {value!r} is not numeric",
+        )
+    if not has_numeric_value:
+        raise ChartDataError.from_code(
+            ERR_SPARK_BAR_VALUE_NOT_NUMERIC,
+            chart_id=chart_id,
+            field=x_field,
+            reason="the column holds no numeric values",
+        )
+
+
 def _render_spark_bar_row(
     row: dict[str, Any],
     row_index: int,
@@ -80,6 +153,7 @@ def _render_spark_bar_row(
     bar_height: int,
     bar_area_width: float,
     max_value: float,
+    signed_layout: bool,
     left_padding: int,
     chart_width: float,
     text_color: str,
@@ -102,7 +176,8 @@ def _render_spark_bar_row(
         y_field: Field name for category labels
         bar_height: Height of each bar (may be overridden from default)
         bar_area_width: Width of the bar area
-        max_value: Maximum value for scaling bars
+        max_value: Maximum magnitude for scaling bars
+        signed_layout: Whether bars grow from a shared midpoint
         left_padding: Left padding before bar starts
         chart_width: Total chart width
         text_color: Color for text labels
@@ -119,14 +194,24 @@ def _render_spark_bar_row(
     """
     svg_parts: list[str] = []
 
-    # Get values
+    # Get values. A NULL value cell is legitimate sparse data (0 bar width);
+    # the caller (_validate_spark_bar_value_field) has already walked every
+    # visible row and rejected any non-null, non-numeric value, so a non-None
+    # value here is guaranteed numeric.
     label_value = str(row.get(y_field, "")) if y_field else f"Item {row_index + 1}"
-    count_value = row.get(x_field, 0) if x_field else 0
-    if not isinstance(count_value, (int, float)):
-        count_value = 0
+    raw_count = row.get(x_field) if x_field else None
+    count_value = raw_count if raw_count is not None else 0
 
-    # Calculate bar width
-    bar_width = (float(count_value) / max_value) * bar_area_width
+    signed = _signed_fraction(float(count_value), max_value, signed_layout)
+    if signed_layout:
+        half_width = bar_area_width / 2
+        bar_width = signed.fraction * half_width
+        fill_x = left_padding + (
+            half_width - bar_width if signed.is_negative else half_width
+        )
+    else:
+        bar_width = signed.fraction * bar_area_width
+        fill_x = left_padding
 
     # Truncate label if too long (use config for label.width)
     max_label_chars = int(spark_config.label.width / spark_rendering.avg_char_width_px)
@@ -166,7 +251,7 @@ def _render_spark_bar_row(
     # Render bar fill
     if bar_width > 0:
         svg_parts.append(
-            f'<rect x="{bar_x}" y="{row_y:.1f}" '
+            f'<rect x="{fill_x:.1f}" y="{row_y:.1f}" '
             f'width="{bar_width:.1f}" height="{bar_height}" '
             f'fill="{bar_color}" rx="{spark_config.border.radius}"/>',
         )
@@ -307,6 +392,11 @@ def _render_spark_bar_svg_core(
     # Get field names from data, auto-detecting if not specified
     x_field, y_field = _auto_detect_spark_bar_fields(data, x, y)
 
+    # "Is x a usable magnitude column?" is a question about the query result,
+    # not about how many bars max_bars happens to paint — validate the full
+    # dataset so the verdict never flips with a display-only style value.
+    _validate_spark_bar_value_field(chart_id, x_field, data)
+
     # Limit data to max_bars
     visible_data = data[:max_bars] if data else []
 
@@ -338,13 +428,17 @@ def _render_spark_bar_svg_core(
     )
     bar_area_width = max(chart_width - left_padding - right_padding, 20)
 
-    # Find max value for scaling
-    max_value = 0.0
-    if visible_data and x_field:
-        for row in visible_data:
-            val = row.get(x_field, 0)
-            if isinstance(val, (int, float)):
-                max_value = max(max_value, float(val))
+    finite_values = (
+        [
+            float(value)
+            for row in visible_data
+            if (value := row.get(x_field)) is not None and math.isfinite(float(value))
+        ]
+        if x_field
+        else []
+    )
+    signed_layout = any(value < 0 for value in finite_values)
+    max_value = max((abs(value) for value in finite_values), default=0.0)
     if max_value == 0:
         max_value = 1.0  # Prevent division by zero
 
@@ -396,6 +490,7 @@ def _render_spark_bar_svg_core(
                 bar_height=int(bar_height),
                 bar_area_width=bar_area_width,
                 max_value=max_value,
+                signed_layout=signed_layout,
                 left_padding=int(left_padding),
                 chart_width=chart_width,
                 text_color=text_color,

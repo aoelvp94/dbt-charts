@@ -2,7 +2,7 @@
 name: board-visual-review
 kind: workflow
 description: >
-  Render a Dataface board to PNG and review the image against a visual-design
+  Render a dbt charts board to PNG and review the image against a visual-design
   checklist using the agent's own vision capability. Catches problems that
   YAML inspection can't see — overlapping text, contrast failures, axis-label
   collisions, whitespace imbalance, KPI precision mismatches. Use when asked
@@ -100,7 +100,7 @@ Same shape as `board-structural-review` so findings merge cleanly:
 **Findings**
 
 - `blocker` `charts.revenue_kpi`: KPI shows `1247392.74` — should be `$1.2M`.
-  Add `style.value.format: currency_compact` to the chart.
+  Add `style.value.format: currency` to the chart.
 - `warning` `charts.regions_bar`: x-axis labels overlap at rendered width.
   Rotate to -45° or shorten labels.
 - `warning` `chart sequence`: revenue trend (most important) sits bottom-right

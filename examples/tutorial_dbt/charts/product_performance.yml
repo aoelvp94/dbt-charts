@@ -2,7 +2,7 @@
 # Analyzes product sales, pricing, and regional performance
 
 title: "Product Performance"
-description: "Product sales analysis with regional breakdown"
+notes: "Product sales analysis with regional breakdown"
 source: dbt_charts_examples
 
 variables:
@@ -116,7 +116,7 @@ charts:
     value: total_revenue
     style:
       value:
-        format: currency
+        format: currency_full
 
   avg_price:
     label: "Avg Price"
@@ -125,7 +125,7 @@ charts:
     value: avg_price
     style:
       value:
-        format: currency
+        format: currency_full
 
   category_revenue:
     style:
@@ -187,10 +187,10 @@ charts:
           format: integer
         revenue:
           label: Revenue
-          format: currency
+          format: currency_full
         price:
           label: Price
-          format: currency
+          format: currency_full
         unique_buyers:
           label: Buyers
 

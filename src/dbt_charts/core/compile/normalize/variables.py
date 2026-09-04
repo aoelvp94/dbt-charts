@@ -408,7 +408,7 @@ def _collect_variables_recursive(board: Board, registry: dict[str, Variable]) ->
             if var_name in RESERVED_VARIABLE_NAMES:
                 raise CompilationError(
                     f"Variable name '{var_name}' is reserved. "
-                    f"It conflicts with a Dataface helper or dbt Jinja builtin. "
+                    f"It conflicts with a dbt charts helper or dbt Jinja builtin. "
                     f"Choose a different name."
                 )
             if var_name in registry:

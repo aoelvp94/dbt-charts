@@ -9,10 +9,10 @@ import json
 import re
 import types
 import warnings
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import date, timedelta
 from functools import cache
-from typing import TYPE_CHECKING, Annotated, TypeAlias, get_args, get_origin
+from typing import TYPE_CHECKING, Annotated, TypeAlias, cast, get_args, get_origin
 
 from importlib_resources import files
 from jsonschema import Draft7Validator
@@ -22,6 +22,7 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     JsonObject,
     JsonValue,
     YamlSchemaCatalog,
+    parse_dotted_version,
 )
 
 if TYPE_CHECKING:
@@ -63,6 +64,16 @@ class UnsupportedSchemaError(MigrationError):
     """The mapping matches none of the retained grammars."""
 
 
+class IncompleteMigrationError(MigrationError):
+    """A recognized grammar's transitions ran but did not reach the current one.
+
+    A sibling of ``UnsupportedSchemaError`` rather than a subclass: to a caller
+    willing to fall back on the parser the two mean opposite things. An
+    unsupported mapping was never old and has no skipped migration to report;
+    this one demonstrably was old and is being handed on unmodernized.
+    """
+
+
 class SchemaVersionTooOldError(MigrationError):
     """Transparent loading no longer supports the recognized schema."""
 
@@ -80,9 +91,19 @@ class Move:
     old_path: YamlKeyPath
     new_path: YamlKeyPath
     # When set, the source value is looked up here before assignment; raises
-    # MigrationError for any value absent from the map (never passes unmapped
-    # values through silently).  Use only for total, lossless value mappings.
+    # MigrationError for any value absent from the map that actually reaches
+    # `_mapped_value` (never passes unmapped values through silently). For an
+    # identity-path Move (old_path == new_path), an absent-from-map value
+    # never reaches that raise at all -- `move_source_locations`'
+    # `_identity_value_would_change` gate leaves it untouched upstream
+    # instead. Use only for total, lossless value mappings.
     # Mapping isn't hashable -- excluded from __hash__, kept in __eq__.
+    #
+    # old_path == new_path is a legal, distinct shape: a value-only remap on a
+    # key that never disappears from any grammar (dbt charts' `theme:` sugar,
+    # whose legal values narrowed without the key itself being renamed away).
+    # `_validate` requires a value_map on that shape -- an identity Move with
+    # none would be a silent no-op.
     value_map: Mapping[MappedScalar, MappedScalar] | None = dataclasses.field(
         default=None, hash=False
     )
@@ -95,18 +116,29 @@ class Deletion:
     source_schema: str
     target_schema: str
     path: YamlKeyPath
+    # Most deletions are mechanical (dead keys nothing ever read) and need no
+    # explanation. Set this only when the field was removed for a reason the
+    # author benefits from hearing, surfaced alongside the tail that actually
+    # fired -- unlike `ConditionalMove.drop_warning`, which is required
+    # because every firing there is unrecoverable data loss with nowhere to
+    # land the value, a bare deletion is routine enough that a required field
+    # would invite filler.
+    reason: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
 class ConditionalMove:
     """A relocation that fires only when its destination's parent mapping already exists.
 
-    Restricted to charts whose ``type`` key equals ``chart_type``, so a
-    same-named field on an unrelated chart family (e.g. callout's own
-    ``style.tone``) is never touched.  ``old_tail``, ``new_tail``, and
-    ``sibling_tail`` are relative to the chart mapping itself (not the full
-    document root) so the rule applies uniformly regardless of nesting depth
-    under rows/cols/grid/tabs.
+    Restricted to charts whose ``type`` key equals ``chart_type`` *and* whose
+    document position is a declared chart of that family in the source
+    grammar (``_declares_chart_type``), so a same-named field on an unrelated
+    chart family (e.g. callout's own ``style.tone``) is never touched, and
+    nor is a free-form value that merely happens to carry a matching
+    ``type:`` key (``Variable.default``, a query data row, ...).  ``old_tail``,
+    ``new_tail``, and ``sibling_tail`` are relative to the chart mapping
+    itself (not the full document root) so the rule applies uniformly
+    regardless of nesting depth under rows/cols/grid/tabs.
 
     When the sibling at ``sibling_tail`` does not exist in the chart, the
     value at ``old_tail`` is dropped (not migrated) and a warning is emitted,
@@ -221,6 +253,25 @@ class MigrationRegistry:
                     f"Move source path {_format_path(move.old_path)!r} is absent from "
                     f"{move.source_schema}"
                 )
+            if move.old_path == move.new_path:
+                if move.value_map is None:
+                    raise MigrationError(
+                        f"Move {_format_path(move.old_path)!r} has old_path == "
+                        "new_path with no value_map; it would rewrite nothing. "
+                        "An identity-path Move only makes sense as a value remap "
+                        "on a key that survives the transition unrenamed -- give "
+                        "it a value_map, or remove the declaration."
+                    )
+            elif _schema_path_exists(target_schema_obj, move.old_path):
+                raise MigrationError(
+                    f"Move source path {_format_path(move.old_path)!r} still exists in "
+                    f"{move.target_schema!r}; the field was not renamed away in this "
+                    "transition. Recognition reads a surviving source path as proof "
+                    "that a document predates the transition, so this would migrate "
+                    "current documents. (Not checked when old_path == new_path: a "
+                    "value-only remap on a key that survives unrenamed is exactly "
+                    "the identity-path shape, not a misfire.)"
+                )
         for deletion in self.deletions:
             source_index = positions.get(deletion.source_schema)
             if source_index is None:
@@ -331,26 +382,121 @@ def suffix_rename_moves(
     """
     old_schema = catalog.schema_for(source_schema)
     new_schema = _resolve_schema(catalog, target_schema)
-    paths = list(_walk_fields(root_model))
-    seen: set[tuple[YamlKeyPath, YamlKeyPath]] = set()
-    result: list[Move] = []
-    for new_tail, old_tail in renames:
-        width = len(new_tail)
-        for path in paths:
-            if len(path) < width or path[-width:] != new_tail:
-                continue
-            old_path = path[:-width] + old_tail
-            key = (old_path, path)
-            if key in seen:
-                continue
-            seen.add(key)
-            if _schema_path_exists(old_schema, old_path) and _schema_path_exists(
-                new_schema, path
-            ):
-                result.append(
-                    Move(source_schema, target_schema, old_path, path, value_map)
-                )
-    return tuple(result)
+    renames = tuple(renames)
+    # `_relative_field_paths` filters to these tails *during* the walk rather
+    # than after materializing every field path -- see its docstring. That's
+    # what keeps this cheap: AuthoredBoard's unfiltered path set is orders of
+    # magnitude larger than the handful a rename call actually matches.
+    tails = frozenset(new_tail for new_tail, _old_tail in renames)
+    try:
+        # Dedupe up front: the walk legitimately re-derives the same absolute
+        # path from different branches (e.g. a type reachable through more
+        # than one union arm at the same position), and every rename tuple
+        # below would otherwise re-scan those duplicates for no benefit --
+        # Move derivation already dedupes by (old_path, path) regardless.
+        paths = list(
+            dict.fromkeys(_relative_field_paths(root_model, frozenset(), tails))
+        )
+        seen: set[tuple[YamlKeyPath, YamlKeyPath]] = set()
+        result: list[Move] = []
+        for new_tail, old_tail in renames:
+            width = len(new_tail)
+            for path in paths:
+                if len(path) < width or path[-width:] != new_tail:
+                    continue
+                old_path = path[:-width] + old_tail
+                key = (old_path, path)
+                if key in seen:
+                    continue
+                seen.add(key)
+                if _schema_path_exists(old_schema, old_path) and _schema_path_exists(
+                    new_schema, path
+                ):
+                    result.append(
+                        Move(source_schema, target_schema, old_path, path, value_map)
+                    )
+        return tuple(result)
+    finally:
+        # `_relative_field_paths` is `@cache`d to avoid re-walking a shared
+        # subtree once per branch within *this* call (see its docstring) --
+        # not to persist across calls. Left uncleared, its memo pinned every
+        # distinct (model, seen) subproblem it had ever computed for the life
+        # of the process -- hundreds of megabytes after a single
+        # `_board_migration_context()` build, for a rename that needed a
+        # vanishing fraction of what it produced. Clearing here bounds the
+        # retention to zero between calls
+        # while keeping the in-call memoization that avoids the combinatorial
+        # blowup board self-nesting (rows/cols/tabs, all mutually reachable)
+        # would otherwise cause.
+        _relative_field_paths.cache_clear()
+
+
+def _apply_identity_moves(
+    mapping: Mapping[str, JsonValue],
+    registry: MigrationRegistry,
+    catalog: YamlSchemaCatalog,
+) -> JsonObject:
+    """Apply every declared identity-path Move's value-only rename.
+
+    An identity-path Move (``old_path == new_path`` — today, only dbt
+    charts' ``theme:`` retired-name rename) has no structural signal the
+    rest of this module's recognition machinery can act on: the key it
+    touches never disappears from any grammar, so ``_recognize``'s
+    JSON-Schema-diff check (``_current_schema_rejections``) can never see
+    one as evidence a document is old. Applied directly here instead,
+    bypassing ``_recognize``'s currency check entirely (see
+    ``prepare_board_mapping``'s cheap ``_theme_value_needs_recheck`` filter
+    for when this function is even called), gated purely by whether
+    ``move_source_locations``' value gate (``_identity_value_would_change``)
+    finds something the value_map would actually rename — a current name or
+    a value the map has never heard of is left completely untouched.
+
+    ``extends:`` gets the identical value-only rename but is deliberately
+    NOT declared as a Move here: unlike ``theme:``, a plain ``extends:``
+    string is genuinely ambiguous with a real project board of the same
+    name, so it cannot be rewritten unconditionally on the raw mapping the
+    way this function does. See ``merge.py``'s ``_retired_theme_redirect``
+    and the module docstring in ``versions/current.py``.
+    """
+    mapping_dict: JsonObject = dict(mapping)
+    identity_moves = [move for move in registry.moves if move.old_path == move.new_path]
+    firing = [
+        move
+        for move in identity_moves
+        if any(move_source_locations(mapping_dict, move, catalog))
+    ]
+    if not firing:
+        return mapping_dict
+    result = copy.deepcopy(mapping_dict)
+    for move in firing:
+        _apply_move(result, move, catalog)
+    warnings.warn(
+        "dbt charts migrated this YAML in memory; `dct migrate` may be able "
+        "to update the file.",
+        SchemaMigrationWarning,
+        stacklevel=3,
+    )
+    return result
+
+
+def _theme_value_needs_recheck(mapping: Mapping[str, JsonValue]) -> bool:
+    """Cheap pre-filter: might a literal ``theme:`` value need an
+    identity-path Move, without building the migration registry to find out?
+
+    Restricted to the exact shape a retired/renamed built-in theme name
+    takes: a plain string not already a current ``ThemeName`` (checked
+    against the generated Literal directly — no registry, no catalog).
+    Over-triggering here (a path ref, a garbage value) only costs one extra,
+    `@cache`d ``_board_migration_context()`` call: the real precision comes
+    from ``move_source_locations``' value gate inside
+    ``_apply_identity_moves``, not from this filter. Under-triggering would
+    be the actual bug — this must never return False for a genuinely
+    retired name.
+    """
+    from dbt_charts.core.compile.models.schema_names import ThemeName
+
+    theme_value = mapping.get("theme")
+    return isinstance(theme_value, str) and theme_value not in get_args(ThemeName)
 
 
 def prepare_board_mapping(
@@ -366,13 +512,28 @@ def prepare_board_mapping(
     ``AuthoredBoard`` for a real, standalone board. Callers handling a
     patch-shaped fragment (a theme YAML's ``style:``-only content, a
     meta.yaml override, an extends target) must pass ``BoardPatch`` —
-    ``AuthoredBoard`` carries a "must have layout/chart/text/title/description"
+    ``AuthoredBoard`` carries a "must have layout/chart/text/title/notes"
     invariant that no patch can ever satisfy, which would make every current
     patch look like a migration candidate.
+
+    Identity-path Moves are applied first, gated by the cheap
+    ``_theme_value_needs_recheck`` filter so a board with no retired ``theme:``
+    value never pays for building the migration registry
+    (``test_prepare_mapping_current_schema_patch_takes_fast_path_under_boardpatch``
+    pins that) — see ``_apply_identity_moves``'s docstring for why this shape
+    cannot go through the currency check below at all. Every other declared
+    Move, Deletion, and ConditionalMove is a genuine grammar transition: a
+    retired *field* always fails pydantic too (``extra="forbid"``), so the
+    currency check below reliably routes it into ``migrate_mapping``, which
+    lazily builds the same (``@cache``d) registry.
     """
     from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 
     currency_model = model if model is not None else AuthoredBoard
+
+    if _theme_value_needs_recheck(mapping):
+        catalog, registry = _board_migration_context()
+        mapping = _apply_identity_moves(mapping, registry, catalog)
 
     try:
         currency_model.model_validate(mapping)
@@ -391,15 +552,62 @@ def prepare_board_mapping(
             allow_expired=allow_expired,
         )
     except UnsupportedSchemaError:
-        # Current Pydantic models admit authoring shorthands that JSON Schema
-        # cannot express. Let the parser validate those after recognition fails.
+        # No boundary matched and the mapping does not satisfy the live schema
+        # either. Usually that means it was never old and there is no skipped
+        # migration to report — but not always: a deletion or conditional move
+        # the positional gate refuses can leave a genuinely old document
+        # matching nothing, and it arrives here too. The parser owns the
+        # diagnostic either way.
+        return dict(mapping)
+    except SchemaVersionTooOldError as error:
+        # Old enough that transparent migration is not offered at all — no
+        # migration was attempted, so "could not finish" would misdescribe it.
+        warnings.warn(
+            f"dbt charts did not migrate this YAML. {error} Reporting it against "
+            "the current schema instead — errors below may name retired syntax "
+            "rather than anything you just changed.",
+            SchemaMigrationWarning,
+            stacklevel=2,
+        )
+        return dict(mapping)
+    except MigrationError as error:
+        # The document is old and the migration could not finish: the schema
+        # gate rejected the result (Pydantic admits authoring shorthands JSON
+        # Schema cannot express), two spellings of a renamed key collided, or a
+        # value would not map.
+        #
+        # Every one of these ends the same way — hand the original to the parser
+        # and let it produce a located diagnostic. What must never happen is
+        # raising past here: this is the face-loading path, so an escaping
+        # migration error is a traceback out of `dct validate` for an author
+        # who is mid-migration, which is precisely who this machinery serves.
+        # Nor may it be silent: an unannounced skip is why a face that had
+        # merely gone stale failed with errors naming fields nobody touched.
+        warnings.warn(
+            f"dbt charts could not finish migrating this YAML. {error} "
+            "Reporting it against the current schema instead — errors below may "
+            "name retired syntax rather than anything you just changed.",
+            SchemaMigrationWarning,
+            stacklevel=2,
+        )
         return dict(mapping)
 
 
 def migrate_board_yaml_text(yaml_text: str) -> str:
-    """Rewrite one retained board grammar to the current grammar."""
+    """Rewrite one retained board grammar to the latest frozen (released) grammar.
+
+    Capped at ``catalog.latest.version``, never the live schema: this is the
+    on-disk rewrite path (``dct migrate``), so it must never write syntax no
+    released dbt charts recognizes yet. See ``migrate_yaml_text``'s
+    ``stop_target`` docstring.
+    """
     catalog, registry = _board_migration_context()
-    return migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
+    return migrate_yaml_text(
+        yaml_text,
+        catalog=catalog,
+        registry=registry,
+        stop_target=catalog.latest.version,
+    )
 
 
 @cache
@@ -425,7 +633,30 @@ def _board_migration_context() -> tuple[YamlSchemaCatalog, MigrationRegistry]:
     so a pending ``Move`` validates its destination path against it exactly
     as a pending ``Deletion`` validates the absence of its path against it,
     and a pending ``ConditionalMove`` validates both tails the same way.
+
+    This function is itself ``@cache``d, so its ``finally`` clause runs at
+    most once per process -- clearing here only accounts for the entries
+    this one build's ``_schema_path_exists``/``_schema_has_tail`` calls
+    (module ``moves()``/``deletions()`` calls plus ``MigrationRegistry``'s
+    own ``_validate``) leave behind. ``_schema_branches_cached`` is reached
+    again later, at document-migration time, via ``_declared_names``/
+    ``_declares_tail``/``_child_positions``, and those entries are never
+    cleared -- so this is not the boundary that keeps the cache from
+    persisting for the life of the process. Retention stays bounded anyway,
+    same reasoning as ``suffix_rename_moves`` clearing
+    ``_relative_field_paths`` on return: the branch space is finite (this
+    one build alone produces ~12.4k ``(schema, node, seen)`` triples / ~4 MB
+    that the registry no longer needs once it is returned), so clearing here
+    just keeps that one-time cost from sitting unused in memory rather than
+    bounding total growth.
     """
+    try:
+        return _build_board_migration_context()
+    finally:
+        _schema_branches_cached.cache_clear()
+
+
+def _build_board_migration_context() -> tuple[YamlSchemaCatalog, MigrationRegistry]:
     from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
         load_yaml_schema_catalog,
     )
@@ -510,7 +741,7 @@ def _board_has_historical_schemas() -> bool:
     )
     schemas = manifest.get("schemas") if isinstance(manifest, dict) else None
     if not isinstance(schemas, list):
-        raise ValueError("Dataface YAML schema manifest has no schemas.")
+        raise ValueError("dbt charts YAML schema manifest has no schemas.")
     return len(schemas) > 1
 
 
@@ -528,7 +759,7 @@ def migrate_mapping(
     support window, while the explicit migration command may rewrite any
     retained schema.
     """
-    identifier = _recognize(mapping, catalog)
+    identifier = recognized = _recognize(mapping, catalog, registry)
     if identifier == _CURRENT:
         return copy.deepcopy(dict(mapping))
     # The latest frozen schema is always transparently migratable — it is the
@@ -538,6 +769,7 @@ def migrate_mapping(
         _enforce_support_window(identifier, catalog, today=today)
 
     result = copy.deepcopy(dict(mapping))
+    drop_warnings: list[str] = []
     while identifier != _CURRENT:
         moves = registry.transition_from(identifier)
         deletions = registry.deletions_from(identifier)
@@ -545,16 +777,10 @@ def migrate_mapping(
         if not moves and not deletions and not cond_moves:
             break
         for move in moves:
-            _apply_move(result, move)
-        for deletion in deletions:
-            _delete_tail_recursive(result, deletion.path)
+            _apply_move(result, move, catalog)
+        drop_warnings.extend(_apply_deletions(result, deletions, catalog))
         for cond_move in cond_moves:
-            drop_warnings = _apply_conditional_move(result, cond_move)
-            for msg in drop_warnings:
-                # Always emit drop warnings regardless of allow_expired: a dropped
-                # value is data loss, not a routine "file needs rewriting" notice.
-                # Authors running dct migrate especially need to see this.
-                warnings.warn(msg, SchemaMigrationWarning, stacklevel=2)
+            drop_warnings.extend(_apply_conditional_move(result, cond_move, catalog))
         identifier = (moves or deletions or cond_moves)[0].target_schema
 
     # A transition's declared moves may not cover every field a source schema
@@ -564,16 +790,108 @@ def migrate_mapping(
     # the current identifier.
     current_errors = _current_schema_rejections(result, catalog)
     if current_errors:
-        raise _unsupported_schema_error(current_errors[0])
+        # Held until here on purpose: the caller discards `result` on this raise
+        # and keeps the original mapping, so nothing was actually dropped. A
+        # data-loss warning for a value still sitting in the document sends the
+        # author hunting for damage that does not exist.
+        raise _incomplete_migration_error(recognized, current_errors[0])
+
+    for msg in drop_warnings:
+        # Emitted regardless of allow_expired: a dropped value is data loss, not
+        # a routine "file needs rewriting" notice. Authors running dct migrate
+        # especially need to see this.
+        warnings.warn(msg, SchemaMigrationWarning, stacklevel=2)
 
     if not allow_expired:
         warnings.warn(
-            "Dataface migrated this YAML in memory; run `dct migrate` to update "
-            "the file.",
+            "dbt charts migrated this YAML in memory; `dct migrate` may be able "
+            "to update the file.",
             SchemaMigrationWarning,
             stacklevel=2,
         )
     return result
+
+
+def _should_stamp_schema_version(current: JsonValue | None, target: str) -> bool:
+    """Whether ``dct migrate`` should (re)write ``_schema_version`` to *target*.
+
+    ``False`` (no write needed) only when the existing value already equals
+    *target*, or is a well-formed string (``parse_dotted_version``, shared
+    with the diagnostic hint's own comparison so the two agree on what
+    "malformed" means) and genuinely newer than *target* -- overwriting a
+    newer value would erase the one signal
+    ``yaml_error_formatter._newer_schema_version_hint`` reads. Any other
+    string -- absent, older, or malformed -- gets stamped. (A non-string
+    value, e.g. an unquoted YAML float, never reaches here in practice:
+    ``migrate_yaml_text``'s completeness check, which runs earlier in the
+    same call, already rejects a document carrying one -- no frozen or live
+    schema declares ``_schema_version`` as anything but a string.)
+    """
+    if not isinstance(current, str) or current == target:
+        return current != target
+    current_parts = parse_dotted_version(current)
+    target_parts = parse_dotted_version(target)
+    if current_parts is None or target_parts is None:
+        return True
+    return current_parts <= target_parts
+
+
+_STAMP_LINE_COMMENT = "  # written automatically by dct migrate"
+
+
+def _mark_stamp_line_auto_written(yaml_text: str) -> str:
+    """Append an explanatory comment to the freshly (re)written ``_schema_version:`` line.
+
+    Only called right after ``set_board_values`` wrote or corrected the stamp
+    this call, so the top-level, unindented ``_schema_version:`` line is
+    always present and unique -- a board never declares the field twice, and
+    no other top-level key can share its name. A trailing YAML comment is
+    invisible to the parser, so this never changes the value the completeness
+    check already verified.
+    """
+    lines = yaml_text.split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("_schema_version:"):
+            lines[i] = line + _STAMP_LINE_COMMENT
+            break
+    return "\n".join(lines)
+
+
+def _verify_reachable_via_moves_and_deletions(
+    mapping: JsonObject,
+    catalog: YamlSchemaCatalog,
+    registry: MigrationRegistry,
+    identifier: str,
+) -> tuple[str, ...]:
+    """Continue an in-memory walk from *identifier* to ``_CURRENT``, Move/Deletion only.
+
+    Used to verify a capped ``migrate_yaml_text`` result is on a genuinely
+    completable path (see its docstring) without pretending the on-disk
+    writer is more capable than it is: the writer's own loop applies
+    ``Move``/``Deletion`` only, never ``ConditionalMove`` (it can't express one
+    positionally in text). Calling ``migrate_mapping`` here instead -- which
+    does resolve ``ConditionalMove`` -- would make a board whose only
+    remaining retired construct needs one verify clean while the actual
+    written file still carries it untouched, exactly the "raise rather than
+    silently leave or corrupt" guarantee
+    ``test_migrate_yaml_text_raises_for_kpi_with_style_tone`` pins for the
+    uncapped path. Getting stuck here (a ``ConditionalMove``-only construct,
+    or a genuinely undeclared one) is reported the same way that test expects.
+
+    Returns the rejection strings from ``_current_schema_rejections`` -- empty
+    means genuinely reachable and valid.
+    """
+    result = copy.deepcopy(mapping)
+    while identifier != _CURRENT:
+        moves = registry.transition_from(identifier)
+        deletions = registry.deletions_from(identifier)
+        if not moves and not deletions:
+            break
+        for move in moves:
+            _apply_move(result, move, catalog)
+        _apply_deletions(result, deletions, catalog)
+        identifier = (moves or deletions)[0].target_schema
+    return _current_schema_rejections(result, catalog)
 
 
 def migrate_yaml_text(
@@ -581,6 +899,7 @@ def migrate_yaml_text(
     *,
     catalog: YamlSchemaCatalog,
     registry: MigrationRegistry,
+    stop_target: str | None = None,
 ) -> str:
     """Rewrite declared moves while preserving unrelated YAML text.
 
@@ -589,10 +908,46 @@ def migrate_yaml_text(
     block-mapping leaves, and it renames a key in place when the move is a
     pure rename (old and new path share the same parent -- only the final
     segment's spelling differs). A rename never relocates content, so it
-    carries no restriction on the value's shape -- an entire nested block
-    renames as cleanly as a scalar. Any other non-scalar move (a genuine
-    relocation to a different parent) fails instead of reformatting a board
-    through a YAML dump/load round trip.
+    carries no restriction on the value's shape -- an entire nested block, a
+    multi-line `|`/`>` block scalar, or a plain single-line scalar all rename
+    as cleanly, byte-identical value included. Any other non-scalar move (a
+    genuine relocation to a different parent) fails instead of reformatting a
+    board through a YAML dump/load round trip.
+
+    ``stop_target``, when given, stops the walk at that frozen version instead
+    of ``_CURRENT`` -- the pending ``catalog.latest.version -> _CURRENT``
+    boundary is never applied. This is how ``dct migrate`` (via
+    ``migrate_board_yaml_text``) avoids writing syntax no released dbt charts
+    recognizes yet; callers that want the full walk to the live schema
+    (recognition tests, in-memory preview) pass nothing. ``stop_target`` also
+    gates the ``_schema_version`` stamp: a file is only ever stamped with a
+    frozen, real version number, never with ``_CURRENT`` -- and only
+    alongside a real structural change (``staged != raw``), never as the
+    sole reason to rewrite an otherwise-untouched file. A structurally
+    current board is always returned byte-identical, stamp included. A
+    written or corrected stamp lands on the file's first line, with a
+    trailing comment naming ``dct migrate`` as the author (see
+    ``_mark_stamp_line_auto_written``).
+
+    The capped result is not itself validated against the frozen target's
+    schema -- that schema is closed and predates every field added since the
+    freeze (including ``_schema_version`` itself), so a legitimately current
+    field would fail it even though nothing is actually wrong. Instead, a
+    throwaway copy is walked the *rest* of the way to ``_CURRENT`` in memory,
+    using only Move/Deletion (never ConditionalMove -- see
+    ``_verify_reachable_via_moves_and_deletions``, not ``migrate_mapping``:
+    the latter also resolves ConditionalMove, which this text writer cannot
+    express, so using it here would verify a document the writer itself can
+    never produce), and checked against the live schema; only the
+    frozen-capped result is written. This proves the file is on a genuinely
+    completable path without requiring it to already look current-shaped --
+    exactly the state a capped, mid-migration file is expected to be in.
+
+    Emits a ``SchemaMigrationWarning`` per ``Deletion.reason`` whose tail
+    actually fired -- the same mechanism ``migrate_mapping`` uses for its
+    drop/deletion notices, but without the generic "migrated in memory"
+    notice, which does not apply here: this function is the file rewrite
+    itself, not a stand-in for one.
     """
     from dbt_charts.core.compile.authoring.yaml_patch import (
         rename_key_at_path,
@@ -601,20 +956,27 @@ def migrate_yaml_text(
     from dbt_charts.core.compile.parse.parser import load_yaml_mapping
 
     raw = load_yaml_mapping(yaml_text)
-    identifier = _recognize(raw, catalog)
+    identifier = recognized = _recognize(raw, catalog, registry)
     if identifier == _CURRENT:
+        # A structurally-current file is never touched, stamp included: the
+        # stamp is written only alongside a real change (see the end of this
+        # function), never as the sole reason to rewrite an otherwise-
+        # untouched file.
         return yaml_text
 
     updates: dict[str, ScalarLeaf] = {}
     removals: set[str] = set()
+    deletion_reasons: list[str] = []
     staged = copy.deepcopy(raw)
-    while identifier != _CURRENT:
+    while identifier != _CURRENT and identifier != stop_target:
         moves = registry.transition_from(identifier)
         deletions = registry.deletions_from(identifier)
         if not moves and not deletions:
             break
         for move in moves:
-            for parent, key, bindings in list(_source_locations(staged, move.old_path)):
+            for parent, key, bindings in list(
+                move_source_locations(staged, move, catalog)
+            ):
                 if isinstance(parent, list):
                     raise MigrationError(
                         f"Cannot rewrite {_format_path(move.old_path)!r}: "
@@ -625,41 +987,75 @@ def migrate_yaml_text(
                 value = parent[key]
                 source = _substitute_wildcards(move.old_path, bindings)
                 destination = _substitute_wildcards(move.new_path, bindings)
-                if value is None or not isinstance(value, (str, int, float, bool)):
-                    if source[:-1] != destination[:-1]:
-                        raise MigrationError(
-                            f"Cannot rewrite {_format_path(move.old_path)!r}: "
-                            "only scalar block-mapping moves or same-position "
-                            "key renames are supported; migrate this field "
-                            "manually."
-                        )
-                    # A rename never relocates content -- any value shape
-                    # (including this nested mapping/list) is safe to
-                    # rewrite in place; only the key token changes.
+                # A pure rename (same parent, only the final segment's spelling
+                # differs) never relocates content, so it carries no
+                # restriction on the value's shape -- a multi-line block
+                # scalar renames as cleanly as a single-line one or a nested
+                # mapping. Checked before the scalar branch below, not after:
+                # a value_map still needs the scalar setter, since the value
+                # itself changes (e.g. html_policy's bool -> string), not just
+                # its key.
+                if source[:-1] == destination[:-1] and move.value_map is None:
                     yaml_text = rename_key_at_path(
                         yaml_text, ".".join(source), destination[-1]
                     )
-                else:
-                    if move.value_map is not None:
-                        value = _mapped_value(move.value_map, move.old_path, value)
-                    updates[".".join(destination)] = value
+                    continue
+                if value is None or not isinstance(value, (str, int, float, bool)):
+                    raise MigrationError(
+                        f"Cannot rewrite {_format_path(move.old_path)!r}: "
+                        "only scalar block-mapping moves or same-position "
+                        "key renames are supported; migrate this field "
+                        "manually."
+                    )
+                if move.value_map is not None:
+                    value = _mapped_value(move.value_map, move.old_path, value)
+                updates[".".join(destination)] = value
+                # An identity-path Move (source == destination) rewrites the
+                # key's value in place -- it must not also be queued as a
+                # removal, or the removals/updates dicts below would collide
+                # on the same key and the merge would delete the rewritten
+                # value instead of setting it.
+                if source != destination:
                     removals.add(".".join(source))
-            _apply_move(staged, move)
+            _apply_move(staged, move, catalog)
+        deletion_reasons.extend(_apply_deletions(staged, deletions, catalog))
         for deletion in deletions:
-            _delete_tail_recursive(staged, deletion.path)
             yaml_text = _delete_tail_in_yaml_text(yaml_text, deletion.path)
         identifier = (moves or deletions)[0].target_schema
 
-    # See migrate_mapping's identical check: a transition's declared moves
-    # may not cover every field the source schema allowed.
-    current_errors = _current_schema_rejections(staged, catalog)
+    # Uncapped, staged already reached _CURRENT: check it directly against
+    # the live schema. Capped, staged deliberately stops short of _CURRENT,
+    # so verify a throwaway copy can still reach one (see
+    # _verify_reachable_via_moves_and_deletions's docstring).
+    if stop_target is None:
+        current_errors = _current_schema_rejections(staged, catalog)
+    else:
+        current_errors = _verify_reachable_via_moves_and_deletions(
+            staged, catalog, registry, identifier
+        )
     if current_errors:
-        raise _unsupported_schema_error(current_errors[0])
+        raise _incomplete_migration_error(recognized, current_errors[0])
+
+    # staged != raw: only stamp a file this call actually changed something
+    # in. A structurally-current file (0 loop iterations, staged untouched)
+    # must never be rewritten for the stamp alone -- dct migrate on an
+    # already-current project stays a true no-op, and a file is never
+    # touched solely to add a key the frozen grammar it names does not
+    # itself declare.
+    if (
+        stop_target is not None
+        and staged != raw
+        and _should_stamp_schema_version(staged.get("_schema_version"), stop_target)
+    ):
+        staged["_schema_version"] = stop_target
+        updates["_schema_version"] = stop_target
 
     final_text = set_board_values(
         yaml_text,
         {**updates, **dict.fromkeys(removals)},
     )
+    if "_schema_version" in updates:
+        final_text = _mark_stamp_line_auto_written(final_text)
     # Verify the text-level rewrite produced the same result as the in-memory
     # migration. The text editor cannot handle flow-style mappings (the regex
     # only matches block-mapping key lines) or block-scalar content (which can
@@ -671,43 +1067,245 @@ def migrate_yaml_text(
         raise MigrationError(
             "YAML text rewrite diverged from in-memory migration; "
             "the file may use YAML constructs the text editor cannot handle "
-            "(flow-style mappings, block scalars, YAML anchors, quoted keys) "
-            "— migrate this file manually."
+            "(flow-style mappings, block scalars, YAML anchors, quoted keys), "
+            "or a deleted key may sit where the text editor matches its name "
+            "but the schema does not declare it — migrate this file manually."
         )
+    # Held until here on the same reasoning as migrate_mapping: the file is
+    # only actually written by this text once the caller sees a clean return,
+    # so a reason attached to a rewrite that raised above would describe
+    # damage that was never committed to disk.
+    for msg in deletion_reasons:
+        warnings.warn(msg, SchemaMigrationWarning, stacklevel=2)
     return final_text
 
 
-def _recognize(mapping: Mapping[str, JsonValue], catalog: YamlSchemaCatalog) -> str:
-    """Return the schema identifier that best matches *mapping*.
+def _recognize(
+    mapping: Mapping[str, JsonValue],
+    catalog: YamlSchemaCatalog,
+    registry: MigrationRegistry,
+) -> str:
+    """Return the grammar whose transition chain *mapping* enters at.
 
-    Returns ``_CURRENT`` when the mapping already satisfies the live (unreleased)
-    schema.  Returns a frozen version string when the mapping satisfies that
-    frozen release.  Raises ``UnsupportedSchemaError`` when no known schema fits.
+    Recognition asks which retired constructs are present, not whether the whole
+    document validates under a frozen grammar. Whole-document validation answered
+    a stronger question than migration needs and got it wrong in one direction:
+    anything a frozen grammar had never seen scored as a mismatch, so every key
+    added since the newest freeze silently disabled migration for the file.
+
+    A document the live grammar already accepts is current by definition and is
+    never probed. That gate is not the bug this replaced — that one was the
+    *frozen* grammar's whole-document match — and it is load-bearing here: the
+    appliers match key chains, so a probe can find something to rewrite in a
+    document where nothing is actually retired.
+
+    Otherwise, oldest grammar first: a document carrying constructs from two
+    eras has to enter the chain at the older one. Matching nothing usually means
+    the document is neither old nor current — but a retired construct the
+    positional gate (shared by ``Deletion`` and ``ConditionalMove``) refuses to
+    act on also matches nothing, so this is "no transition applies", not
+    "nothing retired is here".
     """
     current_errors = _current_schema_rejections(mapping, catalog)
     if not current_errors:
         return _CURRENT
-    for identifier in catalog.versions:
-        errors = list(
-            Draft7Validator(catalog.schema_for(identifier)).iter_errors(mapping)
-        )
-        if not errors:
+    for identifier in reversed(catalog.versions):
+        if _transition_applies(mapping, identifier, catalog, registry):
             return identifier
     raise _unsupported_schema_error(current_errors[0])
+
+
+def _transition_applies(
+    mapping: Mapping[str, JsonValue],
+    identifier: str,
+    catalog: YamlSchemaCatalog,
+    registry: MigrationRegistry,
+) -> bool:
+    """Whether *identifier*'s declared transition would find anything to rewrite.
+
+    A pure dry run: read-only, no copy of *mapping*, and returns on the first
+    Move/Deletion/ConditionalMove that would fire. Each kind is asked via the
+    same read-only existence check its real applier uses internally
+    (``_source_locations``, ``_tail_present``, ...) rather than re-deriving
+    what a retired construct looks like — which is what keeps recognition and
+    application from ever disagreeing, without paying to build and mutate a
+    throwaway copy of the whole document to find out.
+
+    A hit is evidence the document predates the transition only while each kind
+    of declaration cannot fire on a current document, and the three get there
+    differently. ``Move`` and ``Deletion`` are checked structurally: their source
+    path must be gone from the target grammar (``MigrationRegistry._validate``).
+    ``ConditionalMove`` is not, and cannot be — ``("style", "tone")`` survives
+    into the live grammar on callout charts. What separates it is the
+    ``chart_type`` scoping in ``_conditional_move_would_fire``: it fires only
+    on the family the rule names, at a document position the source grammar
+    actually declares as that family (``_declares_chart_type``), where the
+    tail really is retired.
+
+    That scoping is positional too: a free-form mapping that merely happens to
+    carry ``type: kpi`` — a query data row, say — does not match, because its
+    position declares no chart at all. It is not identical to ``Deletion``'s
+    gate, which additionally narrows through ``_matching_positions`` first;
+    see ``_deletion_would_fire`` for why ConditionalMove must not. Neither
+    fires on a bare ``type:`` key alone.
+
+    Both structural checks look one grammar ahead, so a path retired at one
+    boundary and reintroduced two boundaries later would slip through. No
+    declaration does that today; a reintroduction is the thing to look for if
+    recognition ever starts migrating a current document.
+
+    A Move whose source path exists always changes something when actually
+    applied — either the value relocates, or a conflicting destination raises.
+    A ConditionalMove whose old tail is present at a declared chart position
+    is the same: it lands, drops with a warning, or conflicts and raises.
+    Either outcome still means "this transition applies", so existence alone
+    is decisive and neither check needs to know which outcome would follow.
+    """
+    # mapping is always a concrete dict at every real call site (board YAML
+    # always parses to one); Mapping is this function's read-only parameter
+    # type, not the value's actual shape -- see _source_locations et al.,
+    # which narrow the same way on isinstance(node, dict).
+    document = cast(JsonObject, mapping)  # type-state: cast — always a dict here
+    for move in registry.transition_from(identifier):
+        if any(move_source_locations(document, move, catalog)):
+            return True
+    deletions = registry.deletions_from(identifier)
+    if deletions:
+        source_schema = catalog.schema_for(deletions[0].source_schema)
+        live = catalog.current_schema
+        tails = [deletion.path for deletion in deletions]
+        if _deletion_would_fire(
+            document, tails, source_schema, [source_schema], live, [live]
+        ):
+            return True
+    for cond_move in registry.conditional_moves_from(identifier):
+        schema = catalog.schema_for(cond_move.source_schema)
+        if _conditional_move_would_fire(document, cond_move, schema, [schema]):
+            return True
+    return False
+
+
+def _deletion_would_fire(
+    node: JsonValue,
+    tails: Sequence[YamlKeyPath],
+    schema: JsonObject,
+    positions: Sequence[JsonObject],
+    live: JsonObject,
+    live_positions: Sequence[JsonObject],
+) -> bool:
+    """Read-only mirror of ``_delete_tails_recursive``: would any tail actually fire?
+
+    Same schema-position walk (``_matching_positions``, ``_declares_tail``),
+    checked with ``_tail_present`` in place of the pop — nothing here mutates
+    *node*, so the same walk serves as both appliers' dry run.
+    """
+    if isinstance(node, dict):
+        matching = _matching_positions(schema, positions, live, live_positions, node)
+        if any(
+            _declares_tail(schema, matching, tail) and _tail_present(node, tail)
+            for tail in tails
+        ):
+            return True
+        return any(
+            _deletion_would_fire(
+                child,
+                tails,
+                schema,
+                _child_positions(schema, positions, key),
+                live,
+                _child_positions(live, live_positions, key),
+            )
+            for key, child in node.items()
+        )
+    if isinstance(node, list):
+        item_positions = _item_positions(schema, positions)
+        live_items = _item_positions(live, live_positions)
+        return any(
+            _deletion_would_fire(item, tails, schema, item_positions, live, live_items)
+            for item in node
+        )
+    return False
+
+
+def _conditional_move_would_fire(
+    node: JsonValue,
+    rule: ConditionalMove,
+    schema: JsonObject,
+    positions: Sequence[JsonObject],
+) -> bool:
+    """Read-only mirror of ``_apply_conditional_move_recursive``: would *rule* fire?
+
+    Mirrors ``_try_conditional_move_at_chart``'s existence check, not its
+    mutation: a declared chart of ``rule.chart_type`` with ``old_tail``
+    present always changes something once actually applied, so presence alone
+    is decisive (see ``_transition_applies``).
+    """
+    if isinstance(node, dict):
+        if (
+            node.get("type") == rule.chart_type
+            and _declares_chart_type(schema, positions, rule.chart_type)
+            and _tail_present(node, rule.old_tail)
+        ):
+            return True
+        return any(
+            _conditional_move_would_fire(
+                child, rule, schema, _child_positions(schema, positions, key)
+            )
+            for key, child in node.items()
+        )
+    if isinstance(node, list):
+        item_positions = _item_positions(schema, positions)
+        return any(
+            _conditional_move_would_fire(item, rule, schema, item_positions)
+            for item in node
+        )
+    return False
 
 
 def _current_schema_rejections(
     mapping: Mapping[str, JsonValue], catalog: YamlSchemaCatalog
 ) -> tuple[str, ...]:
-    return tuple(
-        error.message
-        for error in Draft7Validator(catalog.current_schema).iter_errors(mapping)
-    )
+    """Why the live grammar rejects *mapping*, each rejection located.
+
+    Draft7 reports a composite failure by dumping the offending node, which
+    reads as an unplaced blob of YAML in a diagnostic. The location is the half
+    an author can act on, so it leads.
+    """
+    rejections: list[str] = []
+    for error in Draft7Validator(catalog.current_schema).iter_errors(mapping):
+        # A composite failure reports by dumping the whole offending node, so a
+        # rejection at `charts` would otherwise serialize every chart into the
+        # message. Name the keyword and let the location carry the rest.
+        #
+        # Deliberately not descending into `error.context` for a more specific
+        # sub-error: the authored unions are `anyOf: [<real thing>, {type: null}]`
+        # over a discriminated chart family, and both obvious rankings pick the
+        # wrong arm — deepest-path lands on an arbitrary family (`'bar' is not
+        # one of ['line']`) and `best_match` prefers the null arm (`is not of
+        # type 'null'`). A container-level location that is true beats a
+        # field-level one that is confidently wrong.
+        location = ".".join(str(part) for part in error.absolute_path)
+        detail = (
+            f"does not match any accepted {error.validator} form"
+            if error.validator in ("anyOf", "oneOf", "allOf")
+            else error.message
+        )
+        rejections.append(f"{location}: {detail}" if location else detail)
+    return tuple(rejections)
 
 
 def _unsupported_schema_error(current_error: str) -> UnsupportedSchemaError:
     return UnsupportedSchemaError(
         f"Unsupported YAML syntax; current schema rejected it: {current_error}"
+    )
+
+
+def _incomplete_migration_error(
+    recognized: str, current_error: str
+) -> IncompleteMigrationError:
+    return IncompleteMigrationError(
+        f"Recognized schema {recognized} and applied its migration, but the "
+        f"result still fails the current schema at {current_error}."
     )
 
 
@@ -734,15 +1332,37 @@ def _subtract_months(value: date, months: int) -> date:
     return date(year, month, min(value.day, last_day))
 
 
-def _apply_conditional_move(result: JsonObject, rule: ConditionalMove) -> list[str]:
+def _apply_conditional_move(
+    result: JsonObject, rule: ConditionalMove, catalog: YamlSchemaCatalog
+) -> list[str]:
     """Apply rule to result, returning a list of drop-warning messages.
 
     Recurses through the entire document so nested boards under rows/cols/grid
     are covered.  Warnings are collected (not emitted here) so the caller
     controls stacklevel.
+
+    Positionally gated like ``Deletion``: a dict only fires when the *source*
+    grammar declares a chart of ``rule.chart_type`` at that exact position
+    (``_declares_chart_type``), not merely because the dict happens to carry a
+    ``type`` key equal to ``chart_type``. Without the gate, any free-form
+    value shaped like a chart -- e.g. ``Variable.default`` -- gets silently
+    rewritten.
+
+    Gated on the raw descended schema positions, not whole-subtree validity
+    (``_matching_positions``): "does the grammar declare a chart of this
+    family here?" doesn't need the node to fully validate. Whole-subtree
+    validity fails closed on a value *form* that widened since the source
+    grammar froze (e.g. ``KpiChart.link`` gaining a ``false`` arm), which
+    ``_strip_post_freeze`` cannot rescue -- it only forgives keys the frozen
+    grammar doesn't name, not keys whose accepted value shape changed. That
+    would silently re-disable migration for a post-freeze board -- a trap
+    that has already recurred twice for ``Deletion``.
     """
+    schema = catalog.schema_for(rule.source_schema)
     drop_warnings: list[str] = []
-    _apply_conditional_move_recursive(result, rule, drop_warnings, last_key="<root>")
+    _apply_conditional_move_recursive(
+        result, rule, drop_warnings, "<root>", schema, [schema]
+    )
     return drop_warnings
 
 
@@ -751,17 +1371,41 @@ def _apply_conditional_move_recursive(
     rule: ConditionalMove,
     drop_warnings: list[str],
     last_key: str,
+    schema: JsonObject,
+    positions: Sequence[JsonObject],
 ) -> None:
-    """Walk node recursively; act on dicts whose ``type`` matches rule.chart_type."""
+    """Walk node recursively; act on dicts declared as a ``rule.chart_type`` chart here.
+
+    ``positions`` are descended in step with the document, exactly as
+    ``_delete_tails_recursive`` does, so ``_declares_chart_type`` can tell a
+    chart position from an open free-form one.
+    """
     if isinstance(node, dict):
-        if node.get("type") == rule.chart_type:
+        if node.get("type") == rule.chart_type and _declares_chart_type(
+            schema, positions, rule.chart_type
+        ):
             _try_conditional_move_at_chart(node, rule, drop_warnings, last_key)
         # Always recurse into children — handles nested boards and sibling charts.
         for key in list(node.keys()):
-            _apply_conditional_move_recursive(node[key], rule, drop_warnings, key)
+            _apply_conditional_move_recursive(
+                node[key],
+                rule,
+                drop_warnings,
+                key,
+                schema,
+                _child_positions(schema, positions, key),
+            )
     elif isinstance(node, list):
+        item_positions = _item_positions(schema, positions)
         for item in node:
-            _apply_conditional_move_recursive(item, rule, drop_warnings, last_key)
+            _apply_conditional_move_recursive(
+                item,
+                rule,
+                drop_warnings,
+                last_key,
+                schema,
+                item_positions,
+            )
 
 
 def _try_conditional_move_at_chart(
@@ -829,23 +1473,473 @@ def _try_conditional_move_at_chart(
         drop_warnings.append(rule.drop_warning.format(chart=chart_id))
 
 
-def _delete_tail_recursive(node: JsonValue, tail: YamlKeyPath) -> None:
-    """Delete tail at every position in node, recursing through dicts and lists.
+def _apply_deletions(
+    document: JsonObject,
+    deletions: Sequence[Deletion],
+    catalog: YamlSchemaCatalog,
+) -> list[str]:
+    """Strip every declared deletion in one document walk.
+
+    All of a boundary's deletions share its source grammar, so one walk covers
+    them: the schema descent is what costs, and re-walking per tail re-expands
+    the same ``$ref``/``anyOf``/``allOf`` nodes once per tail.
+
+    Returns one message per tail that both fired (was actually present in the
+    document, not merely declared by the grammar) and carries a ``reason`` —
+    most deletions are mechanical and carry none.
+    """
+    if not deletions:
+        return []
+    source_schema = catalog.schema_for(deletions[0].source_schema)
+    live = catalog.current_schema
+    reasons = {
+        deletion.path: deletion.reason for deletion in deletions if deletion.reason
+    }
+    messages: list[str] = []
+    _delete_tails_recursive(
+        document,
+        [deletion.path for deletion in deletions],
+        source_schema,
+        [source_schema],
+        live,
+        [live],
+        reasons,
+        messages,
+    )
+    return messages
+
+
+def _delete_tails_recursive(
+    node: JsonValue,
+    tails: Sequence[YamlKeyPath],
+    schema: JsonObject,
+    positions: Sequence[JsonObject],
+    live: JsonObject,
+    live_positions: Sequence[JsonObject],
+    reasons: Mapping[YamlKeyPath, str],
+    messages: list[str],
+) -> None:
+    """Delete every tail wherever the source grammar declares it, throughout *node*.
+
+    ``positions`` are the schema nodes *node* can correspond to, descended in
+    step with the document so the walk keeps its depth-cap-free reach into
+    nested faces while knowing where it is.
+
+    A tail must be a **declared** property chain at the position, never one
+    reached through an open map. ``charts:`` is keyed by the author, so a chart
+    someone named ``bar`` presents exactly the key chain that
+    ``("bar", "tooltip")`` — the ``bar`` block under ``style.charts`` — means.
+
+    ``live_positions`` is the same descent through the *current* grammar, kept
+    in step so ``_matching_positions`` can tell a field that is new **here**
+    from one that merely shares a name with something old somewhere else.
+
+    All of a boundary's tails travel in one walk because the schema descent, not
+    the document traversal, is what costs: re-walking per tail re-expanded the
+    same ``$ref``/``anyOf``/``allOf`` nodes once per tail.
 
     When deleting a tail causes a parent dict to become empty, that parent is
     also removed — the deletion propagates up through the document structure.
+
+    ``reasons`` maps a tail to its ``Deletion.reason``, when set; ``messages``
+    collects one formatted string per occurrence actually removed (checked via
+    ``_tail_present`` before the pop, since a declared tail may simply be
+    absent from this particular document).
     """
     if isinstance(node, dict):
-        _try_delete_tail(node, tail)
+        matching = _matching_positions(schema, positions, live, live_positions, node)
+        for tail in tails:
+            if _declares_tail(schema, matching, tail):
+                reason = reasons.get(tail)
+                if reason is not None and _tail_present(node, tail):
+                    messages.append(f"`{_format_path(tail)}` was removed: {reason}")
+                _try_delete_tail(node, tail)
         for key in list(node.keys()):
             child = node[key]
             was_empty_before = isinstance(child, dict) and not child
-            _delete_tail_recursive(child, tail)
+            _delete_tails_recursive(
+                child,
+                tails,
+                schema,
+                _child_positions(schema, positions, key),
+                live,
+                _child_positions(live, live_positions, key),
+                reasons,
+                messages,
+            )
             if isinstance(child, dict) and not child and not was_empty_before:
                 del node[key]
     elif isinstance(node, list):
+        item_positions = _item_positions(schema, positions)
+        live_items = _item_positions(live, live_positions)
         for item in node:
-            _delete_tail_recursive(item, tail)
+            _delete_tails_recursive(
+                item, tails, schema, item_positions, live, live_items, reasons, messages
+            )
+
+
+def _tail_present(node: JsonObject, tail: YamlKeyPath) -> bool:
+    """Whether *tail* currently exists as a key chain rooted at *node* (read-only)."""
+    current: JsonValue = node
+    for part in tail:
+        if not isinstance(current, dict) or part not in current:
+            return False
+        current = current[part]
+    return True
+
+
+def _matching_positions(
+    schema: JsonObject,
+    positions: Sequence[JsonObject],
+    live: JsonObject,
+    live_positions: Sequence[JsonObject],
+    node: JsonValue,
+) -> list[JsonObject]:
+    """Narrow *positions* to the branches *node* is an instance of.
+
+    Whole-subtree validity under the frozen grammar is the first question, and
+    it is deliberately strict: a node satisfying no branch yields no positions,
+    so no tail is declared there and nothing is deleted. That strictness is what
+    keeps a chart the author named ``style`` from being read as a nested board's
+    style block and emptied.
+
+    Taken alone it is *too* strict, and in this task's own way: a field added
+    since the freeze makes the node invalid under the frozen grammar, which
+    disabled every deletion in that subtree — whole-document recognition again,
+    scoped to a node. So a rejected node is asked once more with those fields
+    removed, position by position (``_strip_post_freeze``).
+
+    Positional, not a global set of newer names: ``theme`` is new at the board
+    root and long-standing under ``TextCodeStyle``; ``nice`` is new on
+    ``ScaleTargetConfig`` and old on ``BaseScaleStyle``. A name-level diff misses
+    both, which is how ``theme:`` — the reported bug — stayed broken for boards
+    whose retired construct was a ``Deletion``.
+
+    Stripping only ever removes what the live grammar declares *and the frozen
+    one does not, at that exact position*, so it cannot turn one kind of node
+    into another: the chart body that must not read as a ``style:`` block is
+    still not a valid ``Style`` without its newer fields.
+    """
+    validator = Draft7Validator(schema)
+    matched = [
+        position
+        for position in positions
+        if validator.evolve(schema=position).is_valid(node)
+    ]
+    if matched:
+        return matched
+    probe = _strip_post_freeze(node, schema, positions, live, live_positions)
+    if probe == node:
+        return []
+    return [
+        position
+        for position in positions
+        if validator.evolve(schema=position).is_valid(probe)
+    ]
+
+
+def _strip_post_freeze(
+    node: JsonValue,
+    schema: JsonObject,
+    positions: Sequence[JsonObject],
+    live: JsonObject,
+    live_positions: Sequence[JsonObject],
+) -> JsonValue:
+    """A copy of *node* without the fields the frozen grammar could not have known.
+
+    Both grammars are descended together, so "could not have known" is decided
+    per position rather than per name, and at every depth — the newer field is
+    routinely nested well below the node whose tail is firing (``style.frame:``
+    against a root-anchored tail is the common shape after the rebrand rename).
+    """
+    if isinstance(node, dict):
+        newer = _declared_names(live, live_positions) - _declared_names(
+            schema, positions
+        )
+        return {
+            key: _strip_post_freeze(
+                value,
+                schema,
+                _child_positions(schema, positions, key),
+                live,
+                _child_positions(live, live_positions, key),
+            )
+            for key, value in node.items()
+            if key not in newer
+        }
+    if isinstance(node, list):
+        item_positions = _item_positions(schema, positions)
+        live_items = _item_positions(live, live_positions)
+        return [
+            _strip_post_freeze(item, schema, item_positions, live, live_items)
+            for item in node
+        ]
+    return node
+
+
+def _declared_names(schema: JsonObject, positions: Sequence[JsonObject]) -> set[str]:
+    """Property names declared at *positions*, across every branch they expand to."""
+    names: set[str] = set()
+    for node in positions:
+        for branch in _schema_branches(schema, node):
+            properties = branch.get("properties")
+            if isinstance(properties, dict):
+                names.update(properties)
+    return names
+
+
+def _declares_tail(
+    schema: JsonObject, positions: Sequence[JsonObject], tail: YamlKeyPath
+) -> bool:
+    """Whether *tail* is a declared property chain at any of *positions*.
+
+    Declared only — `additionalProperties` is deliberately not consulted, which
+    is the whole distinction between a retired key and a key the author chose.
+    """
+    current = list(positions)
+    for part in tail:
+        next_nodes: list[JsonObject] = []
+        for node in current:
+            for branch in _schema_branches(schema, node):
+                properties = branch.get("properties")
+                child = properties.get(part) if isinstance(properties, dict) else None
+                if isinstance(child, dict):
+                    next_nodes.append(child)
+        if not next_nodes:
+            return False
+        current = next_nodes
+    return True
+
+
+def _without_composition(node: JsonObject) -> JsonObject | None:
+    """*node*'s own declarations, with every composition keyword removed.
+
+    ``None`` when nothing is left — a pure wrapper declares nothing itself and
+    contributes no position.
+    """
+    stripped = {
+        key: value
+        for key, value in node.items()
+        if key not in ("anyOf", "oneOf", "allOf", "if", "then", "else")
+    }
+    return stripped if stripped.keys() - {"description", "title"} else None
+
+
+def _open_map_claims(
+    schema: JsonObject,
+    positions: Sequence[JsonObject],
+    live: JsonObject,
+    live_positions: Sequence[JsonObject],
+    key: str,
+    value: JsonValue,
+) -> bool:
+    """Whether *key* reads as an author-chosen map key rather than a field.
+
+    A union arm can be an open map (``rows:`` accepts
+    ``dict[str, AuthoredChart]`` beside ``AuthoredBoard``), and by keys alone
+    the two are indistinguishable: ``{"description": {...}}`` is either a board
+    whose ``description`` field is set, or a chart the author *named*
+    ``description``. Only the value decides, and only here — this is the one
+    question ``_node_could_be``'s identity test cannot answer, so the value is
+    consulted at this single point rather than as general validation.
+
+    The declared reading wins whenever it fits, so a value shape the frozen
+    grammar never accepted (0.5.0's ``data_table``) still migrates: the map
+    reading has to *fit* before it can take precedence.
+    """
+    declared_fits = any(
+        _accepts(schema, position.get("properties"), key, value)
+        for position in positions
+    )
+    # The open-map arm is read from *both* grammars. A position can gain the
+    # arm after the freeze -- `GridItem.item` accepts `dict[str, AuthoredChart]`
+    # live and in no frozen snapshot -- and a frozen-only read is blind exactly
+    # there, which let the author's key be rewritten under `grid.items.*.item`.
+    map_fits = any(
+        _accepts_value(grammar, position.get("additionalProperties"), value)
+        for grammar, group in ((schema, positions), (live, live_positions))
+        for position in group
+    )
+    return map_fits and not declared_fits
+
+
+def _accepts(
+    schema: JsonObject, properties: JsonValue, key: str, value: JsonValue
+) -> bool:
+    """Whether *properties* declares *key* with a subschema *value* satisfies."""
+    if not isinstance(properties, dict):
+        return False
+    return _accepts_value(schema, properties.get(key), value)
+
+
+def _accepts_value(schema: JsonObject, subschema: JsonValue, value: JsonValue) -> bool:
+    if not isinstance(subschema, dict):
+        return False
+    return Draft7Validator(schema).evolve(schema=subschema).is_valid(value)
+
+
+def _plausible_positions(
+    schema: JsonObject, positions: Sequence[JsonObject], node: Mapping[str, JsonValue]
+) -> list[JsonObject]:
+    """Branches at *positions* that *node* could be an instance of.
+
+    Deliberately weaker than ``_matching_positions``, which asks for whole-node
+    validity under the frozen grammar. A document a ``Move`` targets is
+    mid-migration by construction: it carries retired spellings, and their
+    *values* may have retired shapes too (0.5.0's ``data_table`` is not the
+    list its successor accepts), so demanding validity refuses the very
+    positions the move exists to rewrite.
+
+    Identity is the question a rename actually needs, and it is decided the way
+    the schema itself discriminates: the chart union is emitted as ``allOf`` of
+    ``if``/``then``, so a ``then`` counts only when its ``if`` holds for this
+    node. ``_schema_branches`` expands ``then`` unconditionally — correct for
+    "could any value here carry this property?", wrong for "is *this* value one
+    of those?" — which is why this walks the composition itself instead of
+    reusing it.
+
+    That is the whole open-map hazard: a ``queries:`` map reached through the
+    ``dict[str, AuthoredChart]`` arm of ``rows:`` declares no ``type``, so no
+    chart family's ``if`` holds and no rename fires inside it.
+    """
+    plausible: list[JsonObject] = []
+    for position in positions:
+        _collect_plausible(schema, position, node, frozenset(), plausible)
+    return plausible
+
+
+def _collect_plausible(
+    schema: JsonObject,
+    position: JsonObject,
+    node: Mapping[str, JsonValue],
+    seen: frozenset[str],
+    out: list[JsonObject],
+) -> None:
+    """Mirror of ``_schema_branches`` that gates each ``then`` on its ``if``."""
+    ref = position.get("$ref")
+    if isinstance(ref, str):
+        if ref in seen:
+            return
+        seen = seen | {ref}
+    resolved = _resolve_ref(schema, position)
+    # Append the node's *own* declarations only. `_declares_tail` expands
+    # whatever it is handed through the ungated `_schema_branches`, so passing
+    # a composition through would re-admit every arm this walk just gated --
+    # the arms are reached below instead, each on its own merits. A composed
+    # node can still carry its own `properties` (that is how `AuthoredChart`
+    # holds the fields shared across families), so strip rather than skip.
+    own = _without_composition(resolved)
+    if own is not None and _node_could_be(schema, own, node):
+        out.append(own)
+    for keyword in ("anyOf", "oneOf", "allOf"):
+        branches = resolved.get(keyword)
+        if not isinstance(branches, list):
+            continue
+        for branch in branches:
+            if isinstance(branch, dict):
+                _collect_plausible(schema, branch, node, seen, out)
+    conditional = resolved.get("then")
+    if isinstance(conditional, dict):
+        guard = resolved.get("if")
+        if isinstance(guard, dict) and not _node_satisfies(schema, guard, node):
+            return
+        _collect_plausible(schema, conditional, node, seen, out)
+
+
+def _node_could_be(
+    schema: JsonObject, branch: JsonObject, node: Mapping[str, JsonValue]
+) -> bool:
+    """Whether *node* carries what *branch* requires to be an instance of it.
+
+    Required properties and an agreeing ``type`` discriminator only — never the
+    values' own shapes, which a mid-migration document is expected to fail.
+    """
+    required = branch.get("required")
+    if isinstance(required, list) and any(
+        name not in node for name in required if isinstance(name, str)
+    ):
+        return False
+    properties = branch.get("properties")
+    declared_type = properties.get("type") if isinstance(properties, dict) else None
+    node_type = node.get("type")
+    if not isinstance(declared_type, dict) or node_type is None:
+        return True
+    enum = declared_type.get("enum")
+    if isinstance(enum, list) and node_type not in enum:
+        return False
+    const = declared_type.get("const")
+    return const is None or node_type == const
+
+
+def _node_satisfies(
+    schema: JsonObject, guard: JsonObject, node: Mapping[str, JsonValue]
+) -> bool:
+    """Whether *node* satisfies an ``if`` guard — the union's own discriminator."""
+    return Draft7Validator(schema).evolve(schema=guard).is_valid(dict(node))
+
+
+def _declares_chart_type(
+    schema: JsonObject, positions: Sequence[JsonObject], chart_type: str
+) -> bool:
+    """Whether any of *positions* discriminates a chart of *chart_type* via ``type:``.
+
+    Mirrors ``_declares_tail`` for the discriminated chart union: a position
+    only counts when some branch declares ``type`` as an ``enum`` containing
+    *chart_type* -- never merely because the document node happens to carry a
+    ``type`` key with that value. That is the whole distinction between an
+    authored chart and a free-form value shaped like one: for
+    ``Variable.default``, ``ConditionalRule.eq`` and ``DuckDBSourceConfig.remote``
+    the position's schema declares no ``properties.type``, so no branch here
+    matches.
+    """
+    for position in positions:
+        for branch in _schema_branches(schema, position):
+            properties = branch.get("properties")
+            if not isinstance(properties, dict):
+                continue
+            type_schema = properties.get("type")
+            if not isinstance(type_schema, dict):
+                continue
+            enum = type_schema.get("enum")
+            if isinstance(enum, list) and chart_type in enum:
+                return True
+    return False
+
+
+def _child_positions(
+    schema: JsonObject, positions: Sequence[JsonObject], key: str
+) -> list[JsonObject]:
+    """Schema nodes for *key* one step below *positions*.
+
+    Descent *does* follow open maps — reaching inside a user-keyed chart to look
+    at it is fine. Only the delete decision is restricted to declared properties.
+    """
+    children: list[JsonObject] = []
+    for node in positions:
+        for branch in _schema_branches(schema, node):
+            properties = branch.get("properties")
+            declared = properties.get(key) if isinstance(properties, dict) else None
+            candidate = (
+                declared
+                if isinstance(declared, dict)
+                else branch.get("additionalProperties")
+            )
+            if isinstance(candidate, dict):
+                children.append(candidate)
+    return children
+
+
+def _item_positions(
+    schema: JsonObject, positions: Sequence[JsonObject]
+) -> list[JsonObject]:
+    """Schema nodes for the items of the sequences at *positions*."""
+    items: list[JsonObject] = []
+    for node in positions:
+        for branch in _schema_branches(schema, node):
+            candidate = branch.get("items")
+            if isinstance(candidate, dict):
+                items.append(candidate)
+    return items
 
 
 def _try_delete_tail(node: dict[str, JsonValue], tail: YamlKeyPath) -> bool:
@@ -867,14 +1961,93 @@ def _try_delete_tail(node: dict[str, JsonValue], tail: YamlKeyPath) -> bool:
     return False
 
 
-def _apply_move(mapping: JsonObject, move: Move) -> None:
-    for parent, key, bindings in list(_source_locations(mapping, move.old_path)):
+def _apply_move(mapping: JsonObject, move: Move, catalog: YamlSchemaCatalog) -> None:
+    for parent, key, bindings in list(move_source_locations(mapping, move, catalog)):
         destination = _substitute_wildcards(move.new_path, bindings)
         _move_value(mapping, parent, key, destination, move)
 
 
+def move_source_locations(
+    document: JsonObject, move: Move, catalog: YamlSchemaCatalog
+) -> Iterable[tuple[JsonObject | list[JsonValue], str | int, tuple[str, ...]]]:
+    """Document positions *move* rewrites, gated on the source grammar.
+
+    The path walk alone is not enough to decide a rename. A resolved path's
+    ``*`` segments come from one *declared* arm of a union, but application is
+    arm-blind, so wherever an open map sits beside a declared field the final
+    segment can land on a key the author chose — a chart id under ``rows.*``,
+    a query name inside a sub-board's own ``queries:`` map. Both rewrote the
+    author's identifier on disk before this gate existed.
+
+    So the walk carries schema positions alongside the document and gates each
+    yield three ways: ``_plausible_positions`` narrows to the branches the node
+    could be an instance of, ``_declares_tail`` requires the final segment to
+    be a *declared* property there (``additionalProperties`` deliberately not
+    consulted — the distinction ``Deletion`` draws, see
+    ``_deletion_would_fire``), and ``_open_map_claims`` breaks the remaining
+    board-field/chart-id tie by value, since identity alone cannot.
+
+    Both grammars are carried because a position can gain an open-map arm
+    after the freeze (``GridItem.item``), and a frozen-only read is blind
+    there.
+
+    A trailing ``*`` is ungated: it names no key, so "is this a declared
+    property?" has no meaning there. No declaration produces one today.
+
+    A fourth gate applies only to an identity-path Move (``old_path ==
+    new_path``, e.g. dbt charts' ``theme:`` sugar): the structural precondition
+    every other Move relies on for recognition (``MigrationRegistry._validate``
+    requires the source path be absent from the target grammar) does not hold
+    for it by construction -- the key survives every transition unrenamed. Key
+    presence is therefore not evidence the document is old; the value is.
+    ``_identity_value_would_change`` gates the yield on whether the map would
+    actually rename the value found there, so a current name or a value the
+    map has never heard of (a path ref, a project-relative board name -- never
+    legal syntax for this field at any schema version) is left alone instead
+    of being forced through the map.
+    """
+    source_schema = _resolve_schema(catalog, move.source_schema)
+    live = catalog.current_schema
+    identity_move = move.old_path == move.new_path and move.value_map is not None
+    for parent, key, bindings in _source_locations(
+        document, move.old_path, source_schema, [source_schema], live, [live]
+    ):
+        if identity_move:
+            assert move.value_map is not None
+            if isinstance(parent, dict):
+                assert isinstance(key, str)
+                current_value = parent[key]
+            else:
+                assert isinstance(key, int)
+                current_value = parent[key]
+            if not _identity_value_would_change(move.value_map, current_value):
+                continue
+        yield parent, key, bindings
+
+
+def _identity_value_would_change(
+    value_map: Mapping[MappedScalar, MappedScalar], value: JsonValue
+) -> bool:
+    """True when *value_map* actually renames *value*.
+
+    An identity-path Move's value_map is total over its field's whole bounded
+    domain (current names included, mapped to themselves -- see ``THEME_VALUE_MAP``'s
+    comment), so "present in the map" alone does not distinguish a retired
+    spelling from a current one; only a value the map sends somewhere else does.
+    """
+    if not isinstance(value, (str, int, float, bool)):
+        return False
+    return value in value_map and value_map[value] != value
+
+
 def _source_locations(
-    node: JsonValue, parts: YamlKeyPath, bindings: tuple[str, ...] = ()
+    node: JsonValue,
+    parts: YamlKeyPath,
+    schema: JsonObject,
+    positions: Sequence[JsonObject],
+    live: JsonObject,
+    live_positions: Sequence[JsonObject],
+    bindings: tuple[str, ...] = (),
 ) -> Iterable[tuple[JsonObject | list[JsonValue], str | int, tuple[str, ...]]]:
     if not parts:
         return
@@ -887,15 +2060,47 @@ def _source_locations(
             for index in range(len(node)):
                 yield node, index, bindings + (str(index),)
         elif isinstance(node, dict) and part in node:
-            yield node, part, bindings
+            plausible = _plausible_positions(schema, positions, node)
+            live_plausible = _plausible_positions(live, live_positions, node)
+            if _declares_tail(schema, plausible, (part,)) and not _open_map_claims(
+                schema, plausible, live, live_plausible, part, node[part]
+            ):
+                yield node, part, bindings
         return
-    if part == "*" and isinstance(node, (dict, list)):
-        for child_key, value in (
-            list(node.items()) if isinstance(node, dict) else enumerate(node)
-        ):
-            yield from _source_locations(value, parts[1:], bindings + (str(child_key),))
+    if part == "*" and isinstance(node, dict):
+        for child_key, value in list(node.items()):
+            yield from _source_locations(
+                value,
+                parts[1:],
+                schema,
+                _child_positions(schema, positions, child_key),
+                live,
+                _child_positions(live, live_positions, child_key),
+                bindings + (str(child_key),),
+            )
+    elif part == "*" and isinstance(node, list):
+        item_positions = _item_positions(schema, positions)
+        live_items = _item_positions(live, live_positions)
+        for index, value in enumerate(node):
+            yield from _source_locations(
+                value,
+                parts[1:],
+                schema,
+                item_positions,
+                live,
+                live_items,
+                bindings + (str(index),),
+            )
     elif isinstance(node, dict) and part in node:
-        yield from _source_locations(node[part], parts[1:], bindings)
+        yield from _source_locations(
+            node[part],
+            parts[1:],
+            schema,
+            _child_positions(schema, positions, part),
+            live,
+            _child_positions(live, live_positions, part),
+            bindings,
+        )
 
 
 def _substitute_wildcards(parts: YamlKeyPath, bindings: tuple[str, ...]) -> list[str]:
@@ -916,6 +2121,34 @@ def _substitute_wildcards(parts: YamlKeyPath, bindings: tuple[str, ...]) -> list
     return result
 
 
+def _descend_move_segment(
+    parent: JsonObject | list[JsonValue], part: str, move: Move
+) -> JsonValue:
+    """Return the child at ``part`` on ``parent``.
+
+    ``part`` is always a string (even a wildcard-bound list index, e.g.
+    ``tabs.items.0``) — a list descends by ``int(part)``, a dict by key,
+    creating an empty dict for a missing key so the caller can populate it.
+    Split out of ``_move_value``'s loop so ``isinstance(parent, list)``
+    narrows cleanly: pyright doesn't carry a loop-local narrow across the
+    back-edge, but a plain function call re-narrows at each call site.
+    """
+    if isinstance(parent, list):
+        index = int(part)
+        if index >= len(parent):
+            raise MigrationError(
+                f"Cannot move {_format_path(move.old_path)!r} to "
+                f"{_format_path(move.new_path)!r}: list index {part!r} "
+                "does not exist. Migrate this field manually."
+            )
+        return parent[index]
+    value = parent.get(part)
+    if value is None:
+        value = {}
+        parent[part] = value
+    return value
+
+
 def _move_value(
     mapping: JsonObject,
     source_parent: JsonObject | list[JsonValue],
@@ -923,21 +2156,29 @@ def _move_value(
     destination: list[str],
     move: Move,
 ) -> None:
-    parent = mapping
+    parent: JsonObject | list[JsonValue] = mapping
     for part in destination[:-1]:
-        value = parent.get(part)
-        if value is None:
-            value = {}
-            parent[part] = value
-        if not isinstance(value, dict):
+        value = _descend_move_segment(parent, part, move)
+        if not isinstance(value, (dict, list)):
             raise MigrationError(
                 f"Cannot move {_format_path(move.old_path)!r} to "
                 f"{_format_path(move.new_path)!r}: {part!r} "
-                "must be a mapping. Migrate this field manually."
+                "must be a mapping or list. Migrate this field manually."
             )
         parent = value
+    if isinstance(parent, list):
+        raise MigrationError(
+            f"Cannot move {_format_path(move.old_path)!r} to "
+            f"{_format_path(move.new_path)!r}: destination ends inside a "
+            "list. Migrate this field manually."
+        )
     destination_key = destination[-1]
-    if destination_key in parent:
+    # An identity-path Move (old_path == new_path) pops and reassigns the same
+    # slot -- source_parent and parent are the same object and the key hasn't
+    # moved yet, so "destination_key in parent" is trivially true and must not
+    # read as a conflict with a *different* occupied field.
+    same_slot = source_parent is parent and source_key == destination_key
+    if destination_key in parent and not same_slot:
         raise MigrationConflictError(
             f"Cannot move {_format_path(move.old_path)!r} to "
             f"{_format_path(move.new_path)!r}: both fields exist. "
@@ -978,19 +2219,93 @@ def _mapped_value(
     return value_map[value]
 
 
-def _walk_fields(
+def _tail_matches(path: tuple[str, ...], tails: frozenset[tuple[str, ...]]) -> bool:
+    """Does ``path`` end with one of ``tails``? -- the same right-aligned
+    suffix test ``suffix_rename_moves`` applies to a full absolute path."""
+    return any(len(path) >= len(tail) and path[-len(tail) :] == tail for tail in tails)
+
+
+@cache
+def _relative_field_paths(
     model: type[BaseModel],
-    path: tuple[str, ...] = (),
-    seen: frozenset[type[BaseModel]] = frozenset(),
-) -> Iterable[tuple[str, ...]]:
+    seen: frozenset[type[BaseModel]],
+    tails: frozenset[tuple[str, ...]],
+) -> tuple[tuple[str, ...], ...]:
+    """Field-path suffixes reachable from ``model``, relative to ``model``,
+    kept only if they could contribute to a ``tails`` match.
+
+    A candidate is kept when it already ends with one of ``tails`` (a
+    complete match, needs no more context) or is shorter than the widest
+    tail (it might still complete a match once an ancestor's field names are
+    prepended above ``model`` -- ``suffix_rename_moves`` re-checks the full
+    absolute path before trusting one). Everything else is dropped on the
+    spot: filtering *during* the walk, rather than after materializing every
+    field path and filtering the result, is what keeps this cheap.
+    AuthoredBoard's unfiltered path set is vast; a typical rename call
+    (a width-1 tail, e.g. ``html_policy:`` -> ``allow_html:``) matches a
+    vanishing fraction of it, and every non-matching candidate is
+    dropped the moment it's built -- nothing shorter than the tail exists
+    to retain.
+
+    ``seen`` is every ancestor model already on this path, checked on entry:
+    a model already in ``seen`` contributes nothing and the call returns
+    immediately, so a self-referential model's own fields are never reached
+    a second time along the same path -- ``AuthoredBoard`` nested inside
+    itself (via ``rows``/``cols``/``grid.items.*.item``) is opaque to this
+    walk at any depth, not just a second re-entry; only a genuinely
+    different model (``TabItem`` via ``tabs.items.*``, a chart family via
+    ``rows.*``) keeps yielding fields past that point. Memoized on
+    ``(model, seen, tails)``: callers prune ``seen`` to ``_closure(model)``
+    before recursing here, which is safe
+    because the entry check only ever tests membership of the model being
+    entered, and that model is always a member of its own closure -- so the
+    prune never discards the one fact the check depends on, it only drops
+    ancestors ``model`` could never reach again anyway. ``tails`` is
+    threaded down unchanged from the top-level call. The cache is cleared by
+    ``suffix_rename_moves`` on return -- see its docstring for why nothing
+    here persists across calls.
+    """
     if model in seen:
-        return
+        return ()
+    max_width = max(len(tail) for tail in tails)
+    paths: list[tuple[str, ...]] = []
     for name, field in model.model_fields.items():
-        field_path = path + (name,)
-        yield field_path
+        candidates: list[tuple[str, ...]] = [(name,)]
         if field.annotation is not None:
             for nested, suffix in _nested_models(field.annotation):
-                yield from _walk_fields(nested, field_path + suffix, seen | {model})
+                nested_seen = (seen | {model}) & _closure(nested)
+                for nested_suffix in _relative_field_paths(nested, nested_seen, tails):
+                    candidates.append((name,) + suffix + nested_suffix)
+        for candidate in candidates:
+            if len(candidate) < max_width or _tail_matches(candidate, tails):
+                paths.append(candidate)
+    return tuple(paths)
+
+
+@cache
+def _closure(model: type[BaseModel]) -> frozenset[type[BaseModel]]:
+    """Every model transitively reachable from ``model``, including itself.
+
+    Used only to prune the ancestor set passed into ``_relative_field_paths``
+    -- ``model`` can never recurse back into an ancestor outside its own
+    closure, so that part of ``seen`` is dead weight for both correctness
+    and the memoization key. A plain visited-set walk is safe here even
+    though the underlying graph has cycles (``AuthoredBoard``, ``TabItem``/
+    ``TabLayout``): reachability doesn't care how many times a path could
+    loop, only whether a destination is reachable at all.
+    """
+    closure = {model}
+    stack = [model]
+    while stack:
+        current = stack.pop()
+        for field in current.model_fields.values():
+            if field.annotation is None:
+                continue
+            for nested, _suffix in _nested_models(field.annotation):
+                if nested not in closure:
+                    closure.add(nested)
+                    stack.append(nested)
+    return frozenset(closure)
 
 
 def _nested_models(
@@ -1018,7 +2333,7 @@ def _schema_path_exists(schema: JsonObject, path: YamlKeyPath) -> bool:
     for part in path:
         next_nodes: list[JsonObject] = []
         for node in nodes:
-            for branch in _expand_anyof(schema, node):
+            for branch in _schema_branches(schema, node):
                 if part == "*":
                     child = branch.get("additionalProperties")
                     if child is None:
@@ -1036,29 +2351,89 @@ def _schema_path_exists(schema: JsonObject, path: YamlKeyPath) -> bool:
     return True
 
 
-def _expand_anyof(
+class _ById:
+    """Wraps a JSON schema dict so it can key an ``@cache``d function.
+
+    A schema node is an unhashable ``dict``, so it cannot be a ``functools.cache``
+    argument directly. Hashing/comparing by identity (rather than content) is
+    correct here because a hit only ever means "the same node object was asked
+    about again" -- and holding ``obj`` in the wrapper is what keeps that
+    identity valid: a dict's id can be reused after garbage collection, but not
+    while something still references it, so as long as a wrapper survives in
+    the cache it also keeps its id from ever being handed to a different
+    object.
+    """
+
+    __slots__ = ("obj",)
+
+    def __init__(self, obj: JsonObject) -> None:
+        self.obj = obj
+
+    def __hash__(self) -> int:
+        return id(self.obj)
+
+    def __eq__(
+        self,
+        other: object,  # type-state: object_annotation — __eq__ takes any object per Python's data model
+    ) -> bool:
+        return isinstance(other, _ById) and other.obj is self.obj
+
+
+def _schema_branches(
     schema: JsonObject, node: JsonObject, seen: frozenset[str] = frozenset()
 ) -> list[JsonObject]:
-    """Recursively flatten nested anyOf branches into leaf nodes.
+    """Flatten a schema node into every concrete branch a value here could satisfy.
 
-    Follows ``$ref`` (including ``$ref: "#"``) and expands nested ``anyOf``
-    unions so callers get a flat list of concrete schema branches.  The *seen*
-    guard stops cycles caused by self-referential ``$ref: "#"`` appearing inside
-    an ``anyOf`` union.
+    Follows ``$ref`` (including ``$ref: "#"``), unions (``anyOf``/``oneOf``),
+    intersections (``allOf``), and the ``then`` of an ``if``/``then`` pair.
+
+    Unions and intersections flatten alike because every caller asks the same
+    question — could a value at this position carry this property? — and in an
+    intersection one conjunct declaring it is enough. The discriminated chart
+    union is emitted as ``allOf`` of ``if``/``then``, so a walker that
+    understood only ``anyOf`` saw no per-family property at all and read an
+    inline chart as declaring nothing.
+
+    ``resolved`` itself is always included: a composed node can carry its own
+    ``properties`` alongside the composition, which is exactly how
+    ``AuthoredChart`` holds the fields shared across families.
+
+    The *seen* guard stops cycles caused by self-referential ``$ref: "#"``.
+
+    A thin wrapper around ``_schema_branches_cached``, which does the real
+    work and is what carries the ``@cache`` -- ``schema``/``node`` are plain
+    dicts and can't be cache keys themselves, so this wraps each in ``_ById``
+    (hashable by identity) before delegating. ``_schema_path_exists`` and
+    ``_schema_has_tail`` call this once per path segment for every candidate
+    they check, and those paths share long common prefixes (the same
+    board/chart/style nodes, over and over), so the same
+    ``(schema, node, seen)`` triple recurs constantly within one build.
     """
+    return _schema_branches_cached(_ById(schema), _ById(node), seen)
+
+
+@cache
+def _schema_branches_cached(
+    schema_key: _ById, node_key: _ById, seen: frozenset[str]
+) -> list[JsonObject]:
+    schema, node = schema_key.obj, node_key.obj
     ref = node.get("$ref")
     if isinstance(ref, str):
         if ref in seen:
             return []
         seen = seen | {ref}
     resolved = _resolve_ref(schema, node)
-    branches = resolved.get("anyOf")
-    if not isinstance(branches, list):
-        return [resolved]
-    result: list[JsonObject] = []
-    for branch in branches:
-        if isinstance(branch, dict):
-            result.extend(_expand_anyof(schema, branch, seen))
+    result: list[JsonObject] = [resolved]
+    for keyword in ("anyOf", "oneOf", "allOf"):
+        branches = resolved.get(keyword)
+        if not isinstance(branches, list):
+            continue
+        for branch in branches:
+            if isinstance(branch, dict):
+                result.extend(_schema_branches(schema, branch, seen))
+    conditional = resolved.get("then")
+    if isinstance(conditional, dict):
+        result.extend(_schema_branches(schema, conditional, seen))
     return result
 
 
@@ -1095,7 +2470,7 @@ def _schema_has_tail(schema: JsonObject, tail: YamlKeyPath) -> bool:
         for part in tail:
             next_nodes: list[JsonObject] = []
             for node in nodes:
-                for branch in _expand_anyof(schema, node):
+                for branch in _schema_branches(schema, node):
                     props = branch.get("properties")
                     child = props.get(part) if isinstance(props, dict) else None
                     if isinstance(child, dict):
@@ -1146,7 +2521,14 @@ def _delete_tail_in_yaml_text(yaml_text: str, tail: YamlKeyPath) -> str:
 
     When deleting a leaf leaves its parent block empty (the leaf was the only
     child), the orphaned parent key line is also removed — mirroring the
-    in-memory cleanup in ``_delete_tail_recursive``.
+    in-memory cleanup in ``_delete_tails_recursive``.
+
+    It does **not** mirror that walk's schema gate: this one still matches on the
+    key chain alone, so it can strike a position the in-memory walk correctly
+    leaves alone. Nothing reaches disk that way — the equality check against
+    ``staged`` at the end of ``migrate_yaml_text`` catches the divergence and
+    refuses the file — but the two are no longer the same rule, and the guard is
+    what keeps that safe rather than an accident.
     """
     leaf_key = tail[-1]
     parent_keys = tail[:-1]

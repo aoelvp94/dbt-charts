@@ -1,5 +1,5 @@
 title: Conway's Game of Life
-description: 'A YAML-only finite Game of Life board. Generation and initial live cells
+notes: 'A YAML-only finite Game of Life board. Generation and initial live cells
   are
 
   URL variables; SQL simulates the selected generation and table conditional
@@ -477,6 +477,16 @@ charts:
           label: ' '
           width: 180
           background: '#f8fafc'
+        generation_label:
+          visible: false
+        population_label:
+          visible: false
+        grid_label:
+          visible: false
+        action:
+          visible: false
+        next_link:
+          visible: false
       font:
         size: 13
         weight: 600
@@ -507,6 +517,18 @@ charts:
           background: '#dbeafe'
           font:
             weight: 700
+        generation_label:
+          visible: false
+        population_label:
+          visible: false
+        pattern_label:
+          visible: false
+        grid_label:
+          visible: false
+        next_population_label:
+          visible: false
+        next_link:
+          visible: false
       symbol_mode: anchors
       font:
         size: 18
@@ -610,6 +632,8 @@ charts:
         c30: {}
         c31: {}
         c32: {}
+        row_sort:
+          visible: false
       symbol_mode: anchors
       font:
         size: 9
