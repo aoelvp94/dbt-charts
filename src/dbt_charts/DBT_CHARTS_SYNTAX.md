@@ -386,6 +386,52 @@ When set to an integer, it cascades to descendants: titled children render at
 **See also:** `dct docs queries` (data layer), `dct docs charts` (display layer),
 `dct docs layout` (composition), `dct docs cheatsheet` (one-page essentials).
 
+## Sources
+
+Named connections, declared once in the project root config; boards reference them by name.
+
+The `sources:` registry in the project root `dbt_charts.yml` names every connection boards may read from. A board's `source:` is always one of these names (or an inline path to a single CSV/JSON/Parquet file) — never a connection definition.
+
+```yaml
+# dbt_charts.yml — project root, not a board
+sources:
+  analytics:                     # A dbt project: credentials stay in profiles.yml
+    type: dbt_profile
+    profile: my_dbt_project
+    target: dev
+
+  local:                         # A DuckDB file (local-only, see below)
+    type: duckdb
+    path: ./data/analytics.duckdb
+    schema: main                 # Optional default schema
+
+  warehouse:                     # Direct warehouse; secrets via env_var(), never literals
+    type: postgres               # or redshift (same fields); other types take different fields
+    host: "{{ env_var('PGHOST') }}"
+    port: 5432
+    dbname: analytics
+    schema: public
+    user: "{{ env_var('PGUSER') }}"
+    password: "{{ env_var('PGPASSWORD') }}"
+
+  bq:
+    type: bigquery
+    project: my-gcp-project
+    dataset: analytics           # Default dataset for unqualified table names
+
+  files:                         # CSV/JSON/Parquet: each key under files: is a table name
+    type: csv                    # or json, parquet
+    files:
+      orders: data/orders.csv
+      returns: data/returns.csv
+```
+
+Then in a board: `source: warehouse` at the root (default for every `sql` query) or per query (`queries.<name>.source`). Check a source before writing boards: `dct query warehouse 'SELECT 1'`.
+
+Types: `dbt_profile`, `postgres`, `snowflake`, `bigquery`, `redshift`, `mysql`, `trino`, `duckdb`, `sqlite`, `csv`, `json`, `parquet`, `http`.
+
+**Local-only types.** `duckdb` and `sqlite` read a file on the machine running `dct`. dbt charts Cloud connects only to `bigquery`, `postgresql` (Cloud's spelling of `postgres`), `redshift`, and `snowflake` — it never reads a `.duckdb` file from a repo, committed or not. For Cloud, load the tables into one of those warehouses, or export each table to a Parquet/CSV file committed in the repo and point each query at its file directly: `source: <path>` resolves against the board's own directory or the project root, whichever exists (`source: ../data/orders.parquet` from `charts/`, or `source: data/orders.parquet` from any board depth). Both existing at once is a compile error naming both. A registry entry (`type: parquet` under `sources:`) is not yet resolved on Cloud and shows up as an unmapped source.
+
 ## Queries
 
 Queries are the data layer. Charts reference queries by name; queries never embed display logic.

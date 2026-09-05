@@ -191,6 +191,34 @@ class TestSqliteAdapterExecutes:
         assert result.error is None, f"Datetime param execution failed: {result.error}"
         assert [r["id"] for r in result.data] == [2, 3]
 
+    def test_filter_date_range_executes_on_sqlite(self, tmp_path: Path) -> None:
+        """filter_date_range() must not silently exclude every row on SQLite.
+
+        SQLite has no native DATE type: CAST(x AS DATE) takes NUMERIC affinity
+        and truncates a date-like string to its leading integer run (e.g.
+        '2024-01-15' -> 2024), and SQLite orders every INTEGER below every
+        TEXT — so a bare `CAST(col AS DATE) BETWEEN <date> AND <date>` is
+        always false there. The helper must spell the "compare as a date"
+        comparison differently per dialect (DATE(col) on SQLite).
+        """
+        from dbt_charts.core.compile.models.source import SQLiteSourceConfig
+        from dbt_charts.core.execute.adapters.sqlite_adapter import SqliteAdapter
+
+        db_path = _make_sqlite_db_with_dates(tmp_path)
+        adapter = SqliteAdapter()
+        query = SqlQuery(
+            sql="SELECT id FROM events WHERE {{ filter_date_range('event_date', date_range) }} ORDER BY id",
+            source="mydb",
+        )
+        source_cfg = SQLiteSourceConfig(type="sqlite", path=str(db_path))
+        result = adapter._execute(
+            query,
+            variables={"date_range": ["2024-01-01", "2024-12-31"]},
+            source_config=source_cfg,
+        )
+        assert result.error is None, f"filter_date_range query failed: {result.error}"
+        assert [r["id"] for r in result.data] == [1, 2]
+
     def test_sqlite_relative_path_resolves_against_data_dir(
         self,
         tmp_path: Path,

@@ -2460,6 +2460,24 @@ def test_a_variables_input_select_offers_only_what_its_default_survives() -> Non
     assert {"number", "checkbox", "daterange", "multiselect"} <= set(full.enum_values)
 
 
+def test_a_variables_data_type_select_offers_only_what_its_options_survive() -> None:
+    """`data_type` is the same shape of decision as `input`: it names what the
+    options and default already are, and a value they cannot be is a control
+    that only fails."""
+    # No default, deliberately: the option list alone must carry the
+    # rejection, which is the case only `validate_choice_type` reaches.
+    words = _VARIABLES_BOARD.replace(
+        "    label: Region\n", "    label: Region\n    options:\n      static: [A, B]\n"
+    )
+    offered = _flat(build_design_target(words, "variables.region"))["data_type"]
+    assert offered.enum_values is not None
+    assert set(offered.enum_values) == {"string", "array"}
+
+    full = _flat(build_design_target(_VARIABLES_BOARD, "variables.region"))["data_type"]
+    assert full.enum_values is not None
+    assert {"number", "date", "boolean"} <= set(full.enum_values)
+
+
 def test_a_variable_offers_required_only_once_it_has_a_default() -> None:
     """The one control whose single edit breaks the board past all repair.
 

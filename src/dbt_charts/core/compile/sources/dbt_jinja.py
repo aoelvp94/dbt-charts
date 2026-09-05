@@ -14,6 +14,11 @@ Behaviour matches dbt's, deliberately:
   is left as a literal and fails at connect time rather than at parse. We accept
   dbt's contract here rather than re-deriving a stricter one.
 
+A payload dbt would return byte-identical skips the call, and with it dbt-core's
+import; see :func:`_nothing_to_render`. Such a payload is
+returned *as the caller's own object*, where dbt always deep-rebuilt, so callers
+must not write through the result.
+
 dbt reads env vars from a process-global *invocation context* (a ``ContextVar``
 it sets at CLI startup). dbt charts embeds dbt as a library, so we establish that
 context from the live environment per render.
@@ -22,8 +27,86 @@ context from the live environment per render.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from typing import Any
+
+# dbt's render-chars pattern, from ``dbt/clients/jinja.py``
+# (``_HAS_RENDER_CHARS_PAT``). Necessary for the skip below, not sufficient:
+# ``get_rendered``'s matching shortcut is disabled when ``native=True``, and
+# ``renderer.py`` always passes it — so dbt compiles even a jinja-free string
+# through Jinja, and Jinja rewrites some of them.
+_HAS_RENDER_CHARS = re.compile(r"({[{%#]|[#}%]})")
+
+# What that compile changes on a string with nothing in it to render — jinja2's
+# lexer rewrites, and the whole surface of them:
+#   - a single trailing "\n" is dropped   (keep_trailing_newline=False)
+#   - every "\r" becomes "\n"             (newline_sequence="\n")
+# A PEM private key or a password read from a file carries a trailing newline, so
+# skipping these would corrupt a credential, not just reformat one.
+_JINJA_REWRITES = re.compile(r"\r|\n\Z")
+
+# ``dbt_common.constants.SECRET_ENV_PREFIX``, inlined to keep dbt off the import
+# path (``test_secret_prefix_matches_dbt`` pins the two together). Any value
+# containing it takes ``SecretRenderer``'s placeholder branch, which returns
+# ``None`` when the placeholder regex misses. That is a dbt bug, but this
+# function's job is to be indistinguishable from dbt, not better than it.
+_SECRET_ENV_PREFIX = "DBT_ENV_SECRET"
+
+# Leaf types dbt hands back untouched. ``str`` is absent because strings answer
+# above; ``bool`` because ``isinstance(True, int)``. ``datetime.date`` is absent
+# deliberately — ``deep_map_render`` treats it as atomic but ``render_value``
+# ISO-formats it, and YAML gives us real dates for an unquoted ``2026-01-01``.
+_INERT_LEAVES = (int, float, type(None))
+
+
+def _nothing_to_render(
+    data: Any,  # type-state: explicit_any — any yaml.safe_load output
+) -> bool:
+    """Whether ``ProfileRenderer`` would hand ``data`` back exactly as given.
+
+    True only where that has been measured, never where it merely seems likely:
+    a wrong True silently rewrites a config value, while a wrong False costs
+    only the import this function exists to avoid.
+    """
+
+    def walk(
+        value: Any,  # type-state: explicit_any — walks arbitrary YAML nodes
+        path: tuple[int, ...],
+    ) -> bool:
+        if isinstance(value, dict | list):
+            if id(value) in path:
+                # A YAML anchor cycle (`a: &x {b: *x}` — safe_load builds these).
+                # dbt detects it and raises a DbtProjectError that this module
+                # adapts to ValueError; recursing here instead would raise
+                # RecursionError, which is a RuntimeError and sails past the
+                # `except ValueError` in detection.py on untrusted input.
+                return False
+            path += (id(value),)
+            items = value.values() if isinstance(value, dict) else value
+            return all(walk(item, path) for item in items)
+        if isinstance(value, str):
+            return (
+                _HAS_RENDER_CHARS.search(value) is None
+                and _JINJA_REWRITES.search(value) is None
+                and _SECRET_ENV_PREFIX not in value
+            )
+        return isinstance(value, _INERT_LEAVES)
+
+    try:
+        return walk(data, ())
+    except RecursionError:
+        # Depth, where the check above catches self-reference: a chain of YAML
+        # aliases builds an arbitrarily deep *acyclic* graph out of a shallow
+        # document, so nothing repeats and the walk recurses until it gives out.
+        # Answering False hands the payload to dbt, which either renders it or
+        # overflows its own walk — and that overflow it already converts to a
+        # `DbtBaseException`, which this module adapts to `ValueError` below.
+        # What the caller must never get is a bare `RecursionError`: that is a
+        # `RuntimeError`, and
+        # detection.py's degrade-never-crash guard on untrusted `profiles.yml`
+        # catches only `ValueError`.
+        return False
 
 
 def _refresh_invocation_context(env: Mapping[str, str]) -> None:
@@ -71,6 +154,11 @@ def render_dbt_jinja_in_dict(
     we adapt it to ``ValueError`` at this boundary so Pydantic field/model
     validators surface a ``ValidationError``. The dbt message is preserved.
     """
+    # Before the import, not after — skipping the work is the point, but
+    # skipping dbt's several-hundred-millisecond import is the win.
+    if _nothing_to_render(data):
+        return data
+
     from dbt.config.renderer import ProfileRenderer
     from dbt_common.exceptions.base import DbtBaseException
 

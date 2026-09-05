@@ -74,9 +74,10 @@ dependencies = [
     "pydantic>=2.0.0",
     "typing_extensions>=4.5.0",
     # Backport of stdlib importlib.resources — as_file() gains directory support
-    # only in 3.12+; dbt_charts targets 3.10+. Used exclusively by
+    # only in 3.12+; dbt_charts targets 3.10+. Used by
     # core/fonts.py:get_fonts_dir() to materialize a persistent real directory
-    # for foreign libs (StaticFiles, vl-convert, fontTools/PIL).
+    # for foreign libs (StaticFiles, vl-convert, fontTools/PIL), and by
+    # agent_api/init.py for the Traversable type of the template walk.
     "importlib_resources>=6.0",
     "jinja2>=3.1.6",
     "httpx>=0.24.0",

@@ -608,6 +608,7 @@ class SqlAdapter(BaseAdapter):
                     variables=variables or {},
                     dialect=placeholder_style,
                     strict=not (is_sql_query(query) and query.lenient_variables),
+                    warehouse=get_dialect(dialect_name),
                 )
             except (ValueError, KeyError, TypeError) as e:
                 return handle_adapter_error("SQL parameterization", e)

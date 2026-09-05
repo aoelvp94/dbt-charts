@@ -16,6 +16,7 @@ from dbt_charts.core.diagnostics import (
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.project import (
+    BOARD_CANDIDATE_SUFFIXES as BOARD_CANDIDATE_SUFFIXES,
     CHARTS_SUBDIR as CHARTS_SUBDIR,
     BoardFile,
     Project,

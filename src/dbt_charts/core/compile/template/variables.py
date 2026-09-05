@@ -54,10 +54,13 @@ def parse_variable_json_strings(variables: VariableValues) -> VariableValues:
     return parsed
 
 
-# Input kinds that carry a non-string SQL type. Everything else (text, select,
-# multiselect, radio, …) stays a string/list and needs no coercion.
+# Input kinds whose SQL type follows from the kind alone. A choice input
+# carries whatever its options are (`choice_member_type`); select and radio
+# are handled below as scalars, multiselect above as a list, and text stays
+# a string.
 _DATE_INPUTS = frozenset({"date", "datepicker"})
 _NUMBER_INPUTS = frozenset({"number", "slider", "range"})
+_CHOICE_INPUTS = frozenset({"select", "radio"})
 # Scalar typed inputs where an empty string means "unset" (→ None), like the
 # renderer's absent-check. daterange is excluded — its own branch handles both
 # a fully-empty container (variable_value_is_absent) and per-endpoint blanks.
@@ -138,9 +141,9 @@ def coerce_variable_values(
         kind = var.input
         if kind == "multiselect":
             # Ahead of the None check below: an unset multiselect is [], not None.
-            result[name] = coerce_multiselect(
-                UNSET_MULTISELECT if value is None else value
-            )
+            members = coerce_multiselect(UNSET_MULTISELECT if value is None else value)
+            member_type = choice_member_type(var)
+            result[name] = [_coerce_member(name, m, member_type) for m in members]
             continue
         if value is None:
             result[name] = value
@@ -148,9 +151,11 @@ def coerce_variable_values(
         if (
             isinstance(value, str)
             and not value.strip()
-            and kind in _SCALAR_TYPED_INPUTS
+            and (kind in _SCALAR_TYPED_INPUTS or kind in _CHOICE_INPUTS)
         ):
             result[name] = None  # empty scalar typed input = unset
+        elif kind in _CHOICE_INPUTS:
+            result[name] = _coerce_member(name, value, choice_member_type(var))
         elif kind in _DATE_INPUTS:
             result[name] = _coerce_date(name, value)
         elif kind == "daterange":
@@ -240,6 +245,36 @@ def coerce_multiselect(value: _MultiselectRaw) -> list[_Coercible]:
     return [value]
 
 
+def choice_member_type(var: Variable) -> str | None:
+    """The type a choice input's values have — `"number"`, `"date"`,
+    `"boolean"`, or None for strings.
+
+    An explicit `data_type` wins; otherwise a static option list typed as
+    numbers names it (the list is homogeneous by construction). A query-driven
+    option source with no `data_type` is a string: the option query's column
+    type is not known here, and guessing from the value's shape would turn an
+    id like "007" into 7.
+    """
+    if var.data_type in ("number", "date", "boolean"):
+        return var.data_type
+    if var.data_type in ("string", "array"):
+        return None
+    static = var.options.static if var.options else None
+    if static and all(isinstance(o, (int, float)) for o in static):
+        return "number"
+    return None
+
+
+def _coerce_member(name: str, value: _Coercible, member_type: str | None) -> _Coercible:
+    if member_type == "number":
+        return _coerce_number(name, value)
+    if member_type == "date":
+        return _coerce_date(name, value)
+    if member_type == "boolean":
+        return _coerce_bool(name, value)
+    return value
+
+
 def _coerce_date(name: str, value: _Coercible) -> date:
     """Narrow one date/datepicker (or daterange endpoint) value to a ``date``.
 
@@ -323,6 +358,7 @@ def _coerce_bool(name: str, value: _Coercible) -> bool:
 
 __all__ = [
     "UNSET_MULTISELECT",
+    "choice_member_type",
     "coerce_multiselect",
     "coerce_variable_values",
     "normalize_multiselect_values",

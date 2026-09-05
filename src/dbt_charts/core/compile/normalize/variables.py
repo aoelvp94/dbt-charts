@@ -35,13 +35,18 @@ from dbt_charts.core.compile.models.variable.authored import (
     Variable,
     VariableInputType,
 )
-from dbt_charts.core.compile.template.variables import parse_iso_date
+from dbt_charts.core.compile.template.variables import (
+    choice_member_type,
+    coerce_variable_values,
+    parse_iso_date,
+)
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_SOURCE_REQUIRED,
     ERR_UNKNOWN_VARIABLE,
     ERR_VALIDATION_FIELD,
 )
 from dbt_charts.core.diagnostics.diagnostic import Diagnostic
+from dbt_charts.core.diagnostics.execution import ExecutionError
 
 
 @dataclass
@@ -625,6 +630,19 @@ def validate_variable_value(var_name: str, var: Variable, value: Any) -> None:
 
     input_type = var.input
 
+    # A choice input's default must be what its `data_type` / numeric option
+    # list says its values are. Asked of the runtime coercer rather than
+    # restated, so compile and render cannot disagree on what converts.
+    if input_type in ("select", "radio", "multiselect") and choice_member_type(var):
+        try:
+            coerce_variable_values({var_name: value}, {var_name: var})
+        except ExecutionError as e:
+            raise CompilationError.from_code(
+                ERR_VALIDATION_FIELD,
+                field_path=f"variables.{var_name}.default",
+                pydantic_msg=str(e).removeprefix(f"Variable '{var_name}': "),
+            ) from None
+
     # Special case: daterange needs structural validation (2-element list)
     if input_type == "daterange":
         if not isinstance(value, (list, tuple)) or len(value) != 2:
@@ -699,6 +717,32 @@ def validate_variable_value(var_name: str, var: Variable, value: Any) -> None:
             )
         if isinstance(value, str) and value.strip():
             _validate_date_string(var_name, f"{input_type} default", value)
+
+
+def validate_choice_type(var_name: str, var: Variable) -> None:
+    """`data_type` and a static option list must describe the same values.
+
+    Separate from `validate_variable_value`, which only runs for a variable
+    with a default: the common query-driven choice has none, and its option
+    list is still a contract. Scoped to the choice inputs, the only kinds
+    whose values `data_type` types."""
+    static = var.options.static if var.options else None
+    if var.input not in ("select", "radio", "multiselect") or not static:
+        return
+    if var.data_type not in ("number", "date", "boolean"):
+        return
+    for option in static:
+        try:
+            coerce_variable_values({var_name: option}, {var_name: var})
+        except ExecutionError as e:
+            raise CompilationError.from_code(
+                ERR_VALIDATION_FIELD,
+                field_path=f"variables.{var_name}.options.static",
+                pydantic_msg=(
+                    f"{option!r} does not match data_type {var.data_type!r}: "
+                    + str(e).removeprefix(f"Variable '{var_name}': ")
+                ),
+            ) from None
 
 
 def compute_variable_dependencies(

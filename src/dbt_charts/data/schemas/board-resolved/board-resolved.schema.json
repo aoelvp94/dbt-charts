@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.5.1.dev704",
+  "version": "0.5.1.dev844",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -302,7 +302,7 @@
         },
         "endpoint_labels": {
           "$ref": "#/$defs/EndpointLabelsConfig",
-          "description": "Endpoint label pane configuration for area charts."
+          "description": "Series names printed on the bands instead of in a legend."
         },
         "marks": {
           "$ref": "#/$defs/AreaChartMarksStyle",
@@ -2408,7 +2408,7 @@
         },
         "endpoint_labels": {
           "$ref": "#/$defs/EndpointLabelsConfig",
-          "description": "Endpoint label pane configuration for bar charts."
+          "description": "Series names printed on stacked bars instead of in a legend."
         },
         "marks": {
           "$ref": "#/$defs/BarChartMarksStyle",
@@ -4875,20 +4875,20 @@
     },
     "EndpointLabelsConfig": {
       "additionalProperties": false,
-      "description": "Endpoint label pane config, shared across line, area, and bar.\n\nWhen visible, a separate pane is emitted alongside the main chart with one\ntext mark per series. For line/area and vertical stacked/grouped bar, the\npane is hconcat to the right, anchored at the family's \"trailing-x\" slice\n(endpoint, segment midpoint, or bar top). For horizontal stacked bar, the\npane is vconcat above the chart, with each label centered on its segment\nmidpoint in the top categorical row. Typography is sourced from\n``style.charts.series_label.font.*``.\n\nTheme-tunable: all fields live in theme YAML.",
+      "description": "Series names printed on the chart itself instead of in a legend.\n\nAlso called direct labels, series labels, or an in-chart legend. Each\nseries gets one label in its own color, beside the plot: to the right on\nline, area, and vertical stacked bar charts, above the top row on\nhorizontal stacked bars.\n\nOnly shapes that can name every series get them. Line and area charts and\nstacked bars do; grouped bars, layered charts, small multiples, and very\nnarrow cards keep a legend instead. Where the labels do appear they replace the color\nlegend, so `visible` here, and not `legend`, is what takes series names\noff the side of those charts. Their font comes from\n`style.charts.series_label.font`.",
       "properties": {
         "visible": {
-          "description": "Show endpoint labels; theme sets false, authors opt in per chart.",
+          "description": "Print series names on the chart instead of in a legend. True on every built-in theme, and used wherever the shape can name every series: line and area charts, and stacked bars. Grouped bars, layered charts, small multiples, and very narrow cards keep a legend instead. Set false to move the names back into a legend everywhere. Where the labels do appear they replace the color legend, so this setting and not `legend` is what removes them.",
           "title": "Visible",
           "type": "boolean"
         },
         "label_offset": {
-          "description": "Spacing in pixels between the chart pane and the label pane.",
+          "description": "Gap in pixels between the plot and the series labels.",
           "title": "Label Offset",
           "type": "number"
         },
         "height": {
-          "description": "Height in pixels of the endpoint-label pane (top_rail layout).",
+          "description": "Height in pixels of the label strip above a horizontal stacked bar.",
           "title": "Height",
           "type": "number"
         }
@@ -7537,7 +7537,7 @@
         },
         "endpoint_labels": {
           "$ref": "#/$defs/EndpointLabelsConfig",
-          "description": "Endpoint label pane configuration for line charts."
+          "description": "Series names printed at the end of each line instead of in a legend."
         },
         "marks": {
           "$ref": "#/$defs/LineChartMarksStyle"
@@ -20053,7 +20053,7 @@
             }
           ],
           "default": null,
-          "description": "Annotate the min and max data points (line/area spark charts).",
+          "description": "Annotate the min and max data points (line spark charts only).",
           "title": "Min Max Visible"
         },
         "fill_opacity": {
@@ -20081,7 +20081,7 @@
             }
           ],
           "default": null,
-          "description": "Maximum value for bar-normalize range scaling.",
+          "description": "Scaling ceiling: bar-normalize and column clamp the value to it; bar uses it in place of the column's data max.",
           "title": "Max"
         },
         "thresholds": {
@@ -20097,7 +20097,7 @@
             }
           ],
           "default": null,
-          "description": "Color thresholds for bar / bar-normalize: {value: CSS color string}.",
+          "description": "Color thresholds for bar / bar-normalize / column: {value: CSS color string}.",
           "title": "Thresholds"
         },
         "background": {
@@ -20123,7 +20123,7 @@
             }
           ],
           "default": null,
-          "description": "Border radius for bar-normalize track in pixels.",
+          "description": "Corner radius in pixels for bar, bar-normalize, and column bars, and for the bar-normalize track.",
           "title": "Border Radius"
         },
         "value_visible": {
@@ -20154,7 +20154,7 @@
         },
         "negative_color": {
           "default": false,
-          "description": "Opt-in: paint negative values (bar / column / columns) with the theme's tones.negative color instead of the shared spark color. Has no effect on columns with no negative values.",
+          "description": "Paint negative values (bar / column / columns) with the theme's tones.negative color instead of the shared spark color. Has no effect on columns with no negative values.",
           "title": "Negative Color",
           "type": "boolean"
         }
@@ -23206,14 +23206,21 @@
         "data_type": {
           "anyOf": [
             {
-              "type": "null"
+              "enum": [
+                "array",
+                "boolean",
+                "date",
+                "number",
+                "string"
+              ],
+              "type": "string"
             },
             {
-              "type": "string"
+              "type": "null"
             }
           ],
           "default": null,
-          "description": "Upstream data-type hint preserved through migrations (e.g. 'string', 'number'). Informational; not currently consumed at compile time.",
+          "description": "The type of the values a select, radio or multiselect sends back. 'number', 'date' and 'boolean' convert the value before it reaches SQL; needed when the options come from a query, since a static numeric list already implies 'number'. 'string' and 'array' leave the value as sent.",
           "title": "Data Type"
         },
         "min": {
@@ -23325,7 +23332,7 @@
             }
           ],
           "default": null,
-          "description": "Option values written out in place, as strings or numbers.",
+          "description": "Option values written out in place, all strings or all numbers. Numeric options type the value the control sends back as a number unless data_type says otherwise.",
           "title": "Static"
         },
         "query": {

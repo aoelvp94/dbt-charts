@@ -75,7 +75,10 @@ obviously screaming*. Hold these when touching `compile/`:
   diagnostic naming an item silently resolves to no line at all.
 - **`base_dir` is board-global** — the `ProjectDirectory` a board resolves relative
   refs against, used as `base_dir / ref` and threaded through normalized calls. A
-  nested import's child anchors at the imported file's own directory.
+  nested import's child anchors at the imported file's own directory. The one ref
+  with a second anchor is a query's inline file `source:`, which also tries the
+  project root and errors when both hold the file; it never adds anchors beyond
+  those two.
 - **Presentation lives in the board cascade, never `dbt_charts.yml`.** Board dimensions,
   accents, and theme choices merge outermost→innermost: `charts/meta.yaml` →
   `charts/<dir>/meta.yaml` → `charts/<name>.yml`, each an `AuthoredBoard`/`BoardPatch`

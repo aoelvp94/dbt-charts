@@ -1339,6 +1339,8 @@ class TestInlineFileSourcePaths:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         project = local_project(tmp_path)
+        (tmp_path / "data").mkdir()
+        (tmp_path / "data" / "sales.csv").write_text("total\n1\n")
         yaml_content = """
 title: Test
 
@@ -1367,6 +1369,8 @@ rows:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         project = local_project(tmp_path)
+        (tmp_path / "data").mkdir()
+        (tmp_path / "data" / "events.json").write_text("[]")
         yaml_content = """
 title: Test
 
@@ -1397,6 +1401,8 @@ rows:
         """A board/meta `source:` file path also works as a query default (D-04's
         source-inheritance cascade applies the same way to a file ref)."""
         project = local_project(tmp_path)
+        (tmp_path / "data").mkdir()
+        (tmp_path / "data" / "sales.csv").write_text("total\n1\n")
         yaml_content = """
 title: Test
 source: ./data/sales.csv
@@ -1577,6 +1583,92 @@ rows:
         assert not result.success
         codes = [e.code for e in result.errors if hasattr(e, "code")]
         assert "ERR-SOURCE-INLINE-FORBIDDEN" in codes
+
+
+_TWO_ANCHOR_BOARD_YAML = """
+title: Test
+
+queries:
+  sales:
+    source: {ref}
+    sql: SELECT * FROM orders
+
+charts:
+  c:
+    query: sales
+    type: kpi
+    value: total
+
+rows:
+  - c
+"""
+
+
+class TestInlineFileSourceTwoAnchors:
+    """An inline file source ref resolves against the board directory or the
+    project root. Exactly one existing candidate wins; both existing is a
+    compile error naming both paths; neither existing keeps the board-directory
+    candidate so the missing file is a per-chart execution error."""
+
+    def test_root_relative_ref_resolves_from_nested_board_dir(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = local_project(tmp_path)
+        (tmp_path / "data").mkdir()
+        (tmp_path / "data" / "orders.parquet").write_text("dummy")
+        result = compile(
+            _TWO_ANCHOR_BOARD_YAML.format(ref="data/orders.parquet"),
+            base_dir=project.directory("charts/sales"),
+        )
+        assert result.success, f"Compilation failed: {result.errors}"
+        source_cfg = result.board.sources["data/orders.parquet"]
+        assert source_cfg["files"] == {"orders": "data/orders.parquet"}
+
+    def test_board_relative_ref_still_works_from_nested_board_dir(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = local_project(tmp_path)
+        (tmp_path / "data").mkdir()
+        (tmp_path / "data" / "orders.parquet").write_text("dummy")
+        result = compile(
+            _TWO_ANCHOR_BOARD_YAML.format(ref="../../data/orders.parquet"),
+            base_dir=project.directory("charts/sales"),
+        )
+        assert result.success, f"Compilation failed: {result.errors}"
+        source_cfg = result.board.sources["../../data/orders.parquet"]
+        assert source_cfg["files"] == {"orders": "data/orders.parquet"}
+
+    def test_ambiguous_when_both_anchors_have_the_file(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = local_project(tmp_path)
+        (tmp_path / "data").mkdir()
+        (tmp_path / "data" / "orders.parquet").write_text("root copy")
+        (tmp_path / "charts" / "sales" / "data").mkdir(parents=True)
+        (tmp_path / "charts" / "sales" / "data" / "orders.parquet").write_text(
+            "board copy"
+        )
+        result = compile(
+            _TWO_ANCHOR_BOARD_YAML.format(ref="data/orders.parquet"),
+            base_dir=project.directory("charts/sales"),
+        )
+        assert not result.success
+        assert result.errors[0].code == "ERR-FILE-SOURCE-AMBIGUOUS"
+        message = result.errors[0].message
+        assert "'charts/sales/data/orders.parquet'" in message
+        assert "'data/orders.parquet'" in message
+
+    def test_missing_from_both_anchors_keeps_the_board_anchor(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = local_project(tmp_path)
+        result = compile(
+            _TWO_ANCHOR_BOARD_YAML.format(ref="data/orders.parquet"),
+            base_dir=project.directory("charts/sales"),
+        )
+        assert result.success, f"Compilation failed: {result.errors}"
+        source_cfg = result.board.sources["data/orders.parquet"]
+        assert source_cfg["files"] == {"orders": "charts/sales/data/orders.parquet"}
 
 
 class TestRegistryCredentialLiterals:

@@ -42,6 +42,7 @@ from dbt_charts.core.compile.models.refs import CrossFileRef
 from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.normalize.variables import (
     detect_variable_input_type,
+    validate_choice_type,
     validate_variable_value,
 )
 from dbt_charts.core.compile.parse.parser import parse_yaml
@@ -790,17 +791,18 @@ def _suppressed(
 
 
 def _variable_accepts(var: Variable, **edit: Any) -> bool:
-    """Whether the compiler still takes this variable's default after that edit.
+    """Whether the compiler still takes this variable's options and default after that edit.
 
     Asked rather than restated, and this is the one rule on the surface where
-    asking is possible: the two functions called below *are* the functions that
-    raise, so every branch they carry — the per-input type check, the daterange's
-    arity, the slider's bounds against `min`/`max` — answers here at no cost and
-    a copy of them could not drift. The tables above exist because their rules
-    have no such entry point; where one does, a table would be the wrong shape.
+    asking is possible: the three functions called below *are* the functions
+    that raise, so every branch they carry — the per-input type check, the
+    daterange's arity, the slider's bounds against `min`/`max`, the option
+    list against `data_type` — answers here at no cost and a copy of them
+    could not drift. The tables above exist because their rules have no such
+    entry point; where one does, a table would be the wrong shape.
 
-    Three calls, in the pipeline's own order, because the pipeline validates a
-    default in three steps and skipping any one of them asks a different
+    Four calls, in the pipeline's own order, because the pipeline validates a
+    variable in that many steps and skipping any one of them asks a different
     question than the compiler will:
 
     - `detect_variable_input_type` first, exactly as `normalize/dispatch.py`
@@ -809,7 +811,9 @@ def _variable_accepts(var: Variable, **edit: Any) -> bool:
       bound a slider, it makes the variable a slider and then bounds it. Probing
       the unresolved `auto` asks the validator about an input it accepts
       unconditionally, and every answer comes back yes.
-    - `validate_variable_value`, the compile-time gate.
+    - `validate_choice_type`, the compile-time gate on the option list — the
+      one step that does not need a default to have something to judge.
+    - `validate_variable_value`, the compile-time gate on the default.
     - `coerce_variable_values`, the *runtime* gate on the render path. Not a
       strict narrowing of `validate_variable_value` in every direction: a
       `bool` subclasses `int`, so the type table takes a bool wherever it
@@ -827,6 +831,7 @@ def _variable_accepts(var: Variable, **edit: Any) -> bool:
     hypothesis = var.model_copy(update=edit)
     hypothesis.input = detect_variable_input_type(hypothesis)
     try:
+        validate_choice_type("", hypothesis)
         validate_variable_value("", hypothesis, hypothesis.default)
         coerce_variable_values({"": hypothesis.default}, {"": hypothesis})
     except (CompilationError, ExecutionError):
@@ -1149,17 +1154,22 @@ def _describe(
             # `ERR_FORMAT_PREDEFINED_SHADOW` — it keeps the offer honest for a
             # board that does not compile, which this verb still parses.
             enum_values += tuple(a for a in aliases if a not in enum_values)
-        if enum_values and isinstance(instance, Variable) and field.name == "input":
-            # `input:` and `default:` are one decision spelled as two fields, and
-            # the panel writes one at a time. Eight of the thirteen input types
-            # break a variable defaulting to a string, past the save gate. The
-            # values the compiler takes are the values on offer — the rest are a
-            # control that only fails, which is the rule the tables above serve
-            # and this one can reach exactly.
+        if (
+            enum_values
+            and isinstance(instance, Variable)
+            and field.name in ("input", "data_type")
+        ):
+            # `input:` (and `data_type:`) and `default:` are one decision
+            # spelled as two fields, and the panel writes one at a time. Eight
+            # of the thirteen input types break a variable defaulting to a
+            # string, past the save gate; `data_type: number` breaks one whose
+            # options are words. The values the compiler takes are the values
+            # on offer — the rest are a control that only fails, which is the
+            # rule the tables above serve and this one can reach exactly.
             enum_values = tuple(
                 value
                 for value in enum_values
-                if _variable_accepts(instance, input=value)
+                if _variable_accepts(instance, **{field.name: value})
             )
         properties[field.name] = DesignProperty(
             widget=widget,

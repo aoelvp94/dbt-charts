@@ -22,6 +22,7 @@ import pytest
 import yaml
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.compile.config import load_project_sources
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 
 # ---------------------------------------------------------------------------
@@ -458,9 +459,21 @@ def test_corpus_block_compiles(
     fence_body: str,
     tmp_path: Path,
     local_project: Callable[..., FilesystemProject],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Every ```yaml block in the dct docs corpus must pass dct validate."""
     from dbt_charts.agent_api.validate import validate
+
+    parsed = yaml.safe_load(fence_body)
+    if isinstance(parsed, dict) and set(parsed) == {"sources"}:
+        # A `sources:` registry is a dbt_charts.yml document, not a board:
+        # load it the way the engine does. `env_var()` refs need a value to
+        # render, as they would on the user's machine.
+        for name in re.findall(r"env_var\('([A-Za-z_][A-Za-z0-9_]*)'\)", fence_body):
+            monkeypatch.setenv(name, "_test")
+        (tmp_path / "dbt_charts.yml").write_text(fence_body)
+        load_project_sources(local_project(tmp_path))
+        return
 
     board_dict = _scaffold_to_board(fence_body)
     if board_dict is None:

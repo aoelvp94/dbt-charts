@@ -197,33 +197,42 @@ else:
 
 
 class EndpointLabelsConfig(BaseModel):
-    """Endpoint label pane config, shared across line, area, and bar.
+    """Series names printed on the chart itself instead of in a legend.
 
-    When visible, a separate pane is emitted alongside the main chart with one
-    text mark per series. For line/area and vertical stacked/grouped bar, the
-    pane is hconcat to the right, anchored at the family's "trailing-x" slice
-    (endpoint, segment midpoint, or bar top). For horizontal stacked bar, the
-    pane is vconcat above the chart, with each label centered on its segment
-    midpoint in the top categorical row. Typography is sourced from
-    ``style.charts.series_label.font.*``.
+    Also called direct labels, series labels, or an in-chart legend. Each
+    series gets one label in its own color, beside the plot: to the right on
+    line, area, and vertical stacked bar charts, above the top row on
+    horizontal stacked bars.
 
-    Theme-tunable: all fields live in theme YAML.
+    Only shapes that can name every series get them. Line and area charts and
+    stacked bars do; grouped bars, layered charts, small multiples, and very
+    narrow cards keep a legend instead. Where the labels do appear they replace the color
+    legend, so `visible` here, and not `legend`, is what takes series names
+    off the side of those charts. Their font comes from
+    `style.charts.series_label.font`.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # Render-visibility toggle. Theme writes false; authors flip to true per chart.
     visible: bool = Field(
-        description="Show endpoint labels; theme sets false, authors opt in per chart."
+        description=(
+            "Print series names on the chart instead of in a legend. True on "
+            "every built-in theme, and used wherever the shape can name every "
+            "series: line and area charts, and stacked bars. Grouped bars, "
+            "layered charts, small multiples, and very narrow cards keep a "
+            "legend instead. "
+            "Set false to move the names back into a legend everywhere. Where "
+            "the labels do appear they replace the color legend, so this "
+            "setting and not `legend` is what removes them."
+        )
     )
-    # Spacing (px) between the chart pane and the label pane —
-    # passed through as the hconcat or vconcat spacing depending on orientation.
     label_offset: float = Field(
-        description="Spacing in pixels between the chart pane and the label pane."
+        description="Gap in pixels between the plot and the series labels."
     )
-    # Height (px) of the label pane in the top_rail layout (horizontal stacked bar).
     height: float = Field(
-        description="Height in pixels of the endpoint-label pane (top_rail layout)."
+        description=(
+            "Height in pixels of the label strip above a horizontal stacked bar."
+        )
     )
 
 

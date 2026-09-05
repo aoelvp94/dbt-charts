@@ -97,11 +97,10 @@ class BarChartStyle(_CartesianChartStyle, _QuantitativeAxisChartStyleMixin):
             "'alphabetical' sorts by color column name. Ignored when stacking is off or no color."
         ),
     )
-    # Endpoint labels: same opt-in feature as line/area. When enabled on a
-    # multi-series stacked or grouped column chart, a right-side label pane
-    # replaces the categorical legend with direct segment/bar labels.
+    # Stacked only: resolve turns the rail back off for a grouped bar, whose
+    # series all rise from the same baseline and would collide.
     endpoint_labels: EndpointLabelsConfig = Field(
-        description="Endpoint label pane configuration for bar charts."
+        description="Series names printed on stacked bars instead of in a legend."
     )
     marks: Annotated[
         BarChartMarksStyle, InheritSlot(from_path="Style.charts.marks")

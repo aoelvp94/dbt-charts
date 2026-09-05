@@ -117,7 +117,11 @@ Most important information first, following Western reading pattern (top-left �
 
 - **Gray is default** — muted everything, ONE accent color for emphasis
 - **Color carries meaning** — same color = same meaning everywhere
-- **Direct labels** on charts when possible, not separate legends
+- **Direct labels** on charts when possible, not separate legends. This is
+  `style.endpoint_labels`, on by default for multi-series line, area, and
+  *stacked* bar (a grouped bar keeps a legend); where it applies it hides the
+  color legend, so `visible: false` there, not `legend:`, is what puts those
+  series names back in a legend
 - **Maximize data-ink ratio** — every pixel should represent data
 
 **Never write a raw hex.** `color: "#4C78A8"` is the Vega default, not ours — it

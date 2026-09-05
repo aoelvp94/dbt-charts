@@ -1365,11 +1365,12 @@ def migrate(
     help="""\b
 SQL and named board queries — common forms:
   dct query SOURCE 'SQL'
-  dct query BOARD.yaml REFERENCE
+  dct query BOARD.yml REFERENCE
   dct query SOURCE 'SQL' --validate
-  dct query BOARD.yaml REFERENCE --describe
+  dct query BOARD.yml REFERENCE --describe
 
-The first operand is the query context: a data source name, or a .yaml board file.
+The first operand is the query context: a data source name, or a board file
+(.yml, .yaml, .md, .markdown).
 --file reads SQL from a file for source contexts.""",
 )
 def query(
@@ -1377,14 +1378,14 @@ def query(
         str | None,
         typer.Argument(
             metavar="CONTEXT",
-            help="Data source name, or .yaml board path",
+            help="Data source name, or board path",
         ),
     ] = None,
     query_text: Annotated[
         str | None,
         typer.Argument(
             metavar="QUERY",
-            help="SQL string for source contexts, or query reference for .yaml boards",
+            help="SQL string for source contexts, or query reference for boards",
         ),
     ] = None,
     validate: Annotated[

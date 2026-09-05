@@ -157,8 +157,15 @@ EXPECTED_ASSETS: list[tuple[str, str]] = [
         "dbt_charts/agent_api/_init_templates/dbt_charts.yml",
         "dct init project config template",
     ),
-    ("dbt_charts/agent_api/_init_templates/guide.yaml", "dct init guide board"),
-    ("dbt_charts/agent_api/_init_templates/README.md", "dct init readme template"),
+    ("dbt_charts/agent_api/_init_templates/charts/guide.yaml", "dct init guide board"),
+    (
+        "dbt_charts/agent_api/_init_templates/charts/meta.yaml",
+        "dct init directory-defaults template",
+    ),
+    (
+        "dbt_charts/agent_api/_init_templates/charts/partials/.gitkeep",
+        "dct init partials placeholder",
+    ),
     # Default config + default theme — every render path loads these. Bundled
     # because `dbt-charts/core/defaults/` is inside the package; this pin proves
     # the package's data files survive any future `exclude` rule edit.

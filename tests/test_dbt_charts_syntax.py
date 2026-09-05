@@ -37,6 +37,15 @@ def test_chart_type_documented_in_syntax(value: str) -> None:
     )
 
 
+def test_sources_registry_has_its_own_topic() -> None:
+    """`dct docs sources` must exist: the `sources:` registry is the first thing
+    a non-dbt project writes, and `## Queries` only names it in passing."""
+    assert "\n## Sources\n" in _SYNTAX_TEXT
+    section = _SYNTAX_TEXT.split("\n## Sources\n", 1)[1].split("\n## ", 1)[0]
+    for source_type in ("duckdb", "postgres", "bigquery", "dbt_profile", "csv"):
+        assert f"type: {source_type}" in section, f"no `type: {source_type}` example"
+
+
 @pytest.mark.parametrize("value", sorted(set(get_args(VariableInputType))))
 def test_variable_input_type_documented_in_syntax(value: str) -> None:
     """Every VariableInputType literal must appear in DBT_CHARTS_SYNTAX.md."""

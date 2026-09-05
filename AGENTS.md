@@ -8,9 +8,9 @@ The dbt charts core engine: YAML dashboard compiler, query executor, renderer, H
 | `dct validate [PATH]` | Validate board YAML for errors (no DB); default: `charts/` |
 | `dct render <board>` | Compile + execute + write static exports |
 | `dct query SOURCE 'SELECT …'` | Execute raw SQL and return sample rows (CLI parity with MCP `execute_query`) |
-| `dct query board.yaml NAME` | Run a named board query (sample rows) |
+| `dct query board.yml NAME` | Run a named board query (sample rows) |
 | `dct query SOURCE 'SELECT …' --validate` | Static SQL lint for raw SQL in a source context |
-| `dct query board.yaml NAME --validate` | Lint the SQL of a named board query |
+| `dct query board.yml NAME --validate` | Lint the SQL of a named board query |
 | `dct query SOURCE 'SELECT …' --describe` | Column schema for a SQL string |
 | `dct search <query>` | Search dashboards by keyword with ranked results |
 | `dct impact <column>` | Which boards reference a column (reverse index; no DB) |

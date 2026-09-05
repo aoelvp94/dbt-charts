@@ -80,6 +80,7 @@ def lookup_board_query_sql(
     from dbt_charts.core.compile.template.parameterized import (
         render_parameterized_with_queries,
     )
+    from dbt_charts.core.diagnostics.execution import ExecutionError
 
     try:
         file_path = resolve_board_path(path, project)
@@ -116,15 +117,27 @@ def lookup_board_query_sql(
             ],
         )
 
-    merged_vars = {**board.variable_defaults, **(vars or {})}
+    # The same coercion and dialect execution uses, so the preview shows the
+    # SQL the warehouse would get. `dialect_for_source` answers None for a
+    # source whose warehouse is only knowable at execute (`dbt_profile`, a
+    # file source); this preview then falls to the default dialect rather than
+    # refusing.
+    from dbt_charts.core.compile.normalize.queries import dialect_for_source
+    from dbt_charts.core.dialects import get_dialect
+    from dbt_charts.core.execute.executor import merge_board_variables
+
+    source_type = dialect_for_source(query.source, project.sources.sources)
+    warehouse = get_dialect(source_type) if source_type else None
     try:
+        merged_vars = merge_board_variables(board, vars or {})
         rendered = render_parameterized_with_queries(
             query.sql,
             merged_vars,
             queries=board.queries,
             strict=not query.lenient_variables,
+            warehouse=warehouse,
         )
-    except JinjaError as exc:
+    except (JinjaError, ExecutionError) as exc:
         return BoardQueryLookupResult(success=False, errors=[str(exc)])
 
     return BoardQueryLookupResult(success=True, sql=rendered.sql, source=query.source)

@@ -23,6 +23,17 @@ text: |
   This file is your starter guide. Edit it, add new `.yaml` files under
   `charts/`, and run `dct serve` to preview everything in your browser.
 
+  Markdown (`.md`) files under `charts/` are boards too: add YAML
+  frontmatter for queries and charts, then embed a chart inline with
+  `{% raw %}{{ chart my_chart }}{% endraw %}`.
+
+  Next steps:
+
+  1. Open `charts/guide.yaml` and tweak the content.
+  2. Run `dct serve` and open the URL it prints.
+  3. Add new `.yaml` or `.md` files under `charts/` and they appear automatically.
+  4. Run `dct validate` to validate your board YAML for errors.
+
 # ── Queries ───────────────────────────────────────────────────────────────────
 # `type: values` embeds data directly — no database needed.
 # Swap for a `type: sql` query (with a `sources:` entry) once you're ready.

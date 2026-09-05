@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from dbt_charts.agent_api.validate_query import QueryDiagnostic
 
 from dbt_charts.agent_api import Project
+from dbt_charts.agent_api._paths import BOARD_CANDIDATE_SUFFIXES
 from dbt_charts.cli._console import dct_console
 from dbt_charts.cli._json_output import print_json_result
 from dbt_charts.cli._project import with_project
@@ -101,7 +102,7 @@ def _print_query_board_rich(result: QueryBoardResult) -> None:
                 err_console.print(f"Did you mean: {escape(', '.join(matches))}?")
             elif _looks_like_sql(result.name):
                 err_console.print(
-                    "Did you mean to use a source name instead of a .yaml board path?"
+                    "Did you mean to use a source name instead of a board path?"
                 )
             err_console.print(
                 f"Available queries: {escape(', '.join(result.available_queries))}"
@@ -184,8 +185,13 @@ def _print_describe_result(
 
 
 def _is_board_context(context: str) -> bool:
-    """Return True when the first operand selects board-query mode."""
-    return Path(context).suffix == ".yaml"
+    """Return True when the first operand selects board-query mode.
+
+    Must track every suffix the project calls a board: a board path that fails
+    this test falls through to raw-SQL mode, where the query reference is
+    linted as SQL text and a nonexistent one reports success.
+    """
+    return Path(context).suffix in BOARD_CANDIDATE_SUFFIXES
 
 
 def _resolve_query_input(
@@ -199,7 +205,7 @@ def _resolve_query_input(
     Raises typer.Exit(1) on any resolution error.
     """
     if context is None:
-        typer.echo("Error: provide a source or .yaml board path.", err=True)
+        typer.echo("Error: provide a source or board path.", err=True)
         raise typer.Exit(1)
 
     if _is_board_context(context):
@@ -211,7 +217,7 @@ def _resolve_query_input(
         if not query_text:
             typer.echo(
                 "Error: provide a query reference for the board"
-                " (e.g. dct query charts/sales.yaml revenue).",
+                " (e.g. dct query charts/sales.yml revenue).",
                 err=True,
             )
             raise typer.Exit(1)
@@ -261,7 +267,7 @@ def _handle_lookup_failure(lr: BoardQueryLookupResult, query_name: str) -> NoRet
             typer.echo("Did you mean: " + ", ".join(matches) + "?", err=True)
         elif _looks_like_sql(query_name):
             typer.echo(
-                "Did you mean to use a source name instead of a .yaml board path?",
+                "Did you mean to use a source name instead of a board path?",
                 err=True,
             )
         typer.echo("Available queries: " + ", ".join(lr.available_queries), err=True)

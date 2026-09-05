@@ -21,12 +21,6 @@
     background: rgba(102, 126, 234, 0.25);
 }
 
-{# Chart loading state #}
-.dbt-chart.loading {
-    opacity: 0.5;
-    pointer-events: none;
-}
-
 {# Chart highlight overlay when hovering over dependent variable.
    Border only, no fill - just outlines the dependent charts. #}
 .dbt-chart-highlight-overlay {
@@ -87,8 +81,4 @@
 }
 
 
-{# Spinner animation for loading state #}
-@keyframes dbt-spin {
-    to { transform: rotate(360deg); }
-}
 </style>

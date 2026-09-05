@@ -37,56 +37,122 @@
         vars[name] = value;
     }
 
+    window.__dfMarkChartLoading = function(chart) {
+        /*{# Namespaced: a host stylesheet may own a bare `loading` (DaisyUI's #}*/
+        /*{# masks the element into its own spinner, which blanks the chart). #}*/
+        var currentClass = chart.getAttribute('class') || '';
+        if (currentClass.indexOf('dbt-chart-loading') === -1) {
+            chart.setAttribute('class', currentClass + (currentClass ? ' ' : '') + 'dbt-chart-loading');
+        }
+
+        if (!chart.querySelector('.dbt-chart-spinner')) {
+            var spinner = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            spinner.setAttribute('class', 'dbt-chart-spinner');
+            var bbox = chart.getBBox ? chart.getBBox() : {width: 200, height: 200};
+            var centerX = bbox.x + bbox.width / 2;
+            var centerY = bbox.y + bbox.height / 2;
+            spinner.appendChild(loadingGlyph(centerX, centerY));
+            chart.appendChild(spinner);
+        }
+    };
+
     function markDependentChartsLoading(name) {
         var charts = document.querySelectorAll('[data-var-' + name + ']');
         for (var i = 0; i < charts.length; i++) {
-            var chart = charts[i];
-            /*{# Add loading class #}*/
-            var currentClass = chart.getAttribute('class') || '';
-            if (currentClass.indexOf('loading') === -1) {
-                chart.setAttribute('class', currentClass + (currentClass ? ' ' : '') + 'loading');
-            }
-
-            /*{# Add spinner if not already present #}*/
-            if (!chart.querySelector('.dbt-chart-spinner')) {
-                var spinner = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-                spinner.setAttribute('class', 'dbt-chart-spinner');
-                /*{# Get chart bounds for centering spinner #}*/
-                var bbox = chart.getBBox ? chart.getBBox() : {width: 200, height: 200};
-                var centerX = bbox.x + bbox.width / 2;
-                var centerY = bbox.y + bbox.height / 2;
-
-                var circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-                circle.setAttribute('cx', centerX);
-                circle.setAttribute('cy', centerY);
-                circle.setAttribute('r', '14');
-                circle.setAttribute('fill', 'none');
-                circle.setAttribute('stroke', '#e0e0e0');
-                circle.setAttribute('stroke-width', '3');
-                circle.setAttribute('stroke-dasharray', '20 60');
-                circle.setAttribute('stroke-dashoffset', '0');
-                circle.style.animation = 'dbt-spin 0.8s linear infinite';
-
-                spinner.appendChild(circle);
-                chart.appendChild(spinner);
-            }
+            window.__dfMarkChartLoading(charts[i]);
         }
-
-        return charts;
     }
 
-    function scheduleLoadingCleanup(charts) {
-        setTimeout(function() {
-            for (var i = 0; i < charts.length; i++) {
-                var chart = charts[i];
-                var currentClass = chart.getAttribute('class') || '';
-                chart.setAttribute('class', currentClass.replace(/\s*loading\s*/g, ' ').trim());
-                var spinner = chart.querySelector('.dbt-chart-spinner');
-                if (spinner) {
-                    spinner.remove();
-                }
+    /*{# A navigation that starts and never commits (Escape, the browser's #}*/
+    /*{# Stop, a 204, a download response) fires neither `unload` nor #}*/
+    /*{# `pageshow` -- no predicate can see it coming, only this document #}*/
+    /*{# staying alive can prove it happened. One capture-phase, one-shot #}*/
+    /*{# pair answers that: the next `pointerdown` or `keydown` anywhere means #}*/
+    /*{# this document is still here, so whatever navigation was pending did #}*/
+    /*{# not replace it. No timers -- the next interaction is the signal. #}*/
+    var _navGuardArmed = false;
+    function _onDocumentStillAlive() {
+        /*{# Self-removing: whichever eval's `window.__dfClearChartLoading` #}*/
+        /*{# is current by the time this fires, this exact pair comes off. #}*/
+        _navGuardArmed = false;
+        document.removeEventListener('pointerdown', _onDocumentStillAlive, true);
+        document.removeEventListener('keydown', _onDocumentStillAlive, true);
+        window.__dfClearChartLoading();
+    }
+    function _armNavigationCancelGuard() {
+        if (_navGuardArmed) return;
+        _navGuardArmed = true;
+        document.addEventListener('pointerdown', _onDocumentStillAlive, true);
+        document.addEventListener('keydown', _onDocumentStillAlive, true);
+    }
+    function _dropNavigationCancelGuard() {
+        if (!_navGuardArmed) return;
+        _navGuardArmed = false;
+        document.removeEventListener('pointerdown', _onDocumentStillAlive, true);
+        document.removeEventListener('keydown', _onDocumentStillAlive, true);
+    }
+
+    /*{# The loading state ends when the board is replaced -- or when the host #}*/
+    /*{# knows it will not be: a failed commit keeps the old board on screen, #}*/
+    /*{# and a board left dimmed and inert under a failure bar is a lie. #}*/
+    window.__dfClearChartLoading = function() {
+        _dropNavigationCancelGuard();
+        document.querySelectorAll('.dbt-chart-loading').forEach(function(chart) {
+            chart.setAttribute('class', chart.getAttribute('class')
+                .split(/\s+/).filter(function(c) { return c && c !== 'dbt-chart-loading'; }).join(' '));
+        });
+        document.querySelectorAll('.dbt-chart-spinner').forEach(function(s) { s.remove(); });
+    };
+
+    /*{# A back/forward-cache restore resurrects the exact DOM the user #}*/
+    /*{# navigated away from, mark and all -- the page never reloaded, so #}*/
+    /*{# nothing else clears it. `event.persisted` is bfcache's own signal #}*/
+    /*{# for that; an ordinary load fires `pageshow` too, unpersisted, and #}*/
+    /*{# must not disturb a mark a script just applied. #}*/
+    if (!_documentWired) window.addEventListener('pageshow', function(event) {
+        if (event.persisted) window.__dfClearChartLoading();
+    });
+
+    /*{# The turning glyph. A host that has a loading icon of its own marks it #}*/
+    /*{# `data-dbt-loading-icon` and the board turns the same one, so the chart #}*/
+    /*{# and the chrome agree; with no host icon (dct serve) it is a plain ring. #}*/
+    /*{# rotate() turns about the SVG origin unless the box and origin are the #}*/
+    /*{# element's own -- without those the glyph orbits the board instead. #}*/
+    /*{# The host icon's paths are lifted into a <g>, never a nested <svg>: a #}*/
+    /*{# CSS transform on an inner <svg> element corrupts the board's paint. #}*/
+    var LOADING_GLYPH_SIZE = 24;
+    var LOADING_GLYPH_PAINT = ['fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin'];
+    function loadingGlyph(centerX, centerY) {
+        var svgNS = 'http://www.w3.org/2000/svg';
+        var hostIcon = document.querySelector('svg[data-dbt-loading-icon]');
+        var glyph;
+        if (hostIcon) {
+            glyph = document.createElementNS(svgNS, 'g');
+            LOADING_GLYPH_PAINT.forEach(function(attr) {
+                if (hostIcon.hasAttribute(attr)) glyph.setAttribute(attr, hostIcon.getAttribute(attr));
+            });
+            for (var i = 0; i < hostIcon.children.length; i++) {
+                glyph.appendChild(hostIcon.children[i].cloneNode(true));
             }
-        }, 5000);
+        } else {
+            glyph = document.createElementNS(svgNS, 'circle');
+            glyph.setAttribute('cx', LOADING_GLYPH_SIZE / 2);
+            glyph.setAttribute('cy', LOADING_GLYPH_SIZE / 2);
+            glyph.setAttribute('r', LOADING_GLYPH_SIZE / 2 - 1);
+            glyph.setAttribute('fill', 'none');
+            glyph.setAttribute('stroke', 'currentColor');
+            glyph.setAttribute('stroke-width', '2');
+            glyph.setAttribute('stroke-dasharray', '20 60');
+        }
+        glyph.style.transformBox = 'fill-box';
+        glyph.style.transformOrigin = 'center';
+        glyph.style.animation = 'dbt-spin 0.8s linear infinite';
+        /*{# Position on an outer group: the animation owns the glyph's own transform. #}*/
+        var placed = document.createElementNS(svgNS, 'g');
+        placed.setAttribute('transform', 'translate('
+            + (centerX - LOADING_GLYPH_SIZE / 2) + ',' + (centerY - LOADING_GLYPH_SIZE / 2) + ')');
+        placed.appendChild(glyph);
+        return placed;
     }
 
     /*{# The drawn control publishes the committed value, and the render is the #}*/
@@ -111,11 +177,10 @@
 
     /*{# Update URL and reload (or notify parent) #}*/
     function updateVariable(name, value) {
-        /*{# Mark dependent charts as loading (add loading class and spinner) #}*/
-        var charts = markDependentChartsLoading(name);
-
-        /*{# Restore after timeout (fallback if reload fails or is prevented) #}*/
-        scheduleLoadingCleanup(charts);
+        /*{# Mark dependent charts as loading. The state ends when the host #}*/
+        /*{# replaces the board (swap, or the navigation below) or clears it on #}*/
+        /*{# a failed render (__dfClearChartLoading) -- never on a timer. #}*/
+        markDependentChartsLoading(name);
 
         publishCommitted(name, value);
 
@@ -252,7 +317,46 @@
         if (!link) return;
         if (!link.ownerSVGElement && link.namespaceURI !== 'http://www.w3.org/2000/svg') return;
         var href = link.getAttribute('href');
-        if (!href || href.charAt(0) !== '?') return;
+        if (!href) return;
+        if (href.charAt(0) !== '?') {
+            /*{# The mark has no clearing path outside a board swap, a failed- #}*/
+            /*{# render host clear, or the bfcache restore below -- so it must #}*/
+            /*{# not be applied to a click that will not replace this document. #}*/
+            /*{# `.target` on an SVGAElement is an SVGAnimatedString, not a #}*/
+            /*{# plain string -- the attribute is the only portable read. #}*/
+            var linkTarget = link.getAttribute('target');
+            if (
+                event.defaultPrevented ||
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey ||
+                (linkTarget && linkTarget !== '_self') ||
+                link.hasAttribute('download')
+            ) {
+                return;
+            }
+            /*{# `board_links.py`'s passthrough prefixes (mailto:, #, an editor #}*/
+            /*{# deeplink, ...) reach the browser unrewritten, and none of them #}*/
+            /*{# unload the document -- only an http(s) navigation to a #}*/
+            /*{# different document does. #}*/
+            var willReplaceDocument;
+            try {
+                var target = new URL(href, window.location.href);
+                willReplaceDocument = (target.protocol === 'http:' || target.protocol === 'https:')
+                    && target.href.split('#')[0] !== window.location.href.split('#')[0];
+            } catch (e) {
+                willReplaceDocument = false;
+            }
+            if (!willReplaceDocument) return;
+            var group = link.closest('[data-chart-id]');
+            if (group) {
+                window.__dfMarkChartLoading(group);
+                _armNavigationCancelGuard();
+            }
+            return;
+        }
         var inIframe = window.parent !== window;
         var hasHook = typeof window.__dfHandleVariableUpdate === 'function';
         var params = new URLSearchParams(href.slice(1));
@@ -273,16 +377,11 @@
         event.preventDefault();
         var vars = getAllVariableValues();
         var tabUrl = inIframe ? null : new URL(window.location);
-        var chartsToCleanup = [];
         params.forEach(function(value, name) {
-            var charts = markDependentChartsLoading(name);
-            for (var i = 0; i < charts.length; i++) {
-                chartsToCleanup.push(charts[i]);
-            }
+            markDependentChartsLoading(name);
             vars[name] = value;
             if (tabUrl) { tabUrl.searchParams.set(name, value); }
         });
-        scheduleLoadingCleanup(chartsToCleanup);
         if (inIframe) {
             window.parent.postMessage({
                 type: 'dbt-variable-change',

@@ -10,7 +10,7 @@ from pydantic import ValidationError as PydanticValidationError
 from sqlglot.dialects.dialect import Dialect as SqlglotDialect
 
 if TYPE_CHECKING:
-    from dbt_charts.core.project import ProjectDirectory
+    from dbt_charts.core.project import ProjectDirectory, ProjectPath
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.cache import (
@@ -53,6 +53,7 @@ from dbt_charts.core.compile.sql_guard import (
 from dbt_charts.core.compile.template.jinja import extract_variable_dependencies
 from dbt_charts.core.diagnostics.ansi import strip_ansi
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_FILE_SOURCE_AMBIGUOUS,
     ERR_SOURCE_INLINE_FORBIDDEN,
     ERR_SOURCE_NOT_FOUND,
     ERR_SOURCE_REQUIRED,
@@ -107,8 +108,15 @@ def _resolve_inline_file_source(
 
     The table name is the file's stem (`sales.csv` -> table `sales`); an unknown
     extension or a stem that is not a valid SQL identifier is a compile error —
-    no silent sanitization. The path is resolved via the board's ProjectDirectory
-    (`base_dir`), which already rejects absolute/escaping paths.
+    no silent sanitization.
+
+    The ref is tried against two anchors, the board's own directory and the
+    project root, so `data/orders.parquet` works from any board depth while
+    `../data/orders.parquet` keeps working. Exactly one existing candidate
+    wins; both existing (at different relpaths) is a compile error naming
+    both, never a silent pick. When neither exists the board-directory
+    candidate is kept and the missing file surfaces at execution as a
+    per-chart diagnostic, so one stale path degrades one tile, not the board.
     """
     suffix = PurePosixPath(ref).suffix.lower()
     file_type = _FILE_SOURCE_EXTENSIONS.get(suffix)
@@ -123,14 +131,40 @@ def _resolve_inline_file_source(
             "no base directory context (board was compiled without one)."
         )
     stem = PurePosixPath(ref).stem
-    try:
-        resolved = (base_dir / ref).relpath
-    except ValueError as e:
+
+    # A board at the project root yields the same relpath from both anchors;
+    # keyed by relpath so that counts as one candidate. An anchor the ref
+    # escapes (`../x` from the root) is simply absent — only both failing is
+    # the author's error.
+    anchors = (
+        ("board directory", base_dir),
+        ("project root", base_dir.project.directory(".")),
+    )
+    candidates: dict[str, tuple[str, ProjectPath]] = {}
+    invalid: ValueError | None = None
+    for label, directory in anchors:
+        try:
+            path = directory / ref
+        except ValueError as e:
+            invalid = e
+            continue
+        candidates.setdefault(path.relpath, (label, path))
+    if not candidates:
         raise CompilationError(
-            f"Query {name!r}: inline file source {ref!r} is invalid: {e}"
-        ) from e
+            f"Query {name!r}: inline file source {ref!r} is invalid: {invalid}"
+        ) from invalid
+
+    existing = [(label, p) for label, p in candidates.values() if p.exists()]
+    if len(existing) > 1:
+        found = " and ".join(f"{p.relpath!r} ({label})" for label, p in existing)
+        raise CompilationError.from_code(
+            ERR_FILE_SOURCE_AMBIGUOUS, query_name=name, ref=ref, candidates=found
+        )
+    # The board-directory anchor is listed first, so it is the fallback when
+    # neither candidate exists and the executor reports the missing file.
+    winner = existing[0][1].relpath if existing else next(iter(candidates))
     try:
-        config = _build_file_source_config(file_type, stem, resolved)
+        config = _build_file_source_config(file_type, stem, winner)
     except PydanticValidationError as e:
         raise CompilationError(
             f"Query {name!r}: inline file source {ref!r} is invalid: {e}"
@@ -152,7 +186,9 @@ def dialect_for_source(source: str | None, sources: dict[str, Any]) -> str | Non
     None means "could not establish one", and callers must treat it as "do
     not report parse findings" rather than falling back to the default
     dialect: parsing BigQuery SQL as generic SQL is how a parse warning ends
-    up firing on ~40% of real boards.
+    up firing on ~40% of real boards. The one caller that does fall back is
+    `agent_api.lookup_board_query_sql`, which reports no findings — it only
+    renders SQL text for a preview.
     """
     if source is None:
         return None

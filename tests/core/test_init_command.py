@@ -50,39 +50,10 @@ class TestFilesCreated:
         assert "title:" in content
         assert "queries:" in content
 
-    def test_creates_readme_md(self, dbt_repo: Path) -> None:
-        result = init_command(project_dir=dbt_repo)
-        readme = dbt_repo / "charts" / "README.md"
-        assert readme.exists(), (
-            "init must scaffold charts/README.md, not charts/index.md"
-        )
-        assert Path("charts/README.md") in result.created_files
-
     def test_does_not_create_index_md(self, dbt_repo: Path) -> None:
         """charts/index.md must not be created — it would hijack the root URL."""
         init_command(project_dir=dbt_repo)
         assert not (dbt_repo / "charts" / "index.md").exists()
-
-    def test_readme_md_has_frontmatter(self, dbt_repo: Path) -> None:
-        init_command(project_dir=dbt_repo)
-        content = (dbt_repo / "charts" / "README.md").read_text()
-        assert content.startswith("---\n")
-        assert "\n---\n" in content[4:]
-
-    def test_readme_md_has_title(self, dbt_repo: Path) -> None:
-        init_command(project_dir=dbt_repo)
-        content = (dbt_repo / "charts" / "README.md").read_text()
-        assert "title:" in content
-
-    def test_readme_md_is_instructional(self, dbt_repo: Path) -> None:
-        """The landing page should teach users about boards and both authoring modes."""
-        init_command(project_dir=dbt_repo)
-        content = (dbt_repo / "charts" / "README.md").read_text()
-        # Should mention both authoring modes
-        assert ".yml" in content or ".yaml" in content
-        assert ".md" in content
-        # Should reference the guide board
-        assert "guide" in content.lower()
 
     def test_creates_gitkeep_in_partials(self, dbt_repo: Path) -> None:
         init_command(project_dir=dbt_repo)
@@ -133,15 +104,6 @@ class TestIdempotency:
         assert (dbt_repo / "charts" / "guide.yaml").exists()
         assert Path("charts/guide.yaml") in result.created_files
 
-    def test_rerun_does_not_clobber_readme_md(self, dbt_repo: Path) -> None:
-        init_command(project_dir=dbt_repo)
-        readme = dbt_repo / "charts" / "README.md"
-        readme.write_text("custom landing\n")
-
-        result = init_command(project_dir=dbt_repo)
-        assert readme.read_text() == "custom landing\n"
-        assert Path("charts/README.md") in result.skipped_files
-
     def test_existing_gitignore_is_appended_not_clobbered(self, dbt_repo: Path) -> None:
         gitignore = dbt_repo / ".gitignore"
         gitignore.write_text("target/\n")
@@ -188,7 +150,7 @@ class TestInitHints:
         result = init_command(project_dir=dbt_repo)
         assert result.hints == [], f"unexpected hints: {result.hints}"
 
-    def test_readme_md_does_not_mention_inspect(self, dbt_repo: Path) -> None:
+    def test_guide_yaml_does_not_mention_inspect(self, dbt_repo: Path) -> None:
         init_command(project_dir=dbt_repo)
-        content = (dbt_repo / "charts" / "README.md").read_text()
+        content = (dbt_repo / "charts" / "guide.yaml").read_text()
         assert "dct inspect" not in content

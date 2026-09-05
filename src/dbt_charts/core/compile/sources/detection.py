@@ -343,7 +343,11 @@ def parse_dbt_profiles_yaml(content: str) -> list[dict[str, object]]:
 
     try:
         profiles = yaml.safe_load(content)
-    except yaml.YAMLError:
+    except (yaml.YAMLError, RecursionError):
+        # Nesting deep enough to outrun the interpreter stack surfaces as a bare
+        # RecursionError, not a YAMLError — PyYAML's parser recurses per level.
+        # It is a parse failure like any other, and this content is
+        # remote-committed, so degrade rather than 500 the caller.
         return []
     if not isinstance(profiles, dict):
         return []

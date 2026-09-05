@@ -18,6 +18,34 @@ the task or the PR description instead. See ``migrations/AGENTS.md``'s
 
 Changes in this release:
 
+- ``variables.<name>.data_type`` redefined in place: it was an unvalidated
+  free-text hint ("informational; not consumed"), and is now the type
+  contract for what a ``select`` / ``radio`` / ``multiselect`` sends back —
+  ``number``, ``date`` and ``boolean`` convert the value before it reaches
+  SQL; ``string`` and ``array`` remain accepted and inert. Every value the
+  Looker migrator or an in-repo board ever authored (``string``, ``number``,
+  ``boolean``, ``array``) keeps parsing, so no rewrite applies. A board that
+  authored any other spelling now fails validation naming the field and the
+  five values, and a ``number``/``date``/``boolean`` that disagrees with the
+  variable's ``options.static`` or ``default`` is refused at compile rather
+  than failing the first query — both are the diagnostic this redefinition
+  owes, and both are the only places the old, inert intent is detectable.
+
+- ``variables.<name>.options.static`` with every option a number now types
+  the value the control sends back as a number, where it used to bind the
+  text the browser sent. A board that filters a *text* column through a
+  numeric-looking option list (zip codes, account codes) authored nothing
+  new and now binds an integer; Postgres and BigQuery reject that
+  comparison. The YAML is byte-identical before and after, so nothing can
+  recognize it; the opt-out is ``data_type: string`` on that variable.
+
+- ``variables.<name>.options.static`` mixing numbers and strings
+  (``[2023, 2024, All]``) is retired: the list is now the type contract for
+  the values that come back, and a mixed one names no type. Parsing refuses
+  it with ``ERR-VALIDATION-FIELD`` naming the field; the rewrite is by hand
+  (quote every option, or drop the odd one and leave the variable unset for
+  the no-filter choice). No in-repo board authored a mixed list.
+
 - ``style.support_table.position`` (also reachable per chart type and per
   chart) widened from ``top | bottom`` to ``top | bottom | left | right``.
   Pure addition: every board authoring ``top`` or ``bottom`` keeps its exact
@@ -466,6 +494,19 @@ Changes in this release:
   above: a sub-board nested under ``rows``/``cols``/``grid.items.*.item``
   that declares its own ``charts:`` map (``rows.*.charts.*.layers.*.axis_y.
   label``) is not among the resolved moves and reports the field unmigrated.
+
+- A query's inline ``source: <path>`` ref is now resolved against the project
+  root as well as the board's own directory, where it was board-relative
+  only. No board that rendered keeps a different meaning: a path that exists
+  at the board-relative location still resolves there, a path that exists
+  nowhere still fails at execution as before, and a path that exists only
+  at the root, which used to fail, now resolves. The one redefinition is a
+  board whose ref names a file present at *both* locations (say
+  ``charts/sales/data/orders.parquet`` and ``data/orders.parquet`` for a
+  board in ``charts/sales/``): it used to resolve board-relative and now
+  fails compile with ``ERR-FILE-SOURCE-AMBIGUOUS`` naming both, the only
+  place the old intent is detectable. The rewrite is by hand — remove or
+  rename one copy. No in-repo board authors that layout.
 """
 
 from __future__ import annotations

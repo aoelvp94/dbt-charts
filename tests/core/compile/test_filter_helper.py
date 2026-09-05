@@ -5,6 +5,8 @@ The legacy unparameterized _filter_helper from jinja.py raises CompilationError
 on any call — it uses string interpolation and is no longer supported.
 """
 
+from datetime import date, datetime
+
 import pytest
 
 from dbt_charts.core.compile.errors import CompilationError
@@ -15,8 +17,11 @@ from dbt_charts.core.compile.template.jinja import (
 from dbt_charts.core.compile.template.parameterized import (
     _NullValue,
     _ParameterCollector,
+    _ParameterizedValue,
+    make_filter_date_range_helper,
     make_filter_helper,
 )
+from dbt_charts.core.dialects import get_dialect
 from dbt_charts.core.dialects.postgres import PostgresDialect
 
 # ---------------------------------------------------------------------------
@@ -31,7 +36,7 @@ def _collector() -> _ParameterCollector:
 def _make_helper(collector: _ParameterCollector | None = None):
     if collector is None:
         collector = _collector()
-    return make_filter_helper(collector.add_param)
+    return make_filter_helper(collector.add_param, get_dialect("postgres"))
 
 
 # ===========================================================================
@@ -150,3 +155,81 @@ class TestFilterHelperParameterized:
         fn = _make_helper()
         with pytest.raises(ValueError, match="operator"):
             fn("col", "value", 1)
+
+
+# ===========================================================================
+# date values and list operators
+# ===========================================================================
+
+
+class TestFilterHelperDatesAndLists:
+    """What `filter()` emits for the value shapes the cross-dialect matrix
+    (tests/core/test_variable_sql_cross_dialect.py) relies on."""
+
+    def test_date_value_compares_the_column_as_a_date(self) -> None:
+        assert _make_helper()("ts", date(2024, 1, 15), ">=") == "CAST(ts AS DATE) >= $1"
+
+    def test_date_list_compares_the_column_as_a_date(self) -> None:
+        helper = _make_helper()
+        sql = helper("ts", [date(2024, 1, 1), date(2024, 1, 15)])
+        assert sql == "CAST(ts AS DATE) IN ($1, $2)"
+
+    def test_datetime_value_leaves_the_column_alone(self) -> None:
+        """A datetime carries a time of day; truncating the column would
+        discard the comparison the author asked for."""
+        assert _make_helper()("ts", datetime(2024, 1, 15, 13, 0), ">=") == "ts >= $1"
+
+    def test_wrapped_list_items_are_unwrapped(self) -> None:
+        """A list built in the template from two variables holds
+        `_ParameterizedValue` wrappers; the values, not the wrappers, bind."""
+        collector = _collector()
+        a = _ParameterizedValue("a", date(2024, 1, 1), collector)
+        b = _ParameterizedValue("b", date(2024, 1, 15), collector)
+        sql = _make_helper(collector)("ts", [a, b])
+        assert sql == "CAST(ts AS DATE) IN ($1, $2)"
+        assert collector.params == [date(2024, 1, 1), date(2024, 1, 15)]
+
+    def test_mixed_list_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="mixes dates"):
+            _make_helper()("ts", [date(2024, 1, 1), "2024-01-15"])
+
+    @pytest.mark.parametrize("operator", ["=", "IN", "in", " In "])
+    def test_membership_operator_is_in(self, operator: str) -> None:
+        assert _make_helper()("s", ["a", "b"], operator) == "s IN ($1, $2)"
+
+    @pytest.mark.parametrize("operator", ["!=", "<>", "NOT IN", "not in"])
+    def test_inequality_operator_is_not_in(self, operator: str) -> None:
+        assert _make_helper()("s", ["a", "b"], operator) == "s NOT IN ($1, $2)"
+
+    @pytest.mark.parametrize("value", [[1, 2], []])
+    def test_ordering_operator_on_a_list_is_refused(self, value: list[int]) -> None:
+        """A list only has membership semantics — and the refusal cannot
+        depend on whether the viewer happened to select anything."""
+        with pytest.raises(ValueError, match="cannot apply to a list"):
+            _make_helper()("n", value, ">=")
+
+    def test_null_in_a_list_is_refused(self) -> None:
+        """IN never matches NULL and NOT IN would match nothing — neither is
+        what an author meant by putting NULL in a selection."""
+        with pytest.raises(ValueError, match="cannot contain NULL"):
+            _make_helper()("s", ["a", None])
+
+
+class TestFilterDateRangeBounds:
+    def test_datetime_bounds_leave_the_column_alone(self) -> None:
+        """Bounds with a time of day are the author asking for a precise
+        window; truncating the column would widen it to whole days."""
+        collector = _collector()
+        helper = make_filter_date_range_helper(
+            collector.add_param, get_dialect("postgres")
+        )
+        sql = helper("ts", [datetime(2024, 1, 1, 9, 0), datetime(2024, 1, 1, 17, 0)])
+        assert sql == "ts BETWEEN $1 AND $2"
+
+    def test_a_half_datetime_range_is_refused(self) -> None:
+        collector = _collector()
+        helper = make_filter_date_range_helper(
+            collector.add_param, get_dialect("postgres")
+        )
+        with pytest.raises(ValueError, match="mixes a date with a datetime"):
+            helper("ts", [date(2024, 1, 1), datetime(2024, 1, 1, 17, 0)])

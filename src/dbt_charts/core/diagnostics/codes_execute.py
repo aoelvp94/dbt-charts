@@ -40,17 +40,18 @@ ERR_FILE_SOURCE_NOT_FOUND = REGISTRY.register(
         title="File source path could not be read from disk",
         message_template=(
             "File source {source_name!r}: {relpath!r} could not be read "
-            "({detail}). Check the path in `files:` for this source, "
-            "restore the missing file, or fix its permissions."
+            "({detail}). Restore the missing file, fix the path, or fix "
+            "its permissions."
         ),
         summary=(
-            "Fired when a file source's `files:` entry names a path that "
-            "cannot be opened on disk at query-execution time — missing, "
-            "a path component that isn't a directory, or unreadable."
+            "Fired when a file source names a path that cannot be opened "
+            "on disk at query-execution time — missing, a path component "
+            "that isn't a directory, or unreadable."
         ),
         doc=(
             "Fired when a `type: csv`/`json`/`parquet` source's `files:` "
-            "mapping names a literal (non-glob) path that cannot be opened "
+            "mapping, or a query's inline `source: <path>` ref, names a "
+            "literal (non-glob) path that cannot be opened "
             "on disk: the leaf is missing, a path component traverses "
             "through an existing file instead of a directory, or the OS "
             "denies read access. `{detail}` carries the OS error string "
@@ -58,11 +59,13 @@ ERR_FILE_SOURCE_NOT_FOUND = REGISTRY.register(
             '"Permission denied") so the message doesn\'t call a '
             "permissions problem a missing file. Unlike an empty glob "
             "match (`ERR-GLOB-EMPTY`), a literal path is never expanded, "
-            "so this is the only place these failures surface. Neither "
-            "`dct validate` nor `dct validate --warehouse` checks file "
-            "existence, so this fires only at query-execution time "
-            "(`dct render`/`dct serve`). Fix the path, add the missing "
-            "file, or fix its permissions."
+            "so this is the only place these failures surface. Compile "
+            "probes an inline ref's two candidate locations (board "
+            "directory, project root) only to choose between them; a "
+            "path that exists at neither, like a `files:` path, fails "
+            "here at query-execution time (`dct render`/`dct serve`), "
+            "one chart at a time. Fix the path, add the missing file, or "
+            "fix its permissions."
         ),
         docs_topic="queries",
     )

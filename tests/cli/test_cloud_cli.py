@@ -902,7 +902,7 @@ class TestProjectConnectGithub:
             ],
         )
         assert result.exit_code == 0, out(result)
-        assert "https://cloud.example/github/connect/?org=acme-data" in result.output
+        assert "https://cloud.example/acme-data/github/connect/" in result.output
         body = api.body("POST", "/api/orgs/acme-data/projects/from-pick")
         assert body["slug"] == "analytics"
         assert body["dbt_root_choice"] == "warehouse"
@@ -929,7 +929,7 @@ class TestProjectConnectGithub:
             ],
         )
         assert result.exit_code == 1
-        assert "github/connect" in out(result)
+        assert "https://cloud.example/acme-data/github/connect/" in out(result)
 
     def test_json_is_the_contract_model(self, api: FakeApi) -> None:
         api.add("GET", "/api/orgs/acme-data/github/pick", self.PICK)

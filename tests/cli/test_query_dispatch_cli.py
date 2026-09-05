@@ -773,9 +773,9 @@ class TestHelpText:
         lines = [line.strip() for line in text.splitlines()]
         for form in (
             "dct query SOURCE 'SQL'",
-            "dct query BOARD.yaml REFERENCE",
+            "dct query BOARD.yml REFERENCE",
             "dct query SOURCE 'SQL' --validate",
-            "dct query BOARD.yaml REFERENCE --describe",
+            "dct query BOARD.yml REFERENCE --describe",
         ):
             assert form in lines, (
                 f"Recipe form {form!r} not on its own line. Full output:\n{text}"
@@ -862,3 +862,50 @@ def test_raw_sql_validate_uses_project_session_open(tmp_path: Path) -> None:
         "raw-SQL --validate must construct exactly one ProjectSession.from_project(...)"
     )
     fake_project.validate_query.assert_called_once()
+
+
+class TestBoardContextExtensions:
+    """Board-query mode must accept every suffix the project calls a board.
+
+    Regression: `_is_board_context` hardcoded `.yaml`, so a `.yml` board path
+    fell through to RAW-SQL mode and the query reference was validated as if it
+    were SQL text. That fails silently — `--validate` prints "No issues found."
+    for a reference that does not exist — which is worse than an error. Every
+    other test in this file uses `.yaml`, the one suffix that worked, which is
+    why it went unnoticed; `.yml` is what every board in `examples/` uses.
+
+    The discriminator is a bogus query reference: board mode knows the board's
+    query names and rejects it, raw-SQL mode lints it as SQL and passes.
+    """
+
+    @pytest.mark.parametrize("suffix", [".yml", ".yaml", ".md", ".markdown"])
+    def test_board_suffixes_dispatch_to_board_mode(
+        self, tmp_path: Path, sources_yaml: str, suffix: str
+    ) -> None:
+        (tmp_path / "dbt_charts.yml").write_text(sources_yaml)
+        board = tmp_path / f"board{suffix}"
+        if suffix in (".md", ".markdown"):
+            # A markdown board carries the board under a `board:` frontmatter
+            # key; the bare YAML body is not one.
+            body = "\n".join(
+                "  " + ln if ln else ln for ln in SIMPLE_BOARD.splitlines()
+            )
+            board.write_text(f"---\nboard:\n{body}\n---\n\n# Board\n")
+        else:
+            board.write_text(SIMPLE_BOARD)
+
+        result = runner.invoke(
+            app,
+            [
+                "query",
+                str(board),
+                "nosuchquery",
+                "--project-dir",
+                str(tmp_path),
+                "--validate",
+            ],
+        )
+        assert "Unknown query" in result.output, (
+            f"{suffix} did not dispatch to board mode: {result.output}"
+        )
+        assert "revenue" in result.output, result.output

@@ -266,3 +266,24 @@
   background: color-mix(in srgb, var(--dbt-system-accent, #667eea) 85%, black);
   border-color: color-mix(in srgb, var(--dbt-system-accent, #667eea) 85%, black);
 }
+
+{# The per-chart loading state a variable commit (variables.js
+   markDependentChartsLoading) or a navigating auto-link click (the SVG-link
+   interceptor) paints -- same class, different lifetimes: the former clears
+   on the next render, the latter only when the document is replaced or a
+   later interaction proves it wasn't. Host-only, like the runtime that
+   paints it: a static export never loads, so its stylesheet carries none of
+   this, and a change here reaches every board the moment the host deploys
+   rather than when each stored render is next rebuilt. Namespaced: a host
+   stylesheet may own a bare `.loading` (DaisyUI's masks the element into
+   its own spinner). #}
+.dbt-chart-loading {
+  pointer-events: none;
+}
+{# The glyph is a child of the dimmed group; dim the marks, not the glyph. #}
+.dbt-chart-loading > :not(.dbt-chart-spinner) {
+  opacity: 0.5;
+}
+@keyframes dbt-spin {
+  to { transform: rotate(360deg); }
+}

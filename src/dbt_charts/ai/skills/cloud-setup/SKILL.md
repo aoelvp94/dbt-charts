@@ -26,11 +26,20 @@ the GitHub App install flow.
 > tool surface. Syntax for every verb below lives in `--help`; this skill
 > only orders the steps and tells you what to check before each one.
 
+> "Cloud" here is dbt charts Cloud (dbtcharts.com), not dbt Labs' dbt Cloud
+> (getdbt.com). Local-only charts need no account — `dct serve` renders them.
+
 ## Before you start
 
-Confirm the tools exist before relying on them:
+Confirm the tools and access exist before relying on them:
 
 - `dct --version` — dbt charts is installed. If not: `uv tool install dbt-charts`.
+- `gh auth status` — Cloud deploys from a connected git repo, and the smoothest
+  path for a private repo is the GitHub App, which needs GitHub access. If `gh`
+  is installed, `gh auth status` tells you whether that browser hop will go
+  cleanly; a missing or unauthenticated `gh` is **not a blocker** — you can
+  still connect any repo Cloud can clone over a plain git URL (Step 4). Offer to
+  help with `gh auth login` when the user will take the GitHub App path.
 - `dct cloud status` needs a project directory only if you plan to infer org
   and project from `git remote`; run it from the repo you're connecting once
   one exists.
@@ -38,18 +47,80 @@ Confirm the tools exist before relying on them:
   later: `gcloud auth list` (BigQuery), `which snowsql` (Snowflake), `which
   psql` (Postgres/Redshift). Missing tooling isn't fatal — it just means the
   user supplies the credential instead of you minting one.
+- **Where the data lives.** Cloud connection types are exactly
+  `bigquery, postgresql, redshift, snowflake`. A `dbt_charts.yml` source of
+  `type: duckdb` or `type: sqlite` (or a local `.duckdb` file with no project
+  yet) is **local-only** — Cloud never reads the file, even when it is
+  committed to the repo. Say so *now*, before any board is authored in that
+  dialect, and offer the two ways forward: load the tables into one of the
+  four warehouses (then write the boards against it), or export each table to
+  a Parquet/CSV file committed in the repo and point each query at its file
+  directly (`source: ../data/orders.parquet` — the path is relative to the
+  board file, and each query sees one file, so pre-join in the export). Don't register those files under `sources:` in
+  `dbt_charts.yml`: Cloud does not resolve registry file sources yet and will
+  report them as unmapped (`dct docs sources`). Don't build DuckDB boards and
+  discover this at Step 5.
+
+### Pick the repo and folder
+
+Cloud deploys from a git repo, so settle where the project lives before you
+authenticate — don't silently scaffold one:
+
+- **Already in a git repo with a dbt charts project** (a `dbt_charts.yml` plus a
+  `charts/` directory) — use it as-is.
+- **In a git repo but no project yet** — ask whether to make *this* repo the
+  home, or to start a **new repo** for it. `dct init` scaffolds the project
+  (`dbt_charts.yml` + a starter `charts/`) beside the nearest project marker (a
+  `dbt_project.yml` counts), so where you run it matters. Cloud tracks the repo
+  **plus the subfolder that holds the project**, so whatever folder init lands
+  in is the one to connect in Step 4 — keep them the same. Do whichever the
+  user chooses; don't scaffold without asking.
+- **Not in a git repo** — offer to initialize one (`git init`, or point them at
+  a fresh repo). Cloud has nothing to connect without it.
 
 ## Step 1: Authenticate
 
 Run a read-only verb (`dct cloud orgs`) first — if `DCT_CLOUD_TOKEN` is
 already set or a token is already stored, it just works and this step is
-done. Otherwise run `dct cloud login`. It prints a code and a URL; hand off
-to the user there — only they can complete the browser approval: sign in
-(or create an account), pick or create the organization the CLI should
-reach, and approve. Once they confirm, continue; `dct cloud login` blocks
-until the approval lands or the code expires, so re-run it if it timed out.
-Never guess a token value, and never try to complete the browser step
-yourself — it is the user signing in, not you.
+done. Otherwise run `dct cloud login`. It prints a code and a URL; hand that
+URL to the user — only they can complete the browser approval.
+
+**You are not creating an account, and not having one is not a blocker.** All
+you do is hand the user the login URL; on that page **signing in and signing
+up happen in the same place** — the user can sign up right there, with no
+separate registration step first. So never refuse this for "I can't make you
+an account," and never point the user at another product's login. Let them
+sign in or sign up at the `dct cloud login` URL, then pick or create the
+organization the CLI should reach and approve.
+
+`dct cloud login` blocks until the approval lands (it prints `Logged in`) or
+the code expires (about 30 minutes; an expired code's page is a dead end, and
+the only fix is running login again). Your shell tool's timeout is shorter
+than that and the user may be slow, so run it like this:
+
+```bash
+dct cloud login > /tmp/dct-login.log 2>&1 &
+sleep 2 && grep -o 'https://[^ ]*' /tmp/dct-login.log
+```
+
+Hand the user that URL **immediately, as the only thing you say** — no
+summary first; every minute spent writing notes eats the code's lifetime.
+Also say **which account** to approve with when they have several: the CLI
+becomes whoever approves, so the org this creates or joins belongs to that
+account, and the board URLs only open in a browser signed in as a member.
+Then, in the same turn, wait in the foreground with your longest timeout:
+
+```bash
+until grep -qE 'Logged in|expired|denied|error' /tmp/dct-login.log; do sleep 5; done
+cat /tmp/dct-login.log
+```
+
+This returns the moment the user approves, so you continue on your own —
+don't ask the user to tell you when they're done. If the wait times out,
+run the same `until` loop again; if the log says expired, start over from
+the login command and hand over the new URL. Never guess a token value, and
+never try to complete the browser step yourself — it is the user signing in,
+not you.
 
 ## Step 2: Organization
 
@@ -62,10 +133,12 @@ organization later.
 ## Step 3: Boards, if none exist yet
 
 This skill connects a repo and a warehouse; it doesn't author boards. If the
-target repo has no `charts/` yet, hand off to the board-build skill first —
-inspect the warehouse schema, author board YAML, validate and render
-locally, commit, push. Come back here once boards exist (or skip this step
-entirely if they already do).
+repo has no boards the user actually authored — an empty `charts/`, or only
+the starter board `dct init` scaffolds — hand off to the board-build skill
+first: inspect the warehouse schema, author board YAML, validate and render
+locally, commit, push. Don't connect and render the starter board as if it
+were the user's own board. Come back here once real boards exist (or skip this
+step if they already do).
 
 ## Step 4: Connect the project
 
@@ -111,7 +184,12 @@ just created.
 
 ## Step 7: Render
 
-Trigger rendering for the project's boards.
+Trigger rendering for the project's boards — but only once `dct cloud status`
+shows no unmapped sources. Rendering an unmapped project succeeds mechanically:
+every chart's query fails, the render still completes, and `dct cloud boards`
+reports the board `ready` with an empty error. `ready` means a render exists,
+not that the charts have data. Never tell the user the boards are live while
+`status` still names a next step.
 
 ## The loop that actually drives this
 

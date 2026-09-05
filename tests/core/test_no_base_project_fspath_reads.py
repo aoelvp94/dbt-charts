@@ -120,10 +120,10 @@ ALLOWED: dict[tuple[str, int], str] = {
         "agent_api/pack.py",
         459,
     ): "apply_proposal(project: FilesystemProject) — already FS-typed",
-    ("agent_api/_paths.py", 112): (
+    ("agent_api/_paths.py", 113): (
         "_relpath_for_fs_location: isinstance(project, FilesystemProject)-guarded"
     ),
-    ("agent_api/_paths.py", 167): (
+    ("agent_api/_paths.py", 168): (
         "resolve_board_or_error: isinstance(project, FilesystemProject)-guarded"
     ),
     ("agent_api/project_session.py", 288): (

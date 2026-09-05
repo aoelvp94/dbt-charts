@@ -122,10 +122,9 @@ class CloudClient:
     def __exit__(self, *exc_info: object) -> None:
         self._http.close()
 
-    @property
-    def connect_url(self) -> str:
-        """Where a user completes the GitHub install and repo pick."""
-        return f"{self.host}/github/connect/"
+    def connect_url(self, org_slug: str) -> str:
+        """Where a user completes the GitHub install and repo pick for *org_slug*."""
+        return f"{self.host}/{org_slug}/github/connect/"
 
     # --- organizations -----------------------------------------------------
 
@@ -292,7 +291,7 @@ class CloudClient:
                 if exc.api_error.code is not ErrorCode.NOT_FOUND:
                     raise
             if time.monotonic() >= deadline:
-                raise PickTimedOut(f"{self.connect_url}?org={org}", timeout)
+                raise PickTimedOut(self.connect_url(org), timeout)
             time.sleep(interval)
 
     # --- connections -------------------------------------------------------

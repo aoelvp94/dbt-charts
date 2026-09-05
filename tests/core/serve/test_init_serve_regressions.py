@@ -2,12 +2,8 @@
 
 Anchors:
 - root URL on a fresh init must show the directory listing, not a welcome page.
-  README.md is not matched by _resolve_folder_index_board, so root falls through
-  to the listing. index.md WAS matched and hijacked /.
-- README.md is accessible at /README/ with its welcome prose.
-- README.md {{ chart my_chart }}: the lenient Jinja env silently drops the
-  expression, so the docs example is missing from the rendered HTML (200 with
-  degraded content). {% raw %} preserves the literal text.
+  index.md WAS matched by _resolve_folder_index_board and hijacked /; the
+  scaffold no longer creates it, so root falls through to the listing.
 - inspect/ in root listing: clicking inspect/ links 500 because they need
   ?model=...&column=... params; hide the directory from the listing.
 - inspect/ filter must be root-only: nested charts/reports/inspect/ should remain
@@ -53,9 +49,8 @@ class TestRootShowsListingAfterInit:
     ) -> None:
         """After dct init, / must serve the directory listing, not a welcome page.
 
-        README.md is not matched by _resolve_folder_index_board (which only checks
-        index.yml, index.yaml, index.md). Root therefore falls through to
-        _render_directory_listing(), giving new users discoverability on first run."""
+        Root falls through to _render_directory_listing(), giving new users
+        discoverability on first run."""
         with TestClient(
             create_server(FilesystemProject(init_project)),
         ) as client:
@@ -68,23 +63,6 @@ class TestRootShowsListingAfterInit:
         assert "guide" in response.text.lower(), (
             "Root listing must mention 'guide' (the guide.yaml guide board). "
             f"Body: {response.text[:800]}"
-        )
-
-    def test_readme_md_returns_200_after_init(self, init_project: Path) -> None:
-        """charts/README.md must render 200 and preserve the literal {{ chart my_chart }}
-        docs example. Without the {% raw %} fix, the lenient Jinja environment silently
-        drops {{ chart my_chart }} so the text is absent despite a 200 status."""
-        with TestClient(
-            create_server(FilesystemProject(init_project)),
-        ) as client:
-            response = client.get("/README/")
-        assert response.status_code == 200, (
-            f"Expected 200 for /README/, got {response.status_code}. "
-            f"Body preview: {response.text[:500]}"
-        )
-        assert "{{ chart my_chart }}" in response.text, (
-            "The docs example '{{ chart my_chart }}' must survive verbatim in the "
-            "rendered HTML. Without {% raw %}, the lenient Jinja env silently drops it."
         )
 
 

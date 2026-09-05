@@ -9,7 +9,7 @@ user inputs (select, slider, etc.) or have static default values.
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 
 from dbt_charts.core.compile.models.markers import DisplayText
 from dbt_charts.core.compile.models.query.authored import AuthoredQuery
@@ -58,8 +58,28 @@ class VariableOptions(BaseModel):
 
     static: list[str | int | float] | None = Field(
         default=None,
-        description="Option values written out in place, as strings or numbers.",
+        description=(
+            "Option values written out in place, all strings or all numbers. "
+            "Numeric options type the value the control sends back as a number "
+            "unless data_type says otherwise."
+        ),
     )
+
+    @field_validator("static")
+    @classmethod
+    def _one_type(
+        cls, static: list[str | int | float] | None
+    ) -> list[str | int | float] | None:
+        if (
+            static
+            and any(isinstance(o, str) for o in static)
+            and any(not isinstance(o, str) for o in static)
+        ):
+            raise ValueError(
+                f"options.static must be all strings or all numbers (one type), got {static!r}"
+            )
+        return static
+
     query: str | None = Field(
         default=None, description="Query name whose result rows provide option values."
     )
@@ -214,12 +234,14 @@ class Variable(BaseModel):
         description="Where the selectable values come from: a written-out list or a query.",
     )
 
-    # Migration metadata
-    data_type: str | None = Field(
+    data_type: Literal["string", "number", "date", "boolean", "array"] | None = Field(
         default=None,
         description=(
-            "Upstream data-type hint preserved through migrations (e.g. 'string', "
-            "'number'). Informational; not currently consumed at compile time."
+            "The type of the values a select, radio or multiselect sends back. "
+            "'number', 'date' and 'boolean' convert the value before it reaches "
+            "SQL; needed when the options come from a query, since a static "
+            "numeric list already implies 'number'. 'string' and 'array' leave "
+            "the value as sent."
         ),
     )
 

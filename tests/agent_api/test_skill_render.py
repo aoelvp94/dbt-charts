@@ -44,7 +44,7 @@ class TestSurfaceSelection:
             ("{{ s_validate_board }}", "tool", "validate_board"),
             ("{{ s_validate_board }}", "cli", "dct validate"),
             # Regression: s_query_board CLI side uses positional board context.
-            ("{{ s_query_board }}", "cli", "dct query BOARD.yaml QUERY"),
+            ("{{ s_query_board }}", "cli", "dct query BOARD.yml QUERY"),
             ("{{ s_query_board }}", "tool", "query_board"),
         ],
     )

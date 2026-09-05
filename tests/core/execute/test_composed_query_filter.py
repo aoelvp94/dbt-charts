@@ -200,3 +200,47 @@ class TestComposedQueryWithFilter:
 
         rows = executor.execute_query("composed", {"created_range": []})
         assert len(rows) == 2
+
+    def test_composed_query_with_filter_date_range_includes_whole_end_day_for_timestamp(
+        self, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """CAST(column AS DATE) truncates a TIMESTAMP to midnight before the
+        BETWEEN compares it, so a row on the afternoon of the range's end date
+        is included — the range is inclusive of the whole end day, not just
+        midnight. This differs from the pre-cast behaviour (which excluded any
+        end-day timestamp after 00:00:00); pin the new, intended semantics."""
+        yaml_body = "\n".join(
+            [
+                "source: db",
+                "variables:",
+                "  created_range:",
+                "    input: daterange",
+                "    default: ['2025-01-01', '2025-01-31']",
+                "queries:",
+                "  base:",
+                "    sql: |",
+                "      SELECT 1 AS id, TIMESTAMP '2025-01-01 00:00:00' AS created_at",
+                "      UNION ALL",
+                "      SELECT 2 AS id, TIMESTAMP '2025-01-31 00:00:00' AS created_at",
+                "      UNION ALL",
+                "      SELECT 3 AS id, TIMESTAMP '2025-01-31 13:00:00' AS created_at",
+                "    source: db",
+                "  composed:",
+                "    sql: |",
+                "      SELECT * FROM {{ queries.base }}",
+                "      WHERE {{ filter_date_range('created_at', created_range) }}",
+                "    source: db",
+                "charts:",
+                "  dummy:",
+                "    type: bar",
+                "    x: id",
+                "    y: id",
+                "    query: composed",
+            ]
+        )
+        executor = _build_board_and_executor(yaml_body, local_project)
+
+        rows = executor.execute_query(
+            "composed", {"created_range": ["2025-01-01", "2025-01-31"]}
+        )
+        assert sorted(r["id"] for r in rows) == [1, 2, 3]

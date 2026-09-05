@@ -58,6 +58,15 @@ class InlinePlaceholderDialect(SQLDialect):
         """Return the collision-free placeholder for a 1-based index."""
         return f"\x00dct_param_{index}\x00"
 
+    def date_expr(self, column: str) -> str:
+        """No engine parses this style, so it cannot spell warehouse SQL: a
+        caller reaching a filter helper with it has not passed `warehouse=`."""
+        raise NotImplementedError(
+            "InlinePlaceholderDialect is a placeholder style, not a warehouse; "
+            "pass warehouse= to render_parameterized so the filter helpers spell "
+            "SQL for the engine that runs it"
+        )
+
 
 INLINE_PLACEHOLDERS = InlinePlaceholderDialect()
 

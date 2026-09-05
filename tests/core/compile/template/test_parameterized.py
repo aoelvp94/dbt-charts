@@ -4,6 +4,8 @@ Tests the dbt_charts.core.compile.template.parameterized module for secure SQL r
 that prevents SQL injection attacks.
 """
 
+from datetime import date
+
 import pytest
 from jinja2 import Environment
 
@@ -17,7 +19,7 @@ from dbt_charts.core.compile.template.parameterized import (
     render_parameterized_with_queries,
 )
 from dbt_charts.core.dialects import DIALECTS, get_dialect
-from dbt_charts.core.execute.sql_literals import inline_dialect_params
+from dbt_charts.core.execute.sql_literals import inline_dialect_params, inline_params
 
 
 class TestRenderParameterized:
@@ -360,8 +362,26 @@ class TestFilterDateRangeHelper:
 
         result = render_parameterized(template, variables, profile_type="postgres")
 
-        assert "created_at BETWEEN $1 AND $2" in result.sql
+        assert "CAST(created_at AS DATE) BETWEEN $1 AND $2" in result.sql
         assert result.params == ["2024-01-01", "2024-12-31"]
+
+    def test_date_range_inlined_for_bigquery_casts_timestamp_column(self):
+        """A TIMESTAMP column compared against DATE bounds fails on BigQuery
+        ("No matching signature for operator BETWEEN"). Casting the column to
+        DATE is portable: Postgres/DuckDB/Snowflake coerce silently, and a DATE
+        column casts to itself."""
+        template = (
+            "SELECT * FROM t WHERE {{ filter_date_range('created_at', date_range) }}"
+        )
+        variables = {"date_range": [date(2026, 9, 8), date(2026, 9, 30)]}
+
+        result = render_parameterized(template, variables, profile_type="postgres")
+        sql = inline_params(result.sql, result.params, get_dialect("bigquery"))
+
+        assert (
+            "CAST(created_at AS DATE) BETWEEN DATE '2026-09-08' AND DATE '2026-09-30'"
+            in sql
+        )
 
     def test_date_range_none(self):
         """Test date range with None returns 1=1."""
@@ -711,7 +731,7 @@ class TestDateRangeColumnValidation:
 
         result = render_parameterized(template, variables, profile_type="postgres")
 
-        assert "created_at BETWEEN" in result.sql
+        assert "CAST(created_at AS DATE) BETWEEN" in result.sql
 
     def test_invalid_column_in_date_range_raises_error(self):
         """Test invalid column name in date range filter raises error."""

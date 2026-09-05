@@ -156,6 +156,27 @@ ERR_SOURCE_INLINE_FORBIDDEN = REGISTRY.register(
     )
 )
 
+ERR_FILE_SOURCE_AMBIGUOUS = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FILE-SOURCE-AMBIGUOUS",
+        domain="compile",
+        title="Inline file source path exists at both candidate locations",
+        message_template=(
+            "Query {query_name!r}: inline file source {ref!r} exists at both "
+            "{candidates}. Rename or remove one so only a single candidate exists."
+        ),
+        doc=(
+            "Fired when a query's inline `source: <path>` ref resolves to a real "
+            "file at both of its two candidate locations, the board's own "
+            "directory and the project root (a bare path is tried against "
+            "both anchors so it works from any board depth). dbt charts never "
+            "silently prefers one anchor; move or rename one of the two files so "
+            "only a single candidate remains."
+        ),
+        docs_topic="queries",
+    )
+)
+
 ERR_SOURCE_CREDENTIAL_LITERAL = REGISTRY.register(
     ErrorCode(
         code="ERR-SOURCE-CREDENTIAL-LITERAL",

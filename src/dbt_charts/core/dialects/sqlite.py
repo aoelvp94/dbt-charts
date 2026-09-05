@@ -52,6 +52,15 @@ class SQLiteDialect(SQLDialect):
         """
         return None
 
+    def date_expr(self, column: str) -> str:
+        """DATE(x): CAST(x AS DATE) takes NUMERIC affinity on SQLite (no DATE
+        type exists), truncating a date-like string to its leading integer run
+        ('2024-01-15' -> 2024) and comparing an INTEGER against TEXT bounds,
+        which SQLite always orders as false. DATE(x) parses the string and
+        returns the normalized date text instead.
+        """
+        return f"DATE({column})"
+
     def bulk_schema_sql(self, scope: str = "") -> str:
         """Whole-database schema in one query.
 

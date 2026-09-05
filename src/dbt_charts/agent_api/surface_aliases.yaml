@@ -39,7 +39,7 @@ render_board:
 
 query_board:
   tool: "query_board"
-  dct: "dct query BOARD.yaml QUERY"
+  dct: "dct query BOARD.yml QUERY"
 
 describe_query:
   tool: "describe_query"

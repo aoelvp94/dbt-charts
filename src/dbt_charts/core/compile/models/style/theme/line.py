@@ -72,7 +72,7 @@ class LineChartStyle(_CartesianChartStyle, _QuantitativeAxisChartStyleMixin):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     endpoint_labels: EndpointLabelsConfig = Field(
-        description="Endpoint label pane configuration for line charts."
+        description="Series names printed at the end of each line instead of in a legend."
     )
     marks: Annotated[
         LineChartMarksStyle, InheritSlot(from_path="Style.charts.marks")

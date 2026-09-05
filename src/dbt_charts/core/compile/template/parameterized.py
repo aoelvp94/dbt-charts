@@ -11,13 +11,19 @@ This module renders to parameterized queries (safe):
     params = ["2024-01-01"]
 
 Entry Points:
-    - render_parameterized(template, variables, dialect) -> ParameterizedQuery
-    - make_filter_helper(emit) / make_filter_date_range_helper(emit) -> the
-      filter() helpers Jinja calls, over a caller-supplied value-emission
-      strategy. Both callers pass a collector's add_param; they differ in the
-      placeholder style the collector's dialect emits, and in whether the
-      result is bound by a driver or flattened to literals for one that takes
-      no bindings.
+    - render_parameterized(template, variables, dialect, warehouse) ->
+      ParameterizedQuery. `dialect` is the placeholder style; `warehouse` is
+      the engine whose SQL the helpers spell, and defaults to `dialect` — the
+      two differ only where placeholders are an internal round trip that no
+      engine parses (see InlinePlaceholderDialect).
+    - make_filter_helper(emit, dialect) / make_filter_date_range_helper(emit,
+      dialect) -> the filter() helpers Jinja calls, over a caller-supplied
+      value-emission strategy. Both callers pass a collector's add_param; they
+      differ in the placeholder style the collector's dialect emits, and in
+      whether the result is bound by a driver or flattened to literals for one
+      that takes no bindings. The dialect is the warehouse, not necessarily
+      the collector's: it spells "compare this column as a date" per engine —
+      see SQLDialect.date_expr().
 
 The executor then uses: cursor.execute(sql, params)
 
@@ -38,6 +44,7 @@ import hashlib
 import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import Any, NoReturn, SupportsIndex
 
 from jinja2 import (
@@ -397,6 +404,7 @@ def render_parameterized(
     dialect: SQLDialect | None = None,
     profile_type: str = "postgres",
     strict: bool = True,
+    warehouse: SQLDialect | None = None,
 ) -> ParameterizedQuery:
     """Render Jinja template to parameterized SQL.
 
@@ -420,6 +428,9 @@ def render_parameterized(
         strict: If True (default), raises error on undefined variables.
                 If False, undefined variables become empty strings (useful for
                 chart editor where variables may not all be set).
+        warehouse: The engine whose SQL the filter helpers spell (see
+            `SQLDialect.date_expr`). Defaults to `dialect`; pass it when
+            `dialect` is a placeholder style no engine parses.
 
     Returns:
         ParameterizedQuery with SQL, params, and template_hash
@@ -478,9 +489,12 @@ def render_parameterized(
             # Wrap value for parameterization
             context[name] = _ParameterizedValue(name, value, collector)
 
-    # Add parameterized filter helpers
-    context["filter"] = make_filter_helper(collector.add_param)
-    context["filter_date_range"] = make_filter_date_range_helper(collector.add_param)
+    if warehouse is None:
+        warehouse = dialect
+    context["filter"] = make_filter_helper(collector.add_param, warehouse)
+    context["filter_date_range"] = make_filter_date_range_helper(
+        collector.add_param, warehouse
+    )
 
     # Handle queries namespace if present
     if "queries" in variables:
@@ -591,12 +605,21 @@ def _clean_parameter_quotes(sql: str, dialect: SQLDialect, param_count: int) -> 
     return result
 
 
-def make_filter_helper(emit: Emitter) -> Callable[..., str]:
+def make_filter_helper(emit: Emitter, dialect: SQLDialect) -> Callable[..., str]:
     """Create the filter() helper Jinja calls, over a value-emission strategy.
 
     Returns a function that generates filter clauses:
         {{ filter('column', value) }} -> "column = <emitted>"
         {{ filter('column', value, '!=') }} -> "column != <emitted>"
+        {{ filter('column', [a, b]) }} -> "column IN (<emitted>, <emitted>)"
+        {{ filter('column', a_date, '>=') }}
+            -> "<dialect.date_expr('column')> >= <emitted>"
+
+    A calendar date compares the column as a date, whatever the column's own
+    type: a TIMESTAMP column compared bare against a DATE value is a type
+    error on BigQuery and a silent midnight comparison everywhere else (`=`
+    never matches a row with a time of day). A datetime value carries a time
+    of day and leaves the column alone.
 
     Security:
         - Column names are validated against SQL injection
@@ -610,6 +633,8 @@ def make_filter_helper(emit: Emitter) -> Callable[..., str]:
             and what resolves it — a driver binding the parameter, or the
             inline pass flattening it to an escaped literal for dbt's
             adapter.execute(), which takes no bindings.
+        dialect: The warehouse the SQL runs on — its `date_expr()` spells
+            "compare this column as a date".
 
     Returns:
         Filter helper function
@@ -652,28 +677,65 @@ def make_filter_helper(emit: Emitter) -> Callable[..., str]:
         # Unwrap if it's already a ParameterizedValue
         actual_value = value._value if isinstance(value, _ParameterizedValue) else value
 
-        # Handle list for IN clause
-        if isinstance(actual_value, list):
-            if not actual_value:
-                return "1=0" if none == "deny" else "1=1"
-
-            emitted = ", ".join(emit(item) for item in actual_value)
-            return f"{column} IN ({emitted})"
-
-        # Validate operator to prevent SQL injection
         _validate_operator(operator)
 
+        if isinstance(actual_value, list):
+            # Refused before the emptiness check so a malformed board fails
+            # whether or not the viewer selected anything.
+            op = operator.upper().strip()
+            if op in ("=", "IN"):
+                membership = "IN"
+            elif op in ("!=", "<>", "NOT IN"):
+                membership = "NOT IN"
+            else:
+                raise ValueError(
+                    f"filter(): operator {operator!r} cannot apply to a list "
+                    f"value; use 'IN' (default) or 'NOT IN'"
+                )
+            items = [
+                item._value if isinstance(item, _ParameterizedValue) else item
+                for item in actual_value
+            ]
+            if not items:
+                return "1=0" if none == "deny" else "1=1"
+            if any(item is None or isinstance(item, _NullValue) for item in items):
+                raise ValueError(
+                    f"filter(): a list value cannot contain NULL ({items!r}); "
+                    f"IN never matches NULL and NOT IN matches nothing"
+                )
+            dated = [_is_calendar_date(item) for item in items]
+            if all(dated):
+                column = dialect.date_expr(column)
+            elif any(dated):
+                raise ValueError(
+                    f"filter(): a list mixes dates with other values "
+                    f"({items!r}); the column can only be compared one way"
+                )
+            emitted = ", ".join(emit(item) for item in items)
+            return f"{column} {membership} ({emitted})"
+
+        if _is_calendar_date(actual_value):
+            column = dialect.date_expr(column)
         return f"{column} {operator} {emit(actual_value)}"
 
     return filter_helper
 
 
-def make_filter_date_range_helper(emit: Emitter) -> Callable[..., str]:
+def _is_calendar_date(
+    value: object,  # type-state: object_annotation — a runtime variable value, any scalar the author bound
+) -> bool:
+    """A date without a time of day — `datetime` is a `date` subclass."""
+    return isinstance(value, date) and not isinstance(value, datetime)
+
+
+def make_filter_date_range_helper(
+    emit: Emitter, dialect: SQLDialect
+) -> Callable[..., str]:
     """Create the filter_date_range() helper, over the same emission strategy.
 
     Returns a function that generates BETWEEN clauses:
         {{ filter_date_range('date', date_range) }}
-        -> "date BETWEEN <emitted> AND <emitted>"
+        -> "<dialect.date_expr('date')> BETWEEN <emitted> AND <emitted>"
 
     Security:
         - Column names are validated against SQL injection
@@ -681,6 +743,9 @@ def make_filter_date_range_helper(emit: Emitter) -> Callable[..., str]:
 
     Args:
         emit: Value-emission strategy — see `make_filter_helper`.
+        dialect: Target SQL dialect — its `date_expr()` spells the
+            "compare this column as a date" comparison, which differs on
+            SQLite (no native DATE type).
 
     Returns:
         Date range filter helper function
@@ -738,7 +803,17 @@ def make_filter_date_range_helper(emit: Emitter) -> Callable[..., str]:
         if not start or not end:
             return "1=1"  # Empty dates = no filter (intentional)
 
-        return f"{column} BETWEEN {emit(start)} AND {emit(end)}"
+        # A date range is inclusive of the whole end day, so the column is
+        # compared as a date; bounds carrying a time of day are compared raw.
+        timed = (isinstance(start, datetime), isinstance(end, datetime))
+        if all(timed):
+            return f"{column} BETWEEN {emit(start)} AND {emit(end)}"
+        if any(timed):
+            raise ValueError(
+                f"date_range mixes a date with a datetime ({start!r}, {end!r}); "
+                f"the column can only be compared one way"
+            )
+        return f"{dialect.date_expr(column)} BETWEEN {emit(start)} AND {emit(end)}"
 
     return filter_date_range_helper
 
@@ -750,6 +825,7 @@ def render_parameterized_with_queries(
     dialect: SQLDialect | None = None,
     profile_type: str = "postgres",
     strict: bool = True,
+    warehouse: SQLDialect | None = None,
 ) -> ParameterizedQuery:
     """Render parameterized SQL with query reference support.
 
@@ -764,6 +840,8 @@ def render_parameterized_with_queries(
         dialect: SQL dialect instance
         profile_type: Database type string
         strict: If True (default), raises on undefined variables.
+        warehouse: The engine whose SQL the filter helpers spell; see
+            `render_parameterized`.
 
     Returns:
         ParameterizedQuery with SQL, params, and template_hash
@@ -782,4 +860,5 @@ def render_parameterized_with_queries(
         dialect=dialect,
         profile_type=profile_type,
         strict=strict,
+        warehouse=warehouse,
     )

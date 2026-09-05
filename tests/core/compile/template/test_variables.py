@@ -228,3 +228,61 @@ class TestTypedSqlBinding:
             "SELECT * FROM t WHERE day <= '{{ d }}'", variables=coerced
         )
         assert result.params == [date(2024, 1, 1)]
+
+
+class TestCoerceChoice:
+    """select/radio/multiselect values arrive from a URL as strings; the option
+    source says what they are. Static options typed as numbers, or an explicit
+    `data_type`, turn them back into the type the column has."""
+
+    @staticmethod
+    def _var(input_type: str, **fields: Any) -> Variable:
+        return Variable.model_validate({"input": input_type, **fields})
+
+    def test_static_numeric_options_type_a_select(self) -> None:
+        reg = {"y": self._var("select", options={"static": [2023, 2024]})}
+        assert coerce_variable_values({"y": "2024"}, reg)["y"] == 2024
+
+    def test_static_float_options_type_a_radio(self) -> None:
+        reg = {"r": self._var("radio", options={"static": [0.5, 1.5]})}
+        assert coerce_variable_values({"r": "1.5"}, reg)["r"] == 1.5
+
+    def test_static_numeric_options_type_every_multiselect_member(self) -> None:
+        reg = {"m": self._var("multiselect", options={"static": [1, 2, 3]})}
+        assert coerce_variable_values({"m": ["1", "3"]}, reg)["m"] == [1, 3]
+
+    def test_static_string_options_stay_strings(self) -> None:
+        reg = {"s": self._var("select", options={"static": ["2023", "2024"]})}
+        assert coerce_variable_values({"s": "2024"}, reg)["s"] == "2024"
+
+    def test_data_type_number_types_a_query_driven_select(self) -> None:
+        reg = {"y": self._var("select", options={"query": "years"}, data_type="number")}
+        assert coerce_variable_values({"y": "2024"}, reg)["y"] == 2024
+
+    def test_data_type_date_types_multiselect_members(self) -> None:
+        reg = {
+            "d": self._var("multiselect", options={"query": "days"}, data_type="date")
+        }
+        assert coerce_variable_values({"d": ["2024-01-01", "2024-01-15"]}, reg)[
+            "d"
+        ] == [
+            date(2024, 1, 1),
+            date(2024, 1, 15),
+        ]
+
+    def test_query_driven_select_without_data_type_stays_a_string(self) -> None:
+        reg = {"y": self._var("select", options={"query": "years"})}
+        assert coerce_variable_values({"y": "2024"}, reg)["y"] == "2024"
+
+    def test_non_numeric_value_for_a_numeric_select_raises(self) -> None:
+        reg = {"y": self._var("select", options={"static": [2023, 2024]})}
+        with pytest.raises(ExecutionError, match="must be numeric"):
+            coerce_variable_values({"y": "twenty"}, reg)
+
+    def test_typed_default_passes_through(self) -> None:
+        reg = {"y": self._var("select", options={"static": [2023, 2024]})}
+        assert coerce_variable_values({"y": 2024}, reg)["y"] == 2024
+
+    def test_empty_choice_is_unset(self) -> None:
+        reg = {"y": self._var("select", options={"static": [2023, 2024]})}
+        assert coerce_variable_values({"y": ""}, reg)["y"] is None

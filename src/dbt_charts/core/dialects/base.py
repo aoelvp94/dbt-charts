@@ -210,6 +210,26 @@ class SQLDialect(ABC):
         """
         return ()
 
+    # --- Date comparison ---
+
+    def date_expr(self, column: str) -> str:
+        """Return this dialect's SQL for comparing `column` as a DATE.
+
+        `filter()` and `filter_date_range()` need the column truncated to a date regardless
+        of whether it is stored as DATE or TIMESTAMP — a DATE column must be a
+        no-op, and a TIMESTAMP column must not be compared bare against DATE
+        bounds (BigQuery rejects that comparison outright). `CAST(x AS DATE)`
+        is the standard spelling and correct for every dialect we ship except
+        SQLite, which has no DATE type: CAST there takes NUMERIC affinity and
+        truncates a date-like string to its leading integer run, so SQLite
+        overrides this with `DATE(x)`.
+
+        Args:
+            column: Column expression to compare as a date (already validated
+                as a bare identifier by the caller).
+        """
+        return f"CAST({column} AS DATE)"
+
     # --- Bulk schema introspection ---
 
     def bulk_schema_sql(self, scope: str = "") -> str:

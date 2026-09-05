@@ -714,7 +714,8 @@ def project_connect(
         print_json_result(project)
         return
     typer.echo(
-        f"Connected {project.slug} — {project.repo_label} ({project.trunk_branch})"
+        f"Connected {project.slug}: {project.repo_label}"
+        f" (trunk: {project.trunk_branch}, work: {project.work_branch})"
     )
     typer.echo(f"Next: dct cloud project sync --project {project.slug}")
 
@@ -732,7 +733,7 @@ def _connect_through_github(
     """Hand the repository pick to the browser, then resume from its outcome."""
     # Progress, not result: on stderr so `--json` leaves stdout parseable.
     err_console.print("Install the dbt charts GitHub App and pick a repository here:")
-    err_console.print(f"  {client.connect_url}?org={org}", soft_wrap=True)
+    err_console.print(f"  {client.connect_url(org)}", soft_wrap=True)
     err_console.print("Waiting for the pick…")
     pick = client.wait_for_pick(org, timeout, poll_interval)
     err_console.print(f"Picked {escape(pick.full_name)}.")

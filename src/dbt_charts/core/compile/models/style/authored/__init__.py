@@ -200,7 +200,7 @@ class ChartStylePatch(BaseModel):
     # Normalizer promotes these to Chart.aspect_ratio / min_height / max_height.
     aspect_ratio: float | None = Field(
         default=None,
-        description="Chart aspect ratio (width/height). Overrides the theme default for this chart.",
+        description="Chart aspect ratio (width/height).",
     )
     min_height: float | None = Field(
         default=None,

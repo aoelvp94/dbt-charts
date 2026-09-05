@@ -61,7 +61,7 @@ Variable definition from YAML.
 | `column` | str | Table column to draw option values from, as 'table.column'. The table may be schema-qualified ('schema.table.column') when it is not in the connection's default schema. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) | Query name or inline query definition for populating options. |
 | `options` | [VariableOptions](#variableoptions) | Where the selectable values come from: a written-out list or a query. |
-| `data_type` | str | Upstream data-type hint preserved through migrations (e.g. 'string', 'number'). Informational; not currently consumed at compile time. |
+| `data_type` | enum: "string", "number", "date", "boolean", "array" | The type of the values a select, radio or multiselect sends back. 'number', 'date' and 'boolean' convert the value before it reaches SQL; needed when the options come from a query, since a static numeric list already implies 'number'. 'string' and 'array' leave the value as sent. |
 | `min` | int \| float | Minimum value for slider/range inputs. |
 | `max` | int \| float | Maximum value for slider/range inputs. |
 | `step` | int \| float | Step size for slider/range inputs. |
@@ -671,7 +671,7 @@ Options configuration for variable inputs.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `static` | list[str \| int \| float] | Option values written out in place, as strings or numbers. |
+| `static` | list[str \| int \| float] | Option values written out in place, all strings or all numbers. Numeric options type the value the control sends back as a number unless data_type says otherwise. |
 | `query` | str | Query name whose result rows provide option values. |
 | `column` | str | Column in the query result to use as option values. |
 | `label_column` | str | Column in the query result to use as display labels (separate from values). |
@@ -749,7 +749,7 @@ Authored overlay for BarChartStyle. Bar chart style: chart-level fields + marks 
 | `stack` | enum: "none", "zero", "normalize", "center" | Default stack mode for bar charts; none renders side-by-side columns. |
 | `overlap` | float \| enum: "auto", "none", "flush", "partial", "full" | Within-group spacing for grouped bars. Keywords: 'auto' (2 series → partial, 3+ → none), 'none' (small gap), 'flush' (bars touch), 'partial' (25% overlap), 'full' (bars coincide). Or a number as a fraction of bar width: &gt;0 overlaps, 0 touches, &lt;0 gaps; 1 is the maximum (bars fully coincide, same as 'full') and values above 1 are clamped to 1; bars never cross past each other. None uses the renderer default ('auto'). Only applies to grouped bars; setting it together with an active stack mode is an error. |
 | `stack_order` | enum: "value", "data", "alphabetical" | Z-order of stacked segments. None/'value' puts the largest aggregate at baseline. 'data' follows SQL row order (orientation-stable not guaranteed). 'alphabetical' sorts by color column name. Ignored when stacking is off or no color. |
-| `endpoint_labels` | [EndpointLabelsConfig](#endpointlabelsconfig) | Endpoint label pane configuration for bar charts. |
+| `endpoint_labels` | [EndpointLabelsConfig](#endpointlabelsconfig) | Series names printed on stacked bars instead of in a legend. |
 | `marks` | [BarChartMarksStyle](#barchartmarksstyle) | Bar-family mark overrides. Unset fields fall back to [`style.charts.marks`](#chartsstyle). |
 
 <a id="barlayer"></a>
@@ -863,7 +863,7 @@ Authored overlay for LineChartStyle. Line chart style: chart-level fields + mark
 | `number_format` | str \| enum: "currency", "currency_full", "currency_whole", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "year" | Default number format for axes and tooltips (D3 format string); None inherits from theme. |
 | `time_format` | str \| enum: "date_short", "time_short" | Default time format for temporal axes (D3 time format string or strftime spec like '%b %Y'); None inherits from theme. |
 | `support_table` | [SupportTableStyle](#supporttablestyle) | Per-chart-type support_table style override. Unset fields fall back to [`style.charts.support_table`](#chartsstyle). |
-| `endpoint_labels` | [EndpointLabelsConfig](#endpointlabelsconfig) | Endpoint label pane configuration for line charts. |
+| `endpoint_labels` | [EndpointLabelsConfig](#endpointlabelsconfig) | Series names printed at the end of each line instead of in a legend. |
 | `marks` | [LineChartMarksStyle](#linechartmarksstyle) | Line-family mark overrides. Unset fields fall back to [`style.charts.marks`](#chartsstyle). |
 
 <a id="areachartstyle"></a>
@@ -890,7 +890,7 @@ Authored overlay for AreaChartStyle. Area chart style: chart-level fields + mark
 | `time_format` | str \| enum: "date_short", "time_short" | Default time format for temporal axes (D3 time format string or strftime spec like '%b %Y'); None inherits from theme. |
 | `support_table` | [SupportTableStyle](#supporttablestyle) | Per-chart-type support_table style override. Unset fields fall back to [`style.charts.support_table`](#chartsstyle). |
 | `stack` | enum: "none", "zero", "normalize", "center" | Default stack mode for area charts: 'none', 'zero', 'normalize', or 'center'. |
-| `endpoint_labels` | [EndpointLabelsConfig](#endpointlabelsconfig) | Endpoint label pane configuration for area charts. |
+| `endpoint_labels` | [EndpointLabelsConfig](#endpointlabelsconfig) | Series names printed on the bands instead of in a legend. |
 | `marks` | [AreaChartMarksStyle](#areachartmarksstyle) | Area-family mark overrides. Unset fields fall back to [`style.charts.marks`](#chartsstyle). |
 
 <a id="scatterchartstyle"></a>
@@ -1590,13 +1590,13 @@ Authored overlay for SupportTableStyle. Attached support_table style. Lives at s
 
 <a id="endpointlabelsconfig"></a>
 ## EndpointLabelsConfig
-Authored overlay for EndpointLabelsConfig. Endpoint label pane config, shared across line, area, and bar.
+Authored overlay for EndpointLabelsConfig. Series names printed on the chart itself instead of in a legend.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `visible` | bool | Show endpoint labels; theme sets false, authors opt in per chart. |
-| `label_offset` | float | Spacing in pixels between the chart pane and the label pane. |
-| `height` | float | Height in pixels of the endpoint-label pane (top_rail layout). |
+| `visible` | bool | Print series names on the chart instead of in a legend. True on every built-in theme, and used wherever the shape can name every series: line and area charts, and stacked bars. Grouped bars, layered charts, small multiples, and very narrow cards keep a legend instead. Set false to move the names back into a legend everywhere. Where the labels do appear they replace the color legend, so this setting and not `legend` is what removes them. |
+| `label_offset` | float | Gap in pixels between the plot and the series labels. |
+| `height` | float | Height in pixels of the label strip above a horizontal stacked bar. |
 
 <a id="barchartmarksstyle"></a>
 ## BarChartMarksStyle
@@ -2680,15 +2680,15 @@ Configuration for spark charts (inline sparklines) in table columns.
 | `height` | int | Spark chart height in pixels. |
 | `width` | int | Spark chart width in pixels. |
 | `last_visible` | bool | Highlight the last data point (line/area spark charts). |
-| `min_max_visible` | bool | Annotate the min and max data points (line/area spark charts). |
+| `min_max_visible` | bool | Annotate the min and max data points (line spark charts only). |
 | `fill_opacity` | float | Fill opacity for area spark charts (0–1). |
-| `max` | float | Maximum value for bar-normalize range scaling. |
-| `thresholds` | dict[int \| float, str] | Color thresholds for bar / bar-normalize: {value: CSS color string}. |
+| `max` | float | Scaling ceiling: bar-normalize and column clamp the value to it; bar uses it in place of the column's data max. |
+| `thresholds` | dict[int \| float, str] | Color thresholds for bar / bar-normalize / column: {value: CSS color string}. |
 | `background` | str | Background track color for bar-normalize chart. |
-| `border_radius` | float | Border radius for bar-normalize track in pixels. |
+| `border_radius` | float | Corner radius in pixels for bar, bar-normalize, and column bars, and for the bar-normalize track. |
 | `value_visible` | bool | Show numeric value label alongside the bar. |
 | `value_suffix` | str | Text placed after the displayed value (e.g., '%'). |
-| `negative_color` | bool | Opt-in: paint negative values (bar / column / columns) with the theme's tones.negative color instead of the shared spark color. Has no effect on columns with no negative values. |
+| `negative_color` | bool | Paint negative values (bar / column / columns) with the theme's tones.negative color instead of the shared spark color. Has no effect on columns with no negative values. |
 
 <a id="columnscaleconfig"></a>
 ## ColumnScaleConfig

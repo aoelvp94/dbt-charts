@@ -117,7 +117,7 @@ class AreaChartStyle(_CartesianChartStyle, _QuantitativeAxisChartStyleMixin):
         description="Default stack mode for area charts: 'none', 'zero', 'normalize', or 'center'."
     )
     endpoint_labels: EndpointLabelsConfig = Field(
-        description="Endpoint label pane configuration for area charts."
+        description="Series names printed on the bands instead of in a legend."
     )
     marks: Annotated[
         AreaChartMarksStyle, InheritSlot(from_path="Style.charts.marks")

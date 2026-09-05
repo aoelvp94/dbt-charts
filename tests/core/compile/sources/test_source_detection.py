@@ -4,6 +4,7 @@ Tests detect_dbt_database_type fallback_type, detect_database_type_from_registry
 and detect_dbt_connection_string — all in dbt_charts.core.compile.sources.detection.
 """
 
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -546,6 +547,14 @@ class TestParseDbtProfilesYaml:
         assert parse_dbt_profiles_yaml("") == []
         assert parse_dbt_profiles_yaml("\n\n") == []
         assert parse_dbt_profiles_yaml("just: [a, b") == []  # malformed YAML
+
+    def test_deeply_nested_yaml_returns_empty(self) -> None:
+        """PyYAML raises a bare RecursionError, not yaml.YAMLError, on deep nesting."""
+        from dbt_charts.core.compile.sources.detection import parse_dbt_profiles_yaml
+
+        depth = sys.getrecursionlimit() * 5
+        assert parse_dbt_profiles_yaml("[" * depth + "]" * depth) == []
+        assert parse_dbt_profiles_yaml("{a: " * depth + "1" + "}" * depth) == []
 
     def test_multiple_profiles_and_targets_each_emit_one_row(self) -> None:
         from dbt_charts.core.compile.sources.detection import parse_dbt_profiles_yaml

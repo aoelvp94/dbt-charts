@@ -129,6 +129,26 @@ class TestMissingCsvSourceFile:
         assert 'data-chart-id="good"' in result.data
         assert "Traceback" not in result.data
 
+    def test_render_dashboard_degrades_for_an_inline_ref(self, tmp_path: Path) -> None:
+        """An inline `source: <path>` that exists at neither anchor compiles and
+        fails at execution like the registry form: one tile, not the board."""
+        project = FilesystemProject(tmp_path)
+        board_yaml = _BOARD_YAML.replace("source: sales", "source: ./data/sales.csv")
+
+        result = render_dashboard(
+            board=InMemoryBoard(board_yaml, path=project.path("charts/_t.yml")),
+            adapter_registry=build_adapter_registry(project),
+            format="svg",
+            project=project,
+            result_cache=None,
+        )
+
+        assert result.status == "partial"
+        assert result.board_error is None
+        assert [e.code for e in result.chart_errors] == ["ERR-FILE-SOURCE-NOT-FOUND"]
+        assert result.data is not None
+        assert 'data-chart-id="good"' in result.data
+
     def test_render_dashboard_degrades_on_nested_path_through_a_file(
         self, tmp_path: Path
     ) -> None:

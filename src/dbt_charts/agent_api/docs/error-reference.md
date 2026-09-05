@@ -1295,6 +1295,20 @@ SQL references {{{{ source({source_name!r}, {table_name!r}) }}}}, but no matchin
 
 Fired when a query's SQL calls the dbt `source()` Jinja function with a source/table pair that is not present in the loaded manifest. Check for a typo, or refresh the manifest (`dbt parse`) if the source was added recently.
 
+### ERR-FILE-SOURCE-AMBIGUOUS: Inline file source path exists at both candidate locations
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Query {query_name!r}: inline file source {ref!r} exists at both {candidates}. Rename or remove one so only a single candidate exists.
+```
+
+Fired when a query's inline `source: <path>` ref resolves to a real file at both of its two candidate locations, the board's own directory and the project root (a bare path is tried against both anchors so it works from any board depth). dbt charts never silently prefers one anchor; move or rename one of the two files so only a single candidate remains.
+
 ### ERR-FILE-SOURCE-NOT-FOUND: File source path could not be read from disk
 
 - **Level:** error
@@ -1304,10 +1318,10 @@ Fired when a query's SQL calls the dbt `source()` Jinja function with a source/t
 **Message template:**
 
 ```
-File source {source_name!r}: {relpath!r} could not be read ({detail}). Check the path in `files:` for this source, restore the missing file, or fix its permissions.
+File source {source_name!r}: {relpath!r} could not be read ({detail}). Restore the missing file, fix the path, or fix its permissions.
 ```
 
-Fired when a `type: csv`/`json`/`parquet` source's `files:` mapping names a literal (non-glob) path that cannot be opened on disk: the leaf is missing, a path component traverses through an existing file instead of a directory, or the OS denies read access. `{detail}` carries the OS error string (e.g. "No such file or directory", "Not a directory", "Permission denied") so the message doesn't call a permissions problem a missing file. Unlike an empty glob match (`ERR-GLOB-EMPTY`), a literal path is never expanded, so this is the only place these failures surface. Neither `dct validate` nor `dct validate --warehouse` checks file existence, so this fires only at query-execution time (`dct render`/`dct serve`). Fix the path, add the missing file, or fix its permissions.
+Fired when a `type: csv`/`json`/`parquet` source's `files:` mapping, or a query's inline `source: <path>` ref, names a literal (non-glob) path that cannot be opened on disk: the leaf is missing, a path component traverses through an existing file instead of a directory, or the OS denies read access. `{detail}` carries the OS error string (e.g. "No such file or directory", "Not a directory", "Permission denied") so the message doesn't call a permissions problem a missing file. Unlike an empty glob match (`ERR-GLOB-EMPTY`), a literal path is never expanded, so this is the only place these failures surface. Compile probes an inline ref's two candidate locations (board directory, project root) only to choose between them; a path that exists at neither, like a `files:` path, fails here at query-execution time (`dct render`/`dct serve`), one chart at a time. Fix the path, add the missing file, or fix its permissions.
 
 ### ERR-FILE-SOURCE-TOO-LARGE: File source relation exceeded the materialized-size cap
 

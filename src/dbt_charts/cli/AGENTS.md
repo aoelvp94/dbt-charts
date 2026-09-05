@@ -55,7 +55,7 @@ An inline `json.dumps(obj.model_dump(...))`, a hand-rolled `for e in errors: con
 help="""\b
 SQL and named board queries — common forms:
   dct query SOURCE 'SQL'
-  dct query BOARD.yaml REFERENCE
+  dct query BOARD.yml REFERENCE
 """
 ```
 

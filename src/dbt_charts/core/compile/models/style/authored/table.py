@@ -165,7 +165,7 @@ class SparkConfig(BaseModel):
     )
     min_max_visible: bool | None = Field(
         default=None,
-        description="Annotate the min and max data points (line/area spark charts).",
+        description="Annotate the min and max data points (line spark charts only).",
     )
     fill_opacity: float | None = Field(
         default=None,
@@ -176,17 +176,28 @@ class SparkConfig(BaseModel):
 
     # Bar / bar-normalize specific
     max: float | None = Field(
-        default=None, description="Maximum value for bar-normalize range scaling."
+        default=None,
+        description=(
+            "Scaling ceiling: bar-normalize and column clamp the value to it; "
+            "bar uses it in place of the column's data max."
+        ),
     )
     thresholds: dict[int | float, str] | None = Field(
         default=None,
-        description="Color thresholds for bar / bar-normalize: {value: CSS color string}.",
+        description=(
+            "Color thresholds for bar / bar-normalize / column: "
+            "{value: CSS color string}."
+        ),
     )
     background: str | None = Field(
         default=None, description="Background track color for bar-normalize chart."
     )
     border_radius: float | None = Field(
-        default=None, description="Border radius for bar-normalize track in pixels."
+        default=None,
+        description=(
+            "Corner radius in pixels for bar, bar-normalize, and column bars, "
+            "and for the bar-normalize track."
+        ),
     )
     value_visible: bool | None = Field(
         default=None, description="Show numeric value label alongside the bar."
@@ -198,7 +209,7 @@ class SparkConfig(BaseModel):
     negative_color: bool = Field(
         default=False,
         description=(
-            "Opt-in: paint negative values (bar / column / columns) with the "
+            "Paint negative values (bar / column / columns) with the "
             "theme's tones.negative color instead of the shared spark color. "
             "Has no effect on columns with no negative values."
         ),

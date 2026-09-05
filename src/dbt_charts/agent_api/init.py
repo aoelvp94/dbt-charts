@@ -2,32 +2,50 @@
 
 from __future__ import annotations
 
-import importlib.resources
+from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from importlib_resources import files
 from pydantic import BaseModel, ConfigDict
 
-from dbt_charts.core.project import CHARTS_SUBDIR, PROJECT_CONFIG_NAME
+from dbt_charts.core.project import CHARTS_SUBDIR
+
+if TYPE_CHECKING:
+    from importlib_resources.abc import Traversable
 
 GITIGNORE_ENTRIES = ("renders/", ".venv/", "__pycache__/", "*.duckdb")
 
-_TEMPLATES = importlib.resources.files("dbt_charts.agent_api._init_templates")
+_EXCLUDED_TEMPLATE_NAMES = frozenset({"__init__.py", "__pycache__"})
 
-# Scaffold path → packaged template filename (None = empty file).
-_SCAFFOLD_TEMPLATES: dict[str, str | None] = {
-    PROJECT_CONFIG_NAME: PROJECT_CONFIG_NAME,
-    f"{CHARTS_SUBDIR}/README.md": "README.md",
-    f"{CHARTS_SUBDIR}/guide.yaml": "guide.yaml",
-    f"{CHARTS_SUBDIR}/meta.yaml": "meta.yaml",
-    f"{CHARTS_SUBDIR}/partials/.gitkeep": None,
-}
+
+def _walk_templates(
+    node: Traversable, prefix: str = ""
+) -> Iterator[tuple[str, Traversable]]:
+    """Yield (relative posix path, file handle) for every template file, recursively."""
+    for entry in sorted(node.iterdir(), key=lambda e: e.name):
+        if entry.name in _EXCLUDED_TEMPLATE_NAMES:
+            continue
+        rel = f"{prefix}{entry.name}"
+        if entry.is_dir():
+            yield from _walk_templates(entry, f"{rel}/")
+        else:
+            yield rel, entry
+
+
+_TEMPLATES = files("dbt_charts.agent_api._init_templates")
+_TEMPLATE_FILES: tuple[tuple[str, Traversable], ...] = tuple(
+    _walk_templates(_TEMPLATES)
+)
+if not _TEMPLATE_FILES:
+    raise RuntimeError("dbt_charts.agent_api._init_templates shipped no template files")
 
 # Every path init_project may write. A caller that runs init_project against a
 # materialized partial tree (Cloud's scaffold task builds one in a temp dir)
 # must seed these paths with the real repo's versions first — otherwise the
 # skip/merge protections see an empty tree and recreate everything from
 # templates.
-SCAFFOLD_PATHS: tuple[str, ...] = (*_SCAFFOLD_TEMPLATES, ".gitignore")
+SCAFFOLD_PATHS: tuple[str, ...] = (*(rel for rel, _ in _TEMPLATE_FILES), ".gitignore")
 
 
 class InitResult(BaseModel):
@@ -57,27 +75,17 @@ def init_project(
 
     result = InitResult(project_dir=root, dbt_detected=dbt_detected)
 
-    (root / CHARTS_SUBDIR).mkdir(exist_ok=True)
-    (root / CHARTS_SUBDIR / "partials").mkdir(exist_ok=True)
-
-    scaffolds: list[tuple[str, str]] = [
-        (
-            rel,
-            ""
-            if template is None
-            else _TEMPLATES.joinpath(template).read_text(encoding="utf-8"),
-        )
-        for rel, template in _SCAFFOLD_TEMPLATES.items()
-    ]
-
-    for rel, content in scaffolds:
+    for rel, handle in _TEMPLATE_FILES:
         target = root / rel
         if target.exists() and not force:
             result.skipped_files.append(Path(rel))
-        elif target.exists():
+            continue
+        content = handle.read_text(encoding="utf-8")
+        if target.exists():
             target.write_text(content, encoding="utf-8")
             result.refreshed_files.append(Path(rel))
         else:
+            target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
             result.created_files.append(Path(rel))
 

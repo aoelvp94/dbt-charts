@@ -33,7 +33,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_NO_DEFAULT_SOURCE,
     ERR_SOURCE_NOT_FOUND_EMPTY,
 )
-from dbt_charts.core.dialects import SQLDialect
+from dbt_charts.core.dialects import SQLDialect, get_dialect
 from dbt_charts.core.execute.adapters.base import (
     BaseAdapter,
     QueryParams,
@@ -510,12 +510,23 @@ class AdapterRegistry:
             return handle_adapter_error("dbt ref resolution", exc)
 
         try:
+            # Adapters that bind through a driver render in the warehouse's own
+            # style, so that is the warehouse. The inline style is parsed by no
+            # engine; there the source's type names the warehouse — a
+            # `dbt_profile` source has already been expanded to its concrete
+            # target type by the resolver.
+            warehouse = (
+                get_dialect(source_config.type)
+                if render_dialect is INLINE_PLACEHOLDERS
+                else render_dialect
+            )
             rendered = render_parameterized_with_queries(
                 resolved_sql,
                 variables if variables is not None else {},
                 queries=board.queries,
                 dialect=render_dialect,
                 strict=not query.lenient_variables,
+                warehouse=warehouse,
             )
         except (ValueError, KeyError, TypeError) as exc:
             return QueryResult(data=[], error=str(exc))

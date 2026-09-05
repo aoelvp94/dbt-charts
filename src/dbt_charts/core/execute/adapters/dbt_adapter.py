@@ -463,14 +463,21 @@ class DbtAdapter(BaseAdapter):
                 that declare lenient_variables.
         """
         resolved, _ = self._dbt_refs.resolve(sql)
+        # The helpers' date spelling, by the target's type as read from the
+        # profile. Not `_warehouse()`: that refuses an unknown type, which is
+        # right for escaping a value but would fail a query that binds nothing
+        # before it reaches the adapter's own type check.
+        warehouse = get_dialect(self._dialect)
         collector = _ParameterCollector(variables={}, dialect=INLINE_PLACEHOLDERS)
         rendered = resolve_jinja_template(
             resolved,
             variables,
             strict=strict,
             filter_helpers={
-                "filter": make_filter_helper(collector.add_param),
-                "filter_date_range": make_filter_date_range_helper(collector.add_param),
+                "filter": make_filter_helper(collector.add_param, warehouse),
+                "filter_date_range": make_filter_date_range_helper(
+                    collector.add_param, warehouse
+                ),
             },
         )
         if not collector.params:
