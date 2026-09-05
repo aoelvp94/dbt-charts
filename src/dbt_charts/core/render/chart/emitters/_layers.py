@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Literal
+from typing import Literal
 
 from dbt_charts.core.compile.models.style.resolved._marks import (
     ResolvedAreaLineStyle,
@@ -25,6 +25,7 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     line_mark_to_vl,
     scatter_mark_to_vl,
 )
+from dbt_charts.core.utils import stacked_x_domain_order
 
 # Vega's ``autosize: fit`` sizes the plot to fit everything the scenegraph draws,
 # so a mark spilling past the plot rect pushes the plot box inward — and on line
@@ -57,26 +58,35 @@ HOVER_TARGET_SIZE: float = 320.0
 
 
 def pin_categorical_domain_order(cat_enc: VLDict, data: list[VLDict]) -> None:
-    """Pin ``cat_enc``'s scale domain to first-occurrence row order, in place.
+    """Pin ``cat_enc``'s scale domain explicitly, in place.
 
-    Only fires for an unauthored (falsy) ``sort`` on a nominal/ordinal
-    channel — the "keep the query's own row order" default. Splitting a
-    mark's data across VL sub-layers (the positive/negative sign split below)
-    makes Vega-Lite re-infer the shared categorical domain from whichever
-    layer's data it sees first, silently reordering every category, not just
-    the one that moved layers — this pins the domain explicitly so the split
-    is invisible to the axis.
+    Splitting a mark's data across VL sub-layers (the positive/negative sign
+    split below) makes Vega-Lite re-derive the shared categorical domain from
+    each sub-layer's own *filtered* data independently — for an unauthored
+    sort this silently reorders every category, not just the one that moved
+    layers, and for a field-based ``sort`` (e.g. bar's own value-descending
+    default) each sub-layer's sort aggregate runs over an incomplete subset,
+    which Vega-Lite cannot reconcile into one coherent order and falls back
+    to alphabetical. Pinning the domain explicitly, computed once from the
+    full (unfiltered) dataset via ``stacked_x_domain_order`` — the same
+    per-category sort-aggregate ``x_domain.py``'s ``rendered_x_domain`` (used
+    by ``emitters/_overlay.py``) builds its own union on top of — makes the
+    split invisible to the axis either way.
+
+    ``cat_enc["sort"]`` reaching a bar's categorical channel is always either
+    absent or ``chart_sort_to_vl``'s own ``{"field", "order"}`` shape
+    (``emitters/_cartesian.py``) — never a bare VL-native sort array, which
+    the authored surface has no way to produce.
     """
-    if cat_enc.get("type") not in ("nominal", "ordinal") or cat_enc.get("sort"):
+    if cat_enc.get("type") not in ("nominal", "ordinal"):
         return
     cat_field = cat_enc.get("field")
     if cat_field is None:
         return
-    ordered: list[Any] = []
-    for row in data:
-        v = row.get(cat_field)
-        if v is not None and v not in ordered:
-            ordered.append(v)
+    sort = cat_enc.get("sort")
+    sort_field = sort["field"] if isinstance(sort, dict) else ""
+    descending = isinstance(sort, dict) and sort.get("order") == "descending"
+    ordered = stacked_x_domain_order(data, cat_field, sort_field, descending)
     if not ordered:
         return
     existing_scale = cat_enc.get("scale")

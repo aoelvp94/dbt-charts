@@ -48,15 +48,16 @@ from jinja2 import (
 
 from dbt_charts.core.compile.errors import CompilationError, JinjaError
 from dbt_charts.core.compile.template._helpers import _LenientUndefined, _QueryNamespace
+from dbt_charts.core.compile.template.environment import BoardTemplateEnvironment
 
 logger = logging.getLogger(__name__)
 
 
 # Jinja environment with strict undefined (errors on missing variables)
-_jinja_env = Environment(undefined=StrictUndefined)
+_jinja_env = BoardTemplateEnvironment(undefined=StrictUndefined)
 
 # Lenient Jinja environment (undefined variables become empty/None)
-_jinja_env_lenient = Environment(undefined=_LenientUndefined)
+_jinja_env_lenient = BoardTemplateEnvironment(undefined=_LenientUndefined)
 
 # {{ queries.X }} inline ref and {{ queries.X.cache }} cache-read ref patterns.
 # Shared by dependency detection and inline substitution so the two stay in sync.

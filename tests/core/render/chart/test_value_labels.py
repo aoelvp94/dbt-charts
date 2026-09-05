@@ -2755,31 +2755,23 @@ class TestOverlayBarLabelSortPreservation:
     """A chart's authored sort must survive a house-register overlay label,
     not just its own base-chart rendering.
 
-    _reconcile_x_domain pins an explicit scale.domain array to stop Vega-Lite
-    falling back to alphabetical order for a transform-carrying label
-    sublayer with no x channel of its own (force=True). Vega-Lite always lets
-    an explicit scale.domain win over a sort: property on the same channel,
-    so an unsorted pin would silently defeat an authored sort — but verified
-    empirically that Vega-Lite's OWN native sort-by-field also fails to
-    resolve correctly across a shared scale for this specific trigger (a
-    transform-carrying sublayer with no x encoding of its own), regardless of
-    whether a domain is pinned. So the fix for this trigger is not a bail-out
-    (that works for the OTHER trigger — a layer's rows genuinely diverging
-    from the base's — but silently reverts to alphabetical order here): it's
-    pinning an explicit domain that is ITSELF correctly sorted, mirroring
-    what Vega-Lite's sort-by-field would have produced. This class verifies
-    the actual rendered order via vl_convert, not just the emitted spec's
-    structure — a structural-only check already let two prior variants of
-    this regression ship.
+    ``_reconcile_x_domain`` pins an explicit, correctly-sorted
+    ``scale.domain`` array whenever a transform-carrying label sublayer
+    with no x channel of its own shares the scale (``force=True``):
+    verified empirically that Vega-Lite's own native sort-by-field does
+    not resolve correctly across a shared scale for this trigger, pinned
+    domain or not, so the pin has to carry the sort order itself. This
+    class verifies the actual rendered order via vl_convert, not just the
+    emitted spec's structure — a structural-only check already let two
+    prior variants of this regression ship.
     """
 
     def test_overlay_bar_house_label_sort_preserved(self) -> None:
         """Bar chart with sort: {by: revenue, order: desc} + an overlay bar
         layer carrying an alias-format label must render in the authored
         sort order, not query-row order — via an explicit scale.domain
-        pinned to that same order (the force=True trigger firing on the
-        label's calculate transform, sorted the same way Vega-Lite's own
-        native sort-by-field would have).
+        pinned to that same order (the label's calculate transform firing
+        the ``force=True`` trigger).
 
         Data order: Jan (1.2M), Feb (2.4M), Mar (3.6M).
         Authored sort: desc by revenue → expected render order: Mar, Feb, Jan.
@@ -2809,8 +2801,7 @@ class TestOverlayBarLabelSortPreservation:
                                     # "number" is a theme alias for "~s" (SI).
                                     # resolve_label_format("number", ...) → is_house=True
                                     # → calculate transform → _reconcile_x_domain's
-                                    # force=True trigger fires and, since a sort IS
-                                    # authored below, pins an explicit sorted domain.
+                                    # force=True trigger fires.
                                     "format": "number",
                                 }
                             }
@@ -2834,14 +2825,6 @@ class TestOverlayBarLabelSortPreservation:
         assert x_enc.get("sort"), (
             f"expected an authored sort on the x encoding, got {x_enc.get('sort')!r}"
         )
-        # Unlike the "a layer's rows diverge from the base's" trigger (which
-        # correctly bails out and trusts Vega-Lite's native sort-by-field),
-        # this force=True trigger (an overlay layer's own house-register
-        # label sublayer) needs an EXPLICIT, correctly-sorted domain pinned —
-        # verified empirically that Vega-Lite's native sort does not resolve
-        # correctly across a shared scale when one sharing sublayer carries a
-        # calculate transform and no x encoding of its own, pinned domain or
-        # not. See _reconcile_x_domain's docstring for the full reasoning.
         domain = x_enc.get("scale", {}).get("domain")
         assert domain == ["Mar", "Feb", "Jan"], (
             f"scale.domain must be explicitly pinned in desc-by-revenue "

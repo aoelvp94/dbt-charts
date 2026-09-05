@@ -1,4 +1,4 @@
-"""Overlay layer identity and the categorical sort guard.
+"""Overlay layer identity and the categorical domain reconciliation.
 
 Two rules govern ``render_cartesian_overlay`` / ``_reconcile_x_domain``
 (``core/render/chart/emitters/_overlay.py``):
@@ -9,15 +9,24 @@ Two rules govern ``render_cartesian_overlay`` / ``_reconcile_x_domain``
    base's own query name, so ``own_data is not None`` (or an identity check
    against the base's row list) cannot tell "reads its own rows" from
    "shares the base's".
-2. A shared categorical x scale's domain is never pinned to raw row order
-   when the base's x encoding carries an authored ``sort`` — an explicit
-   ``scale.domain`` always wins over ``sort`` in Vega-Lite, so pinning one
-   silently defeats the other. Mirrors the guard already in
-   ``pin_categorical_domain_order`` (``emitters/_layers.py``).
+2. A shared categorical x scale's pinned domain always reflects the base
+   x encoding's own ``sort`` (``chart_sort_to_vl`` never touches row order,
+   so the union this function builds has to apply the sort itself —
+   ``rendered_x_domain`` does), and the pin fires whether or not a sort is
+   present: a sort just changes what order the union is pinned in, never
+   whether it is pinned at all. A base bar mark split into sign-filtered
+   sub-layers (``pin_categorical_domain_order``, ``emitters/_layers.py``)
+   may already have pinned a domain computed from the base's own rows
+   alone, and this function's job is to widen it to the full union, sort
+   included.
 
-Covers the two failing cases neither rule previously caught:
+Covers the failing cases neither rule previously caught:
 - an own-query or own-x overlay layer on a chart with an authored
-  ``chart.sort`` (categorical x) — sort must survive, not get pinned away;
+  ``chart.sort`` (categorical x) — the sort must be reflected in the
+  pinned domain, not left for a (possibly split) base mark to apply alone;
+- an own-query overlay layer contributing a category absent from the base,
+  on a mixed-sign base bar mark (a sign split), sorted or not — that
+  category must survive in the pinned domain;
 - an unauthored overlay layer on a date-bucketed / gap-filled base x — the
   overlay must share the base's own (already-normalized) rows, not a stale
   raw lookup mismatched against what the base actually renders.
@@ -118,7 +127,7 @@ def _rendered_x_axis_order(vl: VLDict) -> list[str]:
         if not text.strip(_pad_chars)
         .replace(",", "")
         .replace(".", "")
-        .lstrip("-")
+        .lstrip("-−")  # d3-format renders a negative tick with U+2212, not ASCII "-"
         .isdigit()
     ]
 
@@ -138,38 +147,38 @@ _DESC_BY_REVENUE = ChartSort(by="revenue", order="desc")
 _EXPECTED_SORT_ORDER = ["Feb", "Jan", "Mar"]
 
 
-def test_reconcile_x_domain_noop_when_x_encoding_carries_sort() -> None:
-    """``_reconcile_x_domain`` must bail out whenever the shared x encoding
-    carries a truthy ``sort`` — mirrors ``pin_categorical_domain_order``'s
-    own guard (``emitters/_layers.py``) exactly. Regression for the false
-    claim, previously in this function's own docstring, that an authored
-    ``chart.sort`` was "reordered upstream of this function" — it is not;
-    ``chart_sort_to_vl`` only builds a Vega-Lite ``sort:`` dict, the row
-    order this function reads is never touched by it. Without this guard,
-    pinning ``scale.domain`` here silently defeats that sort (Vega-Lite
-    always prefers an explicit domain over ``sort``)."""
+def test_reconcile_x_domain_pins_the_sorted_union_when_x_encoding_carries_sort() -> (
+    None
+):
+    """``_reconcile_x_domain`` pins a domain even when the shared x encoding
+    carries a truthy ``sort`` — the union still needs widening to include a
+    layer-only category, and ``rendered_x_domain`` applies the sort itself
+    when building that union, so the pin never defeats it. Base rows carry
+    real ``revenue`` values so the pinned order (``Feb``, ``Jan``, ``Mar``)
+    actually differs from row order, proving the sort was applied — the
+    layer-only category (``Apr``) is appended after the sorted base rows,
+    in the layer's own first-seen order."""
     x_enc: VLDict = {
         "field": "month",
         "type": "nominal",
         "sort": {"field": "revenue", "order": "descending"},
     }
     base_data: list[VLDict] = [
-        {"month": "Jan"},
-        {"month": "Feb"},
-        {"month": "Mar"},
+        {"month": "Jan", "revenue": 100.0},
+        {"month": "Feb", "revenue": 200.0},
+        {"month": "Mar", "revenue": 50.0},
     ]
     layer_x_columns: list[tuple[str, list[VLDict]]] = [
         ("month", [{"month": "Jan"}, {"month": "Feb"}, {"month": "Apr"}])
     ]
     _reconcile_x_domain(x_enc, base_data, layer_x_columns, "c1")
-    assert "scale" not in x_enc
+    assert x_enc["scale"]["domain"] == ["Feb", "Jan", "Mar", "Apr"]
 
 
 def test_reconcile_x_domain_still_pins_domain_without_sort() -> None:
-    """Negative control for the sort guard above: with NO authored sort,
-    ``_reconcile_x_domain`` must still pin the union domain exactly as
-    before — the new guard must not disable pinning generally, only when a
-    sort is actually present."""
+    """Sibling of the sorted case above: with NO authored sort,
+    ``_reconcile_x_domain`` pins the union domain in base row order,
+    extended by any layer-only category in its own first-seen order."""
     x_enc: VLDict = {"field": "month", "type": "nominal"}
     base_data: list[VLDict] = [{"month": "Jan"}, {"month": "Feb"}]
     layer_x_columns: list[tuple[str, list[VLDict]]] = [
@@ -181,12 +190,9 @@ def test_reconcile_x_domain_still_pins_domain_without_sort() -> None:
 
 def test_layered_bar_own_x_layer_with_authored_sort_renders_in_sort_order() -> None:
     """An overlay layer authoring its own ``x:`` field must not defeat an
-    authored ``chart.sort`` on a categorical base x. Before the sort guard,
-    the layer's authored ``x`` populated ``layer_x_columns``, and
-    ``_reconcile_x_domain`` pinned an explicit ``scale.domain`` in raw
-    base-query row order — silently overriding the sort. No labels are
-    authored anywhere in this chart; the bug is unrelated to value labels.
-    """
+    authored ``chart.sort`` on a categorical base x. This layer's own rows
+    carry no category outside the base's, so the pinned domain equals the
+    base's own sort order exactly."""
     layer = LineLayer(type="line", x="month", y="target", query="targets")
     chart = _bar_normalized(layers=[layer], sort=_DESC_BY_REVENUE)
     resolved = resolve(chart, _SORT_DATA, _default_board_style())
@@ -199,9 +205,7 @@ def test_layered_bar_own_x_layer_with_authored_sort_renders_in_sort_order() -> N
             datasets={"targets": _SORT_TARGETS},
         )
     )
-    assert "scale" not in vl["encoding"]["x"] or "domain" not in vl["encoding"][
-        "x"
-    ].get("scale", {})
+    assert vl["encoding"]["x"]["scale"]["domain"] == _EXPECTED_SORT_ORDER
     assert _rendered_x_axis_order(vl) == _EXPECTED_SORT_ORDER
 
 
@@ -211,8 +215,8 @@ def test_layered_bar_own_query_layer_with_authored_sort_renders_in_sort_order() 
     x FIELD name but reads different (query-diverging) rows against it —
     those rows correctly feed the union-domain reconciliation (see
     ``test_unauthored_x_diverging_query_layer_contributes_to_union_domain``
-    below), which makes the sort guard load-bearing here too, not just for
-    an own-``x`` layer."""
+    below), and carry no category outside the base's, so the pinned domain
+    equals the base's own sort order exactly."""
     layer = LineLayer(type="line", y="target", query="targets")
     chart = _bar_normalized(layers=[layer], sort=_DESC_BY_REVENUE)
     resolved = resolve(chart, _SORT_DATA, _default_board_style())
@@ -225,10 +229,73 @@ def test_layered_bar_own_query_layer_with_authored_sort_renders_in_sort_order() 
             datasets={"targets": _SORT_TARGETS},
         )
     )
-    assert "scale" not in vl["encoding"]["x"] or "domain" not in vl["encoding"][
-        "x"
-    ].get("scale", {})
+    assert vl["encoding"]["x"]["scale"]["domain"] == _EXPECTED_SORT_ORDER
     assert _rendered_x_axis_order(vl) == _EXPECTED_SORT_ORDER
+
+
+def test_layered_bar_mixed_sign_diverging_layer_category_survives_sort() -> None:
+    """A diverging overlay layer's own category must survive the shared
+    domain even when the base bar mark is itself split into sign-filtered
+    sub-layers by a mixed-sign measure. ``pin_categorical_domain_order``
+    (``emitters/_layers.py``) pins a domain computed from the base's own
+    rows alone at bar-emission time; ``_reconcile_x_domain`` has to widen
+    it to include "Apr", which appears only in the layer's own query."""
+    data = [
+        {"month": "Jan", "revenue": 100.0},
+        {"month": "Feb", "revenue": -50.0},
+        {"month": "Mar", "revenue": 30.0},
+    ]
+    layer = LineLayer(type="line", y="target", query="targets")
+    chart = _bar_normalized(layers=[layer], sort=_DESC_BY_REVENUE)
+    resolved = resolve(chart, data, _default_board_style())
+
+    targets_rows = [{"month": "Jan", "target": 10.0}, {"month": "Apr", "target": 40.0}]
+    vl = translate_to_vl(
+        BarEmitter().emit(
+            resolved,
+            _DEFAULT_BOX,
+            regroup((), data),
+            datasets={"targets": targets_rows},
+        )
+    )
+    bar_layers = [
+        la
+        for la in vl["layer"][0].get("layer", [])
+        if (la.get("mark") or {}).get("type") == "bar"
+    ]
+    assert len(bar_layers) == 2, (
+        "precondition: the base bar mark must actually split into "
+        f"sign-filtered sub-layers, got {vl['layer'][0]}"
+    )
+    assert vl["encoding"]["x"]["scale"]["domain"] == ["Jan", "Mar", "Feb", "Apr"]
+    assert _rendered_x_axis_order(vl) == ["Jan", "Mar", "Feb", "Apr"]
+
+
+def test_horizontal_bar_default_sort_diverging_layer_category_survives() -> None:
+    """The all-positive, unsplit twin of the mixed-sign test above: a
+    diverging overlay layer's own category must survive the shared domain
+    even with no sign split at all, on a horizontal bar's engine-default
+    value-descending sort (``emitters/bar.py``)."""
+    data = [
+        {"segment": "Expansion", "arr": 2_000_000.0},
+        {"segment": "New", "arr": 1_400_000.0},
+    ]
+    layer = LineLayer(type="line", y="target", query="targets")
+    chart = _bar_normalized(
+        x="segment", y="arr", layers=[layer], style={"orientation": "horizontal"}
+    )
+    resolved = resolve(chart, data, _default_board_style())
+
+    targets_rows = [{"segment": "Renewal", "target": 40.0}]
+    vl = translate_to_vl(
+        BarEmitter().emit(
+            resolved,
+            _DEFAULT_BOX,
+            regroup((), data),
+            datasets={"targets": targets_rows},
+        )
+    )
+    assert vl["encoding"]["y"]["scale"]["domain"] == ["Expansion", "New", "Renewal"]
 
 
 def test_unauthored_x_diverging_query_layer_contributes_to_union_domain() -> None:
@@ -331,9 +398,8 @@ def test_unauthored_layer_reconciles_against_gap_filled_base_x() -> None:
 
 
 def test_layered_bar_plain_categorical_still_unions_without_sort() -> None:
-    """Negative control: a genuinely diverging own-``x`` overlay layer with
-    NO authored sort must keep pinning the union domain in base row order —
-    unaffected by the sort guard added above."""
+    """A genuinely diverging own-``x`` overlay layer with NO authored sort
+    must keep pinning the union domain in base row order."""
     data = [
         {"month": "Jan", "revenue": 100.0},
         {"month": "Feb", "revenue": 200.0},
@@ -362,8 +428,7 @@ def test_layered_line_continuous_x_authored_scale_domain_survives() -> None:
     """An authored continuous-x ``scale.domain`` must survive on a chart
     with ``layers:`` — the union/reconcile machinery in this module is
     scoped to CATEGORICAL x scales only (``_CATEGORICAL_X_TYPES``) and must
-    never touch a continuous (temporal/quantitative) authored domain, on any
-    branch of the identity or sort-guard logic added here."""
+    never touch a continuous (temporal/quantitative) authored domain."""
     from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
     from dbt_charts.core.compile.models.chart.normalized.line import (
         LineChart as NLineChart,

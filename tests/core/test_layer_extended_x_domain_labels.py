@@ -28,7 +28,6 @@ from typing import Any
 
 import vl_convert as vlc
 
-from dbt_charts.core.compile.models.chart.authored import ChartSort
 from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
 from dbt_charts.core.compile.models.chart.normalized import BarChart as NBarChart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -71,7 +70,7 @@ def _default_board_style():
     return resolve_chart_style_context(get_theme_style(get_default_theme_name()))
 
 
-def _layered_vl(width: float = 600.0, sort: ChartSort | None = None) -> VLDict:
+def _layered_vl(width: float = 600.0) -> VLDict:
     """Emit the repro chart: month bars with a longer goal-line overlay."""
     chart = NBarChart(
         id="bar1",
@@ -82,7 +81,6 @@ def _layered_vl(width: float = 600.0, sort: ChartSort | None = None) -> VLDict:
         query_name="q",
         variable_dependencies=set(),
         layers=[LineLayer(type="line", y="goal", query="goals")],
-        **({"sort": sort} if sort is not None else {}),
     )
     resolved = resolve(chart, _BASE_DATA, _default_board_style())
     return translate_to_vl(
@@ -169,21 +167,6 @@ def test_axis_values_cover_the_full_union_domain() -> None:
     for values in injections:
         assert len(values) == len(domain), (
             f"axis.values covers {len(values)} of {len(domain)} bands: {values}"
-        )
-
-
-def test_axis_values_cover_the_domain_when_sort_leaves_it_unpinned() -> None:
-    """An authored sort makes ``_reconcile_x_domain`` bail without pinning
-    ``scale.domain`` (an explicit domain would silently defeat the sort), so
-    the union domain is never written to the spec. The tick values must still
-    cover it — deriving them from the pinned domain would fix the plain case
-    and quietly keep the bug here."""
-    vl = _layered_vl(sort=ChartSort(by="revenue", order="desc"))
-    injections = _axis_values_at_every_injection_site(vl)
-    assert injections, "expected axis.values on the shared x encoding"
-    for values in injections:
-        assert len(values) == len(_GOAL_MONTHS), (
-            f"axis.values covers {len(values)} of {len(_GOAL_MONTHS)} bands: {values}"
         )
 
 

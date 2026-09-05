@@ -15,6 +15,7 @@ from __future__ import annotations
 import pytest
 
 from dbt_charts.core.compile.config import reset_config
+from dbt_charts.core.compile.models.chart.authored import ChartSort
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
@@ -40,7 +41,11 @@ def _reset(monkeypatch: pytest.MonkeyPatch):
     reset_config()
 
 
-def _bar_spec(data: list[dict], orientation: str = "vertical") -> dict:
+def _bar_spec(
+    data: list[dict],
+    orientation: str = "vertical",
+    sort: ChartSort | None = None,
+) -> dict:
     style = BarChartStylePatch.model_validate({"orientation": orientation})
     chart = BarChart(
         id="t",
@@ -50,6 +55,7 @@ def _bar_spec(data: list[dict], orientation: str = "vertical") -> dict:
         query=SqlQuery(sql="SELECT 1", source="src"),
         query_name="q",
         style=style,
+        sort=sort,
     )
     return generate_vega_lite_spec(chart, data, width=400)
 
@@ -166,6 +172,28 @@ def test_mixed_bars_preserve_category_order():
     )
 
 
+def test_mixed_bars_preserve_authored_sort_order():
+    """The sort twin of ``test_mixed_bars_preserve_category_order``: the
+    mixed-sign split must not defeat an authored ``chart.sort`` either.
+
+    Each sign-filtered sub-layer's own sort aggregate runs over an
+    incomplete subset of the rows, which Vega-Lite cannot reconcile back
+    into one coherent order across the split — the pinned domain has to
+    carry the correct order itself.
+    """
+    data = [
+        {"cat": "Jan", "val": 100},
+        {"cat": "Feb", "val": -50},
+        {"cat": "Mar", "val": 30},
+    ]
+    spec = _bar_spec(data, sort=ChartSort(by="val", order="desc"))
+    assert "layer" in spec, "mixed-sign bars should be a layered spec"
+    x_scale = spec.get("encoding", {}).get("x", {}).get("scale", {})
+    assert x_scale.get("domain") == ["Jan", "Mar", "Feb"], (
+        f"mixed-sign split must respect an authored sort; got {x_scale.get('domain')}"
+    )
+
+
 # ── horizontal bar ────────────────────────────────────────────────────────────
 
 
@@ -218,6 +246,27 @@ def test_mixed_horizontal_bars_two_layer_spec():
     assert "cornerRadiusBottomLeft" in neg_mark
     assert "cornerRadiusTopRight" not in neg_mark
     assert "cornerRadiusBottomRight" not in neg_mark
+
+
+def test_mixed_horizontal_bars_preserve_value_descending_sort_order():
+    """A single-series horizontal bar with no color channel defaults its
+    category axis to value-descending order (``emitters/bar.py``). The
+    mixed-sign two-layer split must not defeat that default either: each
+    sign-filtered sub-layer's own sort aggregate runs over an incomplete
+    subset of the rows, which Vega-Lite cannot reconcile into one order.
+    """
+    data = [
+        {"cat": "Expansion", "val": 2_000_000},
+        {"cat": "New", "val": 1_400_000},
+        {"cat": "Contraction", "val": -500_000},
+        {"cat": "Churn", "val": -900_000},
+    ]
+    spec = _bar_spec(data, "horizontal")
+    assert "layer" in spec, "mixed-sign bars should be a layered spec"
+    y_scale = spec.get("encoding", {}).get("y", {}).get("scale", {})
+    assert y_scale.get("domain") == ["Expansion", "New", "Contraction", "Churn"], (
+        f"mixed-sign split must keep value-descending order; got {y_scale.get('domain')}"
+    )
 
 
 # ── stacked diverging bars ────────────────────────────────────────────────────

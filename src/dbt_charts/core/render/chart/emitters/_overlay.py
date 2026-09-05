@@ -220,48 +220,29 @@ def _reconcile_x_domain(
 
     Vega-Lite's default domain union across sub-layers sharing an x scale is
     unordered (alphabetical), so a layer whose rows diverge from the base's
-    needs an explicit domain to preserve the base's own row order and to
-    guarantee its categories — which may not be a subset of the base's own —
-    aren't dropped from the shared scale. The base's own relative order is
-    never disturbed — it is exactly as its query returned it.
+    needs an explicit domain to guarantee its categories — which may not be
+    a subset of the base's own — aren't dropped from the shared scale.
+    ``rendered_x_domain`` decides the pinned order, including how an
+    authored sort on the base x encoding and a layer-only category interact
+    (see its own docstring); this function only fires the pin and writes
+    its result.
 
-    An authored ``chart.sort`` is NOT "reordered upstream of this function"
-    — ``chart_sort_to_vl`` only builds a Vega-Lite ``sort:`` dict applied at
-    render time, the row order this function reads is never touched by it —
-    so pinning an *unsorted* explicit domain would silently defeat that sort
-    (an explicit ``scale.domain`` always wins over ``sort`` in Vega-Lite).
-    For the rows-diverge trigger this function bails out entirely when
-    ``x_enc`` carries a truthy ``sort`` (mirroring the same guard in
-    ``pin_categorical_domain_order``, ``emitters/_layers.py``) and lets
-    Vega-Lite's own native sort-by-field apply — verified empirically to
-    resolve correctly for that trigger.
+    The pin fires whenever a trigger is present, sort or no sort: a base
+    bar mark split into sign-filtered sub-layers
+    (``pin_categorical_domain_order``, ``emitters/_layers.py``) may have
+    already pinned a domain computed from the base's own rows alone, and
+    that narrower domain must be overwritten with the full union or any
+    layer-only category is silently dropped from the shared scale.
 
-    The ``force=True`` trigger cannot rely on the same bail-out: verified
-    empirically that Vega-Lite's native sort-by-field does NOT correctly
-    resolve a shared categorical scale when one of the sharing sublayers
-    (a label's own calculate-transform sublayer) carries no
-    x encoding of its own — it silently falls back to alphabetical order
-    regardless of whether a domain is pinned. So when ``force`` fired and a
-    sort is authored, this function pins an EXPLICIT domain sorted the same
-    way Vega-Lite's own field-based sort would (see
-    ``rendered_x_domain``), rather than bailing out — an unsorted pin
-    would defeat the sort exactly as badly as no pin does for this trigger.
-
-    Layer-only categories go where the base's own stated order puts them —
-    a base ordered most-recent-first keeps taking new dates at the front (see
-    ``rendered_x_domain``). Only when the base states no order to extend do
-    they land on the end in the layer's own first-seen order, and that case
-    earns WARN-LAYER-X-DOMAIN-PAINT-ORDER. No-op when the base x scale isn't categorical
-    (nominal/ordinal) or when neither trigger fires. Every layer's own x
-    type has already been resolved against the base's (see
-    _resolve_layer_x_encoding) by the time this runs — this function only
-    unions and orders values, it never classifies or raises.
+    No-op when the base x scale isn't categorical (nominal/ordinal) or when
+    neither trigger fires. Every layer's own x type has already been
+    resolved against the base's (see _resolve_layer_x_encoding) by the time
+    this runs — this function only unions and orders values, it never
+    classifies or raises.
     """
     if not layer_x_columns and not force:
         return
     if x_enc.get("type") not in _CATEGORICAL_X_TYPES:
-        return
-    if x_enc.get("sort") and not force:
         return
     if not isinstance(x_enc.get("field"), str):
         return

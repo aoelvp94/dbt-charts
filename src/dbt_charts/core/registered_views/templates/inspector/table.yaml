@@ -2,22 +2,15 @@
     per characteristic, one table column per data column. Built from the `columns`
     pre-template schema query so the pivot happens in the view layer. -#]
 [%- set cols = (queries.columns.rows if (queries is defined and queries.columns is defined and queries.columns.rows is defined) else []) -%]
-[%- set names = [] -%]
-[%- for c in cols -%][%- set _ = names.append(c.get('name')) -%][%- endfor -%]
+[%- set names = cols | map(attribute='name') | list -%]
 [#- Concise describe overview — the 5 core characteristics. Numeric min/max/mean
     are column-specific and live on the column page as KPIs, not here. -#]
 [%- set characteristics = [['Type', 'actual_type'], ['Role', 'role'], ['Semantic', 'semantic_type'], ['Null %', 'null_percentage'], ['Distinct', 'distinct_count']] -%]
-[%- set pivot = [] -%]
-[%- for label, field in characteristics -%]
-[%-   set row = [label] -%]
-[%-   for c in cols -%][%- set _ = row.append(c.get(field)) -%][%- endfor -%]
-[%-   set _ = pivot.append(row) -%]
-[%- endfor -%]
+[%- set pivot = pivot_column_profiles(cols, characteristics) -%]
 [#- style.columns is styling-only (order comes from the pivoted row shape
     built above) — one entry per data column attaches its header link to the
     column page. -#]
-[%- set colstyle = {"Attribute": {"align": "right"}} -%]
-[%- for n in names -%][%- set _ = colstyle.update({n: {"header_link": "/inspector/" ~ path.source ~ "/" ~ path.schema ~ "/" ~ path.table ~ "/" ~ n ~ "/"}}) -%][%- endfor -%]
+[%- set colstyle = column_header_styles(names, path.source, path.schema, path.table) -%]
 extends: neon
 title: [[ ("Inspector: " ~ path.source ~ "/" ~ path.schema ~ "/" ~ path.table) | tojson ]]
 

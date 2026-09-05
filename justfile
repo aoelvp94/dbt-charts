@@ -81,13 +81,12 @@ test-file FILE *ARGS:
 test-windows *ARGS:
     LC_ALL=C PYTHONUTF8=0 uv run pytest -q --tb=short -p no:tach tests -m windows {{monorepo_only}} {{ARGS}}
 
-# The honesty nightly (oss-export-honesty-nightly.yml) runs this same lock
-# install against a real Copybara export, but only on its own cron -- a
-# dbt-charts-v* tag build runs off-cycle and needs its own proof the
-# committed oss/uv.lock installs and the wheel Copybara's path rewrites
-# (core.move/core.replace) produce is genuinely installable. Wheel/render
-# steps reuse the fixture and commands from the monorepo's own
-# smoke-install CI job (.github/workflows/test-dataface.yml).
+# The CI pipeline that produces this export runs this same lock install on
+# its own nightly cron, but a dbt-charts-v* tag build runs off-cycle and
+# needs its own proof the committed oss/uv.lock installs and the wheel
+# Copybara's path rewrites (core.move/core.replace) produce is genuinely
+# installable. Wheel/render steps reuse the fixture and commands from the
+# monorepo's own smoke-install CI job (.github/workflows/test-dataface.yml).
 smoke:
     #!/usr/bin/env bash
     set -euo pipefail

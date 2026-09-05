@@ -68,7 +68,7 @@ if TYPE_CHECKING:
 # is what tracks the vendored font set and every post-processing step in
 # render_svg_content. A host store need not expire anything — an upgrade rotates
 # every entry on its own, with no migration and no manual purge.
-RENDERER_VERSION = "2"
+RENDERER_VERSION = "3"
 
 # Largest single entry worth keeping. Above this the entry would dominate any
 # store it is drained into and push out the small hot entries that make an edit

@@ -18,6 +18,18 @@ recognition or how a declaration is applied.
 
 ## Implementation philosophy
 
+**`versions/*.py` — `current.py` included — is schema changes only. Nothing
+else goes in there.** A key renamed, a key removed, or an authored value's
+meaning changing in place (the unmigratable-redefinition case below) — that
+is the entire list of things that earn a docstring bullet. A renderer-default
+tweak, a bug fix, a performance change, a visual behavior change, an internal
+refactor: none of these are grammar changes, and **none of them get an entry
+here, ever, no matter how significant the change feels.** If nothing an
+author could have typed changed meaning, it does not belong in `versions/`.
+Document it in the task or the PR description instead. Before adding a
+bullet, name the `Move`, `Deletion`, or in-place redefinition it documents —
+if you can't, delete the bullet, not add it.
+
 **Every grammar change ships its migration in the same PR** — key renamed,
 key removed, value meaning changed. Done means a board written against the
 previous grammar still renders, not that the models validate.

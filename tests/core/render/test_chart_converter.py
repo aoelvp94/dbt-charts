@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import io
+import re
 import sys
 import types
 from unittest import mock
@@ -937,3 +938,186 @@ def test_correct_facet_overshoot_skips_nonpositive_shrink() -> None:
     )
 
     assert unit["width"] == 50.0
+
+
+def test_namespace_svg_ids_rewrites_definition_and_references() -> None:
+    """_namespace_svg_ids must rewrite a clipPath id and every reference to it,
+    scoped by chart_id, and leave unrelated ids/refs untouched.
+    """
+    from dbt_charts.core.render.converters import chart as chart_converter
+
+    svg = (
+        '<svg><defs><clipPath id="clip3"><rect width="10" height="10"/></clipPath>'
+        "</defs>"
+        '<g clip-path="url(#clip3)"><rect id="other-id"/></g>'
+        '<a xlink:href="#clip3">link</a>'
+        '<a href="#clip3">plain link</a>'
+        "</svg>"
+    )
+
+    result = chart_converter._namespace_svg_ids(svg, "revenue_trend")
+
+    assert 'id="clip3-revenue_trend"' in result
+    assert 'id="clip3"' not in result
+    assert "url(#clip3-revenue_trend)" in result
+    assert 'xlink:href="#clip3-revenue_trend"' in result
+    assert 'href="#clip3-revenue_trend"' in result
+    assert 'id="other-id"' in result, "unrelated ids must be left untouched"
+
+
+def test_namespace_svg_ids_rewrites_gradient_ids_too() -> None:
+    """linearGradient ids (`gradient_0`) come from the same vl-convert counter
+    as clipPath ids and collide the same way.
+    """
+    from dbt_charts.core.render.converters import chart as chart_converter
+
+    svg = (
+        '<svg><defs><linearGradient id="gradient_0"><stop offset="0"/>'
+        "</linearGradient></defs>"
+        '<rect fill="url(#gradient_0)"/></svg>'
+    )
+
+    result = chart_converter._namespace_svg_ids(svg, "sales_by_region")
+
+    assert 'id="gradient_0-sales_by_region"' in result
+    assert "url(#gradient_0-sales_by_region)" in result
+    assert 'id="gradient_0"' not in result
+
+
+def test_namespace_svg_ids_ignores_bare_text_matching_the_id_pattern() -> None:
+    """A bare `#clip3` inside a text node/aria-label must not be rewritten."""
+    from dbt_charts.core.render.converters import chart as chart_converter
+
+    svg = '<svg><text aria-label="channel: #clip3">#clip3</text></svg>'
+    assert chart_converter._namespace_svg_ids(svg, "c") == svg
+
+
+def test_namespace_svg_ids_is_idempotent() -> None:
+    """Applying the rewrite twice must not re-suffix an already-namespaced id
+    -- guards the reference regex's word-boundary from re-matching across the
+    inserted hyphen (`clip3-c` re-splitting into `clip3` + `-c`).
+    """
+    from dbt_charts.core.render.converters import chart as chart_converter
+
+    svg = (
+        '<svg><defs><clipPath id="clip3"><rect/></clipPath></defs>'
+        '<g clip-path="url(#clip3)"/></svg>'
+    )
+
+    once = chart_converter._namespace_svg_ids(svg, "c")
+    twice = chart_converter._namespace_svg_ids(once, "c")
+
+    assert once == twice
+    assert 'id="clip3-c"' in once
+    assert "url(#clip3-c)" in once
+
+
+def test_namespace_svg_ids_sanitizes_chart_id_for_funciri_safety() -> None:
+    """Must hold for arbitrary board-authored text, not just the well-formed
+    ids already in the corpus -- nothing slugifies an authored `charts:` key.
+    """
+    from dbt_charts.core.render.converters import chart as chart_converter
+
+    svg = '<svg><defs><clipPath id="clip1"/></defs><g clip-path="url(#clip1)"/></svg>'
+
+    for unsafe_chart_id in ("my chart", "a)b", "a & b"):
+        result = chart_converter._namespace_svg_ids(svg, unsafe_chart_id)
+        definition = re.search(r'id="(clip1-[^"]+)"', result)
+        reference = re.search(r"url\(#(clip1-[A-Za-z0-9_-]+)\)", result)
+        assert definition is not None
+        assert reference is not None
+        assert definition.group(1) == reference.group(1)
+        assert re.fullmatch(r"clip1-[A-Za-z0-9_-]+", definition.group(1))
+
+
+def test_namespace_svg_ids_disambiguates_chart_ids_that_sanitize_to_the_same_token() -> (
+    None
+):
+    """Two chart ids that only collide after sanitizing (`"a b"` and `"a_b"`
+    both land on `a_b`) must not end up sharing a suffix.
+    """
+    from dbt_charts.core.render.converters import chart as chart_converter
+
+    svg = '<svg><defs><clipPath id="clip1"/></defs></svg>'
+
+    id_a = re.search(
+        r'id="(clip1-[^"]+)"', chart_converter._namespace_svg_ids(svg, "a b")
+    )
+    id_b = re.search(
+        r'id="(clip1-[^"]+)"', chart_converter._namespace_svg_ids(svg, "a_b")
+    )
+    assert id_a is not None
+    assert id_b is not None
+    assert id_a.group(1) != id_b.group(1)
+    assert id_b.group(1) == "clip1-a_b", "an already-safe chart id is untouched"
+
+
+def test_namespace_svg_ids_noop_when_no_vlc_ids_present() -> None:
+    """A chart fragment with no vl-convert-minted ids is returned unchanged."""
+    from dbt_charts.core.render.converters import chart as chart_converter
+
+    svg = '<svg><rect id="chart-my_chart"/></svg>'
+    assert chart_converter._namespace_svg_ids(svg, "my_chart") == svg
+
+
+_FAKE_CLIPPED_SVG = (
+    '<svg width="600" height="320">'
+    '<defs><clipPath id="clip0"><rect width="10" height="10"/></clipPath>'
+    '<clipPath id="clip1"><rect width="20" height="20"/></clipPath>'
+    '<linearGradient id="gradient_0"><stop offset="0"/></linearGradient></defs>'
+    '<g clip-path="url(#clip0)"><rect width="10" height="10"/></g>'
+    '<g clip-path="url(#clip1)"><rect width="20" height="20"/></g>'
+    '<rect fill="url(#gradient_0)"/>'
+    "</svg>"
+)
+
+
+def test_render_vega_spec_namespaces_ids_through_the_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Goes through ``svg_cache_scope`` rather than calling the helper
+    directly: the cached bytes themselves must already be namespaced, so a
+    cache hit (chart_a, rendered once then read back) and a fresh render
+    (chart_b, minting the same raw ids chart_a's cold render did) must never
+    collide once concatenated into one board document.
+    """
+    from dbt_charts.core.render.converters import chart as chart_converter
+    from dbt_charts.core.render.svg_cache import RenderedSvgCache, svg_cache_scope
+
+    fake_vlc = types.SimpleNamespace(
+        vegalite_to_svg=mock.Mock(return_value=_FAKE_CLIPPED_SVG)
+    )
+    monkeypatch.setitem(sys.modules, "vl_convert", fake_vlc)
+    monkeypatch.setattr(
+        chart_converter, "register_vl_convert_fonts", _noop_register_fonts
+    )
+
+    style = resolve_style(get_theme_style())
+    with svg_cache_scope(RenderedSvgCache()):
+        svg_a_cold = chart_converter.render_vega_spec(
+            {"$schema": "chart-a"}, "svg", style, 600, 320, False, chart_id="chart_a"
+        )
+        svg_a_from_cache = chart_converter.render_vega_spec(
+            {"$schema": "chart-a"}, "svg", style, 600, 320, False, chart_id="chart_a"
+        )
+        svg_b_fresh = chart_converter.render_vega_spec(
+            {"$schema": "chart-b"}, "svg", style, 600, 320, False, chart_id="chart_b"
+        )
+
+    assert fake_vlc.vegalite_to_svg.call_count == 2, (
+        "chart_a's second render must be served from the cache, not vl-convert"
+    )
+    assert svg_a_from_cache == svg_a_cold, (
+        "a cache hit must return the already-namespaced bytes, not re-derive them"
+    )
+
+    board_svg = svg_a_from_cache + svg_b_fresh
+    ids = re.findall(r'id="([^"]+)"', board_svg)
+    duplicate_ids = {i for i in ids if ids.count(i) > 1}
+    assert not duplicate_ids, (
+        f"colliding ids across independently-cached charts: {duplicate_ids}"
+    )
+    assert 'id="clip0-chart_a"' in board_svg
+    assert 'id="clip0-chart_b"' in board_svg
+    assert 'id="gradient_0-chart_a"' in board_svg
+    assert 'id="gradient_0-chart_b"' in board_svg

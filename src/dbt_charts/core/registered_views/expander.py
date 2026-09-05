@@ -44,6 +44,12 @@ Template globals:
   SQL Server, double quotes elsewhere). Bound per-render from a dialect
   resolver passed into ``render_template`` — use for any path param that
   appears inside a SQL ``FROM`` or column reference.
+- ``pivot_column_profiles(cols, characteristics)`` /
+  ``column_header_styles(names, source, schema, table)`` — the inspector
+  table page's describe-style transpose (one row per characteristic, one
+  column per data column) and its per-column header-link styling, done in
+  Python rather than a template-side ``list.append`` loop: the sandboxed
+  environment below blocks mutating a known-mutable container.
 """
 
 from __future__ import annotations
@@ -56,7 +62,6 @@ from importlib.resources import files
 from typing import TYPE_CHECKING, Any
 
 from jinja2 import (
-    Environment,
     StrictUndefined,
     TemplateSyntaxError,
     UndefinedError,
@@ -64,6 +69,7 @@ from jinja2 import (
 from sqlglot import exp as _sqlglot_exp
 
 from dbt_charts.core.compile.sql_guard import sqlglot_dialect
+from dbt_charts.core.compile.template.environment import BoardTemplateEnvironment
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.authored import AuthoredBoard
@@ -89,14 +95,14 @@ class ExpansionError(Exception):
 
 # Use [[ / ]] and [% / %] to avoid colliding with board-SQL {{ / }} and {% / %}.
 # Board-SQL Jinja is evaluated AFTER expansion, at the compile/execute boundary.
-_TEMPLATE_ENV = Environment(
+_TEMPLATE_ENV = BoardTemplateEnvironment(
+    undefined=StrictUndefined,
     variable_start_string="[[",
     variable_end_string="]]",
     block_start_string="[%",
     block_end_string="%]",
     comment_start_string="[#",
     comment_end_string="#]",
-    undefined=StrictUndefined,
     keep_trailing_newline=True,
 )
 
@@ -175,6 +181,39 @@ def _plan_key_variables(
 _TEMPLATE_ENV.globals["plan_key_variables"] = _plan_key_variables
 
 
+def _pivot_column_profiles(
+    cols: list[
+        dict[str, Any]  # type-state: explicit_any — heterogeneous DB row values
+    ],
+    characteristics: list[list[str]],
+) -> list[
+    list[Any]  # type-state: explicit_any — pivoted row mixes label str with DB values
+]:
+    """Transpose column-profile rows into a describe-style table: one row per
+    characteristic (from ``characteristics``, each a ``[label, field]`` pair),
+    one column per entry in ``cols``.
+    """
+    return [[label] + [c.get(field) for c in cols] for label, field in characteristics]
+
+
+_TEMPLATE_ENV.globals["pivot_column_profiles"] = _pivot_column_profiles
+
+
+def _column_header_styles(
+    names: list[str], source: str, schema: str, table: str
+) -> dict[str, dict[str, str]]:
+    """Per-column table style: the label column right-aligned, every data
+    column's header linked to its own inspector column page.
+    """
+    styles: dict[str, dict[str, str]] = {"Attribute": {"align": "right"}}
+    for name in names:
+        styles[name] = {"header_link": f"/inspector/{source}/{schema}/{table}/{name}/"}
+    return styles
+
+
+_TEMPLATE_ENV.globals["column_header_styles"] = _column_header_styles
+
+
 # Runtime validation boundary (core/AGENTS.md "Two validation boundaries"):
 # `name` may come straight from an untrusted URL path param. Per-dialect
 # quoting is a formatting step, not a security boundary — sqlglot doubles an
@@ -188,7 +227,8 @@ _TEMPLATE_ENV.globals["plan_key_variables"] = _plan_key_variables
 # stays valid while the whole escape class stays dead.
 #
 # Braces are denied for a second reason: the board SQL this name lands in is
-# re-rendered as Jinja downstream, in a non-sandboxed environment. Today every
+# re-rendered as Jinja downstream. The sandbox stops escape to Python, not
+# template injection itself, so the denial still earns its place. Today every
 # route reaching here also declares a `type: schema` pre-query, whose
 # SchemaQuery._no_jinja rejects `{{`/`{%` on the same params — but that gate
 # lives in another package, and a future registered view without a schema

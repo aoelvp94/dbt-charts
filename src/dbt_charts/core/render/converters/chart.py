@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import html
 import json
 import re
@@ -92,6 +93,50 @@ _LEGEND_SYMBOL_LINECAP_RE = re.compile(
 def _fix_legend_symbol_linecap(svg: str) -> str:
     """Stamp ``stroke-linecap="round"`` onto legend-symbol paths."""
     return _LEGEND_SYMBOL_LINECAP_RE.sub(r'\1 stroke-linecap="round"\2\3', svg)
+
+
+# vl-convert mints its own ids for generated defs -- clipPath (`clip3`) and
+# linearGradient (`gradient_0`) -- with a counter scoped to a single
+# vegalite_to_svg call, not to the board. Two charts rendered in separate calls
+# (one served from cache, one freshly re-rendered) can legitimately mint the
+# same low-numbered ids, colliding once their fragments land in one board
+# document. Scoped to vl-convert's own id families only -- ids dbt-charts
+# assigns downstream (e.g. `chart-{chart_id}` from rendering.py) are untouched.
+_VLC_ID_FAMILY = r"(?:clip|gradient_)\d+"
+_VLC_ID_DEF_RE = re.compile(rf'id="({_VLC_ID_FAMILY})"')
+# Anchored to the reference forms vl-convert actually emits -- url(#id),
+# xlink:href="#id", href="#id" -- rather than a bare "#id" anywhere in the
+# document, so a data value or aria-label that happens to contain "#clip3"
+# text is never rewritten. The negative lookahead keeps a second application
+# a no-op instead of re-suffixing an already-namespaced id.
+_VLC_ID_REF_RE = re.compile(
+    rf'(url\(#|(?:xlink:href|href)="#)({_VLC_ID_FAMILY})(?![\w-])'
+)
+# chart_id lands inside a bare, unquoted url(#...) FuncIRI token, not just an
+# XML attribute -- HTML-escaping is not enough there: a space or `)` produces
+# a reference the renderer cannot resolve, silently dropping the clip.
+# Nothing slugifies an authored `charts:` key before it reaches render, so
+# every character outside this set is replaced with `_`.
+_UNSAFE_ID_CHARS_RE = re.compile(r"[^A-Za-z0-9_-]")
+
+
+def _namespace_svg_ids(svg: str, chart_id: str) -> str:
+    """Suffix every vl-convert-minted id (and its references) with ``chart_id``
+    so ids stay unique across independently-rendered charts on the same board.
+    """
+    safe_id = _UNSAFE_ID_CHARS_RE.sub("_", chart_id)
+    if safe_id != chart_id:
+        # Sanitizing is many-to-one (`"a b"` and `"a_b"` both land on `a_b`) --
+        # append a short digest of the raw id so two charts that only collide
+        # after sanitizing still don't share a suffix. Never taken for a
+        # chart_id that was already FuncIRI-safe, so the common case (and
+        # every id in the current golden corpus) is untouched.
+        digest = hashlib.md5(  # noqa: S324 — non-cryptographic, stable SVG id
+            chart_id.encode(), usedforsecurity=False
+        ).hexdigest()[:8]
+        safe_id = f"{safe_id}-{digest}"
+    svg = _VLC_ID_DEF_RE.sub(lambda m: f'id="{m.group(1)}-{safe_id}"', svg)
+    return _VLC_ID_REF_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}-{safe_id}", svg)
 
 
 # Vega's own role-title-text / role-title-subtitle classes are a genuine 1:1
@@ -805,6 +850,7 @@ def render_vega_spec(
         # so render_chart_item records a per-tile error card instead of aborting
         # the entire dashboard render process.
         raise ChartDataError(str(exc)) from exc
+    svg_result = _namespace_svg_ids(svg_result, chart_id)
     svg_result = _fix_chart_click_hrefs(svg_result)
     svg_result = _stamp_chart_title_kind(svg_result)
     svg_result = _stamp_axis_title_kinds(svg_result, axis_label_kinds)

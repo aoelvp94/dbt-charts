@@ -9,12 +9,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from jinja2 import Environment, StrictUndefined
+from jinja2 import StrictUndefined
 
+from dbt_charts.core.compile.template.environment import BoardTemplateEnvironment
 from dbt_charts.core.text.format_d3 import format_d3
 
 
-def label_jinja_env() -> Environment:
+def label_jinja_env() -> BoardTemplateEnvironment:
     """Return the Jinja env used to compile and render label templates.
 
     Strict-undefined: a typo like ``{{ pct }}`` (instead of ``percent``)
@@ -23,7 +24,7 @@ def label_jinja_env() -> Environment:
     has no identity field bound at all) as empty text instead of Jinja's
     default ``str(None)`` -> the literal word "None".
     """
-    env = Environment(
+    env = BoardTemplateEnvironment(
         undefined=StrictUndefined,
         autoescape=False,
         finalize=_finalize_none,

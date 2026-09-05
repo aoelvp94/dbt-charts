@@ -41,14 +41,15 @@ from dataclasses import dataclass, field
 from typing import Any, NoReturn, SupportsIndex
 
 from jinja2 import (
-    Environment,
     StrictUndefined,
+    TemplateError,
     TemplateSyntaxError,
     UndefinedError,
 )
 
 from dbt_charts.core.compile.errors import JinjaError
 from dbt_charts.core.compile.template._helpers import _LenientUndefined, _QueryNamespace
+from dbt_charts.core.compile.template.environment import BoardTemplateEnvironment
 from dbt_charts.core.dialects import VALID_OPERATORS, SQLDialect, get_dialect
 
 # Bare identifiers joined by dots, to any depth: `col`, `table.col`, and
@@ -487,7 +488,7 @@ def render_parameterized(
 
     try:
         undefined_cls = StrictUndefined if strict else _LenientUndefined
-        env = Environment(undefined=undefined_cls)
+        env = BoardTemplateEnvironment(undefined=undefined_cls)
         jinja_template = env.from_string(template)
         rendered_sql = jinja_template.render(context)
 
@@ -509,6 +510,12 @@ def render_parameterized(
         raise JinjaError(f"Undefined variable: {e}", template) from e
     except TemplateSyntaxError as e:
         raise JinjaError(f"Template syntax error: {e}", template) from e
+    except TemplateError as e:
+        # Catches the sandbox's SecurityError, a TemplateRuntimeError sibling of
+        # UndefinedError rather than a subclass. Uncoded it reaches the executor
+        # and stamps ERR-INTERNAL, which this repo treats as a bug rather than
+        # an author-facing error.
+        raise JinjaError(f"Template error: {e}", template) from e
     except ValueError as e:
         # Re-raise validation errors (operator, column name) with context
         raise JinjaError(f"Validation error: {e}", template) from e

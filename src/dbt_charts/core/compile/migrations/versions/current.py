@@ -5,6 +5,17 @@ Declares the pending structural changes since the 0.5.0 freeze. Authored as
 current`` boundary); renamed to ``versions/v<new_version>.py`` at release time
 with no content edit, same convention as ``v0_4_0.py``/``v0_5_0.py``.
 
+THIS FILE IS SCHEMA CHANGES ONLY. Do not add an entry here for anything that
+is not a key rename, a key removal, or an authored value's meaning changing
+in place (the unmigratable-redefinition case, which still owes the author a
+signal per ``migrations/AGENTS.md``). A renderer-default tweak, a bug fix, a
+performance change, a visual behavior change, an internal refactor -- none of
+these are grammar changes, and none of them get a bullet here, no matter how
+significant. If you cannot point to the ``Move``, ``Deletion``, or in-place
+redefinition backing your bullet, it does not belong in this file. Put it in
+the task or the PR description instead. See ``migrations/AGENTS.md``'s
+"If you catch yourself thinking..." table.
+
 Changes in this release:
 
 - ``style.support_table.position`` (also reachable per chart type and per
@@ -120,19 +131,6 @@ Changes in this release:
   positions fails loud instead, ``ERR-UNKNOWN-THEME`` with no migration
   warning, the same as any other never-valid ``theme:``/``extends:`` value
   there.
-
-  ``clarity``'s own defaults also changed under its new, unchanged-from-here
-  name — the same unrecognizable-value shape as the ``editorial-10`` refresh
-  above, not a rename: ``background``/``page.background`` moved from the gray
-  scaffold (``dbt-grays.canvas``) to ``dbt-grays.white``; the three-ink
-  single-series rotation collapsed to one fixed ink (``category_dark.blue``);
-  ``axis_quantitative.labels.font.color`` gained an explicit
-  ``dbt-grays.ink``; and the y-axis zero rule gained an explicit
-  ``width: 2.0`` alongside its existing ``dbt-grays.subtitle`` color (the
-  rule is thick enough to paint over the gridline it sits on). A board
-  authoring bare ``theme: clarity`` (or nothing at all, before this release's
-  default flip) renders differently after this release with no edit to its
-  own YAML.
 
   ``axis.line.color`` stays set on every remaining theme (``stark``,
   ``clarity``, ``paper``, ``vivid``, ``neon``) rather than being centralized
@@ -468,22 +466,6 @@ Changes in this release:
   above: a sub-board nested under ``rows``/``cols``/``grid.items.*.item``
   that declares its own ``charts:`` map (``rows.*.charts.*.layers.*.axis_y.
   label``) is not among the resolved moves and reports the field unmigrated.
-
-- ``style.axis_x.labels.format`` / ``style.axis_y.labels.format`` (also
-  ``axis_y.mirror.format``) now raise ``ERR-LABEL-FORMAT-AXIS-MISMATCH``
-  wherever the axis's ticks cannot carry a d3 number spec: a band
-  (nominal/ordinal) scale whose ticks are not already readable as numbers,
-  or a temporal scale at all. Four surfaces that used to render something
-  wrong instead of raising now raise the same way ``axis_x`` on a category
-  axis already did: scatter's categorical y (a dot plot) used to silently
-  drop the format; heatmap's y and ``axis_y.mirror.format`` on a categorical
-  y-scale used to paint ``$NaN``; a non-time spec on a temporal axis (either
-  channel) used to paint the literal spec text across the axis. No key was
-  renamed or removed and no value's meaning changed — a format that
-  previously produced a wrong render (or none at all) now refuses instead.
-  There is no automatic rewrite or targeted diagnostic to declare here: the
-  authored intent behind a mismatched format is unknowable, so this is a
-  behaviour-change record only, not a ``Move``.
 """
 
 from __future__ import annotations

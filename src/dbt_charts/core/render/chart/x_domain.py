@@ -95,12 +95,20 @@ def rendered_x_domain(
 ) -> list[DomainValue]:
     """The categorical x scale's value order as Vega-Lite actually renders it.
 
-    Base rows first in query order, then any layer-only categories in their own
-    first-seen order, then reordered by the encoding's own field ``sort``. The
-    sort is applied unconditionally because it describes the RENDERED order
-    either way: when the overlay reconciler pins this domain it pins it sorted,
-    and when it declines to pin, Vega-Lite's own native sort-by-field produces
-    the same order.
+    Base rows in the encoding's own field ``sort`` order if one is authored,
+    else query order. Under a field ``sort``, any layer-only category is
+    tailed after the sorted base rows in first-seen order; without one, a
+    layer-only category is placed into the order the base itself states,
+    when it states one, per ``extend_domain_in_base_order`` above.
+
+    The overlay reconciler (``_reconcile_x_domain``, ``emitters/_overlay.py``)
+    pins this computed order onto the shared scale whenever one of its own
+    triggers fires, and an explicit ``scale.domain`` then overrides whatever
+    native order Vega-Lite's own field-sort would otherwise have produced.
+    ``_layer_band_anchor`` (also in ``emitters/_overlay.py``) calls this over
+    the same encoding, base rows and layer columns the reconciler is about to
+    pin, reproducing that same order ahead of it; only ``chart_id`` differs,
+    deliberately, and it cannot change the order (see below).
 
     Order of appearance is only meaningful while the domain comes from ONE
     dataset — there the query owns the order and this function must not touch
@@ -114,7 +122,11 @@ def rendered_x_domain(
     disturbed, and a base ordered most-recent-first keeps taking new values at
     the front. When the base states no order the values follow (month
     abbreviations, region names), nothing is guessed: the union keeps paint
-    order and earns WARN-LAYER-X-DOMAIN-PAINT-ORDER.
+    order and earns WARN-LAYER-X-DOMAIN-PAINT-ORDER. None of this applies
+    once the encoding carries a field ``sort``: that case returns the plain
+    union — base rows in sort order, then layer-only values tailed in their
+    own first-seen order — before reaching ``extend_domain_in_base_order``,
+    so it never earns the warning regardless of contributor count.
 
     Declining is recorded against ``chart_id`` (see
     ``x_domain_paint_order.py``) so WARN-LAYER-X-DOMAIN-PAINT-ORDER reports the
