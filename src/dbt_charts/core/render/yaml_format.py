@@ -121,7 +121,7 @@ def render_board_yaml(
     )
     truncation_notes: list[str] = []
     yaml_dict = _board_to_yaml_dict(board_dict, truncation_notes)
-    document = yaml.dump(
+    document = yaml.safe_dump(
         yaml_dict, default_flow_style=False, sort_keys=False, allow_unicode=True
     )
     header = "".join(f"# rows truncated: {note}\n" for note in truncation_notes)

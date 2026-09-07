@@ -124,6 +124,9 @@ def emit_board_artifact(
         query_registry=compile_result.query_registry,
         use_cache=use_cache,
         result_cache=result_cache,
+        # emit_board_artifact takes no file_materializer of its own — no host
+        # calls it with an injected one — so this is always the local
+        # DuckDB-backed factory, not a routing decision.
         file_materializer_factory=default_local_materializer_factory(project),
     )
 

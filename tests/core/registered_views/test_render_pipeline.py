@@ -85,8 +85,8 @@ class TestRenderRegisteredViewSuccess:
         )
         assert result is not None
         assert isinstance(result, RenderSuccess)
-        assert len(result.html) > 0
-        assert "wh" in result.html
+        assert len(result.output) > 0
+        assert "wh" in result.output
 
     def test_data_source_returns_render_success(
         self, project_with_duckdb: Project
@@ -101,7 +101,7 @@ class TestRenderRegisteredViewSuccess:
         )
         assert result is not None
         assert isinstance(result, RenderSuccess)
-        assert len(result.html) > 0
+        assert len(result.output) > 0
 
 
 class TestRenderRegisteredViewLinkContext:
@@ -124,8 +124,8 @@ class TestRenderRegisteredViewLinkContext:
             result_cache=None,
         )
         assert isinstance(no_root, RenderSuccess)
-        assert "/data/wh" in no_root.html
-        assert "/myorg/myproject/d/data/" not in no_root.html
+        assert "/data/wh" in no_root.output
+        assert "/myorg/myproject/d/data/" not in no_root.output
 
         # With Cloud root: links become /{org}/{project}/d/data/...
         with_root = render_registered_view(
@@ -136,8 +136,8 @@ class TestRenderRegisteredViewLinkContext:
             link_context=LinkContext(root="/myorg/myproject/d"),
         )
         assert isinstance(with_root, RenderSuccess)
-        assert "/myorg/myproject/d/data/wh" in with_root.html
-        assert '"/data/wh"' not in with_root.html
+        assert "/myorg/myproject/d/data/wh" in with_root.output
+        assert '"/data/wh"' not in with_root.output
 
     def test_empty_root_leaves_links_root_relative(
         self, project_with_duckdb: Project
@@ -154,7 +154,7 @@ class TestRenderRegisteredViewLinkContext:
             link_context=LinkContext(root=""),
         )
         assert isinstance(result, RenderSuccess)
-        assert "/data/wh" in result.html
+        assert "/data/wh" in result.output
 
 
 class TestRenderRegisteredViewUnknownSource:
@@ -281,6 +281,227 @@ class TestRenderRegisteredViewResolvesSourceDialect:
         resolve_dialect = captured["resolve_dialect"]
         assert callable(resolve_dialect)
         assert resolve_dialect() == "bigquery"
+
+
+class TestRenderRegisteredViewFragmentFormat:
+    """A caller that renders inside its own chrome (Cloud) needs a bare
+    fragment, not the CLI's whole standalone document -- ``format``/
+    ``controls`` thread straight through to the shared ``render()`` call,
+    and ``RenderSuccess.title`` gives the caller the board's title without
+    re-parsing it out of the rendered document.
+    """
+
+    def test_default_format_is_unchanged_whole_document(
+        self, project_with_duckdb: Project
+    ) -> None:
+        """dct serve's caller passes no format/controls -- must keep getting
+        the standalone HTML page it always got (no regression)."""
+        adapter_registry = _make_adapter_registry(project_with_duckdb)
+        result = render_registered_view(
+            request_path="/data/",
+            project=project_with_duckdb,
+            adapter_registry=adapter_registry,
+            result_cache=None,
+        )
+        assert isinstance(result, RenderSuccess)
+        assert result.output.lstrip().startswith("<!DOCTYPE html>")
+
+    def test_svg_format_returns_a_bare_fragment(
+        self, project_with_duckdb: Project
+    ) -> None:
+        """Cloud requests format='svg' to get the same bare-SVG fragment shape
+        board_view already puts inside #dashboard-content -- no <html>/<body>."""
+        adapter_registry = _make_adapter_registry(project_with_duckdb)
+        result = render_registered_view(
+            request_path="/data/",
+            project=project_with_duckdb,
+            adapter_registry=adapter_registry,
+            result_cache=None,
+            format="svg",
+            controls=True,
+        )
+        assert isinstance(result, RenderSuccess)
+        assert result.output.lstrip().startswith("<svg")
+        assert "<!DOCTYPE" not in result.output
+        assert "<html" not in result.output
+
+    def test_title_is_the_compiled_boards_title(
+        self, project_with_duckdb: Project
+    ) -> None:
+        """The board's own title, so a host doesn't have to re-derive it by
+        parsing a data-dbt-page-title attribute out of the rendered output."""
+        adapter_registry = _make_adapter_registry(project_with_duckdb)
+        result = render_registered_view(
+            request_path="/data/wh/",
+            project=project_with_duckdb,
+            adapter_registry=adapter_registry,
+            result_cache=None,
+            format="svg",
+            controls=True,
+        )
+        assert isinstance(result, RenderSuccess)
+        assert result.title != ""
+        assert "wh" in result.title
+
+    def test_format_and_controls_reach_render_unchanged(
+        self, project_with_duckdb: Project, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Both params are plain passthroughs to render() -- pin the kwargs
+        actually reaching it, the same way test_request_variables_reach_render
+        pins `variables` below. A registered view never emits a `select`
+        variable (variable_planner.py only ever assigns text/checkbox/
+        datepicker), so `data-dbt-options` presence -- the usual controls
+        discriminator (test_variables_chrome.py) -- can't observe this; this
+        is the only place that fails if `controls=controls` or `format=format`
+        is ever dropped from the render() call in render_pipeline.py.
+        """
+        import sys
+
+        from dbt_charts.core.render import render as real_render
+
+        render_pkg = sys.modules["dbt_charts.core.render"]
+        captured: dict[str, object] = {}
+
+        def spy(board: object, executor: object, **kwargs: object) -> object:
+            captured.update(kwargs)
+            return real_render(board, executor, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(render_pkg, "render", spy)
+        adapter_registry = _make_adapter_registry(project_with_duckdb)
+        result = render_registered_view(
+            request_path="/data/",
+            project=project_with_duckdb,
+            adapter_registry=adapter_registry,
+            result_cache=None,
+            format="svg",
+            controls=True,
+        )
+        assert result is not None
+        assert captured.get("format") == "svg"
+        assert captured.get("controls") is True
+
+
+class TestRenderRegisteredViewYamlFormat:
+    """``format="yaml"`` dumps a registered view's compiled board to
+    re-compilable authored YAML — collapsed into ``render_registered_view``
+    itself (no separate ``dump_registered_view_yaml``): ``format`` is already
+    a plain passthrough parameter, and ``"yaml"`` is one of the data formats
+    ``render()`` short-circuits before any SVG/link/controls work, so a
+    second function asking for the identical output was a pure restatement.
+
+    This is the "make this a board" clone: a generated data view has no YAML
+    file in git, so the source of the clone is the compiled board itself, not
+    a file on disk. The round-trip contract is the only thing that matters —
+    the dump must compile back to the same charts and queries the view
+    rendered, not merely produce *some* YAML.
+    """
+
+    def test_table_view_dumps_yaml_that_recompiles_to_the_same_charts_and_queries(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Dumping /data/<source>/<schema>/<table>/ round-trips through compile().
+
+        The table view (`data/table-index.yaml`) compiles to one `rows` query
+        (raw SQL against the table) and one `row_data` table chart. The dump
+        must compile back to a board carrying the same chart id, chart type,
+        and query name, with the query's rows now inlined as `values:` data
+        matching the fixture — not merely *some* rows, per render_board_yaml's
+        contract.
+        """
+        from dbt_charts.core.compile import compile as compile_yaml
+        from dbt_charts.core.execute.adapters import build_adapter_registry
+
+        db_path = tmp_path / "wh.duckdb"
+        conn = duckdb.connect(str(db_path))
+        conn.execute("CREATE TABLE tickets (id INTEGER, status VARCHAR)")
+        conn.execute("INSERT INTO tickets VALUES (1, 'open'), (2, 'closed')")
+        conn.close()
+        (tmp_path / "dbt_charts.yml").write_text(
+            f"sources:\n  wh:\n    type: duckdb\n    path: '{db_path}'\n"
+        )
+        (tmp_path / "charts").mkdir()
+        project = local_project(tmp_path)
+        # read_only=True (build_adapter_registry's own default, and what dct
+        # serve/Cloud use for /data/ browsing) — not _make_adapter_registry's
+        # read_only=False: the table route's schema pre-query and its main SQL
+        # query both open the same DuckDB file, and DuckDB refuses a second
+        # connection to one file with a different read_only setting than an
+        # already-open connection.
+        adapter_registry = build_adapter_registry(
+            project,
+            read_only=True,
+            profile_type="duckdb",
+            target="dev",
+        )
+
+        result = render_registered_view(
+            request_path="/data/wh/main/tickets/",
+            project=project,
+            adapter_registry=adapter_registry,
+            result_cache=None,
+            format="yaml",
+        )
+
+        assert isinstance(result, RenderSuccess)
+        recompiled = compile_yaml(result.output)
+        assert recompiled.success, recompiled.errors
+        board = recompiled.board
+        assert board is not None
+        assert "row_data" in board.charts
+        assert board.charts["row_data"].type == "table"
+        query_name = board.charts["row_data"].query_name
+        assert query_name in board.queries
+        query = board.queries[query_name]
+        assert query.rows == [
+            {"id": 1, "status": "open"},
+            {"id": 2, "status": "closed"},
+        ]
+
+    def test_request_variables_filter_the_baked_rows(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """CRITICAL: request_variables must reach the yaml-format render the
+        same way they reach every other format (already true of
+        render_registered_view, which is why collapsing dump_registered_view_yaml
+        into it fixes this for free) -- otherwise a row-detail drill's ?id=
+        would freeze on the template's default (unfiltered) rows instead of
+        the one the user drilled into."""
+        from dbt_charts.core.compile import compile as compile_yaml
+        from dbt_charts.core.execute.adapters import build_adapter_registry
+
+        db_path = tmp_path / "wh.duckdb"
+        conn = duckdb.connect(str(db_path))
+        conn.execute("CREATE TABLE tickets (id INTEGER, status VARCHAR)")
+        conn.execute("INSERT INTO tickets VALUES (1, 'open'), (2, 'closed')")
+        conn.close()
+        (tmp_path / "dbt_charts.yml").write_text(
+            f"sources:\n  wh:\n    type: duckdb\n    path: '{db_path}'\n"
+        )
+        (tmp_path / "charts").mkdir()
+        project = local_project(tmp_path)
+        adapter_registry = build_adapter_registry(
+            project,
+            read_only=True,
+            profile_type="duckdb",
+            target="dev",
+        )
+
+        result = render_registered_view(
+            request_path="/data/wh/main/tickets/",
+            project=project,
+            adapter_registry=adapter_registry,
+            result_cache=None,
+            format="yaml",
+            request_variables={"status": "open"},
+        )
+
+        assert isinstance(result, RenderSuccess)
+        recompiled = compile_yaml(result.output)
+        assert recompiled.success, recompiled.errors
+        board = recompiled.board
+        assert board is not None
+        query_name = board.charts["row_data"].query_name
+        assert board.queries[query_name].rows == [{"id": 1, "status": "open"}]
 
 
 class TestRenderRegisteredViewThreadsVariables:

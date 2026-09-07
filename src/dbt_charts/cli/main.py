@@ -1283,10 +1283,12 @@ def validate(
             help=(
                 "Validate queries against the warehouse using the per-adapter mechanism. "
                 "DuckDB: DESCRIBE — schema only, no billing. "
+                "csv/json/parquet: DESCRIBE — schema only, but must materialize "
+                "the source's files first. "
                 "BigQuery: native dry-run — validity + schema, unbilled. "
                 "Postgres/Redshift/Snowflake: EXPLAIN — validity only, "
                 "no result schema. "
-                "All other adapters report 'unchecked' — queries are never run to "
+                "Every other adapter reports 'unchecked' — queries are never run to "
                 "check them."
             ),
         ),
@@ -1296,9 +1298,10 @@ def validate(
 
     By default, validation is stateless — no warehouse connection, no query
     execution. Add --warehouse to validate queries against your warehouse using
-    the cheapest per-adapter mechanism (DuckDB: DESCRIBE; BigQuery: dry-run;
-    Postgres/Redshift/Snowflake: EXPLAIN, validity only; 'unchecked'
-    everywhere else). No query is ever run at full cost to check it.
+    the cheapest per-adapter mechanism (DuckDB and csv/json/parquet: DESCRIBE;
+    BigQuery: dry-run; Postgres/Redshift/Snowflake: EXPLAIN, validity only;
+    'unchecked' everywhere else). No query is ever run at full cost to check
+    it.
 
     \b
     Examples:

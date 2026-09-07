@@ -1,13 +1,20 @@
-"""The Cloud setup API's wire contract — one definition, both ends.
+"""The Cloud setup API's wire contract — one definition in the source tree.
 
 Cloud's ``/api/`` views serialize their responses through these models and the
 ``dct cloud`` client parses them back, so a response shape cannot change on the
-server without the type the CLI reads changing in the same commit. That is the whole reason this lives in the ``dbt-charts`` package rather
-than in ``apps/cloud``: the monorepo lets Cloud import the client's types, never
-the reverse.
+server without the type the CLI reads changing in the same commit. That is why
+this lives in the ``dbt-charts`` package rather than in ``apps/cloud``: the
+monorepo lets Cloud import the client's types, never the reverse.
+
+One definition keeps the *source tree* honest; it says nothing about the
+wire. The ``dct`` parsing Cloud's answers is a PyPI install that lags the
+deployed server, so every model here ignores fields it has never heard of —
+``ContractModel`` says why. That is forward tolerance of an older client, not
+a compatibility shim: no old shape or alias is kept, and removing or renaming
+a response field still breaks every installed ``dct``, deliberately.
 
 The OAuth device-grant models and the ``login``/``whoami`` result shapes are
-the exception to "both ends": those are what the CLI reads from the
+not shared with Cloud's views: those are what the CLI reads from the
 authorization server, or emits itself, and no Cloud view serializes them.
 
 Nothing here may import ``dbt_charts.core`` or Django. These are transport
@@ -36,6 +43,21 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class ContractModel(BaseModel):
+    """Base of every shape in this module: an unknown field is ignored.
+
+    Cloud deploys continuously and the ``dct`` parsing its answers is
+    whatever the user last installed, so a field this client has never heard
+    of is a newer Cloud, not bad input -- and must not become a parse error
+    that kills every verb until they upgrade. Nothing here is a request body
+    (those are plain dicts the server's forms validate), so ``extra="forbid"``
+    would catch nothing on this side of the wire; a typo'd kwarg where the
+    server *builds* one of these is pyright's to catch, not pydantic's.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+
 class ErrorCode(str, enum.Enum):
     """The machine-readable half of every error response."""
 
@@ -50,10 +72,8 @@ class ErrorCode(str, enum.Enum):
     RATE_LIMITED = "rate_limited"
 
 
-class ApiError(BaseModel):
+class ApiError(ContractModel):
     """The one error body every endpoint returns."""
-
-    model_config = ConfigDict(extra="forbid")
 
     code: ErrorCode = Field(description="Machine-readable failure kind.")
     message: str = Field(description="Human-readable failure summary.")
@@ -66,15 +86,11 @@ class ApiError(BaseModel):
 # --- OAuth device grant (RFC 8628) and discovery (RFC 8414) ----------------
 #
 # These three carry wire shapes a server we don't own defines -- Cloud's OAuth
-# toolkit, not this package's API. `extra="ignore"` lets them add fields
-# (scopes_supported, refresh_token, ...) without breaking this client; every
-# other model in this file is OUR contract and keeps `extra="forbid"`.
+# toolkit, not this package's API -- and name only the fields this client reads.
 
 
-class AuthorizationServerMetadata(BaseModel):
+class AuthorizationServerMetadata(ContractModel):
     """The RFC 8414 document a host publishes its OAuth endpoints in."""
-
-    model_config = ConfigDict(extra="ignore")
 
     token_endpoint: str = Field(description="Where to poll for a device token.")
     revocation_endpoint: str = Field(description="Where to revoke a token.")
@@ -83,10 +99,8 @@ class AuthorizationServerMetadata(BaseModel):
     )
 
 
-class DeviceAuthorization(BaseModel):
+class DeviceAuthorization(ContractModel):
     """The answer to starting a device login: a code to show, one to poll with."""
-
-    model_config = ConfigDict(extra="ignore")
 
     device_code: str = Field(
         description="The code this client polls the token endpoint with."
@@ -102,10 +116,8 @@ class DeviceAuthorization(BaseModel):
     interval: int = Field(default=5, description="Minimum seconds between polls.")
 
 
-class DeviceToken(BaseModel):
+class DeviceToken(ContractModel):
     """The answer to a successful token poll."""
-
-    model_config = ConfigDict(extra="ignore")
 
     access_token: str = Field(description="The bearer token to store.")
     token_type: str = Field(description="Always `Bearer`.")
@@ -113,10 +125,8 @@ class DeviceToken(BaseModel):
     scope: str = Field(default="", description="Scopes actually granted.")
 
 
-class LoginResult(BaseModel):
+class LoginResult(ContractModel):
     """What `dct cloud login` reports on success. Never the token."""
-
-    model_config = ConfigDict(extra="forbid")
 
     host: str = Field(description="The Cloud deployment now signed in to.")
     organizations: list[OrgSummary] = Field(
@@ -124,10 +134,8 @@ class LoginResult(BaseModel):
     )
 
 
-class WhoAmI(BaseModel):
+class WhoAmI(ContractModel):
     """What `dct cloud whoami` reports."""
-
-    model_config = ConfigDict(extra="forbid")
 
     host: str = Field(description="The Cloud deployment in use.")
     credential_source: Literal["env", "config"] = Field(
@@ -138,28 +146,22 @@ class WhoAmI(BaseModel):
     )
 
 
-class OrgSummary(BaseModel):
+class OrgSummary(ContractModel):
     """One organization, as the caller sees it."""
-
-    model_config = ConfigDict(extra="forbid")
 
     slug: str = Field(description="URL-safe organization identifier.")
     name: str = Field(description="Display name.")
     role: str = Field(description="The caller's membership role in this org.")
 
 
-class OrgList(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class OrgList(ContractModel):
     organizations: list[OrgSummary] = Field(
         default_factory=list, description="Organizations the caller belongs to."
     )
 
 
-class MemberSummary(BaseModel):
+class MemberSummary(ContractModel):
     """One organization member."""
-
-    model_config = ConfigDict(extra="forbid")
 
     email: str = Field(description="The member's account email.")
     name: str = Field(description="Display name; empty if never set.")
@@ -167,18 +169,14 @@ class MemberSummary(BaseModel):
     joined_at: datetime = Field(description="When the membership was created.")
 
 
-class MemberList(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class MemberList(ContractModel):
     members: list[MemberSummary] = Field(
         default_factory=list, description="The organization's members."
     )
 
 
-class InviteResult(BaseModel):
+class InviteResult(ContractModel):
     """The answer to inviting one address."""
-
-    model_config = ConfigDict(extra="forbid")
 
     email: str = Field(description="The invited address.")
     role: str = Field(description="Role the invitation confers on acceptance.")
@@ -187,10 +185,8 @@ class InviteResult(BaseModel):
     )
 
 
-class InvitationSummary(BaseModel):
+class InvitationSummary(ContractModel):
     """One pending invitation."""
-
-    model_config = ConfigDict(extra="forbid")
 
     email: str = Field(description="The invited address.")
     role: str = Field(description="Role the invitation confers on acceptance.")
@@ -200,27 +196,21 @@ class InvitationSummary(BaseModel):
     )
 
 
-class InvitationList(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class InvitationList(ContractModel):
     invitations: list[InvitationSummary] = Field(
         default_factory=list, description="Pending invitations."
     )
 
 
-class DeleteResult(BaseModel):
+class DeleteResult(ContractModel):
     """The answer to deleting a resource."""
-
-    model_config = ConfigDict(extra="forbid")
 
     deleted: bool = Field(description="Whether this call deleted the resource.")
     message: str = Field(description="What happened, in one line.")
 
 
-class GrantSummary(BaseModel):
+class GrantSummary(ContractModel):
     """One live connector session against an organization."""
-
-    model_config = ConfigDict(extra="forbid")
 
     grant_id: str = Field(description="The grant's id.")
     user_email: str = Field(description="The account that consented.")
@@ -229,18 +219,14 @@ class GrantSummary(BaseModel):
     created_at: datetime = Field(description="When this grant was recorded.")
 
 
-class GrantList(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class GrantList(ContractModel):
     grants: list[GrantSummary] = Field(
         default_factory=list, description="Live connector grants in this organization."
     )
 
 
-class GrantRevokeResult(BaseModel):
+class GrantRevokeResult(ContractModel):
     """The answer to revoking a connector grant."""
-
-    model_config = ConfigDict(extra="forbid")
 
     revoked: bool = Field(description="Whether this call revoked the grant.")
     self_revoked: bool = Field(
@@ -271,34 +257,36 @@ class GrantRevokeResult(BaseModel):
     message: str = Field(description="What happened, in one line.")
 
 
-class BoardSummary(BaseModel):
+class BoardSummary(ContractModel):
     """One board's render state, for the read-only board listing."""
-
-    model_config = ConfigDict(extra="forbid")
 
     slug: str = Field(description="URL-safe board identifier.")
     title: str = Field(description="Board title.")
     render_status: str = Field(
-        description="`ready`, `warning` (last render failed), or `not_rendered`."
+        description=(
+            "`ready`, `errored` (rendered, but some charts came back as error "
+            "cards), `warning` (last render failed), or `not_rendered`."
+        )
     )
     error: str = Field(
-        default="", description="The last render's failure text; empty otherwise."
+        default="",
+        description=(
+            "Why this board is not serving correct content — the failed "
+            "render's text under `warning`, the first chart diagnostic under "
+            "`errored`. Empty otherwise."
+        ),
     )
     url: str = Field(description="Where to view this board.")
 
 
-class BoardList(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class BoardList(ContractModel):
     boards: list[BoardSummary] = Field(
         default_factory=list, description="Boards visible to the caller."
     )
 
 
-class ProjectSummary(BaseModel):
+class ProjectSummary(ContractModel):
     """One connected project."""
-
-    model_config = ConfigDict(extra="forbid")
 
     slug: str = Field(description="URL-safe project identifier.")
     name: str = Field(description="Display name.")
@@ -310,23 +298,30 @@ class ProjectSummary(BaseModel):
     git_subdirectory: str = Field(
         description="Path to the dbt project inside the repo; empty for the root."
     )
-    unmapped_source_count: int = Field(
-        description="Declared sources with no connection behind them yet."
+    unmapped_source_count: int | None = Field(
+        description=(
+            "Declared sources with no connection behind them yet; null when "
+            "config_error is set, because the count is then unknown. This "
+            "listing carries no stage, so the field itself has to say so."
+        )
+    )
+    config_error: str | None = Field(
+        default=None,
+        description=(
+            "Why Cloud could not read this project's dbt_charts.yml, when it "
+            "could not — the unmapped count beside it is null, not zero."
+        ),
     )
 
 
-class ProjectList(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class ProjectList(ContractModel):
     projects: list[ProjectSummary] = Field(
         default_factory=list, description="Projects in the organization."
     )
 
 
-class ConnectionSummary(BaseModel):
+class ConnectionSummary(ContractModel):
     """One warehouse connection. Carries no credential material, ever."""
-
-    model_config = ConfigDict(extra="forbid")
 
     slug: str = Field(description="URL-safe connection identifier.")
     name: str = Field(description="Display name.")
@@ -340,28 +335,22 @@ class ConnectionSummary(BaseModel):
     )
 
 
-class ConnectionList(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class ConnectionList(ContractModel):
     connections: list[ConnectionSummary] = Field(
         default_factory=list, description="Connections the caller may use."
     )
 
 
-class ConnectionTestResult(BaseModel):
+class ConnectionTestResult(ContractModel):
     """The outcome of asking Cloud to reach a warehouse."""
-
-    model_config = ConfigDict(extra="forbid")
 
     success: bool = Field(description="Whether the warehouse answered.")
     message: str = Field(description="Driver or guard text; empty on success.")
     connection: ConnectionSummary = Field(description="The connection that was tested.")
 
 
-class SourceSummary(BaseModel):
+class SourceSummary(ContractModel):
     """One `sources:` name declared by the project's dbt_charts.yml."""
-
-    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="Source name as boards reference it.")
     connection_slug: str | None = Field(
@@ -373,19 +362,24 @@ class SourceSummary(BaseModel):
     is_default: bool = Field(description="Whether boards use this source by default.")
 
 
-class SourceList(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class SourceList(ContractModel):
     sources: list[SourceSummary] = Field(
         default_factory=list, description="The project's declared sources."
     )
     unmapped_count: int = Field(description="How many have no connection yet.")
+    file_sources: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Sources Cloud resolves from the repo itself — the csv/json/parquet "
+            "entries of dbt_charts.yml. They appear in no `sources` entry and "
+            "never in `unmapped_count`: the files are in the branch Cloud "
+            "already synced, so there is nothing to map them to."
+        ),
+    )
 
 
-class DbtRoot(BaseModel):
+class DbtRoot(ContractModel):
     """A dbt project root discovered in a picked repository."""
-
-    model_config = ConfigDict(extra="forbid")
 
     path: str = Field(description="Folder holding dbt_project.yml; empty for the root.")
     is_dct: bool = Field(description="Whether the folder also declares dbt_charts.yml.")
@@ -403,15 +397,13 @@ DBT_ROOT_REPO_ROOT = "__root__"
 DBT_ROOT_OTHER = "__other__"
 
 
-class RepoPick(BaseModel):
+class RepoPick(ContractModel):
     """The repository a user picked in the browser, for the CLI to resume from.
 
     Records the outcome of the browser flow; it is not a way to make a pick.
     Repository authorization still comes from the user's own GitHub OAuth
     listing, in the browser, every time.
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     repo_id: str = Field(description="Cloud's id for the picked repository.")
     full_name: str = Field(description="owner/name of the picked repository.")
@@ -423,19 +415,15 @@ class RepoPick(BaseModel):
     )
 
 
-class SyncResult(BaseModel):
+class SyncResult(ContractModel):
     """The answer to "pull this project's repo"."""
-
-    model_config = ConfigDict(extra="forbid")
 
     queued: bool = Field(description="Whether this call enqueued a new sync.")
     message: str = Field(description="What happened, in one line.")
 
 
-class RenderResult(BaseModel):
+class RenderResult(ContractModel):
     """The answer to "render this project's unrendered boards"."""
-
-    model_config = ConfigDict(extra="forbid")
 
     started: int = Field(description="Board renders this call started.")
     unrendered_remaining: int = Field(
@@ -447,7 +435,11 @@ class SetupStage(str, enum.Enum):
     """One step of the org setup state machine, in completion order.
 
     ``MISSING_PROJECT`` < ``UNSYNCED`` < ``UNTESTED_CONNECTION`` <
-    ``UNMAPPED_SOURCES`` < ``UNRENDERED_BOARDS`` < ``DONE``. The "no org yet"
+    ``UNMAPPED_SOURCES`` < ``MISSING_BOARDS`` < ``UNRENDERED_BOARDS`` <
+    ``DONE``. The connection and mapping gates read ``dbt_charts.yml``, which
+    exists whether or not a board does, so they come first; a board existing
+    is the precondition of boards rendering, so ``MISSING_BOARDS`` sits
+    directly before that stage. The "no org yet"
     stage the initiative's spec describes belongs to the ``dct cloud status``
     verb, never to this endpoint: an org-scoped GET cannot express "there is
     no org" (its URL already names one), so ``MISSING_PROJECT`` is the floor
@@ -458,11 +450,12 @@ class SetupStage(str, enum.Enum):
     UNSYNCED = "unsynced"
     UNTESTED_CONNECTION = "untested_connection"
     UNMAPPED_SOURCES = "unmapped_sources"
+    MISSING_BOARDS = "missing_boards"
     UNRENDERED_BOARDS = "unrendered_boards"
     DONE = "done"
 
 
-class ProjectStatus(BaseModel):
+class ProjectStatus(ContractModel):
     """One project's own place in the setup state machine.
 
     ``unrendered_board_count`` counts only boards a render batch would
@@ -473,18 +466,60 @@ class ProjectStatus(BaseModel):
     report those separately: they never block ``stage`` from reaching
     ``DONE`` (nothing left for ``dct cloud render`` to start), but they are
     still an action item — see ``OrgStatus.next_step``.
-    """
 
-    model_config = ConfigDict(extra="forbid")
+    ``ready_board_count``, ``errored_board_count`` and ``errored_board_slugs``
+    are ``None``, not a real count, when Cloud predates the deploy that added
+    them — a required-but-absent field on a response that otherwise parses
+    is a Cloud deploy one step behind this dct, the mirror case of
+    ``ContractModel``'s ``extra="ignore"``. Older fields
+    (``board_count``, ``unrendered_board_count``, ``rendering_board_count``,
+    ``failed_board_count``, ``failed_board_slugs``) predate this endpoint's
+    first release and stay required: any Cloud answering this URL at all
+    already sends them. The ``None`` meaning is parse-side only — the Cloud
+    producer constructing this model always has a real count and should
+    never pass ``None`` for one.
+    """
 
     slug: str = Field(description="URL-safe project identifier.")
     stage: SetupStage = Field(description="This project's own setup stage.")
     synced: bool = Field(description="Whether the trunk branch has completed a sync.")
     unmapped_source_count: int = Field(
-        description="Declared sources with no connection behind them yet."
+        description=(
+            "Declared sources with no connection behind them yet. 0 and "
+            "meaningless when config_error is set: what the branch declares "
+            "is then unknown, not empty."
+        )
+    )
+    config_error: str | None = Field(
+        default=None,
+        description=(
+            "Why Cloud could not read this project's dbt_charts.yml, when it "
+            "could not. The source counts beside it are unknown rather than "
+            "zero, so the stage is held at unmapped_sources or earlier and "
+            "this project can never report done until the file reads."
+        ),
+    )
+    file_sources: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Sources resolved from the repo — the csv/json/parquet entries of "
+            "dbt_charts.yml. Never counted in unmapped_source_count and never "
+            "a reason this project is not done: they need no connection."
+        ),
     )
     board_count: int = Field(
         description="Boards visible to the caller in this project."
+    )
+    ready_board_count: int | None = Field(
+        default=None,
+        description=(
+            "Visible boards whose latest render completed with every chart "
+            "clean. Its own count, not board_count "
+            "minus the rest — a board already serving a render while a "
+            "re-render is in flight is both ready and rendering. ``None`` "
+            "means this Cloud predates the deploy that added this count and "
+            "does not report it yet — not zero ready boards."
+        ),
     )
     unrendered_board_count: int = Field(
         description="Visible, startable boards with no successful render yet."
@@ -510,9 +545,29 @@ class ProjectStatus(BaseModel):
     failed_board_slugs: list[str] = Field(
         default_factory=list, description="Slugs of the boards counted above."
     )
+    errored_board_count: int | None = Field(
+        default=None,
+        description=(
+            "Visible boards whose most recent successful render carried "
+            "per-chart errors — the board built, but some or all of its "
+            "charts are error cards. Distinct from failed_board_count: that "
+            "render produced no board at all, this one produced a broken "
+            "one. Neither is startable, so neither moves the stage; both "
+            "put a next_step on a DONE org. ``None`` means this Cloud "
+            "predates the deploy that added this count and does not report "
+            "it yet — not zero errored boards."
+        ),
+    )
+    errored_board_slugs: list[str] | None = Field(
+        default=None,
+        description=(
+            "Slugs of the boards counted above. ``None`` has the same "
+            "meaning as errored_board_count being ``None``, not an empty list."
+        ),
+    )
 
 
-class OrgStatus(BaseModel):
+class OrgStatus(ContractModel):
     """The agent contract: one org-scoped read of the setup state machine.
 
     Two concerns, deliberately split:
@@ -552,11 +607,13 @@ class OrgStatus(BaseModel):
     because a sibling connection passed its test elsewhere in the org.
 
     ``next_step`` is null only when every project is fully ``DONE`` *and* no
-    project has a failed board to inspect. Two cases never tell a client to
-    call ``dct cloud render`` when render will not touch anything: a project
-    stuck only on failed boards reports ``stage: done`` (nothing left a retry
-    would start) with a non-null generic ``next_step`` — it says failed
-    boards exist and points at ``dct cloud boards``; the board paths
+    project has a board that is not serving correct content — one whose
+    render failed, or one that rendered carrying per-chart errors. Two cases
+    never tell a client to call ``dct cloud render`` when render will not
+    touch anything: a project stuck only on failed or errored boards reports
+    ``stage: done`` (nothing left a retry would start) with a non-null
+    generic ``next_step`` — it says such boards exist and points at
+    ``dct cloud boards``; the board paths
     themselves appear only in each project's caller-scoped
     ``failed_board_slugs``, so org-truth advice never names a board the
     caller's ACL hides — and, on the same rule, the untested-connection
@@ -571,8 +628,6 @@ class OrgStatus(BaseModel):
     worker cannot pin a project at ``unrendered_boards`` forever.
     """
 
-    model_config = ConfigDict(extra="forbid")
-
     stage: SetupStage = Field(
         description="Earliest incomplete stage across all projects, as org truth."
     )
@@ -580,8 +635,8 @@ class OrgStatus(BaseModel):
         default=None,
         description=(
             "What the ORG needs next; null only when every project is done "
-            "with no failed boards to inspect. May name an admin act this "
-            "caller cannot itself perform."
+            "with no failed or chart-errored boards left. May name an admin "
+            "act this caller cannot itself perform."
         ),
     )
     connection_count: int = Field(

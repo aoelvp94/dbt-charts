@@ -48,23 +48,11 @@ def test_module_imports_neither_django_nor_the_engine(path: Path) -> None:
     assert "from dbt_charts.core" not in path.read_text(encoding="utf-8")
 
 
-# RFC 8414 discovery and RFC 8628 device-grant response shapes are Cloud's
-# OAuth toolkit's wire formats, not this package's contract -- they carry
-# fields (scopes_supported, refresh_token, ...) this client never reads, so
-# they get extra="ignore" instead. Every other model here is decided by
-# `apps/cloud/apps/api/transport.py` alone and keeps extra="forbid".
-THIRD_PARTY_WIRE_MODELS = {
-    "AuthorizationServerMetadata",
-    "DeviceAuthorization",
-    "DeviceToken",
-}
-
-
-def test_every_model_forbids_unknown_fields() -> None:
-    """``extra="forbid"`` everywhere except the third-party OAuth wire shapes:
-    a field the server sends and this side has never heard of is a contract
-    break, and the point of one definition is that it surfaces at the
-    boundary rather than being silently dropped."""
+def test_every_model_ignores_unknown_fields() -> None:
+    """An installed ``dct`` lags the deployed Cloud, so every model -- base
+    included -- ignores fields it has never heard of; ``ContractModel`` says
+    why. A removed or renamed field still breaks older clients; that stays
+    deliberate and is nothing this test can catch."""
     from pydantic import BaseModel
 
     models = [
@@ -76,8 +64,7 @@ def test_every_model_forbids_unknown_fields() -> None:
     ]
     assert models
     for model in models:
-        expected = "ignore" if model.__name__ in THIRD_PARTY_WIRE_MODELS else "forbid"
-        assert model.model_config.get("extra") == expected, model.__name__
+        assert model.model_config.get("extra") == "ignore", model.__name__
 
 
 def test_an_unknown_error_code_does_not_parse() -> None:

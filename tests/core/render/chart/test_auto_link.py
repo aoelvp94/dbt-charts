@@ -674,7 +674,7 @@ charts:
         assert isinstance(detail_result, RenderSuccess), (
             f"Detail view failed to render: {detail_result}"
         )
-        detail_html = detail_result.html
+        detail_html = detail_result.output
 
         # Whichever row's link we grabbed must be the *only* row on the
         # detail page — not both (which is what WHERE 1=1 LIMIT 2 produces

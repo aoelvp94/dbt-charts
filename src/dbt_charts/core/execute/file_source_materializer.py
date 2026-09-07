@@ -5,6 +5,12 @@ Purpose: Parse CSV/JSON/Parquet files (via PyArrow, no DuckDB filesystem access)
 into rows, store in a QueryResultCache via put(), and register a SQL view per
 table name so author SQL like ``SELECT * FROM sales`` works against the cache engine.
 
+CSV and Parquet also hand put() the ``pyarrow.Table`` they parsed, so the stored
+table carries the file's own column types (a Parquet DECIMAL(18,2) stays a
+DECIMAL(18,2)) instead of whatever the backend's row-dict storage encoding would
+have made of them. JSON/NDJSON have no schema beyond ``json.loads``, so they stay
+on the row-dict path.
+
 Cache key per file table:
     source_hash    = compute_source_hash(source_config)
     query_hash     = Project.file_version(relpath), hashed to 16 hex — the single
@@ -46,17 +52,21 @@ from dbt_charts.core.compile.models.source import (
 from dbt_charts.core.compile.template.parameterized import render_parameterized
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_FILE_SOURCE_DECIMAL_TOO_WIDE,
     ERR_FILE_SOURCE_TOO_LARGE,
     ERR_FILE_SOURCE_TOO_MANY_TABLES,
     ERR_GLOB_EMPTY,
     ERR_GLOB_SCHEMA_MISMATCH,
     ERR_GLOB_TOO_MANY,
 )
+from dbt_charts.core.execute.adapters.base import QueryParams
 from dbt_charts.core.execute.cache_backend import FILE_SOURCE_VARS_HASH, CacheHit
 from dbt_charts.core.execute.duckdb_cache import compute_source_hash
 from dbt_charts.core.project import is_glob
 
 if TYPE_CHECKING:
+    import pyarrow as pa
+
     from dbt_charts.core.execute.cache_backend import QueryResultCache
     from dbt_charts.core.project import Project
 
@@ -68,13 +78,6 @@ _JsonRow: TypeAlias = dict[str, Any]
 # confusing "4768.4 MB".
 _BYTES_PER_MB = 1_000_000
 
-# Parquet's columnar compression can expand roughly 8-20x once parsed into row
-# objects; 20 is the conservative upper bound used when checking
-# execution.file_source_max_bytes. Not authored surface — see the config
-# review note in ExecutionConfig.file_source_max_bytes for why a project
-# setting here would defeat the byte ceiling it feeds.
-_PARQUET_MATERIALIZATION_MULTIPLIER = 20
-
 logger = logging.getLogger(__name__)
 
 
@@ -83,10 +86,12 @@ def default_local_materializer_factory(
 ) -> Callable[[], FileSourceMaterializer]:
     """A factory that lazily builds the local DuckDB-backed file materializer.
 
-    Handed to ``Executor(file_materializer_factory=...)`` for local ``dct`` so the
-    per-render materializer (and its in-memory DuckDB) is created only when a
-    file-source query actually misses the result cache — a fully-cached dashboard
-    never opens one. Cloud injects its own Postgres-backed materializer instead.
+    Handed to ``Executor(file_materializer_factory=...)`` and
+    ``AdapterRegistry(file_materializer_factory=...)`` for local ``dct`` so the
+    materializer (and its in-memory DuckDB) is created only when a file-source
+    query actually misses the result cache — a fully-cached render, or a
+    session that never touches a file source, never opens one. Cloud injects
+    its own Postgres-backed materializer instead.
     """
 
     def _build() -> FileSourceMaterializer:
@@ -95,6 +100,24 @@ def default_local_materializer_factory(
         return FileSourceMaterializer(project, TrivialDuckDBCache())
 
     return _build
+
+
+def resolve_local_file_materializer_factory(
+    project: Project,
+    file_materializer: FileSourceMaterializer | None,
+) -> Callable[[], FileSourceMaterializer] | None:
+    """The one place that resolves "local means the DuckDB-backed factory".
+
+    Every local composition root (render, registered views, the ad-hoc
+    ``AdapterRegistry`` a ``ProjectSession`` lazily builds) needs the same
+    choice: an injected ``file_materializer`` (Cloud, or any other host) wins
+    outright and needs no factory; its absence falls back to
+    ``default_local_materializer_factory``. Routing every call site through
+    this function is what keeps that fallback from being reinvented per site.
+    """
+    if file_materializer is not None:
+        return None
+    return default_local_materializer_factory(project)
 
 
 def _version_key(token: str) -> str:
@@ -147,12 +170,18 @@ class FileSourceMaterializer:
         # SQL from reaching the filesystem or network. For Postgres: no-op.
         self._cache.disable_external_access()
 
+    def close(self) -> None:
+        """Release the backing cache's held resources (e.g. a DuckDB handle)."""
+        self._cache.close()
+
     def materialize_and_run(
         self,
         source: CsvSourceConfig | JsonSourceConfig | ParquetSourceConfig,
         sql: str,
         variables: dict[str, Any],
         source_name: str,
+        params: QueryParams = None,
+        strict: bool = True,
     ) -> list[_JsonRow]:
         """Ensure all tables in *source* are in the cache, then execute *sql*.
 
@@ -164,17 +193,34 @@ class FileSourceMaterializer:
         Two more guardrails bound a single relation's growth: ``source.files``
         may not declare more tables than ``execution.file_source_max_tables``
         (checked up front, before any file read), and each relation's
-        estimated materialized byte size — file bytes summed across its
-        matched files, multiplied by ``_PARQUET_MATERIALIZATION_MULTIPLIER``
-        for Parquet — may not exceed ``execution.file_source_max_bytes``
-        (checked as each file is read, before it is parsed or written to the
-        cache).
+        uncompressed byte size — summed across its matched files, measured by
+        ``_uncompressed_bytes`` — may not exceed
+        ``execution.file_source_max_bytes`` (checked as each file is read,
+        before it is parsed or written to the cache).
 
         Args:
             source: A CsvSourceConfig, JsonSourceConfig, or ParquetSourceConfig.
-            sql: SQL template (may contain {{ variable }} Jinja expressions).
-            variables: Variable values substituted into *sql* via render_parameterized.
+            sql: SQL template (may contain {{ variable }} Jinja expressions),
+                or — when *params* is given — SQL already rendered to the
+                "duckdb" placeholder style (``$1``, ``$2``, …) by an upstream
+                composition step (``AdapterRegistry._compose_query_refs``),
+                which also expands ``{{ queries.X }}`` refs this method's own
+                rendering does not.
+            variables: Variable values substituted into *sql* via
+                render_parameterized. Ignored when *params* is given — *sql*
+                is already rendered.
             source_name: Authored source name (for error messages).
+            params: Pre-rendered positional parameter values, in the same
+                "duckdb" placeholder style this method renders internally
+                when omitted. Passed by ``AdapterRegistry`` once it has
+                already composed the SQL; ``None`` (the render path's own
+                caller) renders *sql* against *variables* here instead.
+            strict: Passed to the internal ``render_parameterized`` call when
+                *params* is None (a caller that already composed *sql* has
+                already made this choice). Mirrors every other adapter's
+                ``strict=not query.lenient_variables`` — an undefined
+                ``{{ variable }}`` raises when True (default), renders as an
+                empty string when False.
 
         Returns:
             Rows returned by *sql*.
@@ -188,11 +234,6 @@ class FileSourceMaterializer:
         source_hash = compute_source_hash(source)
         cap = get_execution_config().max_glob_file_count
         byte_cap = resolve_file_source_max_bytes()
-        byte_multiplier = (
-            _PARQUET_MATERIALIZATION_MULTIPLIER
-            if isinstance(source, ParquetSourceConfig)
-            else 1
-        )
 
         table_cap = resolve_file_source_max_tables()
         if len(source.files) > table_cap:
@@ -239,9 +280,19 @@ class FileSourceMaterializer:
                 vkey = _version_key(self._project.file_version(path_or_glob))
                 table_specs.append((table_name, vkey, [path_or_glob]))
 
-        # Render {{ variable }} templates to parameterized SQL before executing.
-        # profile_type="duckdb" → $1/$2/… placeholders (DuckDB positional style).
-        parameterized = render_parameterized(sql, variables, profile_type="duckdb")
+        if params is not None:
+            # Already rendered by the caller (AdapterRegistry._compose_query_refs)
+            # in this same "duckdb" placeholder style — {{ queries.X }} refs and
+            # variables are both expanded, so there is nothing left to render here.
+            resolved_sql, resolved_params = sql, params
+        else:
+            # Render {{ variable }} templates to parameterized SQL before
+            # executing. profile_type="duckdb" → $1/$2/… placeholders (DuckDB
+            # positional style).
+            parameterized = render_parameterized(
+                sql, variables, profile_type="duckdb", strict=strict
+            )
+            resolved_sql, resolved_params = parameterized.sql, parameterized.params
 
         union_by_name = isinstance(source, JsonSourceConfig) and source.union_by_name
 
@@ -252,12 +303,17 @@ class FileSourceMaterializer:
                     self._cache.get(source_hash, vkey, FILE_SOURCE_VARS_HASH), CacheHit
                 ):
                     rows: list[_JsonRow] = []
+                    arrow: pa.Table | None = None
+                    # The file folded into `arrow` most recently — the neighbour
+                    # a schema conflict is actually against, which for a long
+                    # glob is more useful than always blaming the first shard.
+                    previous_relpath = ""
                     first_relpath = ""
                     first_keys: frozenset[str] = frozenset()
                     materialized_bytes = 0
                     for relpath in relpaths:
                         file_bytes = self._project.read_bytes(relpath)
-                        materialized_bytes += len(file_bytes) * byte_multiplier
+                        materialized_bytes += _uncompressed_bytes(source, file_bytes)
                         if materialized_bytes > byte_cap:
                             raise DbtChartsError.from_code(
                                 ERR_FILE_SOURCE_TOO_LARGE,
@@ -265,11 +321,10 @@ class FileSourceMaterializer:
                                 table_name=table_name,
                                 relpath=relpath,
                                 raw_mb=len(file_bytes) / _BYTES_PER_MB,
-                                multiplier=byte_multiplier,
                                 size_mb=materialized_bytes / _BYTES_PER_MB,
                                 cap_mb=byte_cap / _BYTES_PER_MB,
                             )
-                        file_rows = _parse(source, file_bytes, relpath)
+                        file_rows, file_arrow = _parse(source, file_bytes, relpath)
                         if file_rows:
                             # Schema check uses only the first row's keys.  This catches
                             # header-level mismatches (the common authoring mistake) but
@@ -293,6 +348,18 @@ class FileSourceMaterializer:
                                     detail=detail,
                                 )
                             rows.extend(file_rows)
+                            if file_arrow is not None:
+                                arrow = _merge_arrow(
+                                    arrow,
+                                    _normalize_arrow(
+                                        file_arrow, source_name, table_name, relpath
+                                    ),
+                                    source_name,
+                                    table_name,
+                                    relpath,
+                                    previous_relpath,
+                                )
+                                previous_relpath = relpath
                     if union_by_name and rows:
                         # Union of column names in first-seen insertion order so
                         # the created table's column order is deterministic across
@@ -310,6 +377,20 @@ class FileSourceMaterializer:
                             "Empty file sources are not supported — "
                             "provide a file with at least one data row."
                         )
+                    if arrow is not None:
+                        import pyarrow as pa
+
+                        # A column still ``null`` after the merge had no values
+                        # in any shard. DuckDB would make it INTEGER, breaking
+                        # the text SQL an author wrote for it; VARCHAR is what
+                        # the row-dict path always gave it.
+                        arrow = _normalize_arrow(
+                            arrow,
+                            source_name,
+                            table_name,
+                            previous_relpath,
+                            null_as=pa.string(),
+                        )
                     self._cache.put(
                         source_hash,
                         vkey,
@@ -317,6 +398,7 @@ class FileSourceMaterializer:
                         rows,
                         board_slug="__file_source__",
                         query_name=table_name,
+                        arrow=arrow,
                     )
 
                 # Register (or re-register) so SQL can reference the table name.
@@ -324,41 +406,271 @@ class FileSourceMaterializer:
                 # For Postgres: records the mapping for execute_file_source_sql to load.
                 self._cache.register_file_table(table_name, source_hash, vkey)
 
-            return self._cache.execute_file_source_sql(
-                parameterized.sql, parameterized.params
-            )
+            return self._cache.execute_file_source_sql(resolved_sql, resolved_params)
+
+
+def _uncompressed_bytes(
+    source: CsvSourceConfig | JsonSourceConfig | ParquetSourceConfig,
+    file_bytes: bytes,
+) -> int:
+    """How much data this file actually carries, in bytes.
+
+    For CSV and JSON that is the file itself. For Parquet it is the sum of
+    the row groups' ``total_byte_size``, read from the footer — the file's own
+    record of its uncompressed size, which is the same quantity ``len()``
+    reports for the text formats. Measuring all three that way is what lets
+    one cap mean one thing across formats, so the compact format is never
+    the one a budget rejects.
+
+    The footer parse is free relative to the check it feeds: the caller has
+    already read the whole file (``Project`` exposes no range read), and this
+    is what avoids paying ``pq.read_table`` on a relation that will not fit.
+    """
+    if not isinstance(source, ParquetSourceConfig):
+        return len(file_bytes)
+    import pyarrow.parquet as pq
+
+    metadata = pq.ParquetFile(  # type: ignore[no-untyped-call]  # type-state: type_ignore — pyarrow's stubs are placeholders; upstream gap
+        io.BytesIO(file_bytes)
+    ).metadata
+    return sum(
+        metadata.row_group(i).total_byte_size for i in range(metadata.num_row_groups)
+    )
 
 
 # ── Module-level parse helpers (no DuckDB filesystem access) ─────────────────
+
+
+def _engine_type(
+    arrow_type: pa.DataType, null_as: pa.DataType | None = None
+) -> pa.DataType:
+    """The nearest type DuckDB's Arrow bridge accepts, recursing into children.
+
+    ``float16`` and ``decimal256`` are the two Parquet can hand us that the
+    bridge rejects outright, at the top level or nested inside a list, struct,
+    or map. Widening a half float to ``float32`` is lossless; narrowing a
+    ``decimal256`` to ``DECIMAL(38, s)`` is lossless for every value that fits,
+    and the caller's ``safe`` cast raises rather than truncating for one that
+    does not.
+    """
+    import pyarrow as pa
+
+    # ``null`` (a column with no values at all) is left alone per shard so the
+    # glob merge can promote it to a sibling's type; only the merged table
+    # asks for it as text — see the ``null_as`` pass in materialize_and_run.
+    if null_as is not None and pa.types.is_null(arrow_type):
+        return null_as
+    if pa.types.is_float16(arrow_type):
+        return pa.float32()
+    if pa.types.is_decimal256(arrow_type):
+        return pa.decimal128(38, arrow_type.scale)
+    if pa.types.is_list(arrow_type):
+        return pa.list_(_engine_field(arrow_type.value_field, null_as))
+    if pa.types.is_large_list(arrow_type):
+        return pa.large_list(_engine_field(arrow_type.value_field, null_as))
+    if pa.types.is_fixed_size_list(arrow_type):
+        return pa.list_(
+            _engine_field(arrow_type.value_field, null_as), arrow_type.list_size
+        )
+    if pa.types.is_struct(arrow_type):
+        return pa.struct([_engine_field(child, null_as) for child in arrow_type])
+    if pa.types.is_map(arrow_type):
+        return pa.map_(
+            _engine_type(arrow_type.key_type, null_as),
+            _engine_type(arrow_type.item_type, null_as),
+        )
+    return arrow_type
+
+
+def _engine_field(field: pa.Field, null_as: pa.DataType | None) -> pa.Field:
+    return field.with_type(_engine_type(field.type, null_as))
+
+
+def _normalize_arrow(
+    table: pa.Table,
+    source_name: str,
+    table_name: str,
+    relpath: str,
+    *,
+    null_as: pa.DataType | None = None,
+) -> pa.Table:
+    """Recast *table* into types the query engine can load, or raise.
+
+    Every cast is ``safe``, so a value that will not fit the narrowed type
+    raises here instead of arriving silently truncated in a chart.
+
+    Positional throughout: Arrow permits duplicate column names, and looking a
+    field up by name returns -1 when there are two, which would corrupt the
+    table it is meant to be fixing.
+    """
+    import pyarrow as pa
+
+    normalized = pa.schema(
+        [_engine_field(field, null_as) for field in table.schema],
+        metadata=table.schema.metadata,
+    )
+    if normalized.equals(table.schema):
+        return table
+
+    columns = []
+    for index, field in enumerate(table.schema):
+        column = table.column(index)
+        target = normalized.field(index).type
+        if target == field.type:
+            columns.append(column)
+            continue
+        try:
+            fitted = column.cast(target, safe=True)  # type-state: cast — raises
+        except pa.ArrowInvalid as e:
+            raise DbtChartsError.from_code(
+                ERR_FILE_SOURCE_DECIMAL_TOO_WIDE,
+                source_name=source_name,
+                table_name=table_name,
+                column=field.name,
+                relpath=relpath,
+                column_type=str(field.type),
+            ) from e
+        columns.append(fitted)
+    return pa.Table.from_arrays(columns, schema=normalized)
+
+
+def _merge_arrow(
+    accumulated: pa.Table | None,
+    table: pa.Table,
+    source_name: str,
+    table_name: str,
+    relpath: str,
+    previous_relpath: str,
+) -> pa.Table:
+    """Fold one more matched file into the glob's typed table.
+
+    ``promote_options="default"`` unifies by column name and lets a shard whose
+    column is empty (PyArrow types it ``null``) take a sibling's type — both are
+    ordinary shard shapes that the row-dict path always accepted. It does not
+    unify two *widths* of one kind (int32/int64, float/double, timestamp[ms]/
+    [us], DECIMAL(18,2)/DECIMAL(38,2)) — two producers writing the same column,
+    which the row-dict path also loaded losslessly — so ``_widen_to_match``
+    casts those to the wider side first. It stops short of ``"permissive"``,
+    which would widen an int64 column to double to swallow a genuine type
+    conflict. Folding per file rather than concatenating at the end is what
+    lets the error name the two files that disagree.
+    """
+    if accumulated is None:
+        return table
+    import pyarrow as pa
+
+    try:
+        accumulated, table = _widen_to_match(accumulated, table)
+        return pa.concat_tables([accumulated, table], promote_options="default")
+    except (pa.ArrowInvalid, pa.ArrowTypeError) as e:
+        raise DbtChartsError.from_code(
+            ERR_GLOB_SCHEMA_MISMATCH,
+            source_name=source_name,
+            table_name=table_name,
+            path=relpath,
+            first_path=previous_relpath,
+            detail=f"{e}. ",
+        ) from e
+
+
+# Finer is wider — except nanoseconds, whose int64 range ends in 2262 and
+# would put a 9999-12-31 sentinel out of bounds. DuckDB's TIMESTAMP is
+# microseconds, so that is where a unit pair caps.
+_TIME_UNIT_RANK = {"s": 0, "ms": 1, "us": 2, "ns": 2}
+_TIME_UNIT_AT_RANK = {0: "s", 1: "ms", 2: "us"}
+
+
+def _wider(a: pa.DataType, b: pa.DataType) -> pa.DataType | None:
+    """The lossless common type of two widths of one kind, or None when the
+    pair is a genuine conflict (int vs double, string vs numeric, nested)."""
+    import pyarrow as pa
+
+    if pa.types.is_integer(a) and pa.types.is_integer(b):
+        if pa.types.is_signed_integer(a) != pa.types.is_signed_integer(b):
+            return None
+        return a if a.bit_width >= b.bit_width else b
+    if pa.types.is_floating(a) and pa.types.is_floating(b):
+        return a if a.bit_width >= b.bit_width else b
+    if pa.types.is_timestamp(a) and pa.types.is_timestamp(b) and a.tz == b.tz:
+        rank = max(_TIME_UNIT_RANK[a.unit], _TIME_UNIT_RANK[b.unit])
+        return pa.timestamp(_TIME_UNIT_AT_RANK[rank], a.tz)
+    if pa.types.is_decimal(a) and pa.types.is_decimal(b) and a.scale == b.scale:
+        return a if a.precision >= b.precision else b
+    return None
+
+
+def _widen_to_match(
+    accumulated: pa.Table, table: pa.Table
+) -> tuple[pa.Table, pa.Table]:
+    """Cast width-only differences on shared column names to the wider type.
+
+    Integer, float and decimal-precision widening cannot lose a value. A
+    timestamp pair caps at microseconds (see ``_TIME_UNIT_RANK``), so a
+    nanosecond shard with sub-microsecond remainders is the one cast that can
+    refuse — it raises inside ``_merge_arrow``'s guard and is stamped like any
+    other shard mismatch. A duplicated column name (``get_field_index``
+    answers -1) is left for ``concat_tables`` to judge.
+    """
+    for name in set(accumulated.schema.names) & set(table.schema.names):
+        ia = accumulated.schema.get_field_index(name)
+        ib = table.schema.get_field_index(name)
+        if ia < 0 or ib < 0:
+            continue
+        ta, tb = accumulated.schema.field(ia).type, table.schema.field(ib).type
+        if ta == tb:
+            continue
+        wide = _wider(ta, tb)
+        if wide is None:
+            continue
+        if ta != wide:
+            accumulated = accumulated.set_column(
+                ia,
+                accumulated.schema.field(ia).with_type(wide),
+                accumulated.column(ia).cast(wide),  # type-state: cast — widening
+            )
+        if tb != wide:
+            table = table.set_column(
+                ib,
+                table.schema.field(ib).with_type(wide),
+                table.column(ib).cast(wide),  # type-state: cast — widening
+            )
+    return accumulated, table
 
 
 def _parse(
     source: CsvSourceConfig | JsonSourceConfig | ParquetSourceConfig,
     file_bytes: bytes,
     relpath: str,
-) -> list[_JsonRow]:
-    """Dispatch to the correct parser for the given source type."""
+) -> tuple[list[_JsonRow], pa.Table | None]:
+    """Dispatch to the correct parser, returning rows and the typed Arrow form.
+
+    The Arrow table is None for JSON/NDJSON, whose values carry no schema beyond
+    what ``json.loads`` produces; for CSV and Parquet it is the file's own typed
+    representation, which ``materialize_and_run`` hands to ``cache.put`` so the
+    SQL-visible table keeps those types.
+    """
     if isinstance(source, CsvSourceConfig):
-        return _parse_csv(file_bytes, source.delimiter, source.encoding)
-    if isinstance(source, JsonSourceConfig):
-        return _parse_json(file_bytes, relpath)
-    return _parse_parquet(file_bytes)
+        table = _parse_csv(file_bytes, source.delimiter, source.encoding)
+    elif isinstance(source, JsonSourceConfig):
+        return _parse_json(file_bytes, relpath), None
+    else:
+        table = _parse_parquet(file_bytes)
+    return table.to_pylist(), table
 
 
-def _parse_csv(file_bytes: bytes, delimiter: str, encoding: str) -> list[_JsonRow]:
-    """Parse CSV bytes to list[dict] using PyArrow's CSV reader.
+def _parse_csv(file_bytes: bytes, delimiter: str, encoding: str) -> pa.Table:
+    """Parse CSV bytes with PyArrow's CSV reader.
 
-    PyArrow infers column types (int, float, string, bool) — no-magic violation
-    requires types be inferred from data, not returned as all-string.
+    PyArrow infers column types (int, float, string, bool, date) — no-magic
+    violation requires types be inferred from data, not returned as all-string.
     """
     import pyarrow.csv as pacsv
 
     parse_opts = pacsv.ParseOptions(delimiter=delimiter)
     read_opts = pacsv.ReadOptions(encoding=encoding)
-    table = pacsv.read_csv(
+    return pacsv.read_csv(
         io.BytesIO(file_bytes), parse_options=parse_opts, read_options=read_opts
     )
-    return table.to_pylist()
 
 
 def _parse_json(
@@ -430,9 +742,8 @@ def _parse_ndjson(file_bytes: bytes) -> list[_JsonRow]:
     return rows
 
 
-def _parse_parquet(file_bytes: bytes) -> list[_JsonRow]:
-    """Parse Parquet bytes to list[dict] using PyArrow."""
+def _parse_parquet(file_bytes: bytes) -> pa.Table:
+    """Parse Parquet bytes with PyArrow."""
     import pyarrow.parquet as pq
 
-    table = pq.read_table(io.BytesIO(file_bytes))  # type: ignore[no-untyped-call]
-    return table.to_pylist()
+    return pq.read_table(io.BytesIO(file_bytes))  # type: ignore[no-untyped-call]  # type-state: type_ignore — pyarrow's stubs are placeholders; upstream gap

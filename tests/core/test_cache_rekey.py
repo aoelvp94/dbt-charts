@@ -253,6 +253,7 @@ class TestQueryResultCacheProtocol:
                 query_name,
                 source_name="",
                 truncated_reason=None,
+                arrow=None,
             ):
                 pass
 
@@ -297,6 +298,7 @@ class TestQueryResultCacheProtocol:
                 query_name,
                 source_name="",
                 truncated_reason=None,
+                arrow=None,
             ):
                 pass
 

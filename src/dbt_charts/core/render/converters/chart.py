@@ -120,9 +120,15 @@ _VLC_ID_REF_RE = re.compile(
 _UNSAFE_ID_CHARS_RE = re.compile(r"[^A-Za-z0-9_-]")
 
 
-def _namespace_svg_ids(svg: str, chart_id: str) -> str:
-    """Suffix every vl-convert-minted id (and its references) with ``chart_id``
-    so ids stay unique across independently-rendered charts on the same board.
+def safe_svg_id(chart_id: str) -> str:
+    """The id-namespace suffix ``_namespace_svg_ids`` appends to every
+    vl-convert-minted id for this chart: ``chart_id`` sanitized to FuncIRI-safe
+    characters, plus a short digest suffix when sanitizing was lossy.
+
+    Public (not ``_``-prefixed) because ``chart_svg_dev.contract`` — the
+    dev-only golden-sweep harness in ``libs/chart-svg`` — imports it to
+    classify a Rust-rendered chart's ids as namespaced or not, the same way
+    production namespaces them.
     """
     safe_id = _UNSAFE_ID_CHARS_RE.sub("_", chart_id)
     if safe_id != chart_id:
@@ -135,6 +141,14 @@ def _namespace_svg_ids(svg: str, chart_id: str) -> str:
             chart_id.encode(), usedforsecurity=False
         ).hexdigest()[:8]
         safe_id = f"{safe_id}-{digest}"
+    return safe_id
+
+
+def _namespace_svg_ids(svg: str, chart_id: str) -> str:
+    """Suffix every vl-convert-minted id (and its references) with ``chart_id``
+    so ids stay unique across independently-rendered charts on the same board.
+    """
+    safe_id = safe_svg_id(chart_id)
     svg = _VLC_ID_DEF_RE.sub(lambda m: f'id="{m.group(1)}-{safe_id}"', svg)
     return _VLC_ID_REF_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}-{safe_id}", svg)
 

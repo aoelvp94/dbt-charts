@@ -73,6 +73,11 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # there with a variable-naming message; a survivor here is a transform
         # the render guard missed, and the message says what to do.
         ("sql_literals.py", "inline_params_for_dialect"),
+        # trivial_local_cache.py — passing an Arrow table on a non-file cache key
+        # is an implementer contract breach, same category as _require_aware
+        # above: only this package's own materializer calls put(arrow=...), so no
+        # board YAML, CLI flag, or variable value can reach it.
+        ("trivial_local_cache.py", "TrivialDuckDBCache.put"),
     }
 )
 

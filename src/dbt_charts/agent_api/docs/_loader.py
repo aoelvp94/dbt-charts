@@ -126,8 +126,21 @@ def docs(
         )
 
     if search is not None:
-        sections = _load_sections()
-        return DocsResult(mode="search", search=_search(search, sections, limit=limit))
+        # The prose syntax doc ranks first — it's the hand-curated surface a
+        # query like "grid" should surface (`## Layout`, not a scan of every
+        # generated field). The generated schema reference only backfills
+        # remaining slots, for identifiers (like `endpoint_labels`) that live
+        # solely in the schema and never appear in the prose doc at all.
+        hits = _search(search, _load_sections(), limit=limit)
+        remaining = limit - len(hits)
+        if remaining > 0:
+            hits += _search(
+                search,
+                _load_reference_sections(),
+                limit=remaining,
+                topic_override=_REFERENCE_TOPIC,
+            )
+        return DocsResult(mode="search", search=hits)
 
     if topic is None:
         return DocsResult(mode="index", topics=_topic_index())
@@ -229,14 +242,13 @@ def slugify(heading: str) -> str:
     return re.sub(r"[^a-z0-9-]+", "", text)
 
 
-def _load_sections() -> dict[str, tuple[str, str]]:
-    """Read DBT_CHARTS_SYNTAX.md and slice on H2 headers.
+def _slice_h2_sections(text: str) -> dict[str, tuple[str, str]]:
+    """Slice a markdown doc on H2 headers.
 
     Returns an insertion-ordered mapping ``{slug: (title, body)}`` where body
     starts at the H2 line and runs up to (but not including) the next H2 line.
-    Order matches the file — used by the topic index to preserve reading order.
+    Order matches the file.
     """
-    text = read_full_text()
     lines = text.splitlines(keepends=True)
     sections: dict[str, tuple[str, str]] = {}
     current_title: str | None = None
@@ -258,6 +270,32 @@ def _load_sections() -> dict[str, tuple[str, str]]:
             "".join(current_lines).rstrip() + "\n",
         )
     return sections
+
+
+def _load_sections() -> dict[str, tuple[str, str]]:
+    """Read DBT_CHARTS_SYNTAX.md and slice on H2 headers.
+
+    Used by the topic index to preserve reading order (see `_slice_h2_sections`).
+    """
+    return _slice_h2_sections(read_full_text())
+
+
+def _load_reference_sections() -> dict[str, tuple[str, str]]:
+    """Read the generated yaml-reference.md and slice on its own H2 headers.
+
+    Included in the search corpus (not the topic index — `reference` stays a
+    single fetchable topic) so a field name like `endpoint_labels`, present
+    only in the generated schema reference and not in the prose syntax doc,
+    is still findable by `dct docs --search`. Returns {} rather than raising
+    when the generated file is missing: the search corpus degrades quietly,
+    since `docs(topic="reference")` is the codepath that already surfaces
+    that failure as an error.
+    """
+    try:
+        text = _REFERENCE_FILE.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    return _slice_h2_sections(text)
 
 
 def _first_description_line(body: str) -> str:
@@ -293,27 +331,36 @@ def _topic_index() -> list[TopicEntry]:
 
 
 def _search(
-    query: str, sections: dict[str, tuple[str, str]], limit: int = 5
+    query: str,
+    sections: dict[str, tuple[str, str]],
+    limit: int = 5,
+    topic_override: str | None = None,
 ) -> list[DocsSearchHit]:
-    """Substring search across H2 slices with bucketed scoring (1.0 / 0.8 / 0.5)."""
+    """Substring search across H2 slices with bucketed scoring (1.0 / 0.8 / 0.5).
+
+    ``topic_override`` stamps every hit with a fixed topic id instead of the
+    per-heading slug — for a corpus (the generated reference) whose headings
+    aren't individually fetchable topics, only the whole file is.
+    """
     q = query.lower()
     hits: list[DocsSearchHit] = []
     for slug, (title, body) in sections.items():
+        topic = topic_override or slug
         if q in slug:
             snippet = _first_matching_line(body, q) or title
             hits.append(
-                DocsSearchHit(topic=slug, title=title, score=1.0, snippet=snippet)
+                DocsSearchHit(topic=topic, title=title, score=1.0, snippet=snippet)
             )
         elif q in title.lower():
             snippet = _first_matching_line(body, q) or title
             hits.append(
-                DocsSearchHit(topic=slug, title=title, score=0.8, snippet=snippet)
+                DocsSearchHit(topic=topic, title=title, score=0.8, snippet=snippet)
             )
         else:
             line = _first_matching_line(body, q)
             if line:
                 hits.append(
-                    DocsSearchHit(topic=slug, title=title, score=0.5, snippet=line)
+                    DocsSearchHit(topic=topic, title=title, score=0.5, snippet=line)
                 )
     hits.sort(key=lambda h: h.score, reverse=True)
     return hits[:limit]

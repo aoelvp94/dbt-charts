@@ -13,7 +13,7 @@ from dbt_charts.core.diagnostics.registry import build_doc_url
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.fonts import get_font_path, get_mono_font_path
 from dbt_charts.core.render.chart.text_truncation import record_text_truncation
-from dbt_charts.core.render.svg_utils import border_dash_attrs
+from dbt_charts.core.render.svg_utils import authored_kind_attr, border_dash_attrs
 from mdsvg import Style as MdsvgStyle, parse as parse_md
 from mdsvg.fonts import wrap_text_precise
 from mdsvg.renderer import SVGRenderer as MdsvgRenderer
@@ -379,13 +379,14 @@ def render_callout_svg(
             )
             title_svg = (
                 f"{title_clip_def}"
-                f'<g transform="translate({pad_left}, {translate_y})" clip-path="url(#{title_clip_id})">'
+                f'<g transform="translate({pad_left}, {translate_y})" clip-path="url(#{title_clip_id})"'
+                f"{authored_kind_attr('title')}>"
                 f"{title_elements}"
                 f"</g>"
             )
         else:
             title_svg = (
-                f'<g transform="translate({pad_left}, {translate_y})">'
+                f'<g transform="translate({pad_left}, {translate_y})"{authored_kind_attr("title")}>'
                 f"{title_elements}"
                 f"</g>"
             )

@@ -8,6 +8,7 @@ schema pass would look green on exactly the boards validation is meant to catch.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -15,10 +16,12 @@ import duckdb
 
 from dbt_charts.agent_api.validate import validate_paths
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.compile.config import ProjectSourcesConfig
+from dbt_charts.core.compile.config import ProjectSourcesConfig, load_project_sources
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
 from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
+from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
+from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 _HEALTHY_BOARD = (
     "title: Test Board\n"
@@ -259,6 +262,62 @@ class TestWarehouseValidateDuckDB:
         assert r.errors == [], [e.message for e in r.errors]
 
 
+def _setup_csv_project(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject], *, board_yml: str
+) -> tuple[FilesystemProject, AdapterRegistry]:
+    """Create a minimal project with a csv file source containing an `orders` table."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "orders.csv").write_text("id,revenue\n1,100.0\n2,200.0\n")
+    (tmp_path / "dbt_charts.yml").write_text(
+        "sources:\n  marts:\n    type: csv\n    files:\n      orders: data/orders.csv\n"
+    )
+    charts_dir = tmp_path / "charts"
+    charts_dir.mkdir()
+    (charts_dir / "test_board.yml").write_text(board_yml)
+
+    project = local_project(tmp_path)
+    registry = AdapterRegistry(
+        project=project,
+        project_sources=load_project_sources(project),
+        file_materializer=FileSourceMaterializer(project, TrivialDuckDBCache()),
+    )
+    return project, registry
+
+
+class TestWarehouseValidateFileSource:
+    """A csv/json/parquet source is column-checked like duckdb, not skipped.
+
+    Coverage for the ``--warehouse`` column check reaching a file source: it
+    materializes the source's files onto DuckDB and runs the same DESCRIBE
+    mechanism as a native duckdb source (see warehouse_check.py).
+    """
+
+    def test_csv_board_queries_are_column_checked(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        board_yml = (
+            "title: CSV Board\n"
+            "source: marts\n"
+            "queries:\n"
+            "  my_query: SELECT id, revenue FROM orders\n"
+            "charts:\n"
+            "  my_chart:\n"
+            "    type: bar\n"
+            "    query: queries.my_query\n"
+            "    x: id\n"
+            "    y: missing_col\n"
+        )
+        project, registry = _setup_csv_project(
+            tmp_path, local_project, board_yml=board_yml
+        )
+        r = _validate(tmp_path, project, registry)
+        assert r.success is False
+        err = next(e for e in r.errors if e.code == "ERR-CHART-COLUMN-NOT-IN-RESULT")
+        assert "missing_col" in err.message
+        assert "my_chart" in err.message
+
+
 class TestWarehouseTierIsAdditive:
     """The warehouse tier appends findings; it never replaces the stateless ones."""
 
@@ -419,18 +478,28 @@ class TestWarehouseValidateExplainAdapter:
 class TestWarehouseValidateUncheckedAdapter:
     """An adapter with no cheap validity primitive must say so, not report a pass."""
 
-    def _csv_registry(self) -> MagicMock:
+    def _unchecked_registry(self) -> MagicMock:
+        """A mysql source — an adapter in the ``anything else`` row: it has no
+        entry in ``_PREFIX_CHECKS`` and no dry run, unlike a csv/json/parquet
+        file source, which resolves to DuckDB's own DESCRIBE.
+        """
         from dbt_charts.core.compile.models.source import parse_source_config
 
         registry = MagicMock()
         registry.resolve_query_source.return_value = parse_source_config(
-            {"type": "csv", "files": {"orders": "data/orders.csv"}}
+            {
+                "type": "mysql",
+                "host": "h",
+                "database": "db",
+                "user": "u",
+                "password": "p",
+            }
         )
         return registry
 
     def test_unchecked_adapter_warns_rather_than_passing_silently(self, tmp_path):
         project, _ = _setup_duckdb_project(tmp_path, with_data=False)
-        r = _validate(tmp_path, project, self._csv_registry())
+        r = _validate(tmp_path, project, self._unchecked_registry())
         warn_codes = {w.code for w in r.warnings}
         assert "WARN-WAREHOUSE-CHECK-UNAVAILABLE" in warn_codes
         # It was never checked, so it is not a column-check-only shortfall.
@@ -439,15 +508,15 @@ class TestWarehouseValidateUncheckedAdapter:
     def test_unchecked_warning_names_the_reason(self, tmp_path):
         """ "Unchecked" with no reason is not actionable — the reason is the message."""
         project, _ = _setup_duckdb_project(tmp_path, with_data=False)
-        r = _validate(tmp_path, project, self._csv_registry())
+        r = _validate(tmp_path, project, self._unchecked_registry())
         warn = next(
             w for w in r.warnings if w.code == "WARN-WAREHOUSE-CHECK-UNAVAILABLE"
         )
-        assert "csv" in warn.message
+        assert "mysql" in warn.message
 
     def test_unchecked_adapter_never_executes_anything(self, tmp_path):
         project, _ = _setup_duckdb_project(tmp_path, with_data=False)
-        registry = self._csv_registry()
+        registry = self._unchecked_registry()
         _validate(tmp_path, project, registry)
         registry.execute.assert_not_called()
 

@@ -91,12 +91,14 @@ def repo_key(url: str) -> str:
     return f"{host}/{path}" if host else path
 
 
-def _destructive_context_message(candidates: str) -> str:
-    """Prefix a candidates message with why the stored default was refused."""
-    return (
-        "This is a destructive command, so it never falls back to the stored"
-        f" `dct cloud use` default. {candidates}"
-    )
+REFUSE_DEFAULT_DESTRUCTIVE = (
+    "This is a destructive command, so it never falls back to the stored"
+    " `dct cloud use` default."
+)
+REFUSE_DEFAULT_CONNECT = (
+    "Connecting binds this repository to an organization, so it never guesses"
+    " from the stored `dct cloud use` default."
+)
 
 
 def resolve_org(
@@ -105,14 +107,13 @@ def resolve_org(
     config: CloudConfig,
     remotes: list[str],
     *,
-    strict: bool = False,
+    refuse_default: str | None = None,
 ) -> str:
     """The organization this call is about.
 
-    ``strict=True`` (destructive verbs) never returns ``config.org`` — only
-    an explicit ``--org`` or an unambiguous repo match may answer, so a
-    stale ``dct cloud use`` default cannot silently pick which org loses
-    data.
+    With ``refuse_default`` — the verb's reason for never answering from
+    ``config.org`` — only an explicit ``--org`` or an unambiguous repo match
+    may answer; the refusal leads with that reason.
     """
     if org_flag:
         return org_flag
@@ -125,8 +126,8 @@ def resolve_org(
             "This repository is connected to more than one organization."
             f" Name the one you mean:\n{_org_candidate_lines(matches)}"
         )
-    if strict:
-        raise ContextUnresolved(_destructive_context_message(_no_org_message(client)))
+    if refuse_default is not None:
+        raise ContextUnresolved(_no_org_message(client, refuse_default))
     if config.org:
         return config.org
     raise ContextUnresolved(_no_org_message(client))
@@ -139,15 +140,15 @@ def resolve_project(
     config: CloudConfig,
     remotes: list[str],
     *,
-    strict: bool = False,
+    refuse_default: str | None = None,
 ) -> CloudContext:
     """The organization and project this call is about.
 
-    ``strict=True`` (destructive verbs) never returns ``config.org`` or
-    ``config.project`` — only explicit flags or an unambiguous repo match
-    may answer. The ranking's "repo match outranks the stored default" step
-    is otherwise unchanged; strict mode simply removes the stored-default
-    step that would follow it.
+    ``refuse_default`` (the verb's reason, see ``resolve_org``) never
+    returns ``config.org`` or ``config.project`` — only explicit flags or an
+    unambiguous repo match may answer. The ranking's "repo match outranks
+    the stored default" step is otherwise unchanged; refusing simply removes
+    the stored-default step that would follow it.
     """
     if org_flag and project_flag:
         return CloudContext(org_flag, project_flag)
@@ -163,11 +164,9 @@ def resolve_project(
     if len(matches) == 1:
         return CloudContext(matches[0][0], matches[0][1])
 
-    if strict:
+    if refuse_default is not None:
         raise ContextUnresolved(
-            _destructive_context_message(
-                _unresolved_context_message(client, org_flag, project_flag)
-            )
+            _unresolved_context_message(client, org_flag, project_flag, refuse_default)
         )
 
     org = org_flag or config.org
@@ -214,22 +213,36 @@ def _org_candidate_lines(candidates: list[tuple[str, str]]) -> str:
     return "\n".join(f"  --org {org}" for org in sorted({o for o, _p in candidates}))
 
 
-def _no_org_message(client: CloudClient) -> str:
+def _no_org_message(client: CloudClient, refuse_default: str | None = None) -> str:
+    """The "no org" refusal, listing the caller's orgs to name.
+
+    A verb refusing the stored default (``refuse_default``) is not offered
+    ``dct cloud use`` as the remedy — following it would only re-run into
+    the same refusal.
+    """
     organizations = client.list_orgs().organizations
     if not organizations:
-        return (
+        body = (
             "You do not belong to a dbt charts Cloud organization yet. Create"
             " one with `dct cloud org create <name>`."
         )
-    listing = "\n".join(f"  {org.slug} ({org.name})" for org in organizations)
-    return (
-        "No organization selected. Pass --org, or set a default with"
-        f" `dct cloud use <org>`. Yours:\n{listing}"
-    )
+    else:
+        listing = "\n".join(f"  {org.slug} ({org.name})" for org in organizations)
+        remedy = (
+            "Pass --org."
+            if refuse_default is not None
+            else "No organization selected. Pass --org, or set a default with"
+            " `dct cloud use <org>`."
+        )
+        body = f"{remedy} Yours:\n{listing}"
+    return body if refuse_default is None else f"{refuse_default} {body}"
 
 
 def _unresolved_context_message(
-    client: CloudClient, org: str | None, project_flag: str | None
+    client: CloudClient,
+    org: str | None,
+    project_flag: str | None,
+    refuse_default: str | None = None,
 ) -> str:
     """The refusal for a call that resolved neither an org nor a project.
 
@@ -238,11 +251,13 @@ def _unresolved_context_message(
     projects and ask them to supply what they just supplied.
     """
     if project_flag and not org:
-        return _no_org_message(client)
-    return _no_project_message(client, org)
+        return _no_org_message(client, refuse_default)
+    return _no_project_message(client, org, refuse_default)
 
 
-def _no_project_message(client: CloudClient, org: str | None) -> str:
+def _no_project_message(
+    client: CloudClient, org: str | None, refuse_default: str | None = None
+) -> str:
     """Compose the "no project" refusal, listing every candidate to name.
 
     ``org`` may be ``None`` (nothing given) or an unvalidated slug — the
@@ -266,12 +281,19 @@ def _no_project_message(client: CloudClient, org: str | None) -> str:
         for project in client.list_projects(org_slug).projects
     ]
     if not candidates:
-        return (
+        # connect never reads the stored default, so the hint must not lean
+        # on it: name the org only when exactly one is in scope.
+        org_hint = org_slugs[0] if len(org_slugs) == 1 else "<org>"
+        body = (
             "No project to work on. Connect this repository with"
-            " `dct cloud project connect`."
+            f" `dct cloud project connect --org {org_hint}`."
         )
-    return (
-        "No project selected, and this repository matches none of the connected"
-        " ones. Name it, or set a default with `dct cloud use <org>/<project>`:"
-        f"\n{_candidate_lines(candidates)}"
-    )
+    elif refuse_default is None:
+        body = (
+            "No project selected, and this repository matches none of the"
+            " connected ones. Name it, or set a default with"
+            f" `dct cloud use <org>/<project>`:\n{_candidate_lines(candidates)}"
+        )
+    else:
+        body = f"Name the project:\n{_candidate_lines(candidates)}"
+    return body if refuse_default is None else f"{refuse_default} {body}"

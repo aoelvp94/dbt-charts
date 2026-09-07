@@ -9,7 +9,9 @@ type-based routing via the unified query interface.
 
 from __future__ import annotations
 
+import threading
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Final
 
 from dbt_charts.cli.filesystem_project import (
@@ -18,10 +20,20 @@ from dbt_charts.cli.filesystem_project import (
 from dbt_charts.core.attribution import attribute
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.board.normalized import VariableValues
-from dbt_charts.core.compile.models.query.normalized import AnyQuery, is_sql_query
+from dbt_charts.core.compile.models.query.normalized import (
+    AnyQuery,
+    SchemaQuery,
+    SqlQuery,
+    is_sql_query,
+)
 from dbt_charts.core.compile.models.source import (
+    FILE_SOURCE_TYPES,
     AttributedSourceConfig,
+    CsvSourceConfig,
     DuckDBSourceConfig,
+    JsonSourceConfig,
+    ParquetSourceConfig,
+    is_file_source,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
 
@@ -38,7 +50,9 @@ from dbt_charts.core.execute.adapters.base import (
     BaseAdapter,
     QueryParams,
     QueryResult,
+    apply_row_limit_truncation,
     handle_adapter_error,
+    resolve_effective_row_limit,
 )
 from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
 from dbt_charts.core.execute.observability import WarehouseObserver, notify_observers
@@ -53,13 +67,11 @@ from dbt_charts.core.project import Project
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Board
-    from dbt_charts.core.compile.models.source import (
-        CsvSourceConfig,
-        JsonSourceConfig,
-        ParquetSourceConfig,
-        ResolvedSourceConfig,
-    )
+    from dbt_charts.core.compile.models.source import ResolvedSourceConfig
     from dbt_charts.core.execute.adapters.sql_adapter import PreparedSql
+    from dbt_charts.core.execute.file_source_materializer import (
+        FileSourceMaterializer,
+    )
     from dbt_charts.core.execute.source_resolver import SourceResolver
 
 # Empty source config used as the default when the caller has no project sources to
@@ -89,6 +101,8 @@ def build_adapter_registry(
     allow_external_access_in_readonly: bool = False,
     max_workers: int | None = None,
     observers: list[WarehouseObserver] | None = None,
+    file_materializer: FileSourceMaterializer | None = None,
+    file_materializer_factory: Callable[[], FileSourceMaterializer] | None = None,
 ) -> AdapterRegistry:
     """Build an AdapterRegistry with standard adapters.
 
@@ -128,6 +142,16 @@ def build_adapter_registry(
             warehouse worker threads). None falls back to the execution-config
             default. Serve passes its resolved max_workers so the persisted
             registry's pool matches the render-time parallelism.
+        file_materializer: Pre-built materializer for CSV/JSON/Parquet file
+            sources. A plain pass-through — this function invents no local
+            default when it is None; the caller (ProjectSession, a host's own
+            composition root) decides via
+            ``file_source_materializer.resolve_local_file_materializer_factory``.
+        file_materializer_factory: Lazy builder for the file-source
+            materializer, used instead of ``file_materializer`` when it should
+            be built only on first use. Exactly one of the two is normally
+            set; passing neither leaves file-source queries refused by
+            ``AdapterRegistry.execute``.
     """
     from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
     from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
@@ -141,6 +165,8 @@ def build_adapter_registry(
         project_sources=project.sources,
         resolver=resolver,
         observers=observers,
+        file_materializer=file_materializer,
+        file_materializer_factory=file_materializer_factory,
     )
 
     def _should_register(types: set[str]) -> bool:
@@ -251,6 +277,8 @@ class AdapterRegistry:
         project_sources: ProjectSourcesConfig = _EMPTY_PROJECT_SOURCES,
         resolver: SourceResolver | None = None,
         observers: list[WarehouseObserver] | None = None,
+        file_materializer: FileSourceMaterializer | None = None,
+        file_materializer_factory: Callable[[], FileSourceMaterializer] | None = None,
     ) -> None:
         """Initialize adapter registry.
 
@@ -263,6 +291,16 @@ class AdapterRegistry:
             resolver: Source resolver instance. Defaults to DefaultSourceResolver.
             observers: Per-registry observer callables. Called after each query with
                 (warehouse_type, status, duration_seconds). No module global state.
+            file_materializer: Pre-built materializer for CSV/JSON/Parquet file
+                sources (mirrors ``Executor``'s same-named parameter). When
+                set, a file-source ``SqlQuery`` is routed through it instead of
+                being refused.
+            file_materializer_factory: Lazy builder for the file-source
+                materializer, built at most once on first use (see
+                ``_get_file_materializer``). Exactly one of
+                ``file_materializer`` / ``file_materializer_factory`` is
+                normally set; both ``None`` leaves file-source queries
+                refused.
         """
         self._adapters: list[BaseAdapter] = []
         self._observers: list[WarehouseObserver] = list(observers) if observers else []
@@ -277,6 +315,15 @@ class AdapterRegistry:
         # connection matches the execute connection. DuckDB rejects a second
         # connection to the same file opened with a different config.
         self.schema_introspection_duckdb_config: dict[str, Any] | None = None
+        self._file_materializer = file_materializer
+        self._file_materializer_factory = file_materializer_factory
+        # The factory-built materializer, tracked separately from an injected
+        # one: the registry built this itself, so it — and only it — is
+        # closed by close(). An injected materializer (Cloud's, shared with
+        # the session that built it) is closed by whoever owns it, not us.
+        self._built_file_materializer: FileSourceMaterializer | None = None
+        # Guards lazy build of the shared materializer (concurrent callers).
+        self._materializer_lock = threading.Lock()
 
     @property
     def project(self) -> Project:
@@ -300,11 +347,39 @@ class AdapterRegistry:
             self._type_index[query_type].append(adapter)
 
     def close(self) -> None:
-        """Close adapters that hold external resources (e.g. DuckDB file handles)."""
+        """Close adapters that hold external resources (e.g. DuckDB file handles).
+
+        Also closes the file-source materializer the registry itself built
+        via ``file_materializer_factory``, if any — its cache backend may
+        hold a DuckDB handle. An *injected* materializer (``file_materializer``
+        at construction) is never closed here: the registry doesn't own it,
+        the caller that built and handed it in does (Cloud shares one
+        materializer across the registry and the session).
+        """
         for adapter in self._adapters:
             close = getattr(adapter, "close", None)
             if close is not None:
                 close()
+        if self._built_file_materializer is not None:
+            self._built_file_materializer.close()
+
+    def _get_file_materializer(self) -> FileSourceMaterializer | None:
+        """Return the registry's file-source materializer, building it lazily.
+
+        Mirrors ``Executor._get_file_materializer``: an injected materializer
+        is returned directly; a factory-backed one is built at most once,
+        under a lock, so concurrent callers share a single instance. Returns
+        None when neither was supplied — the registry has no file-source
+        support wired.
+        """
+        if self._file_materializer is not None:
+            return self._file_materializer
+        if self._file_materializer_factory is None:
+            return None
+        with self._materializer_lock:
+            if self._built_file_materializer is None:
+                self._built_file_materializer = self._file_materializer_factory()
+        return self._built_file_materializer
 
     def get_adapters_for_type(self, query_type: str) -> list[BaseAdapter]:
         """Get all adapters that support a given query type.
@@ -404,6 +479,75 @@ class AdapterRegistry:
             # time _query_error_from_result rebuilt the QueryError.
             return handle_adapter_error("Source resolution", exc)
 
+        # SqlQuery and SchemaQuery are the two query types that can carry a
+        # source (resolve_query_source returns None for anything else) — the
+        # isinstance below narrows to read `.source`, not a second condition.
+        # SchemaQuery stays refused unconditionally: schema introspection for
+        # file sources (the /data explorer, or an authored `type: schema`
+        # query) is out of scope here, deferred to a follow-up task. A
+        # SqlQuery with a materializer configured dispatches to it below, after
+        # composition (see _execute_file_source); with none configured it
+        # refuses the same way SchemaQuery always does.
+        if source_config is not None and is_file_source(source_config):
+            assert isinstance(query, SqlQuery | SchemaQuery)
+            if isinstance(query, SchemaQuery):
+                return QueryResult(
+                    data=[],
+                    error=(
+                        f"Source {query.source!r} is a {source_config.type} file "
+                        "source. Schema introspection (the /data explorer, or "
+                        "an authored `type: schema` query) is not yet "
+                        "supported for file sources."
+                    ),
+                )
+
+            materializer = self._get_file_materializer()
+            if materializer is None:
+                return QueryResult(
+                    data=[],
+                    error=(
+                        f"Source {query.source!r} is a {source_config.type} "
+                        "file source, but no file-source materializer is "
+                        "configured for this session. Pass one via "
+                        "AdapterRegistry(file_materializer=...) or "
+                        "ProjectSession(file_materializer=...) to run ad-hoc "
+                        "queries against file sources."
+                    ),
+                )
+
+            assert isinstance(
+                source_config, CsvSourceConfig | JsonSourceConfig | ParquetSourceConfig
+            )
+            # Same composition every adapter gets: {{ queries.X }} refs expand
+            # and variables render before the materializer ever sees the SQL —
+            # dispatching from any point above this would hand it an
+            # unresolved template (materialize_and_run's own render step
+            # substitutes plain variables but does not expand query refs).
+            # "duckdb" is the placeholder style materialize_and_run's own
+            # internal render would have used — composition here replaces
+            # that render, not layers a second one on top of it.
+            composed = self._compose_query_refs(
+                query,
+                variables,
+                params,
+                board=board,
+                source_config=source_config,
+                render_dialect=get_dialect("duckdb"),
+            )
+            if isinstance(composed, QueryResult):
+                return composed
+            query, params = composed
+            assert isinstance(query, SqlQuery) and query.source is not None
+            return self._execute_file_source(
+                materializer,
+                query,
+                variables,
+                params,
+                source_config,
+                board=board,
+                query_name=query_name,
+            )
+
         # Single-pass routing on (query_type, resolved source type). source_config
         # is already resolved above, so each adapter's can_execute claims only the
         # source it owns — no concrete-class introspection here.
@@ -466,6 +610,69 @@ class AdapterRegistry:
                 getattr(adapter, "profile_type", None),
                 status,
                 time.perf_counter() - start,
+            )
+
+    def _execute_file_source(
+        self,
+        materializer: FileSourceMaterializer,
+        query: SqlQuery,
+        variables: VariableValues | None,
+        params: QueryParams,
+        source_config: CsvSourceConfig | JsonSourceConfig | ParquetSourceConfig,
+        board: Board | None,
+        query_name: str,
+    ) -> QueryResult:
+        """Run a composed file-source SqlQuery through the materializer.
+
+        Called only after ``_compose_query_refs`` — ``query.sql`` already has
+        any ``{{ queries.X }}`` reference expanded, and *params* is set
+        whenever composition actually ran (a board with its own queries);
+        otherwise *params* is None and the materializer renders *variables*
+        itself, same as the render path.
+
+        Applies the same ``query.limit`` / ``execution.max_rows`` contract
+        ``SqlAdapter``/``DuckDBAdapter`` honour, but not the same mechanism:
+        those bound the driver cursor itself, so an over-the-ceiling result
+        is never fully fetched. ``materialize_and_run`` has no cursor to
+        bound — it returns every row the materialized cache holds, and this
+        method slices to ``row_fetch_limit`` afterward. ``truncated_reason``
+        is set only when the ceiling (not the author's own limit) was the
+        binding value.
+        """
+        assert query.source is not None  # narrowed by the caller
+        row_fetch_limit = resolve_effective_row_limit(query.limit)
+        status = "error"
+        start = time.perf_counter()
+        # No bindings is a valid state, not a caller bug — mirrors Executor's
+        # own Step 4c call.
+        bound_variables = variables or {}  # type-state: silent_fallback — see above
+        try:
+            scope = {"query": query_name}
+            if board is not None:
+                scope["board"] = board.id
+            authored = (
+                source_config.attribution
+                if isinstance(source_config, AttributedSourceConfig)
+                else {}
+            )
+            with attribute(scope, authored):
+                try:
+                    rows = materializer.materialize_and_run(
+                        source_config,
+                        query.sql,
+                        bound_variables,
+                        query.source,
+                        params=params,
+                        strict=not query.lenient_variables,
+                    )
+                except (DbtChartsError, RuntimeError, OSError, ValueError) as exc:
+                    return handle_adapter_error("File-source execution", exc)
+            rows, truncated_reason = apply_row_limit_truncation(rows, row_fetch_limit)
+            status = "success"
+            return QueryResult(data=rows, truncated_reason=truncated_reason)
+        finally:
+            notify_observers(
+                self._observers, source_config.type, status, time.perf_counter() - start
             )
 
     def _compose_query_refs(
@@ -610,7 +817,7 @@ class AdapterRegistry:
 
         result: dict[str, CsvSourceConfig | JsonSourceConfig | ParquetSourceConfig] = {}
         for name, raw in self._sources.all().items():
-            if raw.get("type") not in {"csv", "json", "parquet"}:
+            if raw.get("type") not in FILE_SOURCE_TYPES:
                 continue
             try:
                 cfg = parse_source_config(raw)

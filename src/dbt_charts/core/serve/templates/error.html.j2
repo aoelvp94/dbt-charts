@@ -99,7 +99,8 @@
     </style>
   </head>
   <body>
-
+{% if chrome %}{{ chrome | safe }}
+{% endif -%}
 {%- if result.board_error %}
     {# --- Layout: single board-error panel --- #}
     <div class="panel">

@@ -137,7 +137,53 @@ def test_a_body_that_is_not_the_contract_is_a_loud_failure() -> None:
     with client(handler) as cloud, pytest.raises(UnexpectedResponse) as caught:
         cloud.list_orgs()
 
-    assert "https://cloud.example/api/orgs" in str(caught.value)
+    message = str(caught.value)
+    assert "https://cloud.example/api/orgs" in message
+    assert "not the dbt charts Cloud API" in message
+    assert "upgrade" not in message
+
+
+def test_json_missing_required_fields_blames_an_older_cloud() -> None:
+    """JSON that parsed and then failed only on MISSING fields -- here Cloud
+    simply hasn't deployed a field this dct's contract already requires --
+    means Cloud is BEHIND this dct, not ahead of it (FR-58). Telling the user
+    to "upgrade dbt-charts" here is backwards: upgrading only requires more
+    fields Cloud still won't send."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"projects": [{"slug": "analytics"}]})
+
+    with client(handler) as cloud, pytest.raises(UnexpectedResponse) as caught:
+        cloud.list_projects("acme-data")
+
+    message = str(caught.value)
+    assert "Cloud is older than this dct" in message
+    assert "upgrade dbt-charts" not in message
+
+
+def test_json_with_a_wrong_field_type_blames_a_newer_cloud() -> None:
+    """A field that parsed but with a type/shape this dct has never seen --
+    not merely absent -- means Cloud is AHEAD of this dct, so the upgrade
+    advice is the right one here."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "stage": "not-a-real-stage",
+                "next_step": None,
+                "connection_count": 1,
+                "tested_connection_count": 1,
+                "projects": [],
+            },
+        )
+
+    with client(handler) as cloud, pytest.raises(UnexpectedResponse) as caught:
+        cloud.org_status("acme-data")
+
+    message = str(caught.value)
+    assert "Cloud is newer than this dct" in message
+    assert "upgrade dbt-charts" in message
 
 
 def test_an_error_body_that_is_not_the_contract_is_a_loud_failure() -> None:
@@ -147,7 +193,41 @@ def test_an_error_body_that_is_not_the_contract_is_a_loud_failure() -> None:
     with client(handler) as cloud, pytest.raises(UnexpectedResponse) as caught:
         cloud.list_orgs()
 
-    assert "502" in str(caught.value)
+    message = str(caught.value)
+    assert "502" in message
+    assert "not the dbt charts Cloud API" in message
+    assert "upgrade" not in message
+
+
+def test_a_field_this_dct_has_never_heard_of_is_ignored() -> None:
+    """Cloud deploys continuously; this client is a PyPI install that lags it.
+    A response field added after this dct shipped must not stop it reading
+    the fields it does know -- at any depth of the body."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "projects": [
+                    {
+                        "slug": "analytics",
+                        "name": "Analytics",
+                        "repo_label": "acme/analytics",
+                        "trunk_branch": "main",
+                        "work_branch": "dct",
+                        "git_subdirectory": "",
+                        "unmapped_source_count": 0,
+                        "added_in_a_later_release": True,
+                    }
+                ],
+                "also_added_in_a_later_release": {"nested": 1},
+            },
+        )
+
+    with client(handler) as cloud:
+        projects = cloud.list_projects("acme-data").projects
+
+    assert [(p.slug, p.unmapped_source_count) for p in projects] == [("analytics", 0)]
 
 
 def test_no_token_is_refused_before_any_request() -> None:
@@ -248,7 +328,7 @@ def test_every_verb_targets_its_documented_endpoint() -> None:
         cloud.list_orgs()
         cloud.list_projects("acme")
         cloud.sync_project("acme", "an")
-        cloud.render_project("acme", "an")
+        cloud.render_project("acme", "an", force=False)
         cloud.list_sources("acme", "an")
         cloud.list_connections("acme")
         cloud.org_status("acme")
@@ -353,3 +433,15 @@ def test_invite_member_omits_the_role_field_when_none() -> None:
         cloud.invite_member("acme", "a@example.com")
 
     assert seen == [{"emails": "a@example.com"}]
+
+
+def test_connect_url_declares_the_terminal_landing() -> None:
+    """Every ``cloud_client`` caller finishes the project itself from the
+    ``RepoPick`` row, so the browser must land on the terminal page after the
+    pick, never on the New Project form. The flag is unconditional: drop it and
+    a user who presses Create Project makes a duplicate of the CLI's project."""
+    with client(lambda request: httpx.Response(200)) as cloud:
+        assert (
+            cloud.connect_url("acme")
+            == "https://cloud.example/acme/github/connect/?landing=terminal"
+        )

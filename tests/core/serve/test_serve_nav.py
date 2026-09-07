@@ -529,3 +529,71 @@ def test_nav_failure_does_not_break_the_board(
     assert response.status_code == 200
     assert "<svg" in response.text
     assert "dbt-nav" not in response.text
+
+
+_BROKEN_BOARD = "title: Broken\n"  # no layout — always fails Board validation
+
+
+def test_error_page_includes_nav(tmp_path: Path) -> None:
+    """A board that fails to compile still renders the nav chrome, with a link
+    back to a sibling board — the user is never stranded on a dead-end page."""
+    project = _project(tmp_path)
+    (project / "charts" / "broken.yml").write_text(_BROKEN_BOARD)
+    with TestClient(
+        create_server(FilesystemProject(project)),
+        raise_server_exceptions=False,
+    ) as client:
+        response = client.get("/broken")
+    assert response.status_code == 422
+    assert "dbt-nav" in response.text
+    assert 'href="/overview"' in response.text
+
+
+def test_error_page_omits_nav_when_server_nav_false(tmp_path: Path) -> None:
+    """`server: {nav: false}` suppresses the nav on error pages too."""
+    project = _project(tmp_path)
+    (project / "charts" / "broken.yml").write_text(_BROKEN_BOARD)
+    (project / "dbt_charts.yml").write_text("server:\n  nav: false\n")
+    with TestClient(
+        create_server(FilesystemProject(project)),
+        raise_server_exceptions=False,
+    ) as client:
+        response = client.get("/broken")
+    assert response.status_code == 422
+    assert "dbt-nav" not in response.text
+
+
+def test_download_error_page_includes_nav(tmp_path: Path) -> None:
+    """`?format=` downloads share the board error page, so they share its nav.
+
+    This route is reachable straight from the nav's own download menu — without
+    the chrome it is the same dead end the board page used to be.
+    """
+    project = _project(tmp_path)
+    (project / "charts" / "broken.yml").write_text(_BROKEN_BOARD)
+    with TestClient(
+        create_server(FilesystemProject(project)),
+        raise_server_exceptions=False,
+    ) as client:
+        response = client.get("/broken.svg")
+    assert response.status_code == 422
+    assert "dbt-nav" in response.text
+    assert 'href="/overview"' in response.text
+
+
+def test_download_error_page_omits_nav_when_server_nav_false(tmp_path: Path) -> None:
+    """`server: {nav: false}` reaches the download error page too.
+
+    `_render_board_download` defaults `include_nav` to True, so this pins the
+    caller actually forwarding the server's setting rather than the default.
+    """
+    project = _project(tmp_path)
+    (project / "charts" / "broken.yml").write_text(_BROKEN_BOARD)
+    (project / "dbt_charts.yml").write_text("server:\n  nav: false\n")
+    with TestClient(
+        create_server(FilesystemProject(project)),
+        raise_server_exceptions=False,
+    ) as client:
+        response = client.get("/broken.svg")
+    assert response.status_code == 422
+    assert "dbt-nav" not in response.text

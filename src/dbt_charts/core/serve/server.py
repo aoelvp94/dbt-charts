@@ -280,8 +280,12 @@ def _error_palette_for_theme(theme_name: str | None = None) -> dict[str, str]:
     }
 
 
-def _error_palette_for_board(board: ProjectPath) -> dict[str, str]:
-    """Return structured-error page CSS values for a board file's theme.
+def _board_theme_name(board: ProjectPath) -> str | None:
+    """Return a board file's resolved ``theme:``, for callers with no compile result.
+
+    Both the error page's palette and its nav chrome need this, so it returns the
+    theme rather than a finished palette — a nav themed differently from the page
+    it sits on is worse than an unthemed one.
 
     Intentionally compiles without the markdown_metadata_table flag: only the
     resolved theme is read here, and the metadata header table does not affect
@@ -291,8 +295,8 @@ def _error_palette_for_board(board: ProjectPath) -> dict[str, str]:
 
     result = compile_file(board.read_board())
     if result.success and result.board is not None:
-        return _error_palette_for_theme(result.board.theme)
-    return _error_palette_for_theme()
+        return result.board.theme
+    return None
 
 
 def _render_structured_errors_html(
@@ -300,8 +304,14 @@ def _render_structured_errors_html(
     request_path: str,
     status_override: int | None = None,
     error_palette: Mapping[str, str] | None = None,
+    chrome: str = "",
 ) -> HTMLResponse:
-    """Render a BoardRenderResult error result as a structured HTML page."""
+    """Render a BoardRenderResult error result as a structured HTML page.
+
+    ``chrome`` is the nav fragment from ``_error_nav`` — empty for the error
+    sites with no directory to anchor a nav on (``/inspect/*``, the app-wide
+    handler), so those pages render exactly as before.
+    """
 
     if status_override is not None:
         status = status_override
@@ -325,6 +335,7 @@ def _render_structured_errors_html(
         board_html=board_html,
         palette=error_palette or _error_palette_for_theme(),
         error_guide_url=f"{docs_site_url()}/{ERROR_GUIDE_PATH}/",
+        chrome=chrome,
     )
     return HTMLResponse(content=html, status_code=status)
 
@@ -423,6 +434,33 @@ def _nav_content_left(board: Board | None) -> str:
     return f"{float(frame.margin) + float(frame.card_padding):g}"
 
 
+def _error_nav(
+    nav_dir: ProjectDirectory,
+    url_mount_dir: str,
+    current_label: str,
+    include_nav: bool,
+    board_theme: str | None = None,
+) -> str:
+    """Nav chrome for an error page, so a failed board is never a dead end.
+
+    No download menu — a board that did not render has nothing to export, and
+    every format would land back on this same page — which is why a caller holding
+    a success-path fragment builds a second one here rather than reusing it. The
+    directory listing's ``except`` branch has no fragment to reuse at all: it is
+    reachable before one is ever built.
+    """
+    if not include_nav:
+        return ""
+    return _render_nav_html(
+        nav_dir=nav_dir,
+        url_mount_dir=url_mount_dir,
+        current_label=current_label,
+        board_theme=board_theme,
+        content_left="",
+        show_download=False,
+    )
+
+
 def _render_board_file(
     file_path: ProjectPath,
     variables: dict[str, Any],
@@ -451,6 +489,7 @@ def _render_board_file(
             adapter_registry=adapter_registry,
             max_workers=max_workers,
             result_cache=result_cache,
+            include_nav=include_nav,
         )
 
     link_context = _build_link_context(
@@ -514,7 +553,14 @@ def _render_board_file(
     return _render_structured_errors_html(
         result,
         request_path=file_fspath.name,
-        error_palette=_error_palette_for_board(file_path),
+        error_palette=_error_palette_for_theme(board_theme),
+        chrome=_error_nav(
+            file_path.parent,
+            url_mount_dir,
+            file_fspath.stem,
+            include_nav,
+            board_theme,
+        ),
     )
 
 
@@ -535,6 +581,7 @@ def _render_board_download(
     adapter_registry: AdapterRegistry,
     max_workers: int | None = None,
     result_cache: QueryResultCache | None = None,
+    include_nav: bool = True,
 ) -> Response:
     """Render a board in the requested binary/text format and return as attachment.
 
@@ -554,11 +601,20 @@ def _render_board_download(
     )
 
     file_fspath = project.root / file_path.relpath
+    url_mount_dir = _url_mount_dir(file_fspath, project.root)
     if result.status == "failed" or not result.data:
+        board_theme = _board_theme_name(file_path)
         return _render_structured_errors_html(
             result,
             request_path=file_fspath.name,
-            error_palette=_error_palette_for_board(file_path),
+            error_palette=_error_palette_for_theme(board_theme),
+            chrome=_error_nav(
+                file_path.parent,
+                url_mount_dir,
+                file_fspath.stem,
+                include_nav,
+                board_theme,
+            ),
         )
 
     filename = f"{file_fspath.stem}.{fmt}"
@@ -736,6 +792,9 @@ def _render_directory_listing(
     from dbt_charts.core.compile.template.jinja import resolve_jinja_template
     from dbt_charts.core.render.dir_context import list_dir_entries
 
+    # The root directory has an empty name; "/" is how the nav trigger labels it.
+    nav_label = dir_handle.name or "/"  # type-state: silent_fallback — root's label
+
     listing_lines: list[str] = []
     if url_path:
         parent_parts = url_path.strip("/").split("/")[:-1]
@@ -778,7 +837,7 @@ def _render_directory_listing(
             _render_nav_html(
                 nav_dir=dir_handle,
                 url_mount_dir=url_mount_dir,
-                current_label=dir_handle.name or "/",
+                current_label=nav_label,
                 board_theme=None,
                 content_left=_nav_content_left(compile_result.board),
                 show_download=False,
@@ -803,7 +862,9 @@ def _render_directory_listing(
             data = result.data
             html = data.decode("utf-8") if isinstance(data, bytes) else str(data)
             return HTMLResponse(content=html)
-        return _render_structured_errors_html(result, request_path=url_path)
+        return _render_structured_errors_html(
+            result, request_path=url_path, chrome=nav_fragment
+        )
     except (DbtChartsError, ValueError, FileNotFoundError) as e:
         if logger.isEnabledFor(logging.DEBUG):
             raise
@@ -812,7 +873,16 @@ def _render_directory_listing(
             err = BoardRenderResult(status="failed", board_error=e.to_diagnostic())
         else:
             err = _synthetic_error(str(e))
-        return _render_structured_errors_html(err, request_path=url_path)
+        return _render_structured_errors_html(
+            err,
+            request_path=url_path,
+            chrome=_error_nav(
+                dir_handle,
+                url_mount_dir,
+                nav_label,
+                include_nav,
+            ),
+        )
 
 
 def _render_registered_view_response(
@@ -849,7 +919,7 @@ def _render_registered_view_response(
     if result is None:
         return None
     if isinstance(result, RenderSuccess):
-        return HTMLResponse(content=result.html)
+        return HTMLResponse(content=result.output)
     # PipelineRenderError: map BoardRenderResult to an error page response.
     assert isinstance(result, PipelineRenderError)
     return _render_structured_errors_html(result.dashboard, request_path=request_path)

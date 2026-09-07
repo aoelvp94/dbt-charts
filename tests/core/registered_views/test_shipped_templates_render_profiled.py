@@ -144,7 +144,7 @@ def _render(project: FilesystemProject, path: str) -> str:
     )
     assert result is not None, path
     assert isinstance(result, RenderSuccess), f"{path}: {result}"
-    return result.html
+    return result.output
 
 
 @pytest.mark.parametrize(

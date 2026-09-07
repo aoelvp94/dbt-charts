@@ -6,7 +6,9 @@ non-numeric, histogram pre-aggregated, label/ticks validation, percent range,
 emitter not found, labels field not found, scale domain, concat overshoot,
 chart painted no marks, pie null theta, pie negative theta, multiples +
 endpoint labels, mirror + endpoint labels, multiples + support_table,
-multiples independent-scale + mirror, gap-fill bucket collision.
+multiples independent-scale + mirror, gap-fill bucket collision,
+endpoint labels + unorderable sort, endpoint labels + negative stack,
+layer axis position + endpoint labels.
 
 Warning codes: every render-time detector code, declared here (not in the
 detector modules, which sit above this leaf) so the registry is complete on
@@ -784,6 +786,81 @@ ERR_MIRROR_ENDPOINT_LABELS = REGISTRY.register(
     )
 )
 
+ERR_ENDPOINT_LABELS_UNORDERABLE_SORT = REGISTRY.register(
+    ErrorCode(
+        code="ERR-ENDPOINT-LABELS-UNORDERABLE-SORT",
+        domain="render",
+        title="sort by a non-numeric column cannot be combined with stacked endpoint labels",
+        message_template=(
+            "Chart {chart_id!r}: chart.sort by {sort_by!r} cannot be "
+            "combined with stacked bar endpoint labels — the label rail "
+            "reproduces Vega-Lite's domain order by totalling that column "
+            "per category, and it carries no numeric values. Sort by a "
+            "measure instead, or set style.endpoint_labels.visible: false "
+            "on this chart."
+        ),
+        doc=(
+            "Fired when a stacked bar chart authors `sort:` by a column "
+            "that carries no numeric values while its endpoint-label rail "
+            "is visible. The rail reproduces Vega-Lite's own domain order "
+            "by summing the sort field per category (VL's default `sum` "
+            "aggregation); on a non-numeric column VL concatenates the "
+            "strings instead, an order the rail cannot reproduce, so it "
+            "would anchor on a sequence VL never actually draws. Sort by a "
+            "measure, or turn the rail off with "
+            "`style.endpoint_labels.visible: false`."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_ENDPOINT_LABELS_NEGATIVE_STACK = REGISTRY.register(
+    ErrorCode(
+        code="ERR-ENDPOINT-LABELS-NEGATIVE-STACK",
+        domain="render",
+        title="negative values are not supported for stacked endpoint labels",
+        message_template=(
+            "Chart {chart_id!r}: negative values are not supported for "
+            "stacked bar/area endpoint labels — they break the "
+            "cumulative-midpoint computation. Set "
+            "style.endpoint_labels.visible: false on this chart."
+        ),
+        doc=(
+            "Fired when a stacked bar or area chart's data carries a "
+            "negative measure while its endpoint-label rail is visible. "
+            "The rail anchors each label at its segment's cumulative "
+            "midpoint, a computation that assumes every segment in the "
+            "stack contributes in the same direction; a negative value "
+            "crosses zero and breaks it. Turn the rail off with "
+            "`style.endpoint_labels.visible: false`."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_ENDPOINT_LABELS_CENTER_STACK = REGISTRY.register(
+    ErrorCode(
+        code="ERR-ENDPOINT-LABELS-CENTER-STACK",
+        domain="render",
+        title="stack: center is not supported for horizontal endpoint labels",
+        message_template=(
+            "Chart {chart_id!r}: stack: center is not supported for horizontal "
+            "stacked bar endpoint labels — the rail anchors on the cumulative "
+            "(0..Σ) axis, which a center stack (-Σ/2..+Σ/2) does not have. Use "
+            "stack: zero, or set style.endpoint_labels.visible: false on this "
+            "chart."
+        ),
+        doc=(
+            "Fired when a horizontal stacked bar chart uses `stack: center` "
+            "while its endpoint-label rail is forced on. The rail anchors each "
+            "label at its segment's cumulative midpoint from zero; a center "
+            "stack has no such axis. Use `stack: zero`, or turn the rail off "
+            "with `style.endpoint_labels.visible: false`."
+        ),
+        docs_topic="charts",
+    )
+)
+
 ERR_MIRROR_MULTI_SERIES = REGISTRY.register(
     ErrorCode(
         code="ERR-MIRROR-MULTI-SERIES",
@@ -834,6 +911,37 @@ ERR_LAYER_AXIS_POSITION_ORIENTATION = REGISTRY.register(
             "the layer against a side the author did not ask for."
         ),
         summary=("Fired when a layer sets `axis_y.position` on a horizontal base."),
+        docs_topic="charts",
+    )
+)
+
+ERR_LAYER_AXIS_POSITION_ENDPOINT_LABELS = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LAYER-AXIS-POSITION-ENDPOINT-LABELS",
+        domain="render",
+        title="axis_y.position on a layer cannot be combined with endpoint labels",
+        message_template=(
+            "Chart {chart_id!r}: style.endpoint_labels.visible is not "
+            "supported on a layered chart whose layers pin an explicit "
+            "axis_y.position — the label rail anchors on one shared "
+            "y-scale, and a dual-axis layer renders on a different one. "
+            "Remove the per-layer axis_y.position override, or set "
+            "style.endpoint_labels.visible: false on this chart."
+        ),
+        doc=(
+            "Fired when a layered chart's endpoint-label rail is visible "
+            "(authored or theme-set) while one of its layers pins its own "
+            "`axis_y.position`. The rail anchors every layer's labels on "
+            "the base chart's single shared y-scale; a layer with a pinned "
+            "`axis_y.position` is a genuine dual-axis layer rendering on a "
+            "different scale, which the rail has no way to represent. "
+            "Remove the per-layer `axis_y.position`, or turn the rail off "
+            "with `style.endpoint_labels.visible: false`."
+        ),
+        summary=(
+            "Fired when a layered chart's endpoint-label rail is visible "
+            "while one of its layers pins its own axis_y.position."
+        ),
         docs_topic="charts",
     )
 )

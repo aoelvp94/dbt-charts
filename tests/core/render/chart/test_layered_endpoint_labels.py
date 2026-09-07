@@ -319,6 +319,10 @@ def test_layered_stacked_bar_endpoint_ink_matches_base_stack_palette(make_chart)
 
 
 def test_dual_axis_layer_raises(make_chart):
+    from dbt_charts.core.diagnostics.codes_render import (
+        ERR_LAYER_AXIS_POSITION_ENDPOINT_LABELS,
+    )
+
     chart = make_chart(
         "bar",
         x="month",
@@ -333,8 +337,11 @@ def test_dual_axis_layer_raises(make_chart):
         ],
         style={"endpoint_labels": {"visible": True}},
     )
-    with pytest.raises(ChartDataError):
+    with pytest.raises(ChartDataError) as exc_info:
         _resolve_and_render(chart, _bar_with_layers_data())
+    err = exc_info.value
+    assert err.code is ERR_LAYER_AXIS_POSITION_ENDPOINT_LABELS
+    assert "style.endpoint_labels.visible" in str(err)
 
 
 # --------------------------------------------------------------------------

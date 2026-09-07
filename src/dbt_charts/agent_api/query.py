@@ -402,35 +402,10 @@ def query_board(
     sql = query.sql if isinstance(query, SqlQuery) else None
     noted = query.notes
 
-    # Detect file sources before dispatching — the adapter path has no materializer
-    # and would fall through to SqlAdapter with a cryptic dbt error. File-source
-    # queries require an Executor with a FileSourceMaterializer (the render path).
-    if isinstance(query, SqlQuery) and query.source is not None:
-        raw_source = board.sources.get(query.source)
-        if raw_source is not None:
-            from dbt_charts.core.compile.models.source import (
-                is_file_source,
-                parse_source_config,
-            )
-
-            try:
-                cfg = parse_source_config(raw_source)
-            except Exception:  # noqa: BLE001 — parse failure → not a file source
-                cfg = None
-            if cfg is not None and is_file_source(cfg):
-                return _fail(
-                    name,
-                    resolved_display,
-                    [
-                        f"Query '{name}' uses a file source (type: {cfg.type!r}). "
-                        "File-source queries are only supported in the render path "
-                        "(dct render / dct serve). "
-                        "Use dct render to preview this dashboard."
-                    ],
-                    sql=sql,
-                    notes=noted,
-                )
-
+    # A SQL query against a file source runs through adapter_registry.execute's
+    # own materializer dispatch (or its refusal, when no materializer is
+    # configured for this registry) and surfaces through exec_result.error
+    # below — one dispatch point, not a second copy here.
     try:
         exec_result = adapter_registry.execute(
             query, variables=merged_vars or None, board=board, query_name=name

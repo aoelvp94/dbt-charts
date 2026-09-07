@@ -8,7 +8,7 @@ FastAPI, no starlette. The server handler in serve/server.py calls this and
 maps the typed result to HTTP responses.
 
 Public API:
-- ``RenderSuccess`` — successful render; carries the HTML output string.
+- ``RenderSuccess`` — successful render; carries the rendered output string.
 - ``RenderError`` — failed render; carries a ``BoardRenderResult`` ready for
   the server to pass to ``_render_structured_errors_html``.
 - ``render_registered_view(request_path, project, adapter_registry, ...)``
@@ -20,7 +20,7 @@ Public API:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from dbt_charts.core.registered_views.expander import (
     ExpansionError,
@@ -36,7 +36,13 @@ from dbt_charts.core.registered_views.router import RouteRouter
 
 if TYPE_CHECKING:
     from dbt_charts.core.board import BoardRenderResult
+    from dbt_charts.core.compile.models.board.normalized import Board
+    from dbt_charts.core.compile.models.query.normalized import AnyQuery
+    from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
     from dbt_charts.core.execute.cache_backend import QueryResultCache
+    from dbt_charts.core.execute.file_source_materializer import (
+        FileSourceMaterializer,
+    )
     from dbt_charts.core.project import Project
     from dbt_charts.core.render.board_links import LinkContext
 
@@ -54,10 +60,16 @@ class RenderSuccess:
     """Successful registered-view render.
 
     Attributes:
-        html: The rendered HTML output.
+        output: The rendered output, in whatever ``format`` the caller
+            requested (a standalone HTML document by default; a bare SVG
+            fragment when the caller passes ``format="svg"``).
+        title: The compiled board's own title, so a caller composing its own
+            page chrome (Cloud) doesn't have to re-derive it by parsing a
+            ``data-dbt-page-title`` attribute out of the rendered output.
     """
 
-    html: str
+    output: str
+    title: str = ""
 
 
 @dataclass
@@ -79,47 +91,29 @@ class RenderError:
 RenderResult = RenderSuccess | RenderError
 
 
-def render_registered_view(
+@dataclass
+class _CompiledView:
+    """The board a registered view compiled to, ready for an Executor.
+
+    Holds the output of steps 1-3 of the pipeline (match, pre-template
+    queries, expand, compile) so step 4 (execute + render) can build the
+    ``Executor`` from it.
+    """
+
+    board: Board
+    query_registry: dict[str, AnyQuery]
+
+
+def _compile_registered_view(
     request_path: str,
-    project: Project,
-    adapter_registry: Any,
+    adapter_registry: AdapterRegistry,
     result_cache: QueryResultCache | None,
-    max_workers: int | None = None,
-    link_context: LinkContext | None = None,
-    file_materializer: Any | None = None,
-    request_variables: dict[str, str] = _NO_REQUEST_VARS,
-) -> RenderResult | None:
-    """Run the full registered-view pipeline for a request path.
+) -> _CompiledView | RenderError | None:
+    """Match, query, expand, and compile a registered view. Steps 1-3.
 
-    Matches ``request_path`` against the built-in router, runs any pre-template
-    queries, expands the template, compiles and executes the resulting board,
-    and renders it to HTML.
-
-    Args:
-        request_path: Absolute URL path, e.g. ``"/data/snowflake/analytics/"``.
-        project: The project handle, used by the file-source materializer to
-            read project-local data files.
-        adapter_registry: Configured adapter registry with adapters for the
-            sources declared in the project.
-        result_cache: Optional persistent query-result cache for the project.
-        max_workers: Maximum parallel query workers. ``None`` uses the project
-            default.
-        request_variables: URL query params for the request, threaded through as
-            render variables so interactive views (details/expander toggles, tabs)
-            can read their state from the URL. Empty (the default) renders with
-            template defaults.
-        link_context: Optional link-rewriting context. Cloud callers pass a
-            ``LinkContext`` with ``root="/{org}/{project}/d"`` so that
-            internal links (sibling tables, schema/source navigation) are emitted
-            as ``/{org}/{project}/d/data/...`` rather than root-relative ``/data/...``
-            which would 404 under the Cloud project scope. Leave ``None`` for
-            ``dct serve`` (links stay root-relative).
-
-    Returns:
-        ``None`` when no registered route matches (caller falls through to
-        regular file-based routing).
-        ``RenderSuccess`` when a route matches and the board renders without errors.
-        ``RenderError`` when a route matches but any step fails.
+    Returns ``None`` when no registered route matches (caller falls through to
+    regular file-based routing), a ``RenderError`` when any step fails, or the
+    compiled view ready for an ``Executor``.
     """
     from sqlglot.dialects.dialect import Dialect as SqlglotDialect
 
@@ -128,13 +122,6 @@ def render_registered_view(
     from dbt_charts.core.compile.sql_guard import sqlglot_dialect
     from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
     from dbt_charts.core.diagnostics.base import DbtChartsError
-    from dbt_charts.core.diagnostics.execution import ExecutionError
-    from dbt_charts.core.execute import Executor
-    from dbt_charts.core.execute.file_source_materializer import (
-        default_local_materializer_factory,
-    )
-    from dbt_charts.core.render import render
-    from dbt_charts.core.render.errors import RenderError as RenderExecError
 
     match = _BUILTIN_ROUTER.match(request_path)
     if match is None:
@@ -218,29 +205,108 @@ def render_registered_view(
             )
         )
 
+    return _CompiledView(board=board, query_registry=compile_result.query_registry)
+
+
+def render_registered_view(
+    request_path: str,
+    project: Project,
+    adapter_registry: AdapterRegistry,
+    result_cache: QueryResultCache | None,
+    max_workers: int | None = None,
+    link_context: LinkContext | None = None,
+    file_materializer: FileSourceMaterializer | None = None,
+    request_variables: dict[str, str] = _NO_REQUEST_VARS,
+    format: str = "html",
+    controls: bool = False,
+) -> RenderResult | None:
+    """Run the full registered-view pipeline for a request path.
+
+    Matches ``request_path`` against the built-in router, runs any pre-template
+    queries, expands the template, compiles and executes the resulting board,
+    and renders it in the requested format.
+
+    Args:
+        request_path: Absolute URL path, e.g. ``"/data/snowflake/analytics/"``.
+        project: The project handle, used by the file-source materializer to
+            read project-local data files.
+        adapter_registry: Configured adapter registry with adapters for the
+            sources declared in the project.
+        result_cache: Optional persistent query-result cache for the project.
+        max_workers: Maximum parallel query workers. ``None`` uses the project
+            default.
+        request_variables: URL query params for the request, threaded through as
+            render variables so interactive views (details/expander toggles, tabs)
+            can read their state from the URL. Empty (the default) renders with
+            template defaults.
+        link_context: Optional link-rewriting context. Cloud callers pass a
+            ``LinkContext`` with ``root="/{org}/{project}/d"`` so that
+            internal links (sibling tables, schema/source navigation) are emitted
+            as ``/{org}/{project}/d/data/...`` rather than root-relative ``/data/...``
+            which would 404 under the Cloud project scope. Leave ``None`` for
+            ``dct serve`` (links stay root-relative).
+        format: Output format passed straight through to ``render()``.
+            Defaults to ``"html"`` -- ``dct serve``'s standalone document, the
+            same artifact this pipeline has always produced. A caller that
+            composes its own page chrome (Cloud's ``board_view.html``) passes
+            ``"svg"`` to get the bare fragment shape a served board render
+            already uses, instead of a second, nested HTML document.
+            ``"yaml"`` is Cloud's "make this a board" clone: the compiled
+            board dumped as re-compilable authored YAML (queries, charts, and
+            layout, with each query's result rows inlined as ``values:``).
+            It is a plain data format like ``"json"``/``"text"`` -- ``render()``
+            short-circuits data formats before any SVG/link/controls work, so
+            ``link_context`` and ``controls`` are ignored for it.
+        controls: Whether the render carries the live control runtime's
+            drawn payload (a select's full option list). ``dct serve``'s
+            registered-view route has never set this, so the default
+            (``False``) preserves that behaviour; Cloud passes ``True``, same
+            as its board renders.
+
+    Returns:
+        ``None`` when no registered route matches (caller falls through to
+        regular file-based routing).
+        ``RenderSuccess`` when a route matches and the board renders without errors.
+        ``RenderError`` when a route matches but any step fails.
+    """
+    from dbt_charts.core.board import BoardRenderResult
+    from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
+    from dbt_charts.core.diagnostics.execution import ExecutionError
+    from dbt_charts.core.execute import Executor
+    from dbt_charts.core.execute.file_source_materializer import (
+        resolve_local_file_materializer_factory,
+    )
+    from dbt_charts.core.render import render
+    from dbt_charts.core.render.errors import RenderError as RenderExecError
+
+    compiled = _compile_registered_view(request_path, adapter_registry, result_cache)
+    if compiled is None:
+        return None
+    if isinstance(compiled, RenderError):
+        return compiled
+
     # --- Step 4: execute + render ---
     try:
-        # Injected materializer (Cloud) wins; otherwise a lazy local factory so a
-        # fully-cached registered view never builds a DuckDB (see Executor).
+        # Injected materializer (Cloud) wins; otherwise a lazy local factory so
+        # a fully-cached registered view never builds a DuckDB (see Executor).
         executor = Executor(
-            board,
+            compiled.board,
             adapter_registry=adapter_registry,
-            query_registry=compile_result.query_registry,
+            query_registry=compiled.query_registry,
             result_cache=result_cache,
             file_materializer=file_materializer,
-            file_materializer_factory=(
-                None
-                if file_materializer is not None
-                else default_local_materializer_factory(project)
+            file_materializer_factory=resolve_local_file_materializer_factory(
+                project, file_materializer
             ),
         )
         render_result = render(
-            board,
+            compiled.board,
             executor,
-            format="html",
+            format=format,
             variables=request_variables,
             max_workers=max_workers,
             link_context=link_context,
+            controls=controls,
         )
     except (ExecutionError, RenderExecError) as exc:
         return RenderError(
@@ -251,13 +317,13 @@ def render_registered_view(
         )
 
     if render_result.board_error is None and not render_result.chart_errors:
-        html_output = render_result.output
-        html = (
-            html_output.decode("utf-8")
-            if isinstance(html_output, bytes)
-            else str(html_output)
+        raw_output = render_result.output
+        output = (
+            raw_output.decode("utf-8")
+            if isinstance(raw_output, bytes)
+            else str(raw_output)
         )
-        return RenderSuccess(html=html)
+        return RenderSuccess(output=output, title=compiled.board.title)
 
     return RenderError(
         dashboard=BoardRenderResult(

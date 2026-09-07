@@ -1,7 +1,10 @@
-"""BigQuery discovery helpers on the public dbt_charts.core connection API."""
+"""The public dbt_charts.core connection API: discovery helpers, probes,
+bulk schema, and test_connection."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -294,3 +297,106 @@ def test_bulk_schema_for_config_raises_on_max_rows_truncation(
 
     with pytest.raises(RuntimeError, match="truncated"):
         bulk_schema_for_config(source_config)
+
+
+# --- test_connection: the cleanup crash must not replace the real cause ------
+#
+# dbt-bigquery's BigQueryConnectionManager.close is a bare
+# `connection.handle.close()`. A credential that fails to parse leaves
+# `handle` None, so the release the `connection_named` context manager runs on
+# every exit raises AttributeError -- and that AttributeError is what a caller
+# sees unless test_connection holds on to the open failure itself.
+
+_PEM_FAILURE = (
+    "Database Error\n  Unable to load PEM file. See "
+    "https://cryptography.io/en/latest/faq/ for more details. "
+    "InvalidData(InvalidPadding)"
+)
+
+# A private key that fails PEM parsing before any network call is attempted.
+_UNPARSEABLE_KEYFILE_JSON = {
+    "type": "service_account",
+    "project_id": "my-project",
+    "private_key_id": "abc123",
+    "private_key": "-----BEGIN PRIVATE KEY-----\nNOTAREALKEY\n-----END PRIVATE KEY-----\n",
+    "client_email": "svc@my-project.iam.gserviceaccount.com",
+    "client_id": "1",
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+}
+
+
+class _UnopenableConnection:
+    """dbt's Connection after a failed open: no handle, and asking for one raises."""
+
+    def __init__(self, open_error: Exception) -> None:
+        self._open_error = open_error
+
+    @property
+    def handle(self) -> Any:
+        raise self._open_error
+
+
+class _CleanupCrashingAdapter:
+    """dbt-bigquery's shape on a credential that will not parse."""
+
+    def __init__(self, open_error: Exception) -> None:
+        self._open_error = open_error
+        self.connections = SimpleNamespace(
+            get_thread_connection=lambda: _UnopenableConnection(open_error)
+        )
+
+    @contextmanager
+    def connection_named(self, name: str) -> Iterator[None]:
+        try:
+            yield
+        finally:
+            # BigQueryConnectionManager.close, verbatim in effect.
+            crash = AttributeError("'NoneType' object has no attribute 'close'")
+            crash.__context__ = self._open_error
+            raise crash
+
+    def execute(self, sql: str, **kwargs: Any) -> None:
+        raise self._open_error
+
+
+def test_test_connection_reports_the_credential_error_not_the_cleanup_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    open_error = RuntimeError(_PEM_FAILURE)
+    monkeypatch.setattr(
+        "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
+        lambda creds, **kwargs: _CleanupCrashingAdapter(open_error),
+    )
+
+    from dbt_charts.core.connections import test_connection
+
+    ok, message = test_connection(_bq_config("analytics"))
+
+    assert ok is False
+    assert "'NoneType' object has no attribute 'close'" not in message
+    assert "Unable to load PEM file" in message
+    assert message.startswith("bigquery: Could not open the warehouse:")
+
+
+def test_test_connection_names_an_unparseable_bigquery_key() -> None:
+    """The whole path, against the real dbt-bigquery adapter.
+
+    Offline: PEM parsing fails while the credential is being built, long before
+    anything would reach Google.
+    """
+    from dbt_charts.core.connections import test_connection
+
+    ok, message = test_connection(
+        BigQuerySourceConfig(
+            type="bigquery",
+            project="my-project",
+            dataset="analytics",
+            keyfile_json=_UNPARSEABLE_KEYFILE_JSON,
+        )
+    )
+
+    assert ok is False
+    assert "'NoneType' object has no attribute 'close'" not in message
+    assert "PEM" in message
+    assert "Could not open the warehouse" in message

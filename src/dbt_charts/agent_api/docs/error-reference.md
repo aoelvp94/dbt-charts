@@ -276,6 +276,48 @@ Overshoot correction produced a non-positive pane width ({new_w:.1f}px): pane wi
 
 Fired when the overshoot correction algorithm for a concatenated layout produces a non-positive pane width. The chart content (title, subtitle, axis labels, series labels, or legend) is wider than the available canvas. Series labels come from the column bound to `color:`, and are the usual cause when that column holds long text.
 
+### ERR-ENDPOINT-LABELS-CENTER-STACK: stack: center is not supported for horizontal endpoint labels
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r}: stack: center is not supported for horizontal stacked bar endpoint labels — the rail anchors on the cumulative (0..Σ) axis, which a center stack (-Σ/2..+Σ/2) does not have. Use stack: zero, or set style.endpoint_labels.visible: false on this chart.
+```
+
+Fired when a horizontal stacked bar chart uses `stack: center` while its endpoint-label rail is forced on. The rail anchors each label at its segment's cumulative midpoint from zero; a center stack has no such axis. Use `stack: zero`, or turn the rail off with `style.endpoint_labels.visible: false`.
+
+### ERR-ENDPOINT-LABELS-NEGATIVE-STACK: negative values are not supported for stacked endpoint labels
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r}: negative values are not supported for stacked bar/area endpoint labels — they break the cumulative-midpoint computation. Set style.endpoint_labels.visible: false on this chart.
+```
+
+Fired when a stacked bar or area chart's data carries a negative measure while its endpoint-label rail is visible. The rail anchors each label at its segment's cumulative midpoint, a computation that assumes every segment in the stack contributes in the same direction; a negative value crosses zero and breaks it. Turn the rail off with `style.endpoint_labels.visible: false`.
+
+### ERR-ENDPOINT-LABELS-UNORDERABLE-SORT: sort by a non-numeric column cannot be combined with stacked endpoint labels
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r}: chart.sort by {sort_by!r} cannot be combined with stacked bar endpoint labels — the label rail reproduces Vega-Lite's domain order by totalling that column per category, and it carries no numeric values. Sort by a measure instead, or set style.endpoint_labels.visible: false on this chart.
+```
+
+Fired when a stacked bar chart authors `sort:` by a column that carries no numeric values while its endpoint-label rail is visible. The rail reproduces Vega-Lite's own domain order by summing the sort field per category (VL's default `sum` aggregation); on a non-numeric column VL concatenates the strings instead, an order the rail cannot reproduce, so it would anchor on a sequence VL never actually draws. Sort by a measure, or turn the rail off with `style.endpoint_labels.visible: false`.
+
 ### ERR-FORMAT-INVALID: Format spec is not a predefined name, a style.formats alias, or a valid d3-format spec
 
 - **Level:** error
@@ -457,6 +499,20 @@ Chart {chart_id!r}: labels.field {field!r} on {source} names a column not presen
 ```
 
 Fired when `labels.field` names a column that is not present in the query result. `source` identifies which slot fired: the base chart's own labels, or a specific overlay layer (by position, type, and query), since a chart's overlay `layers:` can each carry their own `labels.field`. Check the column name against the actual columns returned by that slot's query.
+
+### ERR-LAYER-AXIS-POSITION-ENDPOINT-LABELS: axis_y.position on a layer cannot be combined with endpoint labels
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r}: style.endpoint_labels.visible is not supported on a layered chart whose layers pin an explicit axis_y.position — the label rail anchors on one shared y-scale, and a dual-axis layer renders on a different one. Remove the per-layer axis_y.position override, or set style.endpoint_labels.visible: false on this chart.
+```
+
+Fired when a layered chart's endpoint-label rail is visible (authored or theme-set) while one of its layers pins its own `axis_y.position`. The rail anchors every layer's labels on the base chart's single shared y-scale; a layer with a pinned `axis_y.position` is a genuine dual-axis layer rendering on a different scale, which the rail has no way to represent. Remove the per-layer `axis_y.position`, or turn the rail off with `style.endpoint_labels.visible: false`.
 
 ### ERR-LAYER-AXIS-POSITION-ORIENTATION: axis_y.position on a layer needs a vertical base chart
 
@@ -1309,6 +1365,20 @@ Query {query_name!r}: inline file source {ref!r} exists at both {candidates}. Re
 
 Fired when a query's inline `source: <path>` ref resolves to a real file at both of its two candidate locations, the board's own directory and the project root (a bare path is tried against both anchors so it works from any board depth). dbt charts never silently prefers one anchor; move or rename one of the two files so only a single candidate remains.
 
+### ERR-FILE-SOURCE-DECIMAL-TOO-WIDE: File source decimal column exceeds precision 38
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+File source {source_name!r}, table {table_name!r}: column {column!r} in {relpath!r} is {column_type}, and at least one value needs more than the 38 significant digits the query engine's DECIMAL can hold. Re-export the column at precision 38 or less (BigQuery: CAST(col AS NUMERIC) instead of BIGNUMERIC), or split the digits across columns.
+```
+
+Fired when a decimal column in a file source holds a value needing more than 38 significant digits. Parquet's decimal type allows more precision than the query engine's DECIMAL, and BigQuery BIGNUMERIC exports routinely use it. Re-export the column at precision 38 or less, or split the digits across columns.
+
 ### ERR-FILE-SOURCE-NOT-FOUND: File source path could not be read from disk
 
 - **Level:** error
@@ -1323,7 +1393,7 @@ File source {source_name!r}: {relpath!r} could not be read ({detail}). Restore t
 
 Fired when a `type: csv`/`json`/`parquet` source's `files:` mapping, or a query's inline `source: <path>` ref, names a literal (non-glob) path that cannot be opened on disk: the leaf is missing, a path component traverses through an existing file instead of a directory, or the OS denies read access. `{detail}` carries the OS error string (e.g. "No such file or directory", "Not a directory", "Permission denied") so the message doesn't call a permissions problem a missing file. Unlike an empty glob match (`ERR-GLOB-EMPTY`), a literal path is never expanded, so this is the only place these failures surface. Compile probes an inline ref's two candidate locations (board directory, project root) only to choose between them; a path that exists at neither, like a `files:` path, fails here at query-execution time (`dct render`/`dct serve`), one chart at a time. Fix the path, add the missing file, or fix its permissions.
 
-### ERR-FILE-SOURCE-TOO-LARGE: File source relation exceeded the materialized-size cap
+### ERR-FILE-SOURCE-TOO-LARGE: File source relation exceeded the uncompressed-size cap
 
 - **Level:** error
 - **Domain:** execute
@@ -1332,10 +1402,10 @@ Fired when a `type: csv`/`json`/`parquet` source's `files:` mapping, or a query'
 **Message template:**
 
 ```
-File source {source_name!r}, table {table_name!r}: reading {relpath!r} ({raw_mb:.1f} MB raw × {multiplier} materialization multiplier) pushed the estimated materialized size to {size_mb:.1f} MB, exceeding the {cap_mb:.1f} MB cap. Increase execution.file_source_max_bytes in dbt_charts.yml if needed, or use a database connection for data this size.
+File source {source_name!r}, table {table_name!r}: reading {relpath!r} ({raw_mb:.1f} MB on disk) took this table to {size_mb:.1f} MB uncompressed, exceeding the {cap_mb:.1f} MB cap. Load less into this table — fewer files, fewer columns, or a pre-aggregated extract — or use a database connection for data this size.
 ```
 
-Fired when the estimated materialized size of a file-source relation (the file(s) backing one `files:` table entry) exceeds the configured `execution.file_source_max_bytes` limit. Parquet file sizes are multiplied by a fixed materialization multiplier (20x) before comparing, since compressed columnar data can expand many times over once parsed into rows; CSV/JSON files are not multiplied. Raise the cap in `dbt_charts.yml` under `execution: file_source_max_bytes: <N>`, or use a database connection for data this size.
+Fired when the uncompressed size of a file-source relation (the file(s) backing one `files:` table entry) exceeds the effective `execution.file_source_max_bytes` limit. Every format is measured on the same basis: the file's own bytes for CSV and JSON, and for Parquet the uncompressed total its footer records, so choosing the compact format is never what gets a relation rejected. The message names no config key deliberately — the effective limit is the lower of the project's own `execution.file_source_max_bytes` and any deployment ceiling (`DCT_FILE_SOURCE_MAX_BYTES_CEILING`), so where a ceiling is what fired, raising the project setting does nothing. Lower the data volume, or use a database connection for data this size.
 
 ### ERR-FILE-SOURCE-TOO-MANY-TABLES: File source exceeded the table-count cap
 
@@ -1350,6 +1420,20 @@ File source {source_name!r}: `files:` has {count} tables, exceeding the {cap}-ta
 ```
 
 Fired when a file source's `files:` mapping declares more table entries than the configured `execution.file_source_max_tables` limit. A wide `files:` map can quietly fill the shared cache disk, split the source into multiple sources, raise the cap in `dbt_charts.yml` under `execution: file_source_max_tables: <N>`, or use a database connection for large-scale data.
+
+### ERR-FILE-SOURCE-UNSUPPORTED-TYPE: File source column type is not supported by the query engine
+
+- **Level:** error
+- **Domain:** execute
+- **Suppressible:** no
+
+**Message template:**
+
+```
+File table {table_name!r}: the query engine cannot load one of its column types. {detail} Re-export the file with the column cast to a standard SQL type.
+```
+
+Fired when a file carries a column type the query engine cannot represent. dbt charts converts the cases it can (a half-precision float widens, a 256-bit decimal narrows) and reports this for the rest. Re-export the file with the column cast to a standard SQL type.
 
 ### ERR-GLOB-EMPTY: Glob pattern in file source matched no files
 
@@ -1374,10 +1458,10 @@ Fired when a glob pattern in a file source's `files:` mapping expands to zero fi
 **Message template:**
 
 ```
-File source {source_name!r}, table {table_name!r}: {path!r} has different columns than {first_path!r}. {detail}All files matched by a glob must share the same column schema.
+File source {source_name!r}, table {table_name!r}: {path!r} disagrees with {first_path!r} on column names or types. {detail}All files matched by a glob must share the same column names and types.
 ```
 
-Fired when a glob pattern in a file source's `files:` mapping expands to files with different column schemas. All matched files must share the same column names. Align the column schemas across all files, or split the source into separate entries with non-overlapping patterns.
+Fired when a glob pattern in a file source's `files:` mapping expands to files whose column schemas disagree — either a differing set of column names, or the same column carrying a different type in one file than another. Align the schemas across all matched files, or split the source into separate entries with non-overlapping patterns.
 
 ### ERR-GLOB-TOO-MANY: Glob pattern in file source exceeded the file-count cap
 

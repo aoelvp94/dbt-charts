@@ -84,12 +84,12 @@ execution:
   # worth of fan-out. Deliberately generous, not a typical-project quota.
   # Override in dbt_charts.yml under execution.file_source_max_tables.
   file_source_max_tables: 500
-  # Safety ceiling on a single file-source relation's estimated materialized
-  # byte size (5 GB). Parquet file sizes are multiplied by a fixed
-  # materialization multiplier (file_source_materializer.py) before
-  # comparing. Deliberately generous — runaway-relation protection, not a
-  # tight per-file quota. Override in dbt_charts.yml under
-  # execution.file_source_max_bytes.
+  # Safety ceiling on a single file-source relation's uncompressed byte size
+  # (5 GB): the file's own bytes for CSV/JSON, and for Parquet the
+  # uncompressed total its footer records. Deliberately generous — runaway-
+  # relation protection, not a tight per-file quota. Override in
+  # dbt_charts.yml under execution.file_source_max_bytes; a deployment
+  # ceiling (DCT_FILE_SOURCE_MAX_BYTES_CEILING) can lower it further.
   file_source_max_bytes: 5000000000
   # Safety ceiling on rows returned by a single query. Exceeding it truncates
   # the result (with a warning), it never fails the query. Override in
@@ -322,6 +322,12 @@ chart_rendering:
     # Horizontal gap between footer-baseline timestamp and footer attribution
     # text.
     footer_timestamp_gap_px: 12
+    # The dbt charts wordmark that stands in for the footer's brand phrase: the
+    # height of its box, and the clearance between it and the words on either
+    # side, as multiples of the footer font size. At 1.15 the lockup's letters
+    # match the ascender height of the footer type beside them.
+    footer_wordmark_height_em: 1.15
+    footer_wordmark_gap_em: 0.3
   support_table:
     # Vertical gap between divider rule and first row of the attached
     # support table strip.

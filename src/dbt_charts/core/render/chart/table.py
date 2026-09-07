@@ -121,7 +121,7 @@ from dbt_charts.core.render.chart.title_overflow import (
 from dbt_charts.core.render.controls import controls_are_interactive
 from dbt_charts.core.render.format_utils import MAGNITUDE_SUFFIXES, format_kpi_parts
 from dbt_charts.core.render.script_embedding import embed_svg_script
-from dbt_charts.core.render.svg_utils import px
+from dbt_charts.core.render.svg_utils import authored_kind_attr, px
 from dbt_charts.core.render.utils import (
     normalize_data_types,
     slug_to_text,
@@ -4117,7 +4117,7 @@ def _render_table_svg_core(
         svg_parts.append(
             f'<text x="{padding}" y="{title_baseline}" '
             f'font-size="{title_font_size}" font-weight="{title_font_weight}" fill="{colors["title_color"]}" '
-            f'font-family="{title_font_family_str}">{inner_title}',
+            f'font-family="{title_font_family_str}"{authored_kind_attr("title")}>{inner_title}',
         )
         for line_index, line in enumerate(title_lines):
             line_y = title_baseline + (line_index * title_line_height)
@@ -4147,7 +4147,7 @@ def _render_table_svg_core(
             svg_parts.append(
                 f'<text x="{padding}" '
                 f'font-size="{subtitle_font_size}" fill="{colors["subtitle_color"]}" '
-                f'font-family="{table_font_family}">{subtitle_inner_title}',
+                f'font-family="{table_font_family}"{authored_kind_attr("subtitle")}>{subtitle_inner_title}',
             )
             for line_index, line in enumerate(subtitle_lines):
                 line_y = subtitle_y + (line_index * subtitle_line_height)

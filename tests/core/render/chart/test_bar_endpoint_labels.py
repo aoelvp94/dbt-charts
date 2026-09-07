@@ -23,6 +23,7 @@ import pytest
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
@@ -492,6 +493,64 @@ def test_negative_values_auto_disable_endpoint_labels(resolve_bar_chart):
     assert "hconcat" not in spec, (
         "Negative-value stacked bar must not wrap in an endpoint-label hconcat pane"
     )
+
+
+def test_negative_values_raise_registered_code_not_err_internal(resolve_bar_chart):
+    """The defence-in-depth raise for a direct, non-default construction
+    (endpoint_labels forced back on after resolve's auto-disable) must carry
+    a registered code, not the ERR-INTERNAL fallback, and its fix must name
+    the field's full authored path (`style.endpoint_labels.visible`), not
+    the bare `endpoint_labels.visible` that doesn't exist at the chart root.
+    """
+    from dbt_charts.core.diagnostics.codes_render import (
+        ERR_ENDPOINT_LABELS_NEGATIVE_STACK,
+    )
+
+    data = [
+        {"date": "2024-01-01", "value": 10, "series": "A"},
+        {"date": "2024-01-01", "value": -20, "series": "B"},
+    ]
+    rc = resolve_bar_chart(data=data, enabled=True, stack="zero")
+    rc = rc.model_copy(
+        update={
+            "style": rc.style.model_copy(
+                update={
+                    "endpoint_labels": rc.style.endpoint_labels.model_copy(
+                        update={"visible": True}
+                    )
+                }
+            )
+        }
+    )
+    with pytest.raises(ChartDataError) as exc_info:
+        _render(rc, data)
+    err = exc_info.value
+    assert err.code is ERR_ENDPOINT_LABELS_NEGATIVE_STACK
+    assert "style.endpoint_labels.visible" in str(err)
+
+
+def test_refuse_unorderable_sort_raises_registered_code():
+    """A `sort:` by a non-numeric column cannot be combined with stacked
+    endpoint labels — direct call to the standalone guard, same pattern as
+    ``test_series_with_no_rows_anywhere_still_anchors_at_the_seam`` above."""
+    from dbt_charts.core.compile.models.chart.authored import ChartSort
+    from dbt_charts.core.diagnostics.codes_render import (
+        ERR_ENDPOINT_LABELS_UNORDERABLE_SORT,
+    )
+    from dbt_charts.core.render.chart.features.endpoint_labels import (
+        _refuse_unorderable_sort,
+    )
+
+    data = [
+        {"series": "A", "label": "zzz"},
+        {"series": "B", "label": "aaa"},
+    ]
+    sort = ChartSort(by="label", order="desc")
+    with pytest.raises(ChartDataError) as exc_info:
+        _refuse_unorderable_sort("chart", data, sort)
+    err = exc_info.value
+    assert err.code is ERR_ENDPOINT_LABELS_UNORDERABLE_SORT
+    assert "style.endpoint_labels.visible" in str(err)
 
 
 def test_stack_order_independent_of_series_row_order(resolve_bar_chart):

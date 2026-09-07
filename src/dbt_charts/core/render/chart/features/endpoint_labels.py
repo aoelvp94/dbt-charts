@@ -23,6 +23,11 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
     wide_series_names,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_render import (
+    ERR_ENDPOINT_LABELS_CENTER_STACK,
+    ERR_ENDPOINT_LABELS_NEGATIVE_STACK,
+    ERR_ENDPOINT_LABELS_UNORDERABLE_SORT,
+)
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.emitters._cartesian import (
@@ -456,13 +461,8 @@ def _refuse_unorderable_sort(
     """
     if sort is None or numeric_column_values(data, sort.by):
         return
-    raise ChartDataError(
-        f"chart.sort by {sort.by!r} cannot be combined with stacked bar "
-        "endpoint labels — the label rail reproduces Vega-Lite's domain order "
-        "by totalling that column per category, and it carries no numeric "
-        "values. To fix: sort by a measure, or set "
-        "endpoint_labels.visible: false on this chart.",
-        chart_id,
+    raise ChartDataError.from_code(
+        ERR_ENDPOINT_LABELS_UNORDERABLE_SORT, chart_id=chart_id, sort_by=sort.by
     )
 
 
@@ -920,17 +920,12 @@ class EndpointLabelFeature:
                 return spec
             _refuse_unorderable_sort(chart.id, data, chart.sort)
             if chart.stack == "center":
-                raise ChartDataError(
-                    "stack: 'center' is not supported for horizontal stacked bar "
-                    "endpoint labels — the rail anchors on the cumulative (0..Σ) "
-                    "axis, not the diverging (-Σ/2..+Σ/2) center-stack domain.",
-                    chart.id,
+                raise ChartDataError.from_code(
+                    ERR_ENDPOINT_LABELS_CENTER_STACK, chart_id=chart.id
                 )
             if _has_negative_measure(data, y_field):
-                raise ChartDataError(
-                    "negative values are not supported for horizontal stacked bar "
-                    "endpoint labels — they break the cumulative-midpoint computation.",
-                    chart.id,
+                raise ChartDataError.from_code(
+                    ERR_ENDPOINT_LABELS_NEGATIVE_STACK, chart_id=chart.id
                 )
             positions = cumulative_stack_midpoints(
                 data,
@@ -991,12 +986,8 @@ class EndpointLabelFeature:
                     chart.sort if isinstance(chart, ResolvedBarChart) else None,
                 )
                 if _has_negative_measure(data, y_field):
-                    raise ChartDataError(
-                        "negative values are not supported for stacked bar/area "
-                        "endpoint labels — they break the cumulative-midpoint "
-                        "computation. "
-                        "To fix: set endpoint_labels.visible: false on this chart.",
-                        chart.id,
+                    raise ChartDataError.from_code(
+                        ERR_ENDPOINT_LABELS_NEGATIVE_STACK, chart_id=chart.id
                     )
                 stack_mode = chart.stack or "zero"
                 stack_order = (

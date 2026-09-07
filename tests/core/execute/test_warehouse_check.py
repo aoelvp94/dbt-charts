@@ -779,25 +779,26 @@ class TestWarehouseCheckBigQuery:
 class TestWarehouseCheckUnchecked:
     """An adapter with no cheap validity primitive reports unchecked — never valid."""
 
-    def _csv_registry(self):
-        from dbt_charts.core.compile.models.source import CsvSourceConfig
+    def _mysql_registry(self):
+        from dbt_charts.core.compile.models.source import MySQLSourceConfig
 
         registry = MagicMock()
-        registry.resolve_query_source.return_value = CsvSourceConfig(
-            type="csv", files={"orders": "data/orders.csv"}
+        registry.resolve_query_source.return_value = MySQLSourceConfig(
+            type="mysql", host="db", database="d", user="u", password="p"
         )
         return registry
 
     def test_unallowlisted_adapter_is_unchecked_not_valid(self):
-        """A csv source has no dry run: checking it means loading the files."""
-        result = _check_sql("SELECT 1", self._csv_registry())
+        """mysql has an EXPLAIN too, but no branch here yet (see the module
+        docstring)."""
+        result = _check_sql("SELECT 1", self._mysql_registry())
         assert result.status == "unchecked"
         assert result.mechanism == "no-validity-primitive"
         assert result.columns_checked is False
-        assert "csv" in result.reason
+        assert "mysql" in result.reason
 
     def test_unallowlisted_adapter_never_calls_execute(self):
-        registry = self._csv_registry()
+        registry = self._mysql_registry()
         _check_sql("SELECT 1", registry)
         registry.execute.assert_not_called()
 
@@ -805,8 +806,12 @@ class TestWarehouseCheckUnchecked:
         """Spark's EXPLAIN returns planner errors as plan *text* instead of
         failing the statement, so an EXPLAIN branch would report a broken query
         valid — the one outcome this module forbids. Held out deliberately."""
+        from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
+
         registry = MagicMock()
-        registry.resolve_query_source.return_value = SimpleNamespace(type="databricks")
+        registry.resolve_query_source.return_value = DbtTargetSourceConfig(
+            type="databricks"
+        )
         result = _check_sql("SELECT 1", registry)
         assert result.status == "unchecked"
         assert result.columns_checked is False
@@ -899,6 +904,53 @@ class TestWarehouseCheckExplain:
         registry = self._registry("postgres", QueryResult(data=[]))
         result = _check_sql("(SELECT 1) UNION ALL (SELECT 2)", registry)
         assert result.status == "unchecked"
+        registry.execute.assert_not_called()
+
+
+class TestWarehouseCheckFileSource:
+    """A csv/json/parquet source resolves to the duckdb DESCRIBE mechanism: it
+    executes on DuckDB (via the file-source materializer), so DuckDB's own
+    DESCRIBE answers it too — see the dispatch branch in warehouse_check.py."""
+
+    def _csv_registry(self, result: QueryResult) -> MagicMock:
+        from dbt_charts.core.compile.models.source import CsvSourceConfig
+
+        registry = MagicMock()
+        registry.resolve_query_source.return_value = CsvSourceConfig(
+            type="csv", files={"orders": "data/orders.csv"}
+        )
+        registry.execute.return_value = result
+        return registry
+
+    def test_valid_query_reads_columns_from_the_materialized_table(self):
+        registry = self._csv_registry(
+            QueryResult(data=[{"column_name": "region", "column_type": "VARCHAR"}])
+        )
+        result = _check_sql("SELECT region FROM orders", registry)
+        assert result.status == "valid"
+        assert result.mechanism == "DESCRIBE"
+        assert result.adapter_type == "csv"
+        assert result.columns_checked is True
+        assert result.columns == [WarehouseCheckColumn(name="region", type="VARCHAR")]
+
+    def test_sends_the_describe_prefixed_sql_with_no_limit(self):
+        registry = self._csv_registry(QueryResult(data=[]))
+        _check_sql("SELECT region FROM orders", registry)
+        sent = registry.execute.call_args.args[0]
+        assert sent.sql.startswith("DESCRIBE ")
+        assert sent.sql.endswith("SELECT region FROM orders")
+        assert sent.limit is None
+
+    def test_unwrappable_statement_stays_unchecked_without_reaching_the_materializer(
+        self,
+    ):
+        """An authored EXPLAIN can't be led by DESCRIBE — the gate refuses the
+        shape from the author's own parsed statement before anything reaches
+        the materializer, same as every other reads_columns adapter."""
+        registry = self._csv_registry(QueryResult(data=[]))
+        result = _check_sql("EXPLAIN SELECT 1", registry)
+        assert result.status == "unchecked"
+        assert "DESCRIBE" in result.reason
         registry.execute.assert_not_called()
 
 

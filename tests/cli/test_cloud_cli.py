@@ -462,6 +462,21 @@ class TestOrgs:
             "slug": "acme-data",
         }
 
+    def test_create_points_at_connect_with_the_org_named(self, api: FakeApi) -> None:
+        """The next step after creating an org is connecting a repo into it,
+        and connect never reads the `dct cloud use` default -- so the hint
+        must name the org on the connect line itself."""
+        api.add(
+            "POST",
+            "/api/orgs",
+            {"slug": "acme-data", "name": "Acme Data", "role": "ADMIN"},
+            status=201,
+        )
+        result = runner.invoke(app, ["cloud", "org", "create", "Acme Data"])
+        assert result.exit_code == 0, out(result)
+        assert "dct cloud project connect --org acme-data" in out(result)
+        assert "dct cloud use" not in out(result)
+
     def test_a_field_error_is_reported_and_exits_non_zero(self, api: FakeApi) -> None:
         api.add(
             "POST",
@@ -541,7 +556,9 @@ class TestHostPrecedence:
 
 
 class TestStatus:
-    def _status(self, stage: str, next_step: str | None) -> dict[str, object]:
+    def _status(
+        self, stage: str, next_step: str | None, **project: object
+    ) -> dict[str, object]:
         return {
             "stage": stage,
             "next_step": next_step,
@@ -554,10 +571,14 @@ class TestStatus:
                     "synced": True,
                     "unmapped_source_count": 1,
                     "board_count": 14,
+                    "ready_board_count": 0,
                     "unrendered_board_count": 14,
                     "rendering_board_count": 0,
                     "failed_board_count": 0,
                     "failed_board_slugs": [],
+                    "errored_board_count": 0,
+                    "errored_board_slugs": [],
+                    **project,
                 }
             ],
         }
@@ -574,17 +595,220 @@ class TestStatus:
         assert "Map source `db` to a connection." in result.output
         assert "analytics" in result.output
 
+    def test_an_unreadable_config_is_named_beside_its_project(
+        self, api: FakeApi
+    ) -> None:
+        """The count next to a project whose config would not read is 0 and
+        means nothing — without the reason printed, an agent reads it as
+        "nothing left to map"."""
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/status",
+            self._status(
+                "unmapped_sources",
+                "Fix the project config.",
+                unmapped_source_count=0,
+                config_error="Could not read dbt_charts.yml on main: bad byte",
+            ),
+        )
+
+        result = runner.invoke(app, ["cloud", "status", "--org", "acme-data"])
+
+        assert result.exit_code == 0, out(result)
+        assert "Could not read dbt_charts.yml on main" in result.output
+
+    def test_every_board_count_is_on_the_projects_boards_line(
+        self, api: FakeApi
+    ) -> None:
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/status",
+            self._status(
+                "unrendered_boards",
+                "Renders are already in progress — poll status again.",
+                ready_board_count=11,
+                unrendered_board_count=0,
+                rendering_board_count=3,
+            ),
+        )
+
+        result = runner.invoke(app, ["cloud", "status", "--org", "acme-data"])
+
+        assert result.exit_code == 0, out(result)
+        assert (
+            "analytics boards: 14 total, 11 ready, 0 unrendered, 3 rendering,"
+            " 0 failed, 0 errored" in result.output
+        )
+
+    def test_done_points_at_the_board_urls(self, api: FakeApi) -> None:
+        api.add("GET", "/api/orgs/acme-data/status", self._status("done", None))
+
+        result = runner.invoke(app, ["cloud", "status", "--org", "acme-data"])
+
+        assert result.exit_code == 0, out(result)
+        assert "dct cloud boards" in result.output
+
     def test_json_is_the_contract_model(self, api: FakeApi) -> None:
         api.add("GET", "/api/orgs/acme-data/status", self._status("done", None))
         result = runner.invoke(app, ["cloud", "status", "--org", "acme-data", "--json"])
         assert result.exit_code == 0, out(result)
         assert OrgStatus.model_validate_json(result.stdout).next_step is None
 
+    def test_no_projects_points_at_connect_with_the_org_named(
+        self, api: FakeApi
+    ) -> None:
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/status",
+            {**self._status("missing_project", "Connect a project."), "projects": []},
+        )
+        result = runner.invoke(app, ["cloud", "status", "--org", "acme-data"])
+        assert result.exit_code == 0, out(result)
+        assert "dct cloud project connect --org acme-data" in out(result)
+
     def test_a_principal_with_no_org_is_told_to_create_one(self, api: FakeApi) -> None:
         api.add("GET", "/api/orgs", {"organizations": []})
         result = runner.invoke(app, ["cloud", "status"])
         assert result.exit_code == 1
         assert "dct cloud org create" in out(result)
+
+    def test_repo_resolved_file_sources_are_accounted_for(self, api: FakeApi) -> None:
+        """A done project with no connection would otherwise look sourceless —
+        name the file sources so the user sees where the data came from."""
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/status",
+            self._status("done", None, unmapped_source_count=0, file_sources=["marts"]),
+        )
+
+        result = runner.invoke(app, ["cloud", "status", "--org", "acme-data"])
+
+        assert result.exit_code == 0, out(result)
+        assert "marts" in result.output
+        assert "repo" in result.output.lower()
+
+    def test_boards_that_rendered_with_chart_errors_are_named(
+        self, api: FakeApi
+    ) -> None:
+        """A board of error cards renders, so it is neither unrendered nor a
+        failed render — without its own count and line the output shows a
+        project whose every number reads healthy."""
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/status",
+            self._status(
+                "done",
+                "Fix the chart error(s) on board(s) that rendered with error cards.",
+                unrendered_board_count=0,
+                errored_board_count=1,
+                errored_board_slugs=["revenue"],
+            ),
+        )
+
+        result = runner.invoke(app, ["cloud", "status", "--org", "acme-data"])
+
+        assert result.exit_code == 0, out(result)
+        assert "1 errored" in result.output
+        assert "revenue" in result.output
+        assert "chart errors" in result.output
+
+    def test_an_unknown_extra_field_from_a_newer_cloud_is_ignored(
+        self, api: FakeApi
+    ) -> None:
+        """FR-07: a Cloud deploy ahead of this dct may add fields this
+        contract has never heard of; they must be ignored, not a hard parse
+        error, at any depth of the body."""
+        body: dict[str, object] = {
+            **self._status("done", None, future_board_count=3),
+            "future_org_field": "something new",
+        }
+        api.add("GET", "/api/orgs/acme-data/status", body)
+
+        result = runner.invoke(app, ["cloud", "status", "--org", "acme-data"])
+
+        assert result.exit_code == 0, out(result)
+        assert "analytics" in result.output
+
+    def test_a_cloud_behind_the_newest_board_counts_shows_unknown_not_zero(
+        self, api: FakeApi
+    ) -> None:
+        """FR-58: a Cloud deploy that predates #8606/#8612 simply omits
+        ready_board_count/errored_board_count(_slugs) from its response.
+        `dct cloud status` must still exit 0, show `unknown` rather than a
+        fake 0 for those counts, and say which side is behind."""
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/status",
+            {
+                "stage": "unrendered_boards",
+                "next_step": "Render the unrendered board(s).",
+                "connection_count": 1,
+                "tested_connection_count": 1,
+                "projects": [
+                    {
+                        "slug": "analytics",
+                        "stage": "unrendered_boards",
+                        "synced": True,
+                        "unmapped_source_count": 0,
+                        "board_count": 14,
+                        "unrendered_board_count": 14,
+                        "rendering_board_count": 0,
+                        "failed_board_count": 0,
+                        "failed_board_slugs": [],
+                        # ready_board_count, errored_board_count and
+                        # errored_board_slugs deliberately omitted: this
+                        # Cloud predates #8606/#8612.
+                    }
+                ],
+            },
+        )
+
+        result = runner.invoke(app, ["cloud", "status", "--org", "acme-data"])
+
+        assert result.exit_code == 0, out(result)
+        assert (
+            "analytics boards: 14 total, unknown ready, 14 unrendered,"
+            " 0 rendering, 0 failed, unknown errored" in result.output
+        )
+        assert "older than this dct" in result.output.lower()
+
+    def test_json_shows_null_for_a_board_count_this_cloud_does_not_report(
+        self, api: FakeApi
+    ) -> None:
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/status",
+            {
+                "stage": "unrendered_boards",
+                "next_step": "Render the unrendered board(s).",
+                "connection_count": 1,
+                "tested_connection_count": 1,
+                "projects": [
+                    {
+                        "slug": "analytics",
+                        "stage": "unrendered_boards",
+                        "synced": True,
+                        "unmapped_source_count": 0,
+                        "board_count": 14,
+                        "unrendered_board_count": 14,
+                        "rendering_board_count": 0,
+                        "failed_board_count": 0,
+                        "failed_board_slugs": [],
+                    }
+                ],
+            },
+        )
+
+        result = runner.invoke(app, ["cloud", "status", "--org", "acme-data", "--json"])
+
+        assert result.exit_code == 0, out(result)
+        parsed = OrgStatus.model_validate_json(result.stdout)
+        assert parsed.projects[0].ready_board_count is None
+        assert parsed.projects[0].errored_board_count is None
+        assert parsed.projects[0].errored_board_slugs is None
+        raw = json.loads(result.stdout)
+        assert raw["projects"][0]["ready_board_count"] is None
+        assert raw["projects"][0]["errored_board_count"] is None
 
 
 class TestProjects:
@@ -594,6 +818,31 @@ class TestProjects:
         assert result.exit_code == 0, out(result)
         assert "analytics" in result.output
         assert "acme/analytics" in result.output
+
+    def test_an_unreadable_config_is_named_beside_its_project(
+        self, api: FakeApi
+    ) -> None:
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/projects",
+            {
+                "projects": [
+                    {
+                        **_project(),
+                        "unmapped_source_count": None,
+                        "config_error": "Could not read dbt_charts.yml on main: oops",
+                    }
+                ]
+            },
+        )
+
+        result = runner.invoke(app, ["cloud", "projects", "--org", "acme-data"])
+
+        assert result.exit_code == 0, out(result)
+        assert "Could not read dbt_charts.yml on main" in result.output
+        # The cell says it too: a reader scanning the column sees no number
+        # they could act on, whether or not they read the line below.
+        assert "unknown" in result.output
 
     def test_json_is_the_contract_model(self, api: FakeApi) -> None:
         api.add("GET", "/api/orgs/acme-data/projects", {"projects": [_project()]})
@@ -645,6 +894,141 @@ class TestProjects:
         )
         body = api.body("POST", "/api/orgs/acme-data/projects")
         assert body["git_subdirectory"] == "warehouse"
+
+    def _connect(self, api: FakeApi, project: dict[str, object]) -> Result:
+        api.add("POST", "/api/orgs/acme-data/projects", project, status=201)
+        return runner.invoke(
+            app,
+            [
+                "cloud",
+                "project",
+                "connect",
+                "--org",
+                "acme-data",
+                "--git-url",
+                "https://github.com/acme/analytics",
+            ],
+        )
+
+    def test_connect_points_at_a_connection_while_sources_are_unmapped(
+        self, api: FakeApi
+    ) -> None:
+        result = self._connect(api, {**_project(), "unmapped_source_count": 2})
+        assert result.exit_code == 0, out(result)
+        assert "Next: dct cloud connection create --org acme-data" in result.output
+        assert (
+            "dct cloud source map <source> <connection> --org acme-data "
+            "--project analytics" in result.output
+        )
+        assert "project sync" not in result.output
+
+    def test_connect_points_at_sync_once_nothing_is_left_to_map(
+        self, api: FakeApi
+    ) -> None:
+        result = self._connect(api, {**_project(), "unmapped_source_count": 0})
+        assert result.exit_code == 0, out(result)
+        assert (
+            "Next: dct cloud project sync --org acme-data --project analytics"
+            in result.output
+        )
+        assert "connection create" not in result.output
+
+    def test_connect_reports_an_unreadable_config_instead_of_a_next_step(
+        self, api: FakeApi
+    ) -> None:
+        result = self._connect(
+            api,
+            {
+                **_project(),
+                "unmapped_source_count": None,
+                "config_error": "Could not read dbt_charts.yml on main: bad yaml",
+            },
+        )
+        assert result.exit_code == 0, out(result)
+        assert "Could not read dbt_charts.yml on main: bad yaml" in result.output
+        assert "Next: dct cloud" not in result.output
+
+    def test_connect_refuses_a_stale_default_with_no_org_flag(
+        self, api: FakeApi
+    ) -> None:
+        """A repository being connected matches nothing yet, so the
+        stored `dct cloud use` default would answer every connect -- and a
+        stale one binds the repo into the wrong org. Connect refuses instead,
+        saying why and listing the orgs the caller could name."""
+        save_config(CloudConfig(org="stale-org", project=""))
+        api.add(
+            "GET",
+            "/api/orgs",
+            {"organizations": [{"slug": "acme-data", "name": "Acme", "role": "ADMIN"}]},
+        )
+        api.add("POST", "/api/orgs/stale-org/projects", _project(), status=201)
+
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "project",
+                "connect",
+                "--git-url",
+                "https://github.com/acme/analytics",
+            ],
+        )
+
+        assert result.exit_code != 0
+        message = out(result)
+        assert "--org" in message
+        assert "binds this repository" in message
+        assert "destructive" not in message
+        # The remedy it offers must not be the default it just refused.
+        assert "set a default" not in message
+        assert "acme-data (Acme)" in message
+        assert not any(
+            (method, path) == ("POST", "/api/orgs/stale-org/projects")
+            for method, path, _body in api.calls
+        )
+
+    def test_connect_without_org_still_resolves_from_a_repo_match(
+        self, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Refusing the stored default does not touch the repo-match step: a
+        repo already connected to exactly one org (re-connecting, or a second
+        project from the same repo) names that org with no flag."""
+        monkeypatch.setattr(
+            cloud_cmd, "git_remotes", _remotes("git@github.com:acme/analytics.git")
+        )
+        api.add(
+            "GET",
+            "/api/orgs",
+            {"organizations": [{"slug": "acme-data", "name": "Acme", "role": "ADMIN"}]},
+        )
+        api.add("GET", "/api/orgs/acme-data/projects", {"projects": [_project()]})
+        api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
+
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "project",
+                "connect",
+                "--git-url",
+                "https://github.com/acme/analytics",
+                "--slug",
+                "analytics-2",
+            ],
+        )
+
+        assert result.exit_code == 0, out(result)
+        assert api.body("POST", "/api/orgs/acme-data/projects")["slug"] == (
+            "analytics-2"
+        )
+
+    def test_an_empty_listing_points_at_connect_with_the_org_named(
+        self, api: FakeApi
+    ) -> None:
+        api.add("GET", "/api/orgs/acme-data/projects", {"projects": []})
+        result = runner.invoke(app, ["cloud", "projects", "--org", "acme-data"])
+        assert result.exit_code == 0, out(result)
+        assert "dct cloud project connect --org acme-data" in out(result)
 
     def test_sync_reports_what_happened(self, api: FakeApi) -> None:
         api.add(
@@ -902,7 +1286,10 @@ class TestProjectConnectGithub:
             ],
         )
         assert result.exit_code == 0, out(result)
-        assert "https://cloud.example/acme-data/github/connect/" in result.output
+        assert (
+            "https://cloud.example/acme-data/github/connect/?landing=terminal"
+            in result.output
+        )
         body = api.body("POST", "/api/orgs/acme-data/projects/from-pick")
         assert body["slug"] == "analytics"
         assert body["dbt_root_choice"] == "warehouse"
@@ -929,7 +1316,10 @@ class TestProjectConnectGithub:
             ],
         )
         assert result.exit_code == 1
-        assert "https://cloud.example/acme-data/github/connect/" in out(result)
+        assert (
+            "https://cloud.example/acme-data/github/connect/?landing=terminal"
+            in out(result)
+        )
 
     def test_json_is_the_contract_model(self, api: FakeApi) -> None:
         api.add("GET", "/api/orgs/acme-data/github/pick", self.PICK)
@@ -1027,16 +1417,41 @@ class TestConnections:
         assert body["credentials_json"] == '{"type": "service_account"}'
         assert body["dataset"] == "analytics"
 
-    def test_create_takes_the_display_name_through_set(self, api: FakeApi) -> None:
-        """`name` is an ordinary server field, not a flag of its own: the
-        server owns which fields a type takes, so the CLI must not promote
-        one of them to a dedicated option."""
+    def test_create_takes_the_display_name_through_name(self, api: FakeApi) -> None:
+        """The alias the server slugifies is a flag of its own — the slug is
+        how every later verb addresses the connection."""
         api.add(
             "POST",
             "/api/orgs/acme-data/connections",
             {"success": True, "message": "", "connection": _connection()},
             status=201,
         )
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "connection",
+                "create",
+                "--org",
+                "acme-data",
+                "--type",
+                "postgres",
+                "--password-stdin",
+                "--name",
+                "Warehouse",
+                "--set",
+                "host=db.example",
+            ],
+            input="hunter2\n",
+        )
+        assert result.exit_code == 0, out(result)
+        assert api.body("POST", "/api/orgs/acme-data/connections")["name"] == (
+            "Warehouse"
+        )
+
+    def test_the_display_name_is_never_taken_through_set(self, api: FakeApi) -> None:
+        """One spelling per field, the same rule that sends `--set password=`
+        to `--password-stdin`."""
         result = runner.invoke(
             app,
             [
@@ -1055,10 +1470,37 @@ class TestConnections:
             ],
             input="hunter2\n",
         )
-        assert result.exit_code == 0, out(result)
-        assert api.body("POST", "/api/orgs/acme-data/connections")["name"] == (
-            "Warehouse"
+        assert result.exit_code != 0
+        assert "--name" in out(result)
+        assert not api.calls
+
+    def test_an_empty_display_name_is_refused_rather_than_derived(
+        self, api: FakeApi
+    ) -> None:
+        """Blank reaches the server as "derive one for me", which is what
+        omitting the flag already says. `--name "$ALIAS"` with ALIAS unset is a
+        caller bug, and a silently auto-named connection is the wrong answer."""
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "connection",
+                "create",
+                "--org",
+                "acme-data",
+                "--type",
+                "postgres",
+                "--password-stdin",
+                "--name",
+                "   ",
+                "--set",
+                "host=db.example",
+            ],
+            input="hunter2\n",
         )
+        assert result.exit_code != 0
+        assert "blank" in out(result)
+        assert not api.calls
 
     def test_create_reads_a_password_from_stdin(self, api: FakeApi) -> None:
         api.add(
@@ -1187,6 +1629,44 @@ class TestConnections:
         assert result.exit_code != 0
         assert not api.calls
 
+    def test_a_failing_create_is_a_loud_error(self, api: FakeApi) -> None:
+        """A create whose credential check failed exits non-zero and prints the
+        server's own message, exactly like the re-test verb below — the setup
+        script that reads `$?` must never carry on over a dead warehouse."""
+        api.add(
+            "POST",
+            "/api/orgs/acme-data/connections",
+            {
+                "code": "connection_test_failed",
+                "message": (
+                    "bigquery: Could not open the warehouse: Unable to load PEM"
+                    " file. The connection was not saved. Fix the credential and"
+                    " run the same command again."
+                ),
+                "field_errors": {},
+            },
+            status=422,
+        )
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "connection",
+                "create",
+                "--org",
+                "acme-data",
+                "--type",
+                "postgres",
+                "--password-stdin",
+                "--set",
+                "host=db.example",
+            ],
+            input="hunter2\n",
+        )
+        assert result.exit_code == 1
+        assert "Unable to load PEM file" in out(result)
+        assert "was not saved" in out(result)
+
     def test_a_failing_test_is_a_loud_error(self, api: FakeApi) -> None:
         api.add(
             "POST",
@@ -1294,6 +1774,21 @@ class TestSources:
         assert result.exit_code == 0, out(result)
         assert "db" in result.output
         assert "unmapped" in result.output.lower()
+
+    def test_repo_resolved_file_sources_are_listed(self, api: FakeApi) -> None:
+        """A project whose only sources are files has an empty `sources` list;
+        printing "declares no sources" there would be a lie."""
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/projects/analytics/sources",
+            {"sources": [], "unmapped_count": 0, "file_sources": ["marts"]},
+        )
+        result = runner.invoke(
+            app, ["cloud", "sources", "--org", "acme-data", "--project", "analytics"]
+        )
+        assert result.exit_code == 0, out(result)
+        assert "marts" in result.output
+        assert "repo" in result.output.lower()
 
     def test_map_posts_the_source_and_connection(self, api: FakeApi) -> None:
         mapped = {
@@ -1417,6 +1912,35 @@ class TestRender:
             ],
         )
         assert RenderResult.model_validate_json(result.stdout).started == 2
+
+    def test_force_asks_the_server_to_rerender_every_board(self, api: FakeApi) -> None:
+        path = "/api/orgs/acme-data/projects/analytics/render/all"
+        api.add("POST", path, {"started": 47, "unrendered_remaining": 0})
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "render",
+                "--org",
+                "acme-data",
+                "--project",
+                "analytics",
+                "--force",
+            ],
+        )
+        assert result.exit_code == 0, out(result)
+        assert ("POST", path, {}) in api.calls
+        assert "Re-rendering 47" in result.output
+
+    def test_without_force_the_server_starts_only_unrendered_boards(
+        self, api: FakeApi
+    ) -> None:
+        path = "/api/orgs/acme-data/projects/analytics/render"
+        api.add("POST", path, {"started": 0, "unrendered_remaining": 0})
+        runner.invoke(
+            app, ["cloud", "render", "--org", "acme-data", "--project", "analytics"]
+        )
+        assert [c[1] for c in api.calls if c[0] == "POST"] == [path]
 
 
 class TestFailureSurfaces:
@@ -1702,6 +2226,36 @@ class TestBoards:
         assert result.exit_code == 0, out(result)
         assert "revenue" in result.output
         assert "warehouse unreachable" in result.output
+
+    def test_a_chart_diagnostic_with_brackets_does_not_crash_the_table(
+        self, api: FakeApi
+    ) -> None:
+        """`dct_console()` enables Rich markup, so an unescaped bracket in a
+        table cell is swallowed at best and raises MarkupError at worst,
+        taking the whole listing with it."""
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/projects/analytics/boards",
+            {
+                "boards": [
+                    {
+                        "slug": "revenue",
+                        "title": "Revenue",
+                        "render_status": "errored",
+                        "error": "column [region] is 42.1 MB, over the cap",
+                        "url": "https://cloud.example/acme-data/analytics/d/revenue",
+                    }
+                ]
+            },
+        )
+
+        result = runner.invoke(
+            app,
+            ["cloud", "boards", "--org", "acme-data", "--project", "analytics"],
+        )
+
+        assert result.exit_code == 0, out(result)
+        assert "[region]" in result.output
 
     def test_json_is_the_contract_model(self, api: FakeApi) -> None:
         api.add("GET", "/api/orgs/acme-data/projects/analytics/boards", {"boards": []})

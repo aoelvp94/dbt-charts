@@ -12,6 +12,7 @@ layers raise these, never the other way around.
 
 from __future__ import annotations
 
+import enum
 from pathlib import Path
 from typing import ClassVar
 
@@ -101,16 +102,57 @@ class TransportFailed(CloudError):
         super().__init__(f"Could not reach dbt charts Cloud at {host}: {detail}")
 
 
+class SkewDirection(enum.Enum):
+    """Which side of the wire is behind, inferred from a validation error's
+    own error ``type``s -- not a guess, the error already carries the answer.
+
+    ``CLOUD_OLDER``: this dct's contract requires a field Cloud's response
+    simply did not send (every error is ``"missing"``) -- Cloud has not
+    deployed it yet. ``CLOUD_NEWER``: Cloud sent a field in a shape this dct
+    has never seen (a type mismatch, an unrecognized enum value, or --
+    should ``ContractModel`` ever stop ignoring extras -- ``extra_forbidden``)
+    -- Cloud is ahead of this dct. The two need opposite advice: retrying
+    later (or matching Cloud's version) fixes the first, upgrading
+    dbt-charts fixes the second, and upgrading in the first case only adds
+    more fields Cloud still won't send.
+    """
+
+    CLOUD_OLDER = "cloud_older"
+    CLOUD_NEWER = "cloud_newer"
+
+
 class UnexpectedResponse(CloudError):
-    """An answer that is not this API's contract — a proxy, a login page, a 502."""
+    """An answer that is not this API's contract — a proxy, a login page, a 502 —
+    or, with ``skew`` set, well-formed JSON whose fields no longer match this
+    dct's contract: the two ends disagree on a shape. ``skew`` names which
+    side is behind, so the advice can name the actual remedy."""
 
     code: ClassVar[ErrorCode] = ErrorCode.UNAVAILABLE
 
-    def __init__(self, url: str, status_code: int, detail: str) -> None:
-        super().__init__(
-            f"{url} answered {status_code} with something that is not the dbt"
-            f" charts Cloud API: {detail}"
-        )
+    def __init__(
+        self,
+        url: str,
+        status_code: int,
+        detail: str,
+        *,
+        skew: SkewDirection | None = None,
+    ) -> None:
+        if skew is SkewDirection.CLOUD_OLDER:
+            what = (
+                "JSON that does not match this dct's Cloud contract — this"
+                " looks like Cloud is older than this dct and has not"
+                " deployed a field it expects yet: retry once Cloud"
+                " redeploys, or install a dct build that matches Cloud's"
+                " current version"
+            )
+        elif skew is SkewDirection.CLOUD_NEWER:
+            what = (
+                "JSON that does not match this dct's Cloud contract — if"
+                " Cloud is newer than this dct, upgrade dbt-charts and retry"
+            )
+        else:
+            what = "something that is not the dbt charts Cloud API"
+        super().__init__(f"{url} answered {status_code} with {what}: {detail}")
 
 
 class ApiFailed(CloudError):

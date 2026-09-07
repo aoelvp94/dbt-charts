@@ -15,6 +15,8 @@ import pytest
 from dbt_charts.cloud_client.client import CloudClient
 from dbt_charts.cloud_client.config import CloudConfig
 from dbt_charts.cloud_client.context import (
+    REFUSE_DEFAULT_CONNECT,
+    REFUSE_DEFAULT_DESTRUCTIVE,
     git_remotes,
     repo_key,
     resolve_org,
@@ -126,7 +128,7 @@ class TestResolveProject:
             )
         assert (context.org, context.project) == ("other-co", "elsewhere")
 
-    def test_strict_refuses_the_stored_default_when_the_repo_matches_nothing(
+    def test_a_refusing_verb_never_gets_the_stored_default_when_the_repo_matches_nothing(
         self,
     ) -> None:
         """HIGH-6: a destructive verb must not silently delete against a
@@ -139,14 +141,83 @@ class TestResolveProject:
                 project_flag=None,
                 config=CloudConfig(org="other-co", project="elsewhere"),
                 remotes=["git@github.com:someone/unrelated.git"],
-                strict=True,
+                refuse_default=REFUSE_DEFAULT_DESTRUCTIVE,
             )
 
         message = str(caught.value)
         assert "destructive" in message
         assert "--org" in message
+        assert "set a default" not in message
 
-    def test_strict_still_honors_an_exact_repo_match(self) -> None:
+    def test_no_project_anywhere_points_at_connect_with_the_org_named(self) -> None:
+        """The org is known (an explicit, valid --org) and has nothing
+        connected: the connect hint carries that org, since connect never
+        reads the stored default."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/api/orgs":
+                return httpx.Response(200, json=ORGS)
+            return httpx.Response(200, json={"projects": []})
+
+        with cloud(handler) as client, pytest.raises(ContextUnresolved) as caught:
+            resolve_project(
+                client,
+                org_flag="acme-data",
+                project_flag=None,
+                config=CloudConfig(),
+                remotes=[],
+            )
+
+        assert "dct cloud project connect --org acme-data" in str(caught.value)
+
+    def test_no_project_anywhere_with_two_orgs_leaves_the_org_to_the_caller(
+        self,
+    ) -> None:
+        """Nothing named and two memberships: the hint cannot pick, so it
+        keeps a placeholder rather than the first org alphabetically."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/api/orgs":
+                return httpx.Response(200, json=ORGS)
+            return httpx.Response(200, json={"projects": []})
+
+        with cloud(handler) as client, pytest.raises(ContextUnresolved) as caught:
+            resolve_project(
+                client,
+                org_flag=None,
+                project_flag=None,
+                config=CloudConfig(),
+                remotes=[],
+            )
+
+        message = str(caught.value)
+        assert "dct cloud project connect --org <org>" in message
+        assert "--org acme-data" not in message
+
+    def test_a_refusing_verb_with_nothing_to_delete_still_says_why(self) -> None:
+        """Zero projects anywhere is the one branch of the project refusal
+        that used to drop the verb's reason."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/api/orgs":
+                return httpx.Response(200, json=ORGS)
+            return httpx.Response(200, json={"projects": []})
+
+        with cloud(handler) as client, pytest.raises(ContextUnresolved) as caught:
+            resolve_project(
+                client,
+                org_flag="acme-data",
+                project_flag=None,
+                config=CloudConfig(),
+                remotes=[],
+                refuse_default=REFUSE_DEFAULT_DESTRUCTIVE,
+            )
+
+        message = str(caught.value)
+        assert message.startswith(REFUSE_DEFAULT_DESTRUCTIVE)
+        assert "No project to work on" in message
+
+    def test_a_refusing_verb_still_honors_an_exact_repo_match(self) -> None:
         with cloud() as client:
             context = resolve_project(
                 client,
@@ -154,11 +225,11 @@ class TestResolveProject:
                 project_flag=None,
                 config=CloudConfig(org="other-co", project="elsewhere"),
                 remotes=["git@github.com:acme/analytics.git"],
-                strict=True,
+                refuse_default=REFUSE_DEFAULT_DESTRUCTIVE,
             )
         assert (context.org, context.project) == ("acme-data", "analytics")
 
-    def test_strict_still_honors_explicit_flags(self) -> None:
+    def test_a_refusing_verb_still_honors_explicit_flags(self) -> None:
         with cloud() as client:
             context = resolve_project(
                 client,
@@ -166,7 +237,7 @@ class TestResolveProject:
                 project_flag="elsewhere",
                 config=CloudConfig(),
                 remotes=[],
-                strict=True,
+                refuse_default=REFUSE_DEFAULT_DESTRUCTIVE,
             )
         assert (context.org, context.project) == ("other-co", "elsewhere")
 
@@ -318,7 +389,9 @@ class TestResolveOrg:
                 == "other-co"
             )
 
-    def test_strict_refuses_the_stored_default_with_no_repo_match(self) -> None:
+    def test_a_refusing_verb_never_gets_the_stored_default_with_no_repo_match(
+        self,
+    ) -> None:
         """HIGH-6: org delete/connection delete must not fall back to a
         stale `dct cloud use` default with no repo evidence at all."""
         with cloud() as client, pytest.raises(ContextUnresolved) as caught:
@@ -327,19 +400,42 @@ class TestResolveOrg:
                 org_flag=None,
                 config=CloudConfig(org="other-co"),
                 remotes=[],
-                strict=True,
+                refuse_default=REFUSE_DEFAULT_DESTRUCTIVE,
             )
 
         assert "destructive" in str(caught.value)
 
-    def test_strict_still_honors_the_repo_match(self) -> None:
+    def test_the_refusal_names_the_verbs_own_reason(self) -> None:
+        """`project connect` refuses the stored default for a reason of its
+        own -- it is binding a repository, not deleting anything -- and the
+        message says that, then lists the caller's orgs to name. It must not
+        then offer `dct cloud use` as the remedy: that is the default it just
+        refused, and following it re-runs into the same refusal."""
+        with cloud() as client, pytest.raises(ContextUnresolved) as caught:
+            resolve_org(
+                client,
+                org_flag=None,
+                config=CloudConfig(org="other-co"),
+                remotes=[],
+                refuse_default=REFUSE_DEFAULT_CONNECT,
+            )
+
+        message = str(caught.value)
+        assert message.startswith(REFUSE_DEFAULT_CONNECT)
+        assert "destructive" not in message
+        assert "--org" in message
+        assert "set a default" not in message
+        assert "acme-data (Acme Data)" in message
+        assert "other-co (Other Co)" in message
+
+    def test_a_refusing_verb_still_honors_the_repo_match(self) -> None:
         with cloud() as client:
             org = resolve_org(
                 client,
                 org_flag=None,
                 config=CloudConfig(org="other-co"),
                 remotes=["git@github.com:acme/analytics.git"],
-                strict=True,
+                refuse_default=REFUSE_DEFAULT_DESTRUCTIVE,
             )
         assert org == "acme-data"
 

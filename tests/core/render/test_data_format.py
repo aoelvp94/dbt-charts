@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import datetime
 import json
+import uuid
 from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
@@ -293,6 +295,37 @@ def test_decimal_precision_contract_across_formats(
 
     as_data = _render(board, _make_executor(rows))
     assert as_data["queries"]["q"]["rows"][0]["revenue"] == float(exact)
+
+
+def test_exotic_warehouse_scalars_pin_the_data_format_wire_shape(
+    make_chart: Callable[..., Any],
+) -> None:
+    """All four types serialize identically to before `clean_value` grew
+    explicit branches for them — pydantic's own JSON encoder already rendered
+    a naive `time`/`UUID`/`timedelta` this way (via `to_jsonable_python`,
+    which `clean_value` now calls directly for `timedelta` so the published
+    wire format doesn't drift). BYTES is the one genuine fix: before,
+    non-UTF8 bytes raised `PydanticSerializationError` and UTF8-safe bytes
+    silently decoded as text with no sign they were ever bytes; `.hex()`
+    always succeeds and is honest about the type. Pin the current shape here
+    so any future drift is caught rather than silently reshaping this wire
+    format.
+    """
+    data = [
+        {
+            "started_at": datetime.time(9, 30, 0),
+            "duration": datetime.timedelta(hours=1, minutes=15),
+            "row_id": uuid.UUID("12345678-1234-5678-1234-567812345678"),
+            "payload": b"\x00\x01binary",
+        }
+    ]
+    board = _make_board([make_chart("table", id="tbl", query_name="q")])
+    row = _render(board, _make_executor(data))["queries"]["q"]["rows"][0]
+
+    assert row["started_at"] == "09:30:00"
+    assert row["duration"] == "PT1H15M"
+    assert row["row_id"] == "12345678-1234-5678-1234-567812345678"
+    assert row["payload"] == "000162696e617279"
 
 
 def test_duplicate_chart_id_across_nested_boards_raises(

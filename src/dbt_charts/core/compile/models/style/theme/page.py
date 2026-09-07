@@ -74,13 +74,15 @@ class FooterStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     visible: bool = Field(description="Show the footer attribution line.")
-    text: str = Field(description="Attribution text shown in the footer.")
+    text: str = Field(
+        description="Attribution text shown in the footer. The first 'dbt charts' in it is drawn as the dbt charts wordmark, in the same ink as the text."
+    )
     # Cascade sentinel: None (theme sets link: null) or absent = no link, the
-    # footer text renders plain. When set, occurrences of the brand phrase
-    # "dbt charts" in the footer text link here (styled by .dbt-footer-link).
+    # wordmark renders plain. When set, the wordmark links here (an anchor
+    # classed .dbt-footer-link).
     link: str | None = Field(
         default=None,
-        description="URL the footer brand phrase 'dbt charts' links to; null renders plain text.",
+        description="URL the footer's dbt charts wordmark links to; null renders it plain.",
     )
     font: FontStyle = Field(
         default_factory=FontStyle,

@@ -5,12 +5,14 @@ serialize into their respective wire formats.
 """
 
 import sys
+import uuid
 from collections.abc import Mapping
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel
+from pydantic_core import to_jsonable_python
 
 from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
 from dbt_charts.core.compile.models.chart.normalized import Chart
@@ -92,6 +94,21 @@ def clean_value(v: Any) -> Any:
         return v.isoformat()
     if isinstance(v, date):
         return v.isoformat()
+    if isinstance(v, time):
+        return v.isoformat()
+    if isinstance(v, timedelta):
+        # ISO-8601 duration (e.g. "PT1H15M") — the same shape Pydantic's own
+        # encoder already produced for a bare `timedelta` in an `Any`-typed
+        # field before this branch existed, so YAML safety doesn't reshape
+        # the published `--format data`/`--format json` wire format.
+        # `to_jsonable_python` is the encoder that produced it, not a
+        # hand-rolled formatter — negative durations, sub-second precision,
+        # and day rollover are all easy to get subtly wrong by hand.
+        return to_jsonable_python(v)
+    if isinstance(v, uuid.UUID):
+        return str(v)
+    if isinstance(v, bytes):
+        return v.hex()
     if isinstance(v, set):
         return sorted(v)
     return v

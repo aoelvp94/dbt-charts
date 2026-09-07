@@ -223,6 +223,7 @@ def render_inspect_dashboard(
     *,
     project: FilesystemProject,
     adapter_registry: AdapterRegistry,
+    standalone: bool = False,
 ) -> str:
     """Render a profile template to HTML.
 
@@ -249,6 +250,11 @@ def render_inspect_dashboard(
         variables: Variables to substitute in the template
         project: Project for resolving sources and relative paths
         adapter_registry: Pre-configured registry to resolve/execute against
+        standalone: Output will be opened with no host, so carry font bytes
+            inline rather than naming ``/static/fonts/...`` (the super-schema
+            CLI's case). ``dct serve`` leaves this at the default — it already
+            mounts the prefix, and embedding would add ~0.5 MiB of base64 to
+            every served page.
 
     Returns:
         Rendered HTML string
@@ -295,7 +301,11 @@ def render_inspect_dashboard(
     )
 
     html_output = render(
-        result.board, executor, format="html", variables=safe_vars
+        result.board,
+        executor,
+        format="html",
+        variables=safe_vars,
+        standalone=standalone,
     ).output
 
     if html_output is None:

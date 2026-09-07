@@ -3,12 +3,18 @@
 The footer is a right-aligned muted text line at the bottom of every board,
 with an optional hairline rule above. Theme-controlled, always-on by default,
 disabled by setting style.footer.visible: false. The brand phrase "dbt charts"
-in the footer text links to style.footer.link (a subtle watermark) when set.
+in the footer text is drawn as the dbt charts wordmark in the footer color, and
+links to style.footer.link (a subtle watermark) when set.
 """
 
 import re
 
-from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+from dbt_charts.core.compile.config import (
+    get_chart_rendering,
+    get_default_theme_name,
+    get_theme_style,
+)
+from dbt_charts.core.font_measure import get_font_measurer
 
 from ._svg_render import render_board_to_svg
 
@@ -16,8 +22,8 @@ from ._svg_render import render_board_to_svg
 class TestSVGFooter:
     def test_footer_text_is_visible_by_default(self):
         svg = render_board_to_svg()
-        assert "made with " in svg
-        assert "dbt charts" in svg
+        assert "made with" in svg
+        assert 'class="dbt-footer-wordmark"' in svg
 
     def test_footer_text_is_right_anchored_and_uses_configured_styling(self):
         footer = get_theme_style(get_default_theme_name()).footer
@@ -29,16 +35,16 @@ class TestSVGFooter:
         svg_output = render_board_to_svg()
 
         # The footer <text> open tag carries the right anchor, size, and color;
-        # its content is "made with " followed by the linked brand word.
+        # "made with" is its own run, ending where the mark's gap begins.
         pattern = (
             rf'<text[^>]*text-anchor="end"[^>]*font-size="{expected_size}"'
-            rf'[^>]*fill="{re.escape(expected_color)}"[^>]*>made with '
+            rf'[^>]*fill="{re.escape(expected_color)}"[^>]*>made with</text>'
         )
         assert re.search(pattern, svg_output) is not None
 
     def test_footer_hairline_rule_renders_above_text_by_default(self):
         svg_output = render_board_to_svg()
-        footer_idx = svg_output.find("made with ")
+        footer_idx = svg_output.find("made with")
         assert footer_idx > -1
         rule = get_theme_style(get_default_theme_name()).footer.rule
         assert rule is not None
@@ -58,7 +64,9 @@ style:
   footer:
     visible: false
 """
-        assert "made with dbt charts" not in render_board_to_svg(yaml)
+        svg = render_board_to_svg(yaml)
+        assert "made with" not in svg
+        assert 'class="dbt-footer-wordmark"' not in svg
 
     def test_footer_text_is_user_overridable(self):
         yaml = """\
@@ -89,43 +97,85 @@ style:
 """
         svg = render_board_to_svg(yaml)
         assert "custom attribution" in svg
-        assert "made with dbt charts" not in svg
+        assert "made with" not in svg
 
     def test_footer_hairline_rule_color_matches_theme(self):
         footer = get_theme_style(get_default_theme_name()).footer
         assert footer.rule is not None
         svg_output = render_board_to_svg()
-        footer_idx = svg_output.find("made with ")
+        footer_idx = svg_output.find("made with")
         prefix = svg_output[:footer_idx]
         rule_pattern = rf'<line[^>]*stroke="{re.escape(footer.rule.color)}"[^>]*/>'
         assert re.search(rule_pattern, prefix) is not None
 
-    # --- brand-word link -----------------------------------------------------
+    # --- wordmark and link ---------------------------------------------------
 
-    def test_footer_brand_word_links_to_configured_url_by_default(self):
+    def test_footer_brand_phrase_is_drawn_as_the_wordmark_not_set_in_type(self):
+        svg = render_board_to_svg()
+        assert re.search(r"<text[^>]*>[^<]*dbt charts", svg) is None
+        assert re.search(
+            r'<g class="dbt-footer-wordmark"[^>]*>(<path d="[^"]+"/>){3}</g>', svg
+        )
+
+    def test_footer_wordmark_is_painted_in_the_footer_font_color(self):
+        footer = get_theme_style(get_default_theme_name()).footer
+        svg = render_board_to_svg()
+        lockup = re.search(r'<g class="dbt-footer-wordmark"[^>]*>', svg)
+        assert lockup is not None
+        assert f'fill="{footer.font.color}"' in lockup.group(0)
+        assert "fill=" not in re.sub(
+            r'<g class="dbt-footer-wordmark"[^>]*>', "", lockup.group(0)
+        )
+
+    def test_footer_wordmark_follows_an_overridden_footer_color(self):
+        yaml = """\
+title: Test
+queries:
+  q: {type: values, rows: [{n: 1}]}
+charts:
+  t: {query: q, type: table}
+rows: [t]
+style:
+  footer:
+    font:
+      color: "#123456"
+"""
+        svg = render_board_to_svg(yaml)
+        lockup = re.search(r'<g class="dbt-footer-wordmark"[^>]*>', svg)
+        assert lockup is not None
+        assert 'fill="#123456"' in lockup.group(0)
+
+    def test_footer_wordmark_links_to_configured_url_by_default(self):
         footer = get_theme_style(get_default_theme_name()).footer
         assert footer.link
         svg = render_board_to_svg()
-        # "dbt charts" is wrapped in an anchor to the configured URL; "made with "
-        # stays plain text outside the link.
         pattern = (
-            rf'made with <a href="{re.escape(footer.link)}"[^>]*>'
-            r'<tspan class="dbt-footer-link">dbt charts</tspan></a>'
+            rf'<a class="dbt-footer-link" href="{re.escape(footer.link)}"[^>]*>'
+            r'<g class="dbt-footer-wordmark"'
         )
         assert re.search(pattern, svg) is not None
-
-    def test_footer_link_styling_is_subtle_not_blue(self):
-        """The linked phrase inherits the footer fill (no blue) and is styled via CSS."""
-        svg = render_board_to_svg()
-        # The tspan carries no explicit fill — it inherits the muted footer color.
-        assert re.search(r'<tspan class="dbt-footer-link">dbt charts</tspan>', svg)
-        assert 'class="dbt-footer-link"' in svg
-        # Subtle styling lives in the embedded stylesheet: slightly bold, underline
-        # only on hover.
+        # Subtle styling lives in the embedded stylesheet: pointer, dim on hover.
         assert ".dbt-footer-link" in svg
         assert ".dbt-footer-link:hover" in svg
 
-    def test_footer_link_absent_when_brand_word_not_in_text(self):
+    def test_footer_link_null_keeps_the_wordmark_but_no_link(self):
+        yaml = """\
+title: Test
+queries:
+  q: {type: values, rows: [{n: 1}]}
+charts:
+  t: {query: q, type: table}
+rows: [t]
+style:
+  footer:
+    link: null
+"""
+        svg = render_board_to_svg(yaml)
+        assert 'class="dbt-footer-wordmark"' in svg
+        assert "<a " not in svg
+        assert 'class="dbt-footer-link"' not in svg
+
+    def test_footer_wordmark_absent_when_brand_word_not_in_text(self):
         yaml = """\
 title: Test
 queries:
@@ -139,6 +189,70 @@ style:
 """
         svg = render_board_to_svg(yaml)
         assert "custom attribution" in svg
-        # No brand word to link — the footer <text> emits no anchor tspan (the
-        # .dbt-footer-link CSS class definition still lives in the stylesheet).
-        assert '<tspan class="dbt-footer-link">' not in svg
+        assert 'class="dbt-footer-wordmark"' not in svg
+        assert 'class="dbt-footer-link"' not in svg
+
+    def test_footer_prefix_ends_before_the_wordmark_starts(self):
+        """ "made with" is its own right-anchored run ending left of the lockup."""
+        svg = render_board_to_svg()
+        prefix = re.search(r'<text x="([\d.]+)"[^>]*>made with</text>', svg)
+        lockup = re.search(
+            r'<g class="dbt-footer-wordmark" transform="translate\(([\d.]+), [\d.]+\)',
+            svg,
+        )
+        assert prefix is not None and lockup is not None
+        assert float(prefix.group(1)) < float(lockup.group(1))
+
+    def test_footer_text_after_the_brand_phrase_stays_right_of_the_wordmark(self):
+        yaml = """\
+title: Test
+queries:
+  q: {type: values, rows: [{n: 1}]}
+charts:
+  t: {query: q, type: table}
+rows: [t]
+style:
+  footer:
+    text: "made with dbt charts for Acme"
+"""
+        svg = render_board_to_svg(yaml)
+        suffix = re.search(r'<text x="([\d.]+)"[^>]*>for Acme</text>', svg)
+        lockup = re.search(
+            r'<g class="dbt-footer-wordmark" transform="translate\(([\d.]+), [\d.]+\) '
+            r"scale\(([\d.]+)\)",
+            svg,
+        )
+        assert suffix is not None and lockup is not None
+        lockup_right = float(lockup.group(1)) + 997 * float(lockup.group(2))
+        style = get_theme_style(get_default_theme_name())
+        assert style.footer.font.size is not None
+        suffix_w = get_font_measurer(style.font.family).measure(
+            "for Acme", float(style.footer.font.size)
+        )
+        assert lockup_right < float(suffix.group(1)) - suffix_w
+
+    def test_footer_right_timestamp_clears_the_lockup(self):
+        """The timestamp ends the configured gap before the leftmost painted
+        edge of the attribution, which is the start of "made with"."""
+        style = get_theme_style(get_default_theme_name())
+        assert style.footer.font.size is not None
+        measure = get_font_measurer(style.font.family).measure
+        size = float(style.footer.font.size)
+        yaml = """\
+title: Test
+queries:
+  q: {type: values, rows: [{n: 1}]}
+charts:
+  t: {query: q, type: table}
+rows: [t]
+style:
+  timestamp:
+    align: right
+"""
+        svg = render_board_to_svg(yaml)
+        stamp = re.search(r'<text data-role="render-timestamp" x="([\d.]+)"', svg)
+        prefix = re.search(r'<text x="([\d.]+)"[^>]*>made with</text>', svg)
+        assert stamp is not None and prefix is not None
+        lockup_left = float(prefix.group(1)) - measure("made with", size)
+        gap = get_chart_rendering().frame.footer_timestamp_gap_px
+        assert abs(lockup_left - float(stamp.group(1)) - gap) < 0.01

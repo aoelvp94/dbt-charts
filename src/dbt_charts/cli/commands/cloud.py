@@ -58,6 +58,8 @@ from dbt_charts.cloud_client.config import (
     save_config,
 )
 from dbt_charts.cloud_client.context import (
+    REFUSE_DEFAULT_CONNECT,
+    REFUSE_DEFAULT_DESTRUCTIVE,
     CloudContext,
     git_remotes,
     resolve_org,
@@ -97,6 +99,15 @@ SECRET_FIELDS = frozenset(
 OrgOption = Annotated[
     str | None,
     typer.Option("--org", help="Organization slug (default: inferred, then `use`)"),
+]
+# For verbs that pass a ``refuse_default`` reason: same flag, honest help.
+RefusingOrgOption = Annotated[
+    str | None,
+    typer.Option(
+        "--org",
+        help="Organization slug (inferred from this repo, else required;"
+        " never the `use` default)",
+    ),
 ]
 ProjectOption = Annotated[
     str | None,
@@ -281,10 +292,15 @@ def _org(
     client: CloudClient,
     config: CloudConfig,
     org_flag: str | None,
-    *,
-    strict: bool = False,
+    refuse_default: str | None = None,
 ) -> str:
-    return resolve_org(client, org_flag, config, git_remotes(Path.cwd()), strict=strict)
+    return resolve_org(
+        client,
+        org_flag,
+        config,
+        git_remotes(Path.cwd()),
+        refuse_default=refuse_default,
+    )
 
 
 def _context(
@@ -292,11 +308,15 @@ def _context(
     config: CloudConfig,
     org_flag: str | None,
     project_flag: str | None,
-    *,
-    strict: bool = False,
+    refuse_default: str | None = None,
 ) -> CloudContext:
     return resolve_project(
-        client, org_flag, project_flag, config, git_remotes(Path.cwd()), strict=strict
+        client,
+        org_flag,
+        project_flag,
+        config,
+        git_remotes(Path.cwd()),
+        refuse_default=refuse_default,
     )
 
 
@@ -470,19 +490,19 @@ def org_create(
         print_json_result(result)
         return
     typer.echo(f"Created {result.slug} ({result.name}); you are {result.role}.")
-    typer.echo(f"Next: dct cloud use {result.slug} && dct cloud project connect")
+    typer.echo(f"Next: dct cloud project connect --org {result.slug}")
 
 
 @org_app.command("delete")
 def org_delete(
-    org: OrgOption = None,
+    org: RefusingOrgOption = None,
     yes: YesOption = False,
     host: HostOption = None,
     as_json: JsonOption = False,
 ) -> None:
     """Delete an organization and all its data. Refused while it has projects."""
     with _cloud(host, as_json) as (client, config):
-        org_slug = _org(client, config, org, strict=True)
+        org_slug = _org(client, config, org, refuse_default=REFUSE_DEFAULT_DESTRUCTIVE)
         _confirm_destructive("organization", org_slug, yes)
         result = client.delete_org(org_slug)
     if as_json:
@@ -641,18 +661,21 @@ def projects(
 ) -> None:
     """List the projects connected to an organization."""
     with _cloud(host, as_json) as (client, config):
-        result = client.list_projects(_org(client, config, org))
+        org_slug = _org(client, config, org)
+        result = client.list_projects(org_slug)
     if as_json:
         print_json_result(result)
         return
-    _print_projects(result)
+    _print_projects(org_slug, result)
 
 
 @project_app.command("connect")
 def project_connect(
     git_url: Annotated[
         str | None,
-        typer.Option("--git-url", help="Connect a plain git URL, with no browser hop"),
+        typer.Option(
+            "--git-url", help="Connect a public GitHub URL, with no browser hop"
+        ),
     ] = None,
     root: Annotated[
         str | None,
@@ -675,15 +698,15 @@ def project_connect(
     poll_interval: Annotated[
         float, typer.Option("--poll-interval", help="Seconds between pick checks")
     ] = PICK_POLL_SECONDS,
-    org: OrgOption = None,
+    org: RefusingOrgOption = None,
     host: HostOption = None,
     as_json: JsonOption = False,
 ) -> None:
-    """Connect a repository as a project.
+    """Connect a GitHub repository as a project.
 
     \b
     Two paths:
-      --git-url URL   fully headless; works for any repo Cloud can clone
+      --git-url URL   fully headless; public GitHub repos only
       (default)       prints a URL, waits for you to install the GitHub App
                       and pick the repo in the browser, then finishes here
 
@@ -696,7 +719,7 @@ def project_connect(
             param_hint="--poll-interval",
         )
     with _cloud(host, as_json) as (client, config):
-        org_slug = _org(client, config, org)
+        org_slug = _org(client, config, org, refuse_default=REFUSE_DEFAULT_CONNECT)
         if git_url:
             project = client.create_project(
                 org_slug,
@@ -717,7 +740,28 @@ def project_connect(
         f"Connected {project.slug}: {project.repo_label}"
         f" (trunk: {project.trunk_branch}, work: {project.work_branch})"
     )
-    typer.echo(f"Next: dct cloud project sync --project {project.slug}")
+    typer.echo(_connect_next_step(org_slug, project))
+
+
+def _connect_next_step(org: str, project: ProjectSummary) -> str:
+    """Where connect sends the user next.
+
+    Syncing a project whose sources are unmapped renders every board against
+    no connection, and mapping one afterwards re-renders nothing. Cloud has
+    already cloned the repo, so the create response's count is the work
+    branch's real answer.
+    """
+    if project.config_error is not None:
+        return f"{project.config_error}\nFix dbt_charts.yml and push before syncing."
+    if project.unmapped_source_count:
+        return (
+            f"Next: dct cloud connection create --org {org} --type <type>, then "
+            f"dct cloud source map <source> <connection> --org {org} "
+            f"--project {project.slug} ({project.unmapped_source_count} unmapped; "
+            "dct cloud sources lists them). Sync only after mapping, or every "
+            "board renders without a source."
+        )
+    return f"Next: dct cloud project sync --org {org} --project {project.slug}"
 
 
 def _connect_through_github(
@@ -798,7 +842,7 @@ def project_scaffold(
 
 @project_app.command("delete")
 def project_delete(
-    org: OrgOption = None,
+    org: RefusingOrgOption = None,
     project: ProjectOption = None,
     yes: YesOption = False,
     host: HostOption = None,
@@ -806,7 +850,9 @@ def project_delete(
 ) -> None:
     """Delete a project and all its data."""
     with _cloud(host, as_json) as (client, config):
-        context = _context(client, config, org, project, strict=True)
+        context = _context(
+            client, config, org, project, refuse_default=REFUSE_DEFAULT_DESTRUCTIVE
+        )
         _confirm_destructive("project", f"{context.org}/{context.project}", yes)
         result = client.delete_project(context.org, context.project)
     if as_json:
@@ -876,6 +922,16 @@ def connection_create(
             "--password-env", metavar="VAR", help="Env var holding the password"
         ),
     ] = None,
+    name: Annotated[
+        str | None,
+        typer.Option(
+            "--name",
+            help=(
+                "Display name; its slug is the connection's id"
+                " (default: BigQuery's project, otherwise the database)"
+            ),
+        ),
+    ] = None,
     org: OrgOption = None,
     host: HostOption = None,
     as_json: JsonOption = False,
@@ -889,8 +945,14 @@ def connection_create(
           --set project=acme-gcp --set dataset=analytics
 
     Key material is never a flag value — pass --keyfile, --password-stdin, or
-    --password-env VAR. A connection whose test fails is reported as a failure,
-    not saved quietly.
+    --password-env VAR.
+
+    The connection is addressed by the slug of --name. Left off, the display
+    name defaults to the field that names the warehouse — BigQuery's project,
+    otherwise the database — and create prints the slug it derived.
+
+    A connection whose test fails is reported as a failure and is not saved:
+    fix the credential and run the same command again.
     """
     fields = parse_kv_pairs(settings or [], "--set")
     leaked = sorted(SECRET_FIELDS & set(fields))
@@ -901,6 +963,20 @@ def connection_create(
             " --password-env VAR.",
             param_hint="--set",
         )
+    if "name" in fields:
+        raise typer.BadParameter(
+            "the display name is --name, not --set name=.",
+            param_hint="--set",
+        )
+    if name is not None:
+        if not name.strip():
+            # Blank reaches the form as "derive one for me", which is what
+            # omitting the flag already means — an empty --name is a caller bug
+            # (an unset shell variable), not a request.
+            raise typer.BadParameter(
+                "a display name cannot be blank.", param_hint="--name"
+            )
+        fields["name"] = name
     fields.update(_secret_field(connection_type, keyfile, password_stdin, password_env))
 
     with _cloud(host, as_json) as (client, config):
@@ -1001,13 +1077,13 @@ def connection_delete(
         str, typer.Argument(help="Connection slug, as `dct cloud connections` lists it")
     ],
     yes: YesOption = False,
-    org: OrgOption = None,
+    org: RefusingOrgOption = None,
     host: HostOption = None,
     as_json: JsonOption = False,
 ) -> None:
     """Delete a warehouse connection. Boards that query it start failing."""
     with _cloud(host, as_json) as (client, config):
-        org_slug = _org(client, config, org, strict=True)
+        org_slug = _org(client, config, org, refuse_default=REFUSE_DEFAULT_DESTRUCTIVE)
         _confirm_destructive("connection", f"{org_slug}/{connection}", yes)
         result = client.delete_connection(org_slug, connection)
     if as_json:
@@ -1064,17 +1140,30 @@ def source_map(
 
 @cloud_app.command("render")
 def render(
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Re-render every board with fresh query results, including "
+            "ones that already rendered — the lever for a board that stays "
+            "errored after its source was mapped or its warehouse fixed. "
+            "A project admin's act.",
+        ),
+    ] = False,
     org: OrgOption = None,
     project: ProjectOption = None,
     host: HostOption = None,
     as_json: JsonOption = False,
 ) -> None:
-    """Start renders for the project's boards that have none yet."""
+    """Start renders for the project's boards that have none yet, or all of them."""
     with _cloud(host, as_json) as (client, config):
         context = _context(client, config, org, project)
-        result = client.render_project(context.org, context.project)
+        result = client.render_project(context.org, context.project, force=force)
     if as_json:
         print_json_result(result)
+        return
+    if force:
+        typer.echo(f"Re-rendering {result.started} board(s).")
         return
     typer.echo(
         f"Started {result.started} board render(s);"
@@ -1104,19 +1193,32 @@ def _print_orgs(result: OrgList) -> None:
     dct_console().print(table)
 
 
-def _print_projects(result: ProjectList) -> None:
+def _print_projects(org: str, result: ProjectList) -> None:
     if not result.projects:
-        typer.echo("No projects yet. Connect one: dct cloud project connect")
+        typer.echo(
+            f"No projects yet. Connect one: dct cloud project connect --org {org}"
+        )
         return
     table = _table("SLUG", "REPOSITORY", "TRUNK", "UNMAPPED SOURCES")
     for project in result.projects:
+        # A count Cloud could not compute prints as a word, not a number: the
+        # reason is under the table, but the cell has to say it too or the
+        # column reads as something the caller could act on.
+        unmapped = project.unmapped_source_count
         table.add_row(
             project.slug,
             project.repo_label,
             project.trunk_branch,
-            str(project.unmapped_source_count),
+            "unknown" if unmapped is None else str(unmapped),
         )
-    dct_console().print(table)
+    console = dct_console()
+    console.print(table)
+    for project in result.projects:
+        if project.config_error:
+            console.print(
+                f"{project.slug}: {escape(project.config_error)}"
+                " — its unmapped count is unknown, not 0."
+            )
 
 
 def _print_connections(result: ConnectionList) -> None:
@@ -1138,17 +1240,23 @@ def _print_connections(result: ConnectionList) -> None:
 
 
 def _print_sources(result: SourceList) -> None:
-    if not result.sources:
+    if not result.sources and not result.file_sources:
         typer.echo("This project declares no sources.")
         return
-    table = _table("SOURCE", "CONNECTION", "SCHEMA")
-    for source in result.sources:
-        table.add_row(
-            source.name,
-            source.connection_slug or "unmapped",
-            source.schema_override,
+    if result.sources:
+        table = _table("SOURCE", "CONNECTION", "SCHEMA")
+        for source in result.sources:
+            table.add_row(
+                source.name,
+                source.connection_slug or "unmapped",
+                source.schema_override,
+            )
+        dct_console().print(table)
+    if result.file_sources:
+        typer.echo(
+            "resolved from repo (no connection needed): "
+            + ", ".join(result.file_sources)
         )
-    dct_console().print(table)
     if result.unmapped_count:
         typer.echo(
             f"{result.unmapped_count} unmapped source(s):"
@@ -1184,7 +1292,7 @@ def _print_boards(result: BoardList) -> None:
     for board in result.boards:
         status_text = board.render_status
         if board.error:
-            status_text = f"{status_text}: {board.error}"
+            status_text = f"{status_text}: {escape(board.error)}"
         table.add_row(board.slug, status_text, board.url)
     dct_console().print(table)
 
@@ -1211,33 +1319,78 @@ def _print_status(org: str, status_result: OrgStatus) -> None:
     if status_result.next_step:
         console.print(f"[bold]next:[/bold] {escape(status_result.next_step)}")
     else:
-        console.print("[bold]next:[/bold] nothing — setup is complete.")
+        console.print(
+            "[bold]next:[/bold] nothing — setup is complete;"
+            " `dct cloud boards` lists the board URLs."
+        )
     console.print(
         f"connections: {status_result.connection_count}"
         f" ({status_result.tested_connection_count} tested)"
     )
     if not status_result.projects:
-        typer.echo("No projects yet. Connect one: dct cloud project connect")
+        typer.echo(
+            f"No projects yet. Connect one: dct cloud project connect --org {org}"
+        )
         return
-    table = _table(
-        "PROJECT", "STAGE", "SYNCED", "UNMAPPED", "BOARDS", "UNRENDERED", "FAILED"
-    )
+    table = _table("PROJECT", "STAGE", "SYNCED", "UNMAPPED")
     for project in status_result.projects:
         table.add_row(
             project.slug,
             project.stage.value,
             "yes" if project.synced else "no",
             str(project.unmapped_source_count),
-            str(project.board_count),
-            str(project.unrendered_board_count),
-            str(project.failed_board_count),
         )
     console.print(table)
+    if any(
+        project.ready_board_count is None or project.errored_board_count is None
+        for project in status_result.projects
+    ):
+        console.print(
+            "This Cloud is older than this dct and does not report one or"
+            " both of the ready/errored board counts below yet — a missing"
+            " count prints as `unknown`, not a real count."
+        )
+    # One unwrapped line per project, not more columns: ten numeric columns
+    # truncate their own headers at the 80 columns a piped (agent) read gets.
     for project in status_result.projects:
+        ready = (
+            "unknown"
+            if project.ready_board_count is None
+            else str(project.ready_board_count)
+        )
+        errored = (
+            "unknown"
+            if project.errored_board_count is None
+            else str(project.errored_board_count)
+        )
+        console.print(
+            f"{project.slug} boards: {project.board_count} total,"
+            f" {ready} ready,"
+            f" {project.unrendered_board_count} unrendered,"
+            f" {project.rendering_board_count} rendering,"
+            f" {project.failed_board_count} failed,"
+            f" {errored} errored",
+            soft_wrap=True,
+        )
+        if project.config_error:
+            console.print(
+                f"{project.slug}: {escape(project.config_error)}"
+                " — its source counts are unknown, not 0."
+            )
+        if project.file_sources:
+            console.print(
+                f"{project.slug} sources resolved from repo: "
+                + escape(", ".join(project.file_sources))
+            )
         if project.failed_board_slugs:
             console.print(
                 f"{project.slug} render failures: "
                 + escape(", ".join(project.failed_board_slugs))
+            )
+        if project.errored_board_slugs:
+            console.print(
+                f"{project.slug} boards with chart errors: "
+                + escape(", ".join(project.errored_board_slugs))
             )
 
 

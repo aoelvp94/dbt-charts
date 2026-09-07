@@ -57,6 +57,7 @@ from dbt_charts.cloud_client.errors import (
     DeviceLoginFailed,
     InvalidCredential,
     PickTimedOut,
+    SkewDirection,
     TransportFailed,
     UnexpectedResponse,
 )
@@ -123,8 +124,14 @@ class CloudClient:
         self._http.close()
 
     def connect_url(self, org_slug: str) -> str:
-        """Where a user completes the GitHub install and repo pick for *org_slug*."""
-        return f"{self.host}/{org_slug}/github/connect/"
+        """Where a user completes the GitHub install and repo pick for *org_slug*.
+
+        ``landing=terminal`` is unconditional: every caller of this client
+        finishes the project itself from the pick, so the browser must land on
+        a page that says "go back to your terminal", not on the New Project
+        form that would create a second project against the same repo.
+        """
+        return f"{self.host}/{org_slug}/github/connect/?landing=terminal"
 
     # --- organizations -----------------------------------------------------
 
@@ -242,10 +249,11 @@ class CloudClient:
     def sync_project(self, org: str, project: str) -> SyncResult:
         return self._request("POST", f"/orgs/{org}/projects/{project}/sync", SyncResult)
 
-    def render_project(self, org: str, project: str) -> RenderResult:
-        return self._request(
-            "POST", f"/orgs/{org}/projects/{project}/render", RenderResult
-        )
+    def render_project(self, org: str, project: str, *, force: bool) -> RenderResult:
+        """``force`` re-renders every board (``render/all``, a project-admin
+        act); otherwise only boards with no render yet start."""
+        path = f"/orgs/{org}/projects/{project}/render"
+        return self._request("POST", path + "/all" if force else path, RenderResult)
 
     def delete_project(self, org: str, project: str) -> DeleteResult:
         return self._request("DELETE", f"/orgs/{org}/projects/{project}", DeleteResult)
@@ -387,7 +395,20 @@ class CloudClient:
         try:
             return model.model_validate_json(response.content)
         except ValidationError as exc:
-            raise UnexpectedResponse(url, response.status_code, str(exc)) from exc
+            # JSON that parsed and failed on its fields is a contract the two
+            # ends disagree on; a body that is not JSON at all is not Cloud.
+            # Every error's own "missing" vs. anything-else type says which
+            # side is behind -- see SkewDirection's docstring.
+            error_types = {error["type"] for error in exc.errors()}
+            if "json_invalid" in error_types:
+                skew = None
+            elif error_types <= {"missing"}:
+                skew = SkewDirection.CLOUD_OLDER
+            else:
+                skew = SkewDirection.CLOUD_NEWER
+            raise UnexpectedResponse(
+                url, response.status_code, str(exc), skew=skew
+            ) from exc
 
     def _failure(
         self, response: httpx.Response, url: str

@@ -1345,8 +1345,8 @@ Authored overlay for FooterStyle. Page footer chrome: visibility, attribution te
 | Field | Type | Description |
 |-------|------|-------------|
 | `visible` | bool | Show the footer attribution line. |
-| `text` | str | Attribution text shown in the footer. |
-| `link` | str | URL the footer brand phrase 'dbt charts' links to; null renders plain text. |
+| `text` | str | Attribution text shown in the footer. The first 'dbt charts' in it is drawn as the dbt charts wordmark, in the same ink as the text. |
+| `link` | str | URL the footer's dbt charts wordmark links to; null renders it plain. |
 | `font` | [FontStyle](#fontstyle) | Footer text font style (size and color required). |
 | `y_offset` | float | Vertical offset from bottom edge in pixels. |
 | `rule` | [FooterRule](#footerrule) | Hairline rule above footer text; null disables the rule. |

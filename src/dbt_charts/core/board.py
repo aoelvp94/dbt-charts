@@ -53,7 +53,7 @@ from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.execute.cache_backend import QueryResultCache
 from dbt_charts.core.execute.file_source_materializer import (
     FileSourceMaterializer,
-    default_local_materializer_factory,
+    resolve_local_file_materializer_factory,
 )
 from dbt_charts.core.project import (
     CHARTS_SUBDIR,
@@ -381,10 +381,8 @@ def render_dashboard(
             use_cache=use_cache,
             result_cache=result_cache,
             file_materializer=file_materializer,
-            file_materializer_factory=(
-                None
-                if file_materializer is not None
-                else default_local_materializer_factory(project)
+            file_materializer_factory=resolve_local_file_materializer_factory(
+                project, file_materializer
             ),
         )
         if scale is not None:

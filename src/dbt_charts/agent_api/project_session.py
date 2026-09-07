@@ -40,6 +40,9 @@ from dbt_charts.core.execute.adapters.adapter_registry import (
     build_adapter_registry,
 )
 from dbt_charts.core.execute.cache_backend import QueryResultCache
+from dbt_charts.core.execute.file_source_materializer import (
+    resolve_local_file_materializer_factory,
+)
 from dbt_charts.core.inspect.query_validator import (
     QueryDiagnostic,
     validate_query as _core_validate_query,
@@ -226,6 +229,10 @@ class ProjectSession:
         # FilesystemProject internally (data_dir / dbt-sibling detection fall
         # back to None for any other host), so no data file is ever
         # materialized via a non-filesystem Project's disk.
+        #
+        # Threading file_materializer through here is what makes dct query /
+        # MCP execute_query / query_board work against a file source the same
+        # way a local render already does.
         return build_adapter_registry(
             self.project,
             read_only=self._read_only,
@@ -233,6 +240,10 @@ class ProjectSession:
             duckdb_config=self._duckdb_config,
             allow_external_access_in_readonly=self._allow_external_access_in_readonly,
             resolver=self._resolver,
+            file_materializer=self._file_materializer,
+            file_materializer_factory=resolve_local_file_materializer_factory(
+                self.project, self._file_materializer
+            ),
         )
 
     def refresh(self) -> None:

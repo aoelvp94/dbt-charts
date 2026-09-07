@@ -292,6 +292,31 @@ class AllowlistedSourceResolver(DefaultSourceResolver):
     name raises regardless of `dbt_context`, because dbt-profile names are not
     part of the configured allowlist by definition.
 
+    **File sources are ordinary allowlist entries here; the rules above are
+    about warehouse sources.** A csv/json/parquet entry names a repo-relative
+    path — validated by `CsvSourceConfig`/`JsonSourceConfig`/`ParquetSourceConfig`'s
+    own `files:` rules, which reject absolute paths and any path escaping the
+    project root — not a host, a port, or a credential. There is no endpoint to
+    approve, so a host that resolves file sources from its own repo (Cloud does,
+    from the committed `dbt_charts.yml`) puts them in `project_sources` like any
+    other name, and rule 1 is untouched: an *authored* source definition is still
+    refused whatever its type.
+
+    Two paths then diverge, and only one skips this resolver. `Executor` (the
+    render path) short-circuits a file-source query into the
+    `FileSourceMaterializer` before resolution ("Step 4c"), so a rendered board
+    never asks here. `agent_api`'s `execute_query` and `query_board`, which
+    Cloud exposes over MCP and chat, call `AdapterRegistry.execute` directly and
+    DO reach this resolver, which returns the file config normally;
+    `AdapterRegistry.execute` then refuses it itself, because it holds no
+    materializer. That refusal is the one place the "you need the render path"
+    answer lives. `describe_query` reaches it too: it routes a file source's
+    SQL through `check_ad_hoc_query`, which wraps it in `DESCRIBE (...)` and
+    hands it to the same `AdapterRegistry.execute` — the identical
+    no-materializer refusal fires there if none is configured. Behaviour is no
+    more permissive than the execute path; describe just answers with columns
+    instead of rows when a materializer *is* present.
+
     This is the closed-allowlist resolver — pick it when the caller does not
     trust authored YAML to declare arbitrary connections (e.g. hosted /
     multi-tenant deployments). Loosening any rule changes the trust boundary;

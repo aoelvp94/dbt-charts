@@ -1222,3 +1222,44 @@ def test_top_rail_does_not_warn_about_labels_it_never_truncates(
     # would send the author chasing a truncation that never happened.
     assert "limit" not in spec["vconcat"][0]["mark"]
     assert truncations == {}
+
+
+def test_center_stack_with_an_opted_in_rail_raises_a_registered_code(
+    resolve_horizontal_bar_chart,
+):
+    """An author who forces the rail on over a center stack gets a coded error
+    whose fix names the full authored path, not the ERR-INTERNAL fallback."""
+    from dbt_charts.core.diagnostics.chart_data import ChartDataError
+    from dbt_charts.core.diagnostics.codes_render import (
+        ERR_ENDPOINT_LABELS_CENTER_STACK,
+    )
+
+    data = _two_series_two_row_data()
+    rc = resolve_horizontal_bar_chart(
+        data=data, enabled=True, stack="center", author_asked=True
+    )
+    with pytest.raises(ChartDataError) as exc_info:
+        _render(rc, data)
+    assert exc_info.value.code is ERR_ENDPOINT_LABELS_CENTER_STACK
+    assert "style.endpoint_labels.visible" in str(exc_info.value)
+
+
+def test_negative_values_with_an_opted_in_rail_raise_a_registered_code(
+    resolve_horizontal_bar_chart,
+):
+    from dbt_charts.core.diagnostics.chart_data import ChartDataError
+    from dbt_charts.core.diagnostics.codes_render import (
+        ERR_ENDPOINT_LABELS_NEGATIVE_STACK,
+    )
+
+    data = [
+        {"row": "a", "series": "A", "value": 10},
+        {"row": "a", "series": "B", "value": -4},
+    ]
+    rc = resolve_horizontal_bar_chart(
+        data=data, enabled=True, stack="zero", author_asked=True
+    )
+    with pytest.raises(ChartDataError) as exc_info:
+        _render(rc, data)
+    assert exc_info.value.code is ERR_ENDPOINT_LABELS_NEGATIVE_STACK
+    assert "style.endpoint_labels.visible" in str(exc_info.value)

@@ -1,5 +1,7 @@
 """Tests for YAML render output format."""
 
+import datetime
+import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,6 +11,7 @@ from dbt_charts.core.compile.models.board.normalized import Board, Layout, Layou
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.renderer import render
+from dbt_charts.core.render.yaml_format import render_board_yaml
 
 from ._board_utils import _default_chart_style_context, _default_resolved_style
 
@@ -359,3 +362,68 @@ rows: [grid]
         result = render(board, _make_executor(data), format="yaml").output
         assert "rows" in result
         assert not result.startswith("#")
+
+
+# --- warehouse scalar types must round-trip through safe YAML --------------
+#
+# `render_board_yaml` documents are handed straight to `yaml.safe_load` by
+# consumers (e.g. Cloud's registered-view materialize path) and must also
+# stay re-compilable board YAML. `yaml.dump`'s default (unsafe) Dumper emits
+# `!!python/object` tags for types it doesn't know — TIME, INTERVAL, and UUID
+# columns from a warehouse result all hit that path unless normalized first.
+# BYTES is different: both `dump` and `safe_dump` already represent `bytes`
+# natively as `!!binary`, so it never hit the python-tag path — it needed
+# normalizing so the round-trip re-compile sees a plain string, not a `bytes`
+# object a `values:` query can't author.
+
+
+def test_exotic_warehouse_scalars_are_safe_loadable_and_recompile(make_chart):
+    """TIME, INTERVAL, UUID, and BYTES columns must not emit python tags."""
+    from dbt_charts.core.compile import compile
+
+    data = [
+        {
+            "started_at": datetime.time(9, 30, 0),
+            "duration": datetime.timedelta(hours=1, minutes=15),
+            "row_id": uuid.UUID("12345678-1234-5678-1234-567812345678"),
+            "payload": b"\x00\x01binary",
+            "label": "a",
+            "amount": 1,
+        }
+    ]
+    chart = make_chart("table", query_name="q", id="tbl")
+    board = _make_board([chart])
+    executor = _make_executor(data)
+
+    result = render(board, executor, format="yaml").output
+
+    parsed = yaml.safe_load(result)  # raises ConstructorError on !!python/object tags
+    row = parsed["queries"]["q"]["rows"][0]
+    assert row["started_at"] == "09:30:00"
+    assert row["duration"] == "PT1H15M"
+    assert row["row_id"] == "12345678-1234-5678-1234-567812345678"
+    assert row["payload"] == "000162696e617279"
+
+    compile_result = compile(result)
+    assert not compile_result.errors, (
+        f"Round-trip compile failed: {compile_result.errors}"
+    )
+
+
+def test_safe_dump_rejects_a_type_clean_value_does_not_normalize(make_chart):
+    """Pin the `safe_dump` swap itself, not just `clean_value`'s output.
+
+    Every type `clean_value` normalizes (above) serializes identically
+    whether the dumper is `yaml.dump` or `yaml.safe_dump` — by the time the
+    dumper sees the row, it's already a plain string. So a test built only
+    from those types goes on passing even if `safe_dump` were reverted to
+    `dump`. `bytearray` is a type `clean_value` does not touch: `yaml.dump`
+    would silently emit a `!!python/object/apply:` tag for it, while
+    `yaml.safe_dump` raises `RepresenterError` — a real signal a revert would
+    trip.
+    """
+    board = _make_board([make_chart("table", query_name="q", id="tbl")])
+    executor = _make_executor([{"payload": bytearray(b"\x00\x01")}])
+
+    with pytest.raises(yaml.representer.RepresenterError):
+        render_board_yaml(board, executor, {})

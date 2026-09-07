@@ -15,7 +15,7 @@ Behaviour matches dbt's, deliberately:
   dbt's contract here rather than re-deriving a stricter one.
 
 A payload dbt would return byte-identical skips the call, and with it dbt-core's
-import; see :func:`_nothing_to_render`. Such a payload is
+import; see :func:`nothing_to_render`. Such a payload is
 returned *as the caller's own object*, where dbt always deep-rebuilt, so callers
 must not write through the result.
 
@@ -60,7 +60,7 @@ _SECRET_ENV_PREFIX = "DBT_ENV_SECRET"
 _INERT_LEAVES = (int, float, type(None))
 
 
-def _nothing_to_render(
+def nothing_to_render(
     data: Any,  # type-state: explicit_any — any yaml.safe_load output
 ) -> bool:
     """Whether ``ProfileRenderer`` would hand ``data`` back exactly as given.
@@ -156,7 +156,7 @@ def render_dbt_jinja_in_dict(
     """
     # Before the import, not after — skipping the work is the point, but
     # skipping dbt's several-hundred-millisecond import is the win.
-    if _nothing_to_render(data):
+    if nothing_to_render(data):
         return data
 
     from dbt.config.renderer import ProfileRenderer

@@ -301,6 +301,19 @@ class TestFileSourceMaxTablesCap:
 # ---------------------------------------------------------------------------
 
 
+def _parquet_uncompressed_size(path: Path) -> int:
+    """The size the guard will measure, from the guard's own function — used
+    to place a fixture's cap on the right side of it, never as the oracle a
+    test asserts against."""
+    from dbt_charts.core.compile.models.source import ParquetSourceConfig
+    from dbt_charts.core.execute.file_source_materializer import _uncompressed_bytes
+
+    return _uncompressed_bytes(
+        ParquetSourceConfig(type="parquet", files={"t": "x.parquet"}),
+        path.read_bytes(),
+    )
+
+
 class TestFileSourceMaxBytesCap:
     def test_exceeding_cap_raises(
         self, in_memory_project: Any, monkeypatch: pytest.MonkeyPatch
@@ -351,13 +364,11 @@ class TestFileSourceMaxBytesCap:
         finally:
             reset_config()
 
-    def test_json_uses_raw_bytes_not_parquet_multiplier(
+    def test_json_is_measured_at_its_own_byte_size(
         self, in_memory_project: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """CSV/JSON relations are checked against raw file bytes — the Parquet
-        20x materialization multiplier does not apply to them. A cap set
-        between the raw size and raw x 20 only passes if the multiplier is
-        correctly skipped."""
+        """A text format's file IS its uncompressed size, so the cap it is
+        checked against is the file's own length and nothing else."""
         content = '[{"id": 1, "note": "hello world, this is a json row"}]'
         raw_size = len(content.encode())
         cap = raw_size * 5
@@ -369,14 +380,15 @@ class TestFileSourceMaxBytesCap:
         rows = mat.materialize_and_run(source, "SELECT id FROM rows", {}, "evals")
         assert rows[0]["id"] == 1
 
-    def test_parquet_multiplier_applies(
+    def test_parquet_is_measured_from_its_footer_not_a_multiplier(
         self,
         tmp_path: Path,
         local_project: Callable[..., FilesystemProject],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The parquet materialization multiplier makes an otherwise-under-cap
-        parquet file trip the byte cap."""
+        """A compressible parquet file that fits the cap by its real
+        uncompressed size must load, even though a raw x 20 guess would blow
+        the same cap."""
         import pyarrow as pa
         import pyarrow.parquet as pq
 
@@ -387,10 +399,49 @@ class TestFileSourceMaxBytesCap:
         parquet_path.parent.mkdir(parents=True)
         pq.write_table(table, parquet_path)
         raw_size = parquet_path.stat().st_size
+        uncompressed = _parquet_uncompressed_size(parquet_path)
 
-        # Cap sits comfortably above the raw parquet byte size but below the
-        # multiplied (20x default) estimate, so only the multiplier trips it.
+        # Above the file's real uncompressed size, below raw x 20: passes iff
+        # the guard measures rather than guesses.
         cap = raw_size * 5
+        assert uncompressed < cap < raw_size * 20
+        monkeypatch.setenv("DCT_FILE_SOURCE_MAX_BYTES_CEILING", str(cap))
+
+        project = local_project(tmp_path)
+        source = ParquetSourceConfig(
+            type="parquet", files={"events": "data/events.parquet"}
+        )
+        mat = _mat(project)
+
+        rows = mat.materialize_and_run(source, "SELECT id FROM events", {}, "evals")
+        assert len(rows) == 50
+
+    def test_parquet_over_the_cap_by_measured_size_still_raises(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A relation whose real uncompressed size exceeds the cap raises,
+        even though the compressed file on disk fits under it."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from dbt_charts.core.compile.models.source import ParquetSourceConfig
+
+        # Distinct values, so the encoded column stays large and only the
+        # file compression shrinks it: uncompressed > raw, the normal case.
+        table = pa.table({"note": [f"row-{i:012d}" for i in range(200_000)]})
+        parquet_path = tmp_path / "data" / "events.parquet"
+        parquet_path.parent.mkdir(parents=True)
+        # Four row groups, so a guard that read only the first would measure a
+        # quarter of the relation, land under the cap, and fail here.
+        pq.write_table(table, parquet_path, row_group_size=50_000)
+        raw_size = parquet_path.stat().st_size
+        uncompressed = _parquet_uncompressed_size(parquet_path)
+
+        cap = (raw_size + uncompressed) // 2
+        assert raw_size < cap < uncompressed
         monkeypatch.setenv("DCT_FILE_SOURCE_MAX_BYTES_CEILING", str(cap))
 
         project = local_project(tmp_path)
@@ -401,6 +452,91 @@ class TestFileSourceMaxBytesCap:
 
         with pytest.raises(DbtChartsError, match="exceeding"):
             mat.materialize_and_run(source, "SELECT * FROM events", {}, "evals")
+
+    def test_parquet_and_csv_of_the_same_rows_are_measured_alike(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Choosing the compact format must not be what gets you rejected.
+        The two formats of the same rows must be measured within a small
+        factor of each other: the real difference between a CSV's digits and
+        an int64 column, and nothing more."""
+        import pyarrow as pa
+        import pyarrow.csv as pacsv
+        import pyarrow.parquet as pq
+
+        from dbt_charts.core.compile.models.source import ParquetSourceConfig
+
+        table = pa.table({"id": list(range(2_000))})
+        data = tmp_path / "data"
+        data.mkdir(parents=True)
+        pq.write_table(table, data / "events.parquet")
+        pacsv.write_csv(table, data / "events.csv")
+
+        csv_size = (data / "events.csv").stat().st_size
+        parquet_size = _parquet_uncompressed_size(data / "events.parquet")
+        assert parquet_size < csv_size * 3
+
+        cap = csv_size * 3
+        monkeypatch.setenv("DCT_FILE_SOURCE_MAX_BYTES_CEILING", str(cap))
+        project = local_project(tmp_path)
+
+        csv_rows = _mat(project).materialize_and_run(
+            CsvSourceConfig(type="csv", files={"events": "data/events.csv"}),
+            "SELECT id FROM events",
+            {},
+            "evals",
+        )
+        parquet_rows = _mat(project).materialize_and_run(
+            ParquetSourceConfig(
+                type="parquet", files={"events": "data/events.parquet"}
+            ),
+            "SELECT id FROM events",
+            {},
+            "evals",
+        )
+
+        assert len(csv_rows) == len(parquet_rows) == 2_000
+
+    def test_the_message_names_no_remedy_a_deployment_ceiling_can_veto(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The cap that fires may be a deployment ceiling, which a project's
+        own config can only lower. Cloud pins one at 50 MB, so telling the
+        caller to raise execution.file_source_max_bytes is an instruction that
+        cannot work on the surface the error fires on."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from dbt_charts.core.compile.models.source import ParquetSourceConfig
+
+        table = pa.table({"id": list(range(50))})
+        parquet_path = tmp_path / "data" / "events.parquet"
+        parquet_path.parent.mkdir(parents=True)
+        pq.write_table(table, parquet_path)
+        # Any file is over a 1-byte cap; this test is about what the message
+        # then tells the caller to do, not about where the threshold sits.
+        monkeypatch.setenv("DCT_FILE_SOURCE_MAX_BYTES_CEILING", "1")
+
+        project = local_project(tmp_path)
+        source = ParquetSourceConfig(
+            type="parquet", files={"events": "data/events.parquet"}
+        )
+        mat = _mat(project)
+
+        with pytest.raises(DbtChartsError) as excinfo:
+            mat.materialize_and_run(source, "SELECT * FROM events", {}, "evals")
+
+        message = str(excinfo.value)
+        assert "file_source_max_bytes" not in message
+        assert "multiplier" not in message
+        # A remedy the caller can always reach, whichever limit fired.
+        assert "use a database connection" in message
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +557,7 @@ class TestGlobColumnConsistency:
         source = JsonSourceConfig(type="json", files={"reports": "runs/*/report.json"})
         mat = _mat(project)
 
-        with pytest.raises(DbtChartsError, match="different columns"):
+        with pytest.raises(DbtChartsError, match="on column names or types"):
             mat.materialize_and_run(source, "SELECT * FROM reports", {}, "evals")
 
     def test_mismatched_columns_second_has_extra(self, in_memory_project: Any) -> None:

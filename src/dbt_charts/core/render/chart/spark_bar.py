@@ -26,6 +26,7 @@ from dbt_charts.core.diagnostics.codes_render import (
 )
 from dbt_charts.core.render.chart.spark import _signed_fraction
 from dbt_charts.core.render.chart.text_truncation import record_text_truncation
+from dbt_charts.core.render.svg_utils import authored_kind_attr
 from dbt_charts.core.render.utils import normalize_data_types
 from dbt_charts.core.text.case import apply_case
 
@@ -460,7 +461,7 @@ def _render_spark_bar_svg_core(
         svg_parts.append(
             f'<text x="0" y="{spark_rendering.title_baseline_y}" '
             f'font-size="{chart_title_size}" font-weight="{chart_title_weight}" fill="{text_color}" '
-            f'font-family="{chart_title_family}">'
+            f'font-family="{chart_title_family}"{authored_kind_attr("title")}>'
             f"{escaped_title}</text>",
         )
         if subtitle_text:
@@ -472,7 +473,7 @@ def _render_spark_bar_svg_core(
             svg_parts.append(
                 f'<text x="0" y="{spark_rendering.title_baseline_y + chart_title_size}" '
                 f'font-size="{subtitle_font_size}" fill="{secondary_color}" '
-                f'font-family="{spark_config.font.family}">'
+                f'font-family="{spark_config.font.family}"{authored_kind_attr("subtitle")}>'
                 f"{escaped_subtitle}</text>",
             )
         current_y = title_height

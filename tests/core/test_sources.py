@@ -565,6 +565,42 @@ class TestProjectSources:
     def test_project_config_name(self) -> None:
         assert PROJECT_CONFIG_NAME == "dbt_charts.yml"
 
+    @pytest.mark.parametrize(
+        ("entry", "offending"),
+        [
+            # An unquoted YAML key parses as a number, and would otherwise reach
+            # the model as a bad keyword argument (TypeError, not ValueError).
+            (
+                "    type: csv\n    files:\n      rows: data/r.csv\n    2024: x\n",
+                "2024",
+            ),
+            # A list `type:` is unhashable, so even the type lookup raises.
+            ("    type: [csv]\n", "csv"),
+        ],
+    )
+    def test_malformed_source_entry_is_stamped_not_crashed(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        entry: str,
+        offending: str,
+    ) -> None:
+        """A shape nobody validated still fails as ERR-SOURCE-CONFIG-INVALID.
+
+        ``parse_source_config`` promises ValueError, so it rejects these itself
+        rather than letting a TypeError out and making every caller catch a type
+        the contract never named.
+        """
+        (tmp_path / PROJECT_CONFIG_NAME).write_text(f"sources:\n  marts:\n{entry}")
+
+        with pytest.raises(CompilationError) as exc:
+            load_project_sources(local_project(tmp_path))
+
+        assert exc.value.code is not None
+        assert exc.value.code.code == "ERR-SOURCE-CONFIG-INVALID"
+        assert "marts" in str(exc.value)
+        assert offending in str(exc.value)
+
     def test_load_sources_from_file(
         self, tmp_path, local_project: Callable[..., FilesystemProject]
     ):
@@ -1951,3 +1987,24 @@ rows:
         # from_code skips ExecutionError's " (query: q)" decoration, and
         # display_message() re-appends it from this field for CLI/SVG output.
         assert diagnostic.query == "q"
+
+
+class TestParseSourceConfigEnv:
+    """``env`` is the one render the parser performs: a sealed caller (Cloud,
+    reading a tenant's committed YAML) passes ``{}`` and the process
+    environment is unreachable; the default is the live environment."""
+
+    def test_sealed_parse_cannot_read_the_process_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dbt_charts.core.compile.models.source import parse_source_config
+
+        monkeypatch.setenv("SEALED_SECRET", "data/from_env.csv")
+        data = {"type": "csv", "files": {"t": "{{ env_var('SEALED_SECRET') }}"}}
+
+        default = parse_source_config(data)
+        assert default.model_dump(by_alias=True)["files"]["t"] == "data/from_env.csv"
+        with pytest.raises(ValueError, match="SEALED_SECRET"):
+            parse_source_config(data, env={})
+        supplied = parse_source_config(data, env={"SEALED_SECRET": "data/given.csv"})
+        assert supplied.model_dump(by_alias=True)["files"]["t"] == "data/given.csv"

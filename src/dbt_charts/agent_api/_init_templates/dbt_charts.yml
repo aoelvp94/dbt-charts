@@ -16,9 +16,11 @@
 #     target: dev
 #
 #   # A local DuckDB file. Local-only: dbt charts Cloud cannot read it —
-#   # for Cloud, use a warehouse, or export each table to Parquet/CSV and
-#   # point queries at the file, relative to the board
-#   # (`source: ../data/orders.parquet` from a board in charts/).
+#   # for Cloud, use a warehouse, or export each table to Parquet/CSV/JSON
+#   # and register it under sources: (type: csv | json | parquet, a files:
+#   # map) so queries reference it by name with no connection step. A
+#   # board that's the only reader of one file can point at it inline
+#   # instead (`source: ../data/orders.parquet` from a board in charts/).
 #   local:
 #     type: duckdb
 #     path: ./data/analytics.duckdb

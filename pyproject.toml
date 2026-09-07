@@ -554,10 +554,18 @@ exclude = ["tests/"]
 
 # Modules that interact with untyped third-party libraries (pygments, dbt_charts_super_schema)
 # have no stubs available; suppress disallow_any_unimported only where unavoidable.
+# The three execute/ modules name `pyarrow.Table` in signatures: pyarrow ships a
+# py.typed marker but its `__init__.pyi` is still a placeholder whose
+# `__getattr__` returns Any, so every such annotation reads as an unfollowed
+# import. Naming the real type is worth more than the check it costs here; drop
+# these entries once pyarrow's stubs are real.
 [[tool.mypy.overrides]]
 module = [
     "dbt_charts.integrations.highlighting",
     "dbt_charts.core.inspect.resolver",
     "dbt_charts.core.inspect.cache_factory",
+    "dbt_charts.core.execute.cache_backend",
+    "dbt_charts.core.execute.file_source_materializer",
+    "dbt_charts.core.execute.trivial_local_cache",
 ]
 disallow_any_unimported = false

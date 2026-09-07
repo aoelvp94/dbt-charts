@@ -341,11 +341,14 @@ style:
         )
         assert isinstance(rendered.output, str)
         timestamp = _render_timestamp_element(rendered.output)
+        # The footer's last <text> is the run before the wordmark ("made with");
+        # the timestamp must end the configured gap before that run's left edge.
         footer = _footer_text_element(rendered.output)
         footer_style = get_theme_style(get_default_theme_name()).footer
         assert footer_style.font.size is not None
-        attribution_width = get_font_measurer().measure(
-            footer_style.text,
+        assert footer.text
+        prefix_width = get_font_measurer().measure(
+            footer.text,
             float(footer_style.font.size),
         )
 
@@ -353,7 +356,7 @@ style:
         assert timestamp.attrib["text-anchor"] == "end"
         assert float(timestamp.attrib["x"]) <= (
             float(footer.attrib["x"])
-            - attribution_width
+            - prefix_width
             - get_chart_rendering().frame.footer_timestamp_gap_px
         )
 

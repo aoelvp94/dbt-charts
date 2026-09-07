@@ -208,7 +208,11 @@ class TestTableProportionalSizing:
         # The subtitle wraps, so its baseline lives on the first tspan.
         subtitle = re.search(
             rf'<text x="0" font-size="([0-9.]+)" fill="{re.escape(subtitle_fill)}" '
-            r'font-family="[^"]*Inter[^"]*"><tspan x="0" y="([0-9.]+)">This exposes',
+            # `[^>]*` tolerates any attributes (e.g. data-authored-kind) between
+            # font-family and the tag close — same tolerant style as
+            # `subtitle_el` below and `_svg_render.py`'s helpers, so a new
+            # attribute on this element doesn't silently miss this regex.
+            r'font-family="[^"]*Inter[^"]*"[^>]*><tspan x="0" y="([0-9.]+)">This exposes',
             svg,
         )
 

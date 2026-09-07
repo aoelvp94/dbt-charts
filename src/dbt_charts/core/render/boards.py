@@ -26,6 +26,7 @@ from dbt_charts.core.diagnostics import Diagnostic
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
     from dbt_charts.core.compile.models.style.theme import TextStyle
+    from dbt_charts.core.compile.models.style.theme.page import FooterStyle
     from dbt_charts.core.compile.models.variable.authored import Variable
 
 from dbt_charts.core.compile.config import get_chart_rendering
@@ -51,6 +52,7 @@ from dbt_charts.core.render.svg_utils import (
     padded_authoring_content,
     px,
 )
+from dbt_charts.core.render.template_loader import render_template
 from dbt_charts.core.render.variables_resolve import resolve_controls
 from dbt_charts.core.render.variables_strip import (
     StripAlign,
@@ -72,32 +74,78 @@ __all__ = [
 # -----------------------------------------------------------------------------
 
 
-# The brand phrase linked in the footer watermark (case-insensitive, whole-word).
+# The brand phrase in the footer attribution (case-insensitive, whole-word);
+# its first occurrence is drawn as the dbt charts wordmark and carries the link.
 _FOOTER_BRAND_WORD_RE = re.compile(r"\bdbt charts\b", re.IGNORECASE)
 
+# Intrinsic geometry of templates/svg/footer_wordmark.svg: its box, and the
+# baseline the letters sit on inside it.
+_WORDMARK_BOX = (997.0, 190.0)
+_WORDMARK_BASELINE = 148.5
 
-def _footer_text_svg(text: str, link: str | None) -> str:
-    """Footer text as escaped SVG, linking the brand phrase when a link is set.
 
-    When ``link`` is set, whole-word occurrences of "dbt charts" (case-insensitive)
-    are wrapped in an anchor styled as a subtle watermark (.dbt-footer-link: same
-    color as the footer text, slightly bold, underline only on hover). When
-    ``link`` is None or the brand phrase is absent, the text renders plain.
+def _footer_attribution_svg(
+    footer: "FooterStyle", font_family: str, x: float, y: float
+) -> tuple[str, float]:
+    """Footer attribution ending at (x, y), and its total width.
+
+    The brand phrase is not set in type: it is replaced by the dbt charts
+    wordmark, filled with the footer text color and sitting on the text's
+    baseline. The words around it are emitted as right-anchored runs on either
+    side. The wordmark links to ``footer.link`` when set (an anchor classed
+    .dbt-footer-link); with ``link`` null it is plain. Without the brand phrase
+    the text renders plain. The width lets a footer-right timestamp clear the
+    whole lockup.
     """
-    if not link:
-        return html.escape(text)
-    href = html.escape(link, quote=True)
-    parts: list[str] = []
-    last = 0
-    for match in _FOOTER_BRAND_WORD_RE.finditer(text):
-        parts.append(html.escape(text[last : match.start()]))
-        parts.append(
-            f'<a href="{href}" target="_blank" rel="noopener noreferrer">'
-            f'<tspan class="dbt-footer-link">{html.escape(match.group(0))}</tspan></a>'
+    # FooterStyle._require_font_size_and_color guarantees both non-None.
+    assert footer.font.size is not None and footer.font.color is not None
+    size = float(footer.font.size)
+    measure = get_font_measurer(font_family).measure
+
+    def run(end_x: float, content: str) -> str:
+        return (
+            f'<text x="{format_svg_numeric(end_x)}" y="{format_svg_numeric(y)}" '
+            f'text-anchor="end" font-size="{format_svg_numeric(size)}" '
+            f'fill="{footer.font.color}" font-family="{font_family}">'
+            f"{html.escape(content)}</text>"
         )
-        last = match.end()
-    parts.append(html.escape(text[last:]))
-    return "".join(parts)
+
+    match = _FOOTER_BRAND_WORD_RE.search(footer.text)
+    if match is None:
+        return run(x, footer.text), measure(footer.text, size)
+    frame = get_chart_rendering().frame
+    scale = size * frame.footer_wordmark_height_em / _WORDMARK_BOX[1]
+    gap = size * frame.footer_wordmark_gap_em
+    prefix = footer.text[: match.start()].rstrip()
+    suffix = footer.text[match.end() :].lstrip()
+    parts: list[str] = []
+    right = x
+    width = 0.0
+    if suffix:
+        parts.append(run(x, suffix))
+        right -= measure(suffix, size) + gap
+        width += measure(suffix, size) + gap
+    lockup_w = _WORDMARK_BOX[0] * scale
+    # Snapped like every other translate, so the lockup lands on whole pixels.
+    lockup_x = px(right - lockup_w)
+    lockup = render_template(
+        "svg/footer_wordmark.svg",
+        x=format_svg_numeric(lockup_x),
+        y=format_svg_numeric(px(y - _WORDMARK_BASELINE * scale)),
+        scale=format_svg_numeric(scale),
+        color=footer.font.color,
+    ).strip()
+    if footer.link:
+        lockup = (
+            f'<a class="dbt-footer-link" href="{html.escape(footer.link, quote=True)}" '
+            f'target="_blank" rel="noopener noreferrer">{lockup}</a>'
+        )
+    parts.insert(0, lockup)
+    width = x - lockup_x
+    if prefix:
+        parts.insert(0, run(lockup_x - gap, prefix))
+        width += gap + measure(prefix, size)
+    return "".join(parts), width
 
 
 def _resolve_jinja(template: str, variables: VariableValues) -> str:
@@ -1185,6 +1233,28 @@ def render_board_svg(
     footer_x = total_width - page_padding
     footer_y = total_height - footer_style.y_offset
 
+    footer_element = ""
+    footer_width = 0.0
+    if footer_style.visible:
+        attribution, footer_width = _footer_attribution_svg(
+            footer_style, board.style.font.family, footer_x, footer_y
+        )
+        footer_parts = []
+        if footer_style.rule is not None:
+            assert footer_style.font.size is not None
+            rule_y = (
+                footer_y
+                - float(footer_style.font.size)
+                - get_chart_rendering().frame.footer_rule_gap_px
+            )
+            footer_parts.append(
+                f'<line x1="{format_svg_numeric(page_padding)}" y1="{format_svg_numeric(rule_y)}" '
+                f'x2="{format_svg_numeric(footer_x)}" y2="{format_svg_numeric(rule_y)}" '
+                f'stroke="{footer_style.rule.color}" stroke-width="{format_svg_numeric(footer_style.rule.stroke_width)}"/>'
+            )
+        footer_parts.append(attribution)
+        footer_element = "\n".join(footer_parts)
+
     timestamp_element = ""
     timestamp_style = board.style.timestamp
     if timestamp_style.visible:
@@ -1213,15 +1283,9 @@ def render_board_svg(
             timestamp_x = total_width - page_padding
             timestamp_anchor = "end"
             if timestamp_style.position == "footer" and footer_style.visible:
-                # FooterStyle._require_font_size_and_color guarantees font.size not None.
-                assert footer_style.font.size is not None
-                attribution_width = get_font_measurer(board.style.font.family).measure(
-                    footer_style.text,
-                    float(footer_style.font.size),
-                )
                 timestamp_x = (
                     footer_x
-                    - attribution_width
+                    - footer_width
                     - get_chart_rendering().frame.footer_timestamp_gap_px
                 )
         timestamp_element = (
@@ -1230,31 +1294,6 @@ def render_board_svg(
             f'style="font-variant-numeric: tabular-nums lining-nums;">'
             f"{html.escape(display_timestamp)}</text>"
         )
-
-    footer_element = ""
-    # All footer values come from board.style.footer (style cascade).
-    if footer_style.visible:
-        # FooterStyle._require_font_size_and_color guarantees both non-None.
-        assert footer_style.font.size is not None
-        assert footer_style.font.color is not None
-        footer_parts = []
-        if footer_style.rule is not None:
-            rule_y = (
-                footer_y
-                - float(footer_style.font.size)
-                - get_chart_rendering().frame.footer_rule_gap_px
-            )
-            footer_parts.append(
-                f'<line x1="{format_svg_numeric(page_padding)}" y1="{format_svg_numeric(rule_y)}" '
-                f'x2="{format_svg_numeric(footer_x)}" y2="{format_svg_numeric(rule_y)}" '
-                f'stroke="{footer_style.rule.color}" stroke-width="{format_svg_numeric(footer_style.rule.stroke_width)}"/>'
-            )
-        footer_parts.append(
-            f'<text x="{format_svg_numeric(footer_x)}" y="{format_svg_numeric(footer_y)}" text-anchor="end" '
-            f'font-size="{format_svg_numeric(float(footer_style.font.size))}" fill="{footer_style.font.color}" font-family="{board.style.font.family}">'
-            f"{_footer_text_svg(footer_style.text, footer_style.link)}</text>"
-        )
-        footer_element = "\n".join(footer_parts)
 
     return f"""<svg id="{svg_id}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {total_width} {total_height}" width="{format_svg_numeric(total_width)}" height="{format_svg_numeric(total_height)}" preserveAspectRatio="xMinYMin meet" style="display: block;" data-rendered-at="{render_timestamp_iso}" data-dbt-page-title="{html.escape(page_title, quote=True)}" data-dbt-font-family="{html.escape(str(font_family), quote=True)}" data-dbt-page-background="{html.escape(str(page_background), quote=True)}" aria-label="{html.escape(page_title, quote=True)}">
 <defs>

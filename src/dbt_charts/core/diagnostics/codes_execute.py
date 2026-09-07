@@ -103,18 +103,21 @@ ERR_GLOB_SCHEMA_MISMATCH = REGISTRY.register(
         title="Glob-matched files have inconsistent column schemas",
         message_template=(
             "File source {source_name!r}, table {table_name!r}: "
-            "{path!r} has different columns than {first_path!r}. "
+            "{path!r} disagrees with {first_path!r} on column names or types. "
             "{detail}"
-            "All files matched by a glob must share the same column schema."
+            "All files matched by a glob must share the same column names and "
+            "types."
         ),
         summary=(
-            "Fired when files matched by a glob pattern have different column sets."
+            "Fired when files matched by a glob pattern disagree on column "
+            "names or types."
         ),
         doc=(
             "Fired when a glob pattern in a file source's `files:` mapping expands "
-            "to files with different column schemas. All matched files must share the "
-            "same column names. Align the column schemas across all files, or split "
-            "the source into separate entries with non-overlapping patterns."
+            "to files whose column schemas disagree — either a differing set of "
+            "column names, or the same column carrying a different type in one "
+            "file than another. Align the schemas across all matched files, or "
+            "split the source into separate entries with non-overlapping patterns."
         ),
         docs_topic="queries",
     )
@@ -151,29 +154,84 @@ ERR_FILE_SOURCE_TOO_LARGE = REGISTRY.register(
     ErrorCode(
         code="ERR-FILE-SOURCE-TOO-LARGE",
         domain="execute",
-        title="File source relation exceeded the materialized-size cap",
+        title="File source relation exceeded the uncompressed-size cap",
         message_template=(
             "File source {source_name!r}, table {table_name!r}: reading "
-            "{relpath!r} ({raw_mb:.1f} MB raw × {multiplier} materialization "
-            "multiplier) pushed the estimated materialized size to "
-            "{size_mb:.1f} MB, exceeding the {cap_mb:.1f} MB cap. "
-            "Increase execution.file_source_max_bytes in dbt_charts.yml if "
-            "needed, or use a database connection for data this size."
+            "{relpath!r} ({raw_mb:.1f} MB on disk) took this table to "
+            "{size_mb:.1f} MB uncompressed, exceeding the {cap_mb:.1f} MB cap. "
+            "Load less into this table — fewer files, fewer columns, or a "
+            "pre-aggregated extract — or use a database connection for data "
+            "this size."
         ),
         summary=(
-            "Fired when a file source's estimated materialized size exceeds "
-            "the configured byte cap."
+            "Fired when a file source's uncompressed size exceeds the "
+            "effective byte cap."
         ),
         doc=(
-            "Fired when the estimated materialized size of a file-source "
-            "relation (the file(s) backing one `files:` table entry) exceeds "
-            "the configured `execution.file_source_max_bytes` limit. Parquet "
-            "file sizes are multiplied by a fixed materialization multiplier "
-            "(20x) before comparing, since compressed columnar data can "
-            "expand many times over once parsed into rows; CSV/JSON files "
-            "are not multiplied. Raise the cap in `dbt_charts.yml` "
-            "under `execution: file_source_max_bytes: <N>`, or use a database "
-            "connection for data this size."
+            "Fired when the uncompressed size of a file-source relation (the "
+            "file(s) backing one `files:` table entry) exceeds the effective "
+            "`execution.file_source_max_bytes` limit. Every format is "
+            "measured on the same basis: the file's own bytes for CSV and "
+            "JSON, and for Parquet the uncompressed total its footer records, "
+            "so choosing the compact format is never what gets a relation "
+            "rejected. The message names no config key deliberately — the "
+            "effective limit is the lower of the project's own "
+            "`execution.file_source_max_bytes` and any deployment ceiling "
+            "(`DCT_FILE_SOURCE_MAX_BYTES_CEILING`), so where a ceiling is "
+            "what fired, raising the project setting does nothing. Lower the "
+            "data volume, or use a database connection for data this size."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_FILE_SOURCE_DECIMAL_TOO_WIDE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FILE-SOURCE-DECIMAL-TOO-WIDE",
+        domain="execute",
+        title="File source decimal column exceeds precision 38",
+        message_template=(
+            "File source {source_name!r}, table {table_name!r}: column "
+            "{column!r} in {relpath!r} is {column_type}, and at least one value "
+            "needs more than the 38 significant digits the query engine's "
+            "DECIMAL can hold. Re-export the column at precision 38 or less "
+            "(BigQuery: CAST(col AS NUMERIC) instead of BIGNUMERIC), or split "
+            "the digits across columns."
+        ),
+        summary=(
+            "Fired when a file's decimal column holds a value wider than the "
+            "38-digit maximum the query engine supports."
+        ),
+        doc=(
+            "Fired when a decimal column in a file source holds a value needing "
+            "more than 38 significant digits. Parquet's decimal type allows more "
+            "precision than the query engine's DECIMAL, and BigQuery BIGNUMERIC "
+            "exports routinely use it. Re-export the column at precision 38 or "
+            "less, or split the digits across columns."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_FILE_SOURCE_UNSUPPORTED_TYPE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FILE-SOURCE-UNSUPPORTED-TYPE",
+        domain="execute",
+        title="File source column type is not supported by the query engine",
+        message_template=(
+            "File table {table_name!r}: the query engine cannot load one of its "
+            "column types. {detail} Re-export the file with the column cast to "
+            "a standard SQL type."
+        ),
+        summary=(
+            "Fired when a file's column type cannot be loaded into the query engine."
+        ),
+        doc=(
+            "Fired when a file carries a column type the query engine cannot "
+            "represent. dbt charts converts the cases it can (a half-precision "
+            "float widens, a 256-bit decimal narrows) and reports this for the "
+            "rest. Re-export the file with the column cast to a standard SQL "
+            "type."
         ),
         docs_topic="queries",
     )

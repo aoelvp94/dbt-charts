@@ -227,6 +227,19 @@ def handle_adapter_error(operation: str, error: Exception) -> QueryResult:
     )
 
 
+def connection_failure_message(warehouse: str, error: Exception) -> str:
+    """The one sentence a warehouse that could not be opened gets.
+
+    Shared with ``dbt_charts.core.connections.test_connection``, which reports a
+    connect failure as a bare string rather than a ``QueryResult``. One copy of
+    the wording, so a connect failure cannot be phrased two ways depending on
+    which verb hit it.
+    """
+    return (
+        f"{warehouse}: {ERR_WAREHOUSE_CONNECTION.message_template.format(detail=error)}"
+    )
+
+
 def connection_failure(warehouse: str, error: Exception) -> QueryResult:
     """The verdict for a warehouse that could not be opened.
 
@@ -235,12 +248,11 @@ def connection_failure(warehouse: str, error: Exception) -> QueryResult:
     carrying a query-defect code and every query in the board reads as broken.
     Nothing looked at the SQL, and the result has to say so.
     """
-    detail = str(error)
     return QueryResult(
         data=[],
-        error=f"{warehouse}: {ERR_WAREHOUSE_CONNECTION.message_template.format(detail=detail)}",
+        error=connection_failure_message(warehouse, error),
         error_code=ERR_WAREHOUSE_CONNECTION,
-        fields={"detail": detail},
+        fields={"detail": str(error)},
     )
 
 

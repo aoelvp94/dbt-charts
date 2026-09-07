@@ -243,11 +243,16 @@ def run_registry_queries(
             # Path params are already baked into the materialized SQL /
             # source_description, so there are no variables — keying is purely by
             # query content. No board context here, so board_sources is omitted.
-            # File sources are intentionally NOT handled on this path (registered-view
-            # pre-template queries run straight through adapter_registry.execute, and a
-            # file source there fails loudly at the SQL adapter). So no source_version
-            # is folded in here — do NOT route file sources through this cache without
-            # adding the Project.file_version key, or edited data files would go stale.
+            # File sources are intentionally NOT handled on this path. A SqlQuery
+            # against a file source can now succeed through
+            # adapter_registry.execute when a materializer is configured — it no
+            # longer fails loudly at the SQL adapter — but every pre-template
+            # query registry.yaml ships today is `type: schema`, which stays
+            # refused for file sources unconditionally regardless of a
+            # materializer. So no file-source query actually reaches this cache
+            # today; if a future entry authors a SqlQuery against a file source,
+            # this key must fold in Project.file_version first, or edited data
+            # files would go stale.
             cache_key = compute_cache_key(query)
             outcome = cache.get(*cache_key, ttl=query.cache.ttl_timedelta)
             # Registry queries raise on failure rather than caching the error

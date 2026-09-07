@@ -8,6 +8,8 @@ from __future__ import annotations
 import contextlib
 import json
 from collections.abc import Callable
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,7 @@ from dbt_charts.core.compile.models.source import (
     JsonSourceConfig,
     ParquetSourceConfig,
 )
+from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
@@ -629,3 +632,607 @@ charts:
         assert len(rows) == 2, f"Expected 2 rows, got error or wrong count: {rows}"
         assert rows[0]["name"] == "alpha"
         assert rows[1]["name"] == "beta"
+
+
+# ---------------------------------------------------------------------------
+# 10. File-table type fidelity
+# ---------------------------------------------------------------------------
+
+
+class TestFileTableTypeFidelity:
+    """A file table exposes the file's own column types to SQL — the result
+    cache's storage encoding (a VARCHAR sidecar for uniformly-Decimal columns,
+    see ``_uniform_decimal_columns``) must never leak into it.
+
+    The query-result half of that contract — a uniformly-Decimal *query* result
+    still round-tripping exactly through ``get()`` — is pinned by
+    ``tests/core/test_duckdb_cache_decimal256.py::
+    test_duckdb_cache_put_with_normal_decimal_round_trips``.
+    """
+
+    @staticmethod
+    def _decimal_parquet_project(
+        tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> tuple[FilesystemProject, ParquetSourceConfig]:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        table = pa.table(
+            {
+                "amount": pa.array(
+                    [Decimal("1.10"), Decimal("2.20")], type=pa.decimal128(18, 2)
+                )
+            }
+        )
+        parquet_path = tmp_path / "data" / "orders.parquet"
+        parquet_path.parent.mkdir(parents=True)
+        pq.write_table(table, parquet_path)
+        return local_project(tmp_path), ParquetSourceConfig(
+            type="parquet", files={"orders": "data/orders.parquet"}
+        )
+
+    def test_parquet_decimal_column_sums_exactly(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project, source = self._decimal_parquet_project(tmp_path, local_project)
+        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+
+        summed = mat.materialize_and_run(
+            source, "SELECT SUM(amount) AS s FROM orders", {}, "orders"
+        )
+        assert summed[0]["s"] == Decimal("3.30")
+
+    def test_decimal_type_survives_a_cache_hit(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A hit never opens the file, so the type has to come from the stored
+        table — both within one process and from a cache file a previous one
+        left behind."""
+        project, source = self._decimal_parquet_project(tmp_path, local_project)
+        db_path = tmp_path / "cache.duckdb"
+
+        warm = FileSourceMaterializer(project, TrivialDuckDBCache(db_path=db_path))
+        warm.materialize_and_run(source, "SELECT * FROM orders", {}, "orders")
+
+        for mat in (
+            warm,
+            FileSourceMaterializer(project, TrivialDuckDBCache(db_path=db_path)),
+        ):
+            rows = mat.materialize_and_run(
+                source,
+                "SELECT SUM(amount) AS s, ANY_VALUE(typeof(amount)) AS t FROM orders",
+                {},
+                "orders",
+            )
+            assert rows[0] == {"s": Decimal("3.30"), "t": "DECIMAL(18,2)"}
+
+    def test_arrow_on_a_non_file_put_is_rejected(self) -> None:
+        """The Arrow path skips the Decimal storage encoding, which is only
+        sound for a file table — a query-result key must not reach it."""
+        import pyarrow as pa
+
+        cache = TrivialDuckDBCache()
+        with pytest.raises(ValueError, match="FILE_SOURCE_VARS_HASH"):
+            cache.put(
+                "src",
+                "qry",
+                "deadbeefdeadbeef",
+                [{"amount": Decimal("1.10")}],
+                board_slug="b",
+                query_name="q",
+                arrow=pa.table({"amount": pa.array([Decimal("1.10")])}),
+            )
+
+    def test_csv_date_bool_and_int_columns_keep_their_types(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = _make_project(
+            tmp_path,
+            {
+                "data/events.csv": "day,active,n\n2026-01-02,true,5\n2026-01-03,false,6\n"
+            },
+            local_project,
+        )
+        source = _csv_source({"events": "data/events.csv"})
+        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+
+        rows = mat.materialize_and_run(
+            source,
+            "SELECT typeof(day) AS d, typeof(active) AS a, typeof(n) AS n "
+            "FROM events LIMIT 1",
+            {},
+            "events",
+        )
+        assert rows[0] == {"d": "DATE", "a": "BOOLEAN", "n": "BIGINT"}
+
+    def test_all_null_csv_column_is_varchar_and_reads_back_null(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = _make_project(
+            tmp_path,
+            {"data/sparse.csv": "region,note\nNorth,\nSouth,\n"},
+            local_project,
+        )
+        source = _csv_source({"sparse": "data/sparse.csv"})
+        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+
+        rows = mat.materialize_and_run(
+            source,
+            "SELECT region, note, typeof(note) AS t, coalesce(note, '-') AS c "
+            "FROM sparse WHERE note IS DISTINCT FROM 'x' ORDER BY region",
+            {},
+            "sparse",
+        )
+        assert [r["region"] for r in rows] == ["North", "South"]
+        assert all(r["note"] is None for r in rows)
+        assert rows[0]["t"] == "VARCHAR"
+        assert rows[0]["c"] == "-"
+
+    def test_glob_files_with_conflicting_column_types_raise(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Same column name, genuinely different types across a glob's files:
+        a stamped error naming the two files that disagree, not the raw
+        ArrowTypeError the executor would stamp ERR-INTERNAL.
+
+        Three shards, so the blamed pair is the offender and its neighbour —
+        shard 1 is not in the message at all."""
+        project = _make_project(
+            tmp_path,
+            {
+                "data/2023/sales.csv": "region,amount\nEast,50\n",
+                "data/2024/sales.csv": "region,amount\nNorth,100\n",
+                "data/2025/sales.csv": "region,amount\nSouth,1.5\n",
+            },
+            local_project,
+        )
+        source = _csv_source({"sales": "data/*/sales.csv"})
+        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+
+        with pytest.raises(DbtChartsError) as excinfo:
+            mat.materialize_and_run(source, "SELECT * FROM sales", {}, "sales_source")
+        assert excinfo.value.code.code == "ERR-GLOB-SCHEMA-MISMATCH"
+        message = str(excinfo.value)
+        assert "data/2025/sales.csv" in message
+        assert "data/2024/sales.csv" in message
+        assert "data/2023/sales.csv" not in message
+        assert "amount" in message
+
+    def test_glob_shard_with_an_all_null_column_takes_the_sibling_type(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """An empty column in one shard is ordinary — PyArrow types it ``null``,
+        and it must adopt the sibling shard's type rather than fail the render."""
+        project = _make_project(
+            tmp_path,
+            {
+                "data/2024/sales.csv": "region,note\nNorth,\n",
+                "data/2025/sales.csv": "region,note\nSouth,ok\n",
+            },
+            local_project,
+        )
+        source = _csv_source({"sales": "data/*/sales.csv"})
+        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+
+        rows = mat.materialize_and_run(
+            source,
+            "SELECT region, note, typeof(note) AS t FROM sales ORDER BY region",
+            {},
+            "sales_source",
+        )
+        assert [(r["region"], r["note"]) for r in rows] == [
+            ("North", None),
+            ("South", "ok"),
+        ]
+        assert rows[0]["t"] == "VARCHAR"
+
+    @pytest.mark.parametrize(
+        ("sibling", "expected_type", "expected_value"),
+        [
+            ("100", "BIGINT", 100),
+            ("true", "BOOLEAN", True),
+            ("2025-01-01", "DATE", date(2025, 1, 1)),
+        ],
+    )
+    def test_glob_shard_with_an_all_null_column_takes_a_non_text_sibling_type(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        sibling: str,
+        expected_type: str,
+        expected_value: object,
+    ) -> None:
+        """The all-null column must reach the glob merge still typed ``null`` so
+        ``promote_options="default"`` can give it the sibling's type. Turning it
+        into text first makes ``string`` vs ``int64`` a schema mismatch between
+        two files that agree — the string-sibling test above cannot see that,
+        because ``null → string`` satisfies it either way."""
+        project = _make_project(
+            tmp_path,
+            {
+                "data/2024/sales.csv": "region,amount\nNorth,\n",
+                "data/2025/sales.csv": f"region,amount\nSouth,{sibling}\n",
+            },
+            local_project,
+        )
+        source = _csv_source({"sales": "data/*/sales.csv"})
+        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+
+        rows = mat.materialize_and_run(
+            source,
+            "SELECT region, amount, typeof(amount) AS t FROM sales ORDER BY region",
+            {},
+            "sales_source",
+        )
+        assert [(r["region"], r["amount"]) for r in rows] == [
+            ("North", None),
+            ("South", expected_value),
+        ]
+        assert rows[0]["t"] == expected_type
+
+    def test_glob_whose_column_is_empty_in_every_shard_is_varchar(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """No sibling to adopt a type from: the merged column is still ``null``
+        and gets the VARCHAR the single-file case gets."""
+        project = _make_project(
+            tmp_path,
+            {
+                "data/2024/sales.csv": "region,note\nNorth,\n",
+                "data/2025/sales.csv": "region,note\nSouth,\n",
+            },
+            local_project,
+        )
+        source = _csv_source({"sales": "data/*/sales.csv"})
+        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+
+        rows = mat.materialize_and_run(
+            source,
+            "SELECT coalesce(note, '-') AS n, typeof(note) AS t FROM sales",
+            {},
+            "sales_source",
+        )
+        assert {r["n"] for r in rows} == {"-"}
+        assert rows[0]["t"] == "VARCHAR"
+
+    @pytest.mark.parametrize(
+        "wide_first", [False, True], ids=["narrow-first", "wide-first"]
+    )
+    @pytest.mark.parametrize(
+        ("narrow", "wide", "expected_type"),
+        [
+            ("int32", "int64", "BIGINT"),
+            ("float", "double", "DOUBLE"),
+            ("timestamp[ms]", "timestamp[us]", "TIMESTAMP"),
+            ("decimal128(18, 2)", "decimal128(38, 2)", "DECIMAL(38,2)"),
+        ],
+    )
+    def test_parquet_shards_differing_only_in_type_width_merge_to_the_wider(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        narrow: str,
+        wide: str,
+        expected_type: str,
+        wide_first: bool,
+    ) -> None:
+        """Two producers write the same column at different widths (Spark
+        emits timestamp[ms], DuckDB timestamp[us]; one month's export is
+        DECIMAL(18,2), the next DECIMAL(38,2)). That is not a type conflict:
+        the row-dict path loaded every such pair losslessly, and so must the
+        Arrow path — in either shard order."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        def _value(type_name: str) -> object:
+            if type_name.startswith("timestamp"):
+                return datetime(2025, 1, 1, 12, 0, 0)
+            if type_name.startswith("decimal"):
+                return Decimal("12.50")
+            return 7
+
+        def _arrow_type(type_name: str) -> pa.DataType:
+            if type_name.startswith("decimal128("):
+                precision, scale = type_name[len("decimal128(") : -1].split(",")
+                return pa.decimal128(int(precision), int(scale))
+            return pa.type_for_alias(type_name)
+
+        # Globs expand sorted, so the shard name decides which side is the
+        # accumulated table — both fold directions must widen.
+        shards = (
+            (("2024", wide), ("2025", narrow))
+            if wide_first
+            else (
+                ("2024", narrow),
+                ("2025", wide),
+            )
+        )
+        for shard, type_name in shards:
+            path = tmp_path / "data" / shard / "t.parquet"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            arrow_type = _arrow_type(type_name)
+            pq.write_table(
+                pa.table({"v": pa.array([_value(type_name)], type=arrow_type)}),
+                path,
+            )
+        source = ParquetSourceConfig(type="parquet", files={"t": "data/*/t.parquet"})
+        mat = FileSourceMaterializer(local_project(tmp_path), TrivialDuckDBCache())
+
+        rows = mat.materialize_and_run(
+            source, "SELECT v, typeof(v) AS t FROM t", {}, "t_source"
+        )
+        assert len(rows) == 2
+        assert {r["t"] for r in rows} == {expected_type}
+        assert rows[0]["v"] == rows[1]["v"]
+
+    def test_a_nanosecond_shard_does_not_drag_a_far_future_sibling_out_of_range(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """timestamp[ns] has the finest unit and the NARROWEST range (to 2262).
+        An SCD2 sentinel like 9999-12-31 in a millisecond shard must not be
+        cast to nanoseconds to match an INT96 sibling; DuckDB's TIMESTAMP is
+        microseconds, so the merge caps there and the glob renders as on main."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        for shard, unit, value in (
+            ("2024", "ms", datetime(9999, 12, 31)),
+            ("2025", "ns", datetime(2025, 1, 1)),
+        ):
+            path = tmp_path / "data" / shard / "t.parquet"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            pq.write_table(
+                pa.table({"valid_to": pa.array([value], type=pa.timestamp(unit))}),
+                path,
+            )
+        source = ParquetSourceConfig(type="parquet", files={"t": "data/*/t.parquet"})
+        mat = FileSourceMaterializer(local_project(tmp_path), TrivialDuckDBCache())
+
+        rows = mat.materialize_and_run(
+            source,
+            "SELECT valid_to, typeof(valid_to) AS t FROM t ORDER BY 1",
+            {},
+            "t_source",
+        )
+        assert [r["valid_to"] for r in rows] == [
+            datetime(2025, 1, 1),
+            datetime(9999, 12, 31),
+        ]
+        assert rows[0]["t"] == "TIMESTAMP"
+
+    def test_a_nanosecond_remainder_that_microseconds_cannot_hold_is_a_stamped_mismatch(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """The cap makes ns → us the one widening cast that can refuse. It must
+        refuse inside the merge guard, as a coded mismatch naming both shards —
+        never as a raw pyarrow message. (Passes only while ``_widen_to_match``
+        runs inside ``_merge_arrow``'s try.)"""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        for shard, unit, value in (
+            ("2024", "us", 1_735_689_600_000_000),
+            ("2025", "ns", 1_735_689_600_000_000_123),
+        ):
+            path = tmp_path / "data" / shard / "t.parquet"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            pq.write_table(
+                pa.table({"ts": pa.array([value], type=pa.timestamp(unit))}), path
+            )
+        source = ParquetSourceConfig(type="parquet", files={"t": "data/*/t.parquet"})
+        mat = FileSourceMaterializer(local_project(tmp_path), TrivialDuckDBCache())
+
+        with pytest.raises(DbtChartsError) as excinfo:
+            mat.materialize_and_run(source, "SELECT ts FROM t", {}, "t_source")
+        assert excinfo.value.code is not None
+        assert excinfo.value.code.code == "ERR-GLOB-SCHEMA-MISMATCH"
+        assert "data/2024/t.parquet" in str(excinfo.value)
+        assert "data/2025/t.parquet" in str(excinfo.value)
+
+    def test_glob_shards_with_reordered_headers_union_by_name(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Column order is not part of a glob's contract — the first-row-keys
+        check compares sets, so two shards that disagree only on header order
+        have always been legal."""
+        project = _make_project(
+            tmp_path,
+            {
+                "data/2024/sales.csv": "region,amount\nNorth,100\n",
+                "data/2025/sales.csv": "amount,region\n200,South\n",
+            },
+            local_project,
+        )
+        source = _csv_source({"sales": "data/*/sales.csv"})
+        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+
+        rows = mat.materialize_and_run(
+            source, "SELECT region, amount FROM sales ORDER BY amount", {}, "sales"
+        )
+        assert rows == [
+            {"region": "North", "amount": 100},
+            {"region": "South", "amount": 200},
+        ]
+
+
+class TestArrowTypesDuckDBRefuses:
+    """Parquet can hold Arrow types DuckDB's bridge rejects at ``register``:
+    ``decimal256`` (its FIXED_LEN_BYTE_ARRAY backing allows precision > 38, and
+    BigQuery BIGNUMERIC exports use it routinely) and ``float16``, at the top
+    level or nested inside a list/struct/map. Each is normalized to the nearest
+    type DuckDB accepts, losslessly, and anything left over is refused with a
+    stamped code rather than reaching the user as ERR-INTERNAL.
+    """
+
+    @staticmethod
+    def _write(
+        tmp_path: Path, values: list[Decimal], precision: int, scale: int
+    ) -> ParquetSourceConfig:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        parquet_path = tmp_path / "data" / "wide.parquet"
+        parquet_path.parent.mkdir(parents=True, exist_ok=True)
+        pq.write_table(
+            pa.table(
+                {"amount": pa.array(values, type=pa.decimal256(precision, scale))}
+            ),
+            parquet_path,
+        )
+        return ParquetSourceConfig(type="parquet", files={"wide": "data/wide.parquet"})
+
+    def test_values_that_fit_narrow_to_decimal_38(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        source = self._write(tmp_path, [Decimal("1.10"), Decimal("2.20")], 40, 2)
+        mat = FileSourceMaterializer(local_project(tmp_path), TrivialDuckDBCache())
+
+        rows = mat.materialize_and_run(
+            source,
+            "SELECT SUM(amount) AS s, ANY_VALUE(typeof(amount)) AS t FROM wide",
+            {},
+            "wide_source",
+        )
+        assert rows[0] == {"s": Decimal("3.30"), "t": "DECIMAL(38,2)"}
+
+    def test_a_value_wider_than_38_digits_is_refused(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        source = self._write(tmp_path, [Decimal("1" * 39 + ".00")], 41, 2)
+        mat = FileSourceMaterializer(local_project(tmp_path), TrivialDuckDBCache())
+
+        with pytest.raises(DbtChartsError) as excinfo:
+            mat.materialize_and_run(source, "SELECT * FROM wide", {}, "wide_source")
+        assert excinfo.value.code.code == "ERR-FILE-SOURCE-DECIMAL-TOO-WIDE"
+        message = str(excinfo.value)
+        assert "amount" in message
+        assert "data/wide.parquet" in message
+        assert "41" in message
+        # The fields ride into `dct render --format json` and the
+        # `--diagnostics-json` stream verbatim: a live pyarrow type there
+        # crashes both surfaces on a legitimate authoring error.
+        json.dumps(excinfo.value.fields)
+        dumped = excinfo.value.to_diagnostic(file="charts/x.yml").model_dump(
+            mode="json"
+        )
+        assert dumped["fields"]["column_type"] == "decimal256(41, 2)"
+
+    @staticmethod
+    def _write_parquet(tmp_path: Path, table) -> ParquetSourceConfig:
+        import pyarrow.parquet as pq
+
+        parquet_path = tmp_path / "data" / "t.parquet"
+        parquet_path.parent.mkdir(parents=True, exist_ok=True)
+        pq.write_table(table, parquet_path)
+        return ParquetSourceConfig(type="parquet", files={"t": "data/t.parquet"})
+
+    def test_float16_column_widens_to_float(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A halffloat column rendered before the Arrow path existed (to_pylist
+        gave a float and _infer_type said DOUBLE); widening to float32 is
+        lossless and keeps it renderable."""
+        import pyarrow as pa
+
+        source = self._write_parquet(
+            tmp_path, pa.table({"v": pa.array([1.5, 2.5], type=pa.float16())})
+        )
+        mat = FileSourceMaterializer(local_project(tmp_path), TrivialDuckDBCache())
+
+        rows = mat.materialize_and_run(
+            source,
+            "SELECT SUM(v) AS s, ANY_VALUE(typeof(v)) AS t FROM t",
+            {},
+            "t_source",
+        )
+        assert rows[0] == {"s": 4.0, "t": "FLOAT"}
+
+    def test_decimal256_nested_in_a_list_narrows(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        import pyarrow as pa
+
+        source = self._write_parquet(
+            tmp_path,
+            pa.table(
+                {
+                    "v": pa.array(
+                        [[Decimal("1.10"), Decimal("2.20")]],
+                        type=pa.list_(pa.decimal256(40, 2)),
+                    )
+                }
+            ),
+        )
+        mat = FileSourceMaterializer(local_project(tmp_path), TrivialDuckDBCache())
+
+        rows = mat.materialize_and_run(
+            source, "SELECT v, typeof(v) AS t FROM t", {}, "t_source"
+        )
+        assert rows[0]["v"] == [Decimal("1.10"), Decimal("2.20")]
+        assert rows[0]["t"] == "DECIMAL(38,2)[]"
+
+    def test_float16_nested_in_a_struct_widens(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        import pyarrow as pa
+
+        source = self._write_parquet(
+            tmp_path,
+            pa.table(
+                {
+                    "v": pa.array(
+                        [{"half": 1.5, "wide": Decimal("2.20")}],
+                        type=pa.struct(
+                            [("half", pa.float16()), ("wide", pa.decimal256(40, 2))]
+                        ),
+                    )
+                }
+            ),
+        )
+        mat = FileSourceMaterializer(local_project(tmp_path), TrivialDuckDBCache())
+
+        rows = mat.materialize_and_run(
+            source, "SELECT typeof(v) AS t FROM t", {}, "t_source"
+        )
+        assert rows[0]["t"] == "STRUCT(half FLOAT, wide DECIMAL(38,2))"
+
+    def test_duplicate_column_names_do_not_crash_normalization(self) -> None:
+        """Arrow permits duplicate column names, and looking a field up by name
+        then returns -1. Normalization walks positionally, so both columns
+        survive and the wide one still narrows."""
+        import pyarrow as pa
+
+        from dbt_charts.core.execute.file_source_materializer import _normalize_arrow
+
+        duplicated = pa.Table.from_arrays(
+            [
+                pa.array([Decimal("1.10")], type=pa.decimal256(40, 2)),
+                pa.array([2], type=pa.int64()),
+            ],
+            schema=pa.schema([("a", pa.decimal256(40, 2)), ("a", pa.int64())]),
+        )
+
+        normalized = _normalize_arrow(duplicated, "src", "t", "data/t.parquet")
+
+        assert normalized.schema.names == ["a", "a"]
+        assert normalized.schema.field(0).type == pa.decimal128(38, 2)
+        assert normalized.schema.field(1).type == pa.int64()
+        assert normalized.column(0).to_pylist() == [Decimal("1.10")]
+
+    def test_duplicate_csv_header_is_stamped_not_internal(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """pyarrow.csv reads ``a,a,b`` as three fields; DuckDB accepts the table at
+        register and refuses it at CREATE. The author sees a coded error naming
+        the table, not ERR-INTERNAL."""
+        project = _make_project(
+            tmp_path, {"data/dup.csv": "a,a,b\n1,2,3\n"}, local_project
+        )
+        source = _csv_source({"dup": "data/dup.csv"})
+        mat = FileSourceMaterializer(project, TrivialDuckDBCache())
+
+        with pytest.raises(DbtChartsError) as exc:
+            mat.materialize_and_run(source, "SELECT * FROM dup", {}, "dup")
+        assert exc.value.code.code == "ERR-FILE-SOURCE-UNSUPPORTED-TYPE"
+        assert "'dup'" in str(exc.value)
+        assert "error.pxi" not in str(exc.value)

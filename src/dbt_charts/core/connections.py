@@ -121,9 +121,19 @@ def dataset_location(source_config: SourceConfig) -> str:
 def test_connection(source_config: SourceConfig) -> tuple[bool, str]:
     """Verify that source_config can reach the database.
 
-    Constructs a fresh adapter, pings with SELECT 1, and lets GC clean up
-    when the local reference drops at function exit. The temp target dir is
-    removed by the weakref.finalize registered in build_adapter.
+    Constructs a fresh adapter, opens the connection, pings with SELECT 1, and
+    lets GC clean up when the local reference drops at function exit. The temp
+    target dir is removed by the weakref.finalize registered in build_adapter.
+
+    The connection is opened explicitly, before any SQL, for the same reason
+    ``dct query`` does it (execute/adapters/dbt_adapter.py): a connect failure is
+    not a warehouse rejection, and it gets the ERR-WAREHOUSE-CONNECTION sentence
+    rather than a bare driver string. Holding that failure in ``open_error``
+    rather than returning on the spot is what keeps it: ``connection_named``
+    releases on *every* exit, and dbt-bigquery's release dereferences the handle
+    a failed open left as None, so the AttributeError it raises would otherwise
+    replace a verdict already reached — including the value of a plain ``return``
+    from inside the block.
 
     Args:
         source_config: Typed SourceConfig instance (DuckDBSourceConfig,
@@ -134,20 +144,28 @@ def test_connection(source_config: SourceConfig) -> tuple[bool, str]:
         (False, "<error message>") on any failure — driver missing, bad creds,
         network unreachable, unsupported type, etc.
     """
+    from dbt_charts.core.execute.adapters.base import connection_failure_message
     from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
 
     creds = source_config.model_dump(
         by_alias=True, exclude_unset=True, exclude_none=True
     )
+    open_error: Exception | None = None
     try:
         adapter = build_adapter(creds)
         with adapter.connection_named("test"):
-            adapter.execute("SELECT 1", auto_begin=False, fetch=True)
-        return True, "Connection successful"
-    except (
-        Exception  # noqa: BLE001
-    ) as e:  # broad on purpose — surfaces driver-level errors as messages
-        return False, str(e) or type(e).__name__
+            try:
+                _ = adapter.connections.get_thread_connection().handle
+            except Exception as e:  # noqa: BLE001 — any driver's connect failure
+                open_error = e
+            else:
+                adapter.execute("SELECT 1", auto_begin=False, fetch=True)
+    except Exception as e:  # noqa: BLE001 — driver-level errors become messages
+        if open_error is None:
+            return False, str(e) or type(e).__name__
+    if open_error is not None:
+        return False, connection_failure_message(source_config.type, open_error)
+    return True, "Connection successful"
 
 
 def bulk_schema_for_config(source_config: SourceConfig) -> SchemaTree:

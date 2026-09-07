@@ -56,7 +56,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Literal, Protocol, TypeAlias, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, runtime_checkable
+
+if TYPE_CHECKING:
+    import pyarrow
 
 # Shared with executor.TruncationInfo.reason — the set of causes a cached
 # rows entry can carry. Defined here (not imported from executor) because
@@ -249,6 +252,7 @@ class QueryResultCache(Protocol):
         query_name: str,
         source_name: str = "",
         truncated_reason: TruncatedReason | None = None,
+        arrow: pyarrow.Table | None = None,
     ) -> None:
         """Record *outcome* in its own slot, leaving the other one alone.
 
@@ -262,6 +266,20 @@ class QueryResultCache(Protocol):
         truncated_reason travels with the rows so a later warm ``get()`` can
         reconstruct the same truncation warning a fresh execution would —
         ignored when *outcome* is an Exception.
+
+        *arrow*, when given, is the authoritative typed form of *outcome*: the
+        same rows, typed as the source declared them rather than as the Python
+        objects those declarations decoded into, and already recast into types a
+        SQL engine can load. A backend may store from it instead of the row
+        dicts, and one that does must not apply its own storage encodings
+        (``TrivialDuckDBCache``'s VARCHAR sidecar for uniformly-Decimal columns,
+        say) to the result. Only the file-source materializer passes it, and
+        only for CSV and Parquet, whose parsers hold a ``pyarrow.Table``
+        already; a backend that restores types on ``get()`` from its own
+        metadata can ignore it entirely. Because skipping those encodings is
+        only sound for a file table, *arrow* on a write whose ``variables_hash``
+        is not ``FILE_SOURCE_VARS_HASH`` is a caller bug, and a backend that
+        acts on it must reject that.
         """
         ...
 

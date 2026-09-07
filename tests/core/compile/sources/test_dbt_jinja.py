@@ -12,7 +12,7 @@ import contextlib
 import pytest
 
 from dbt_charts.core.compile.sources.dbt_jinja import (
-    _nothing_to_render,
+    nothing_to_render,
     render_dbt_jinja_in_dict,
 )
 
@@ -271,7 +271,7 @@ class TestFastPathEquivalence:
         assert render_dbt_jinja_in_dict({"k": value}) == {"k": value}
         # Not redundant with the line above: dbt returns these verbatim too, so
         # matching output alone cannot tell a taken skip from a widened guard.
-        assert _nothing_to_render({"k": value}), "value stopped being fast-pathed"
+        assert nothing_to_render({"k": value}), "value stopped being fast-pathed"
 
     def test_secret_prefix_matches_dbt(self) -> None:
         """The inlined constant exists to keep dbt off the import path; if dbt
@@ -302,7 +302,7 @@ class TestFastPathEquivalence:
         and no output comparison would notice.
         """
         shared = {"host": "db.example.com"}
-        assert _nothing_to_render({"a": shared, "b": shared})
+        assert nothing_to_render({"a": shared, "b": shared})
 
     def test_deep_acyclic_alias_chain_falls_through_instead_of_raising(self) -> None:
         """Depth is not self-reference. A chain of YAML aliases builds a deep
@@ -321,7 +321,7 @@ class TestFastPathEquivalence:
             ["x0: &x0 [v]"] + [f"x{i}: &x{i} [*x{i - 1}]" for i in range(1, 900)]
         )
         doc = yaml.safe_load(chain)
-        assert _nothing_to_render(doc) is False
+        assert nothing_to_render(doc) is False
         # ValueError is dbt's own overflow, already adapted at this module's
         # boundary; a RecursionError would propagate and fail the test.
         with contextlib.suppress(ValueError):

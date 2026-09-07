@@ -74,6 +74,21 @@ class TestListDirEntries:
         entries = list_dir_entries(project.directory("."), "/")
         assert not any(e.name.startswith(".") for e in entries)
 
+    def test_excludes_meta_yaml(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        """meta.yaml/meta.yml are cascade fragments, never standalone boards
+        (ProjectPath.is_meta) — they must not be offered as a nav destination."""
+        from dbt_charts.core.render.dir_context import list_dir_entries
+
+        (tmp_path / "meta.yaml").write_text("style: {}\n")
+        (tmp_path / "meta.yml").write_text("style: {}\n")
+        (tmp_path / "sales.yml").write_text("title: Sales\n")
+        project = local_project(tmp_path)
+        entries = list_dir_entries(project.directory("."), "/")
+        names = {e.name for e in entries}
+        assert names == {"sales.yml"}
+
     def test_excludes_non_board_files(
         self, tmp_path: Path, local_project: Callable[..., Project]
     ) -> None:
@@ -311,6 +326,21 @@ class TestBuildDirContext:
         sibling_names = [s["name"] for s in ctx["siblings"]]
         assert "x.yml" in sibling_names
         assert "y.yml" in sibling_names
+
+    def test_siblings_excludes_meta_yaml(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        """meta.yaml is a cascade fragment, not a board — siblings must not
+        offer it as a nav destination (it can never compile as a board)."""
+        from dbt_charts.core.render.dir_context import lazy_dir_context
+
+        project, board_dir = self._make_project(tmp_path, local_project)
+        (project.root / "charts" / "reports" / "meta.yaml").write_text("style: {}\n")
+        ctx = lazy_dir_context(board_dir)
+        sibling_names = [s["name"] for s in ctx["siblings"]]
+        assert "meta.yaml" not in sibling_names
+        # Guard against a vacuous pass: real siblings still list.
+        assert "x.yml" in sibling_names
 
     def test_siblings_one_level_only(
         self, tmp_path: Path, local_project: Callable[..., Project]

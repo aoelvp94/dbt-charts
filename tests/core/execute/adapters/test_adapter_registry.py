@@ -383,6 +383,81 @@ class TestClose:
         registry.close()
         assert closed
 
+    def test_close_does_not_close_an_injected_file_materializer(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """An injected materializer (Cloud's, shared with the session that
+        built it) is not the registry's to close — only a materializer the
+        registry itself built via file_materializer_factory is.
+        """
+        from dbt_charts.core.execute.file_source_materializer import (
+            FileSourceMaterializer,
+        )
+        from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+        project = local_project(tmp_path)
+        materializer = FileSourceMaterializer(project, TrivialDuckDBCache())
+        closed = False
+        original_close = materializer.close
+
+        def track_close() -> None:
+            nonlocal closed
+            closed = True
+            original_close()
+
+        materializer.close = track_close  # type: ignore[method-assign]
+        registry = AdapterRegistry(project=project, file_materializer=materializer)
+
+        registry.close()
+
+        assert not closed
+
+    def test_close_closes_a_factory_built_file_materializer(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A materializer the registry built lazily via
+        file_materializer_factory is the one materializer close() owns."""
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.execute.file_source_materializer import (
+            FileSourceMaterializer,
+        )
+        from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "orders.csv").write_text("region,amount\nNorth,1\n")
+        (tmp_path / "dbt_charts.yml").write_text(
+            "sources:\n  marts:\n    type: csv\n    files:\n      orders: data/orders.csv\n"
+        )
+        project = local_project(tmp_path)
+        built: list[FileSourceMaterializer] = []
+
+        def factory() -> FileSourceMaterializer:
+            materializer = FileSourceMaterializer(project, TrivialDuckDBCache())
+            built.append(materializer)
+            return materializer
+
+        registry = AdapterRegistry(
+            project=project,
+            project_sources=load_project_sources(project),
+            file_materializer_factory=factory,
+        )
+        registry.execute(SqlQuery(sql="SELECT * FROM orders", source="marts"))
+        assert len(built) == 1
+        closed = False
+        original_close = built[0].close
+
+        def track_close() -> None:
+            nonlocal closed
+            closed = True
+            original_close()
+
+        built[0].close = track_close  # type: ignore[method-assign]
+
+        registry.close()
+
+        assert closed
+
 
 class TestSourcelessRejectScopedToSql:
     """The closed-allowlist source-less reject fires for SQL queries only.
@@ -501,3 +576,275 @@ class TestSourcelessSqlRejectedOnDefaultResolver:
         result = registry.execute(ValuesQuery(rows=[{"metric": "revenue", "n": 42}]))
         assert result.error is None, result.error
         assert result.data == [{"metric": "revenue", "n": 42}]
+
+
+def test_file_source_without_a_materializer_still_refuses(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """A file source resolves fine — but a registry with no file_materializer
+    (the default) still cannot run one. The seam is opt-in: a caller that wants
+    ad-hoc file-source queries must pass file_materializer/file_materializer_factory
+    to AdapterRegistry (or ProjectSession), never get one invented for free.
+    """
+    from dbt_charts.core.compile.models.query.normalized import SqlQuery
+
+    (tmp_path / "dbt_charts.yml").write_text(
+        "sources:\n  marts:\n    type: csv\n    files:\n      orders: data/orders.csv\n"
+    )
+    registry = AdapterRegistry(
+        project=local_project(tmp_path),
+        project_sources=load_project_sources(local_project(tmp_path)),
+    )
+
+    result = registry.execute(SqlQuery(sql="SELECT 1", source="marts"))
+
+    assert result.error is not None
+    assert "marts" in result.error
+    assert "materializer" in result.error
+
+
+def test_schema_query_on_a_file_source_refuses_even_with_a_materializer(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """SchemaQuery is the other query that can carry a source, and stays
+    refused unconditionally — schema introspection on a file source (the
+    /data explorer, or an authored `type: schema` query) is out of scope
+    here and deferred to a follow-up task, regardless of whether a
+    materializer is wired for SqlQuery execution.
+    """
+    from dbt_charts.core.compile.models.query.normalized import SchemaQuery
+    from dbt_charts.core.execute.file_source_materializer import (
+        FileSourceMaterializer,
+    )
+    from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+    (tmp_path / "dbt_charts.yml").write_text(
+        "sources:\n  marts:\n    type: csv\n    files:\n      orders: data/orders.csv\n"
+    )
+    project = local_project(tmp_path)
+    registry = AdapterRegistry(
+        project=project,
+        project_sources=load_project_sources(project),
+        file_materializer=FileSourceMaterializer(project, TrivialDuckDBCache()),
+    )
+
+    result = registry.execute(SchemaQuery(source="marts"))
+
+    assert result.error is not None
+    assert "marts" in result.error
+    # Distinguish this refusal from the "no materializer configured" one
+    # (test_file_source_without_a_materializer_still_refuses) — this fires
+    # unconditionally regardless of the materializer wired above.
+    assert "Schema introspection" in result.error
+
+
+class TestFileSourceDispatch:
+    """execute() runs a file-source SqlQuery through an injected materializer.
+
+    Regression coverage for `dct query <file-source> 'SELECT ...'` /
+    `dct query <board> <query>` (agent_api.execute_query / query_board share
+    this path via AdapterRegistry.execute).
+    """
+
+    @staticmethod
+    def _csv_project(
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        rows: list[tuple[str, int]],
+    ) -> FilesystemProject:
+        data_dir = tmp_path / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        lines = "\n".join(f"{region},{amount}" for region, amount in rows)
+        (data_dir / "orders.csv").write_text(f"region,amount\n{lines}\n")
+        (tmp_path / "dbt_charts.yml").write_text(
+            "sources:\n  marts:\n    type: csv\n    files:\n      orders: data/orders.csv\n"
+        )
+        return local_project(tmp_path)
+
+    def _registry_with_materializer(
+        self, project: FilesystemProject
+    ) -> AdapterRegistry:
+        from dbt_charts.core.execute.file_source_materializer import (
+            FileSourceMaterializer,
+        )
+        from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+        return AdapterRegistry(
+            project=project,
+            project_sources=load_project_sources(project),
+            file_materializer=FileSourceMaterializer(project, TrivialDuckDBCache()),
+        )
+
+    def test_sql_query_returns_rows_from_a_real_csv(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+
+        project = self._csv_project(
+            tmp_path, local_project, [("North", 100), ("South", 200)]
+        )
+        registry = self._registry_with_materializer(project)
+
+        result = registry.execute(
+            SqlQuery(sql="SELECT * FROM orders ORDER BY amount", source="marts")
+        )
+
+        assert result.error is None, result.error
+        assert [r["region"] for r in result.data] == ["North", "South"]
+
+    def test_missing_file_on_disk_returns_an_error_not_a_crash(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A `files:` entry naming a file absent from disk makes
+        Project.file_version (Path.stat()) raise FileNotFoundError — an
+        OSError, not a DbtChartsError/RuntimeError. Must surface as a
+        QueryResult error, not escape execute() as an unhandled exception.
+        """
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+
+        (tmp_path / "dbt_charts.yml").write_text(
+            "sources:\n  marts:\n    type: csv\n    files:\n      orders: data/missing.csv\n"
+        )
+        project = local_project(tmp_path)
+        registry = self._registry_with_materializer(project)
+
+        result = registry.execute(SqlQuery(sql="SELECT * FROM orders", source="marts"))
+
+        assert result.error is not None
+        # Pin which arm answered: without this the test would also pass if a
+        # future change made `marts` fail at source resolution instead.
+        assert "File-source execution" in result.error
+
+    def test_header_only_csv_returns_an_error_not_a_crash(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A CSV parsing to zero data rows raises a bare ValueError inside the
+        materializer — neither a DbtChartsError/RuntimeError nor an OSError.
+        It is an ordinary authoring mistake, so it must surface as a
+        QueryResult error rather than escaping execute() unhandled.
+        """
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+
+        project = self._csv_project(tmp_path, local_project, [])
+        registry = self._registry_with_materializer(project)
+
+        result = registry.execute(SqlQuery(sql="SELECT * FROM orders", source="marts"))
+
+        assert result.error is not None
+        assert "File-source execution" in result.error
+        # Pin the raise site too: were this ValueError later promoted to a typed
+        # DbtChartsError, the prefix alone would keep passing while the
+        # ValueError arm of the catch lost its only coverage.
+        assert "contain no rows" in result.error
+
+    def test_execution_error_names_the_operation_once(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """The cache backend adds SQL context; the registry names the operation
+        exactly once, so a DuckDB rejection reaches the author without the
+        phrase "File-source execution failed" stuttering before the actual
+        Binder Error.
+        """
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+
+        project = self._csv_project(tmp_path, local_project, [("North", 100)])
+        registry = self._registry_with_materializer(project)
+
+        result = registry.execute(
+            SqlQuery(sql="SELECT nonexistent_col FROM orders", source="marts")
+        )
+
+        assert result.error is not None
+        assert result.error.count("File-source execution failed") == 1
+        # The backend's own context still reaches the author.
+        assert "nonexistent_col" in result.error
+
+    def test_lenient_variables_is_honored_on_the_file_source_path(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """query.lenient_variables must reach materialize_and_run's own
+        render — the same ``strict=not query.lenient_variables`` every other
+        adapter honors — for a query with no board.queries, where params
+        stays None and the materializer does its own render.
+        """
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+
+        project = self._csv_project(tmp_path, local_project, [("North", 100)])
+        registry = self._registry_with_materializer(project)
+        sql = "SELECT * FROM orders WHERE region = '{{ region }}'"
+
+        strict_result = registry.execute(SqlQuery(sql=sql, source="marts"))
+        assert strict_result.error is not None
+
+        lenient_result = registry.execute(
+            SqlQuery(sql=sql, source="marts", lenient_variables=True)
+        )
+        assert lenient_result.error is None, lenient_result.error
+
+    def test_query_ref_is_expanded_before_dispatch(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Regression test for the ordering hazard: the guard used to sit
+        above _compose_query_refs, so a file-source query carrying
+        `{{ queries.X }}` reached the materializer unexpanded. Dispatch must
+        sit below composition so the ref is resolved first.
+        """
+        from dbt_charts.core.compile import compile as compile_board
+
+        project = self._csv_project(
+            tmp_path, local_project, [("North", 100), ("South", 200)]
+        )
+        registry = self._registry_with_materializer(project)
+
+        board_yaml = (
+            "title: probe\n"
+            "text: probe board\n"
+            "queries:\n"
+            "  base:\n"
+            "    sql: SELECT * FROM orders\n"
+            "    source: marts\n"
+            "  wrapper:\n"
+            "    sql: \"SELECT * FROM {{ queries.base }} WHERE region = 'North'\"\n"
+            "    source: marts\n"
+        )
+        compile_result = compile_board(board_yaml)
+        assert compile_result.success, compile_result.errors
+        board = compile_result.board
+        assert board is not None
+
+        result = registry.execute(
+            board.queries["wrapper"], board=board, query_name="wrapper"
+        )
+
+        assert result.error is None, result.error
+        assert [r["region"] for r in result.data] == ["North"]
+
+    def test_limit_and_max_rows_bound_the_file_source_fetch(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from dbt_charts.core.compile.models.query.normalized import SqlQuery
+
+        rows = [("North", i) for i in range(10)]
+        project = self._csv_project(tmp_path, local_project, rows)
+        registry = self._registry_with_materializer(project)
+
+        # Author's own limit: bounds the fetch to exactly that many rows.
+        limited = registry.execute(
+            SqlQuery(sql="SELECT * FROM orders", source="marts", limit=2)
+        )
+        assert limited.error is None, limited.error
+        assert len(limited.data) == 2
+        assert limited.truncated_reason is None
+
+        # No author limit, ceiling below the source's row count: truncates at
+        # the ceiling and flags it — the same contract SqlAdapter honours.
+        monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "3")
+        unbounded = registry.execute(
+            SqlQuery(sql="SELECT * FROM orders", source="marts")
+        )
+        assert unbounded.error is None, unbounded.error
+        assert len(unbounded.data) == 3
+        assert unbounded.truncated_reason == "max_rows"

@@ -538,9 +538,9 @@ class _DuckDBResultCacheBase:
             try:
                 return _rows_from_result(self.conn.execute(sql, params))
             except Exception as e:  # noqa: BLE001 — duckdb raises various internal exception types; catching broadly at the file-source execution boundary
-                raise RuntimeError(
-                    f"File-source execution failed: {e}\nSQL:\n{sql}"
-                ) from e
+                # SQL context only — naming the operation is the caller's job.
+                # Saying it here too stuttered the phrase twice in one message.
+                raise RuntimeError(f"{e}\nSQL:\n{sql}") from e
 
     def _drop_stale_outcomes_and_payloads(self, reason: str) -> None:
         """Drop _query_outcomes and its orphaned _r_* payload tables.

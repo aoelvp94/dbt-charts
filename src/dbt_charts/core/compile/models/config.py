@@ -246,6 +246,8 @@ class ChartRenderingConfig(ConfigNode):
     class FrameConfig(ConfigNode):
         footer_rule_gap_px: int
         footer_timestamp_gap_px: int
+        footer_wordmark_height_em: float = Field(gt=0)
+        footer_wordmark_gap_em: float = Field(ge=0)
 
     class SupportTableConfig(ConfigNode):
         divider_gap: float
@@ -378,16 +380,16 @@ class ExecutionConfig(ConfigNode):
         gt=0,
         description="Max tables in a files: map (must be > 0).",
     )
-    # Safety ceiling on a file-source table's estimated materialized bytes
-    # (source file bytes; Parquet is multiplied by a fixed factor — see
-    # _PARQUET_MATERIALIZATION_MULTIPLIER in file_source_materializer.py).
-    # Checked while reading, before the cache backend is written, so a runaway
-    # relation fails fast. A deployment ceiling (DCT_FILE_SOURCE_MAX_BYTES_CEILING)
-    # can only lower it, never raise it.
+    # Safety ceiling on a file-source table's uncompressed bytes: the file's
+    # own bytes for CSV/JSON, and for Parquet the uncompressed total its
+    # footer records, so one cap means one thing across formats. Checked while
+    # reading, before the cache backend is written, so a runaway relation
+    # fails fast. A deployment ceiling (DCT_FILE_SOURCE_MAX_BYTES_CEILING) can
+    # only lower it, never raise it — so a message about this limit must not
+    # tell the caller to raise it.
     file_source_max_bytes: int = Field(
         gt=0,
-        description="Max estimated materialized bytes per file-source table "
-        "(must be > 0).",
+        description="Max uncompressed bytes per file-source table (must be > 0).",
     )
     # Safety ceiling on rows returned by a single query, enforced by bounding the
     # driver's own fetch (fetchmany()/execute(limit=...)) rather than rewriting

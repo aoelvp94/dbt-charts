@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.5.1.dev844",
+  "version": "0.5.1.dev888",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -5168,7 +5168,7 @@
           "type": "boolean"
         },
         "text": {
-          "description": "Attribution text shown in the footer.",
+          "description": "Attribution text shown in the footer. The first 'dbt charts' in it is drawn as the dbt charts wordmark, in the same ink as the text.",
           "title": "Text",
           "type": "string"
         },
@@ -5182,7 +5182,7 @@
             }
           ],
           "default": null,
-          "description": "URL the footer brand phrase 'dbt charts' links to; null renders plain text.",
+          "description": "URL the footer's dbt charts wordmark links to; null renders it plain.",
           "title": "Link"
         },
         "font": {

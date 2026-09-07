@@ -18,10 +18,11 @@ from dbt_charts.agent_api.docs import (
 
 @pytest.fixture(autouse=True)
 def patch_syntax_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Monkeypatch ``_SYNTAX_FILE`` to a controlled corpus for every test in this module.
+    """Monkeypatch ``_SYNTAX_FILE`` and ``_REFERENCE_FILE`` to controlled corpora
+    for every test in this module.
 
-    The missing-file crash test points the path somewhere else by re-patching;
-    autouse keeps the rest of the suite isolated from the wheel's real file.
+    The missing-file crash tests point a path somewhere else by re-patching;
+    autouse keeps the rest of the suite isolated from the wheel's real files.
     """
     fake = tmp_path / "DBT_CHARTS_SYNTAX.md"
     fake.write_text(
@@ -32,9 +33,20 @@ def patch_syntax_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "## Charts\nBar chart documentation.\nUse x and y fields.\n\n"
         "## Layout\nGrid layout documentation.\nArrange charts in a grid.\n\n"
     )
+    fake_ref = tmp_path / "yaml-reference.md"
+    fake_ref.write_text(
+        "# Generated\n\n"
+        "## BarChart\n\n"
+        "| Field | Type | Description |\n"
+        "|---|---|---|\n"
+        "| `endpoint_labels` | EndpointLabelsConfig | Series names printed on "
+        "stacked bars instead of in a legend. |\n\n"
+    )
+
     import dbt_charts.agent_api.docs._loader as _loader
 
     monkeypatch.setattr(_loader, "_SYNTAX_FILE", fake)
+    monkeypatch.setattr(_loader, "_REFERENCE_FILE", fake_ref)
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +268,19 @@ def test_docs_search_no_match_returns_empty() -> None:
     assert result.success is True
     assert result.mode == "search"
     assert result.search == []
+
+
+def test_docs_search_finds_generated_reference_field() -> None:
+    """`endpoint_labels` lives in the generated schema reference (a field on
+    BarChart/LineChart/AreaChart's `style`), not in the prose syntax doc —
+    the search corpus must cover both so this term is findable at all. The
+    hit's topic must be the fetchable `reference` topic id, not a per-field
+    slug with no corresponding `docs(topic=...)` lookup.
+    """
+    result = docs(search="endpoint_labels")
+    assert result.success is True
+    assert result.mode == "search"
+    assert any(hit.topic == "reference" for hit in result.search)
 
 
 # ---------------------------------------------------------------------------

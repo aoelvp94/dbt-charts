@@ -55,6 +55,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_TICKS_INTERVAL_MEASURE_AXIS,
 )
 from dbt_charts.core.diagnostics.codes_render import (
+    ERR_LAYER_AXIS_POSITION_ENDPOINT_LABELS,
     ERR_MULTIPLES_INDEPENDENT_SCALE_MIRROR,
 )
 from dbt_charts.core.font_measure import get_font_measurer
@@ -402,14 +403,8 @@ def _reject_dual_axis_layered_endpoint_labels(
         layer.axis_y is not None and layer.axis_y.position is not None
         for layer in layers
     ):
-        raise ChartDataError(
-            "endpoint_labels.visible is not supported on a layered chart "
-            "whose layers pin an explicit axis_y.position — the label "
-            "rail anchors on one shared y-scale, and a dual-axis layer "
-            "renders on a different one. To fix: remove the per-layer "
-            "axis_y.position override, or set "
-            "endpoint_labels.visible: false on this chart.",
-            chart_id,
+        raise ChartDataError.from_code(
+            ERR_LAYER_AXIS_POSITION_ENDPOINT_LABELS, chart_id=chart_id
         )
 
 

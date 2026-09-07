@@ -18,10 +18,13 @@ class DescribeQueryArgs(BaseModel):
     non-error diagnostics (e.g. WARN-FANOUT-RISK warnings) so the agent can read them
     without being blocked from the column shape.
 
-    Only ever uses a cheap, no-execution check: DuckDB's own DESCRIBE, or a
-    BigQuery dry run. A source with neither (Postgres, Snowflake, Redshift, ...)
-    returns success=False explaining that it cannot list columns without
-    running the query, rather than running it for you.
+    Uses a no-execution check where one exists: DuckDB's own DESCRIBE, or a
+    BigQuery dry run. A csv/json/parquet file source also answers via DESCRIBE,
+    but that is not free — it must materialize its files onto DuckDB first,
+    reading and parsing them, though still far cheaper than running the query
+    for a full result set. A source with none of these (Postgres, Snowflake,
+    Redshift, ...) returns success=False explaining that it cannot list
+    columns without running the query, rather than running it for you.
     """
 
     sql: str = Field(..., description="SQL query to describe.")
@@ -69,9 +72,11 @@ def describe_query(
     Column lookup is dispatch, never execution: a DuckDB source uses its own
     read-only DESCRIBE, and every other adapter goes through
     ``core.execute.warehouse_check.check_ad_hoc_query`` — a BigQuery dry run;
-    an EXPLAIN on Postgres/Redshift/Snowflake that proves validity but returns
-    no schema (so the refusal below still fires, after a warehouse round-trip
-    that validates the SQL); or an explicit refusal for an adapter with no
+    a csv/json/parquet file source, which also answers via DESCRIBE but must
+    materialize its files onto DuckDB first; an EXPLAIN on
+    Postgres/Redshift/Snowflake that proves validity but returns no schema (so
+    the refusal below still fires, after a warehouse round-trip that
+    validates the SQL); or an explicit refusal for an adapter with no
     mechanism at all. That refusal is the answer for such an adapter, never a
     silent fall-through to running the query in full.
     """

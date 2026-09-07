@@ -5,14 +5,27 @@ exactly what execution would: dbt refs resolved, ``setup_sql`` on the same
 connection, board variables merged and coerced. Checking a hand-rebuilt copy of
 the SQL instead would report failures the real render never produces.
 
-| Adapter       | Mechanism     | Result             |
-|---------------|---------------|--------------------|
-| duckdb        | ``DESCRIBE``  | validity + columns |
-| bigquery      | dry run       | validity + columns |
-| postgres      | ``EXPLAIN``   | validity only      |
-| redshift      | ``EXPLAIN``   | validity only      |
-| snowflake     | ``EXPLAIN``   | validity only      |
-| anything else | none          | ``unchecked``      |
+| Adapter          | Mechanism     | Result             |
+|------------------|---------------|--------------------|
+| duckdb           | ``DESCRIBE``  | validity + columns |
+| csv/json/parquet | ``DESCRIBE``  | columns only        |
+| bigquery         | dry run       | validity + columns |
+| postgres         | ``EXPLAIN``   | validity only      |
+| redshift         | ``EXPLAIN``   | validity only      |
+| snowflake        | ``EXPLAIN``   | validity only      |
+| anything else    | none          | ``unchecked``      |
+
+A file source (csv/json/parquet) resolves to the same ``DESCRIBE`` mechanism
+as duckdb — it executes by materializing onto an in-process DuckDB either
+way — but it is the one row in this table where DESCRIBE is not free: it must
+read and parse the files first. Still far cheaper than executing (DESCRIBE
+returns column metadata, not the result set), and it warms the cache for the
+rest of the current process — not for a later, separate process, since the
+cache is in-memory and dies with it. Its row also can't report ``invalid``:
+materialization failures reach this module as a bare ``RuntimeError`` with no
+``error_code`` (``execute_file_source_sql`` flattens whatever DuckDB raised),
+so ``_is_query_defect`` can't classify them and they fall back to
+``unchecked``.
 
 The last row is the point: an adapter with no primitive that runs without
 executing reports ``unchecked``, never ``valid``. "Unchecked" is not a flavour
@@ -49,6 +62,7 @@ import sqlglot.expressions as exp
 from pydantic import BaseModel, ConfigDict
 
 from dbt_charts.core.compile.models.query.normalized import SqlQuery, is_sql_query
+from dbt_charts.core.compile.models.source import is_file_source
 from dbt_charts.core.compile.sql_guard import (
     as_expressions,
     build_skeleton,
@@ -193,6 +207,17 @@ def warehouse_check(
             source_config=source_config,
         )
     prefix_check = _PREFIX_CHECKS.get(adapter_type)
+    parse_dialect = adapter_type
+    if prefix_check is None and is_file_source(source_config):
+        # A csv/json/parquet source executes by materializing its files onto
+        # an in-process DuckDB (file_source_materializer.py), so DuckDB's own
+        # DESCRIBE mechanism answers it too — reusing the duckdb entry rather
+        # than adding three near-duplicate rows to _PREFIX_CHECKS. Cost of
+        # this path: see the module docstring.
+        prefix_check = _PREFIX_CHECKS["duckdb"]
+        # "csv"/"json"/"parquet" aren't sqlglot dialects — the SQL is parsed
+        # as DuckDB's own, since DuckDB is what actually runs it.
+        parse_dialect = "duckdb"
     if prefix_check is not None:
         keyword = prefix_check.keyword
         # A bare keyword prefix rather than a parenthesized wrapper, so a
@@ -204,7 +229,7 @@ def warehouse_check(
         # for EXPLAIN the gate's leading-parenthesized-arm refusal also covers
         # Postgres parsing `EXPLAIN (SELECT …)` as EXPLAIN's options list.
         unwrappable = _unwrappable_reason(
-            query.sql, dialect=adapter_type, keyword=keyword
+            query.sql, dialect=parse_dialect, keyword=keyword
         )
         if unwrappable is not None:
             return WarehouseCheck(

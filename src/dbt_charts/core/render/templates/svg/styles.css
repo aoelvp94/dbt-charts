@@ -69,15 +69,15 @@
     outline-offset: 2px;
 }
 
-{# Footer attribution watermark link — deliberately subtle: inherits the muted
-   footer text color (never blue), bold, underline only on hover. #}
+{# Footer attribution watermark link, wrapping the dbt charts wordmark —
+   deliberately subtle: the lockup keeps the muted footer color and only
+   dims on hover. #}
 .dbt-footer-link {
-    font-weight: 700;
     cursor: pointer;
 }
 
 .dbt-footer-link:hover {
-    text-decoration: underline;
+    opacity: 0.7;
 }
 
 

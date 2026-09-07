@@ -45,7 +45,7 @@ See also:
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Annotated, Any, ClassVar, Literal, get_args, get_type_hints
 
 from pydantic import (
@@ -53,6 +53,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -191,6 +192,11 @@ class BaseSourceConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # Declared without a value: every concrete variant names its own category,
+    # and there is no sensible default to inherit if one forgets. FILE_SOURCE_TYPES
+    # is derived from these, so a new file variant needs no list kept in step.
+    source_category: ClassVar[str]
+
     # None = no source-level cache override authored; queries against this
     # source inherit the project default (then board/query refinements).
     cache: CachePatch | None = Field(
@@ -204,11 +210,24 @@ class BaseSourceConfig(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _resolve_all_env_vars(cls, data: Any) -> Any:
-        """Render dbt Jinja (env_var etc.) in all fields before Pydantic validates."""
-        if isinstance(data, dict):
+    def _resolve_all_env_vars(
+        cls,
+        data: Any,  # type-state: explicit_any — raw YAML before validation
+        info: ValidationInfo,
+    ) -> Any:  # type-state: explicit_any — passes non-dict input through
+        """Render dbt Jinja (env_var etc.) in all fields before Pydantic validates.
+
+        This is the ONE render a source config gets, so it is also where a
+        caller seals untrusted input: ``parse_source_config(..., env={})``
+        arrives here as ``info.context["env"]``. No context (a model built
+        directly, local config) means the live process environment.
+        """
+        if not isinstance(data, dict):
+            return data
+        env = info.context.get("env") if info.context else None
+        if env is None:
             return render_dbt_jinja_in_dict(data)
-        return data
+        return render_dbt_jinja_in_dict(data, env=env)
 
 
 class AttributedSourceConfig(BaseModel):
@@ -1398,6 +1417,10 @@ class DbtProfileSourceConfig(AttributedSourceConfig, BaseSourceConfig):
     dbt profile from profiles.yml.
     """
 
+    # Its own category, not "database": this is a *reference* the resolver
+    # expands into a DbtTargetSourceConfig, and only that expansion knows which
+    # warehouse it names. is_database_source stays False for it, as it was.
+    source_category: ClassVar[str] = "dbt_profile"
     type: Literal["dbt_profile"] = Field(description="Source type identifier.")
     profile: str = Field(description="dbt profile name from profiles.yml.")
     target: str | None = Field(
@@ -1465,18 +1488,28 @@ SourceConfig = (
 ResolvedSourceConfig = SourceConfig | DbtTargetSourceConfig
 
 
-def _source_type_str(cls: type) -> str:
+def _source_type_str(cls: type[SourceConfig]) -> str:
     """Extract the Literal type string from a SourceConfig subclass."""
     return get_args(get_type_hints(cls)["type"])[0]
 
 
 # Derived from the SourceConfig union — no manual maintenance needed.
 # Adding a new SourceConfig variant automatically updates this map.
-_SOURCE_TYPE_MAP: dict[str, type] = {
+_SOURCE_TYPE_MAP: dict[str, type[SourceConfig]] = {
     _source_type_str(m): m for m in get_args(SourceConfig)
 }
 
 VALID_SOURCE_TYPES: frozenset[str] = frozenset(_SOURCE_TYPE_MAP)
+
+# The type names a host can recognise as a file source from raw YAML alone,
+# before anything is parsed — for a host that must decide "does this entry
+# need a connection?" while reading a committed dbt_charts.yml (Cloud does).
+# Derived from the union, so a new file variant is never a list to update.
+FILE_SOURCE_TYPES: frozenset[str] = frozenset(
+    type_name
+    for type_name, model in _SOURCE_TYPE_MAP.items()
+    if model.source_category == "file"
+)
 
 
 # ============================================================================
@@ -1484,38 +1517,72 @@ VALID_SOURCE_TYPES: frozenset[str] = frozenset(_SOURCE_TYPE_MAP)
 # ============================================================================
 
 
-def parse_source_config(data: dict[str, Any]) -> SourceConfig:
+def parse_source_config(
+    data: dict[str, Any],  # type-state: explicit_any — unvalidated YAML mapping
+    *,
+    env: Mapping[str, str] | None = None,
+) -> SourceConfig:
     """Parse a source configuration dictionary into the appropriate type.
 
+    Callers hand this a committed ``dbt_charts.yml`` that nobody validated, so
+    the annotation above is a promise, not a fact: ``yaml.safe_load`` turns
+    ``2024:`` into an int key and ``type: [csv]`` into a list. The two shape
+    checks below are what make the promise true for everything downstream —
+    without them a non-string key reaches the model as a bad keyword argument
+    and an unhashable ``type`` blows up the lookup, so every caller would have
+    to catch a TypeError this contract never named.
+
+    ``env`` is the environment ``env_var()`` renders against. ``None`` — the
+    documented default for local, trusted config — is the live process
+    environment. A host reading remote-committed YAML passes ``{}`` so only
+    author-supplied defaults render; the render happens once, inside the
+    model, so there is no second pass for an escaped template to reach.
+
     Raises:
-        ValueError: If type is missing or unknown.
+        ValueError: If any key is not a string, or ``type`` is missing, not a
+            string, or unknown.
     """
+    # Sequence[object] is the honest view of keys YAML built; the annotation
+    # cannot express it, and this line exists to reject the ones that break it.
+    keys: Sequence[object] = list(data)  # type-state: object_annotation — YAML keys
+    non_string_keys = sorted(repr(key) for key in keys if not isinstance(key, str))
+    if non_string_keys:
+        raise ValueError(
+            f"Source configuration keys must be strings; got "
+            f"{', '.join(non_string_keys)}. An unquoted YAML key like `2024:` "
+            "or `on:` parses as a number or a bool — quote it."
+        )
+
     if "type" not in data:
         raise ValueError("Source configuration must have a 'type' field")
 
     source_type = data["type"]
+    if not isinstance(source_type, str):
+        raise ValueError(
+            f"Source configuration 'type' must be a string; got {source_type!r}."
+        )
     if source_type not in _SOURCE_TYPE_MAP:
         raise ValueError(
             f"Unknown source type: '{source_type}'. "
             f"Valid types: {', '.join(sorted(_SOURCE_TYPE_MAP.keys()))}"
         )
 
-    return _SOURCE_TYPE_MAP[source_type](**data)
+    return _SOURCE_TYPE_MAP[source_type].model_validate(data, context={"env": env})
 
 
-def is_database_source(config: SourceConfig) -> bool:
+def is_database_source(config: ResolvedSourceConfig) -> bool:
     """True if config is a database source (source_category == 'database')."""
-    return getattr(type(config), "source_category", None) == "database"
+    return type(config).source_category == "database"
 
 
-def is_file_source(config: SourceConfig) -> bool:
+def is_file_source(config: ResolvedSourceConfig) -> bool:
     """True if config is a file-based source (source_category == 'file')."""
-    return getattr(type(config), "source_category", None) == "file"
+    return type(config).source_category == "file"
 
 
-def is_api_source(config: SourceConfig) -> bool:
+def is_api_source(config: ResolvedSourceConfig) -> bool:
     """True if config is an HTTP/API source (source_category == 'api')."""
-    return getattr(type(config), "source_category", None) == "api"
+    return type(config).source_category == "api"
 
 
 def source_cache_layer(

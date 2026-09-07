@@ -68,6 +68,7 @@ def list_dir_entries(dir_handle: ProjectDirectory, url_prefix: str) -> list[DirE
     - Anything ``iter_dir`` itself excludes (dotfiles, SKIP_SCAN_DIRS
       directory names, symlink escapes on a filesystem host)
     - Files with non-board extensions
+    - ``meta.yaml`` / ``meta.yml`` (cascade fragments, never standalone boards)
 
     Args:
         dir_handle: Directory to list.
@@ -93,6 +94,8 @@ def list_dir_entries(dir_handle: ProjectDirectory, url_prefix: str) -> list[DirE
                 )
             )
         else:
+            if child.is_meta:
+                continue
             suffix = PurePosixPath(name).suffix
             if suffix not in _BOARD_EXTENSIONS:
                 continue
