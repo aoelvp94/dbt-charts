@@ -357,6 +357,64 @@ class TestQueryOptionVariety:
         assert isinstance(data["suppressed"], list)
 
 
+class TestQueryWideResultRendering:
+    """Off a TTY, Rich falls back to an assumed 80-column width and ellipsizes
+    every cell to fit -- an agent capturing stdout got single-character column
+    names for a 29-column result. Full names/values must always print."""
+
+    def test_many_columns_render_full_names_not_ellipsized(
+        self, project_dir: Path
+    ) -> None:
+        cols = ", ".join(f"1 as long_column_name_number_{i}" for i in range(29))
+        result = runner.invoke(
+            app,
+            ["query", "db", f"select {cols}", "--project-dir", str(project_dir)],
+        )
+        assert result.exit_code == 0, result.output
+        assert "…" not in result.output
+        assert "long_column_name_number_0" in result.output
+        assert "long_column_name_number_28" in result.output
+
+
+class TestQueryTruncationNotice:
+    """A row-limit clip must never print a bare 'N rows' that looks complete."""
+
+    def test_truncated_raw_sql_result_names_the_limit_flag(
+        self, project_dir: Path
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "query",
+                "db",
+                "select * from range(30) t(x)",
+                "--project-dir",
+                str(project_dir),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "truncated" in result.output
+        assert "--limit" in result.output
+
+    def test_truncated_describe_result_mentions_describe_flag(
+        self, project_dir: Path
+    ) -> None:
+        cols = ", ".join(f"{i} as c{i}" for i in range(29))
+        result = runner.invoke(
+            app,
+            [
+                "query",
+                "db",
+                f"describe select {cols}",
+                "--project-dir",
+                str(project_dir),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "truncated" in result.output
+        assert "--describe" in result.output
+
+
 class TestQueryCommonErrors:
     """Every error case asserts documented exit codes.
 

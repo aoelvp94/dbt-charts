@@ -11,12 +11,14 @@ from __future__ import annotations
 
 from collections.abc import ItemsView, Iterator, KeysView, Mapping, ValuesView
 from typing import Any
+from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
     PrivateAttr,
+    field_validator,
     model_validator,
 )
 
@@ -24,6 +26,13 @@ from dbt_charts.core.compile.models.cache import CachePatch
 from dbt_charts.core.compile.models.primitives import HtmlPolicy
 from dbt_charts.core.compile.models.vega_lite.config import VegaLiteConfig
 from dbt_charts.core.compile.vega_lite import VEGA_LITE_SCHEMA_URL
+
+# The shape `published_to:` must take. Cloud mounts a project at
+# `/<org>/<project>/`, and the trailing slash is what makes the recorded URL
+# a page rather than a 404. `cloud_client.published_to.EXPECTED_FORM` states
+# the same rule for the writing side -- tach forbids that package importing
+# this one, so a parity test holds the two together.
+PUBLISHED_TO_FORM = "https://<host>/<org>/<project>/"
 
 
 def _normalize_node_value(value: object) -> object:
@@ -520,6 +529,30 @@ class Config(ConfigMappingBase):
     # Canonical public URL for dct render exports (e.g. "https://dashboards.example.com").
     # When set, rendered links are fully-qualified. Empty string means root-relative (default).
     public_url: str
+    # Where this project is published in dbt charts Cloud, e.g.
+    # "https://dbtcharts.com/acme-data/analytics/" -- written by
+    # `dct cloud project connect`, read by context resolution
+    # (dbt_charts.cloud_client.context) before it falls back to matching the
+    # git remote. None = not connected, or not recorded yet.
+    published_to: str | None = None
+
+    @field_validator("published_to")
+    @classmethod
+    def _validate_published_to(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        parsed = urlsplit(value)
+        segments = [segment for segment in parsed.path.split("/") if segment]
+        if (
+            parsed.scheme not in ("http", "https")
+            or not parsed.netloc
+            or len(segments) != 2
+        ):
+            raise ValueError(
+                "published_to must be an absolute URL of the form "
+                f"{PUBLISHED_TO_FORM}, got {value!r}"
+            )
+        return value
 
     @model_validator(mode="after")
     def _validate_palette_contract(self) -> Config:

@@ -25,6 +25,8 @@ from dbt_charts.cloud_client.errors import CloudConfigError
 
 CONFIG_DIR_NAME = "dbt-charts"
 CONFIG_FILE_NAME = "config.yml"
+PENDING_LOGIN_FILE_NAME = "pending-login.yml"
+PENDING_CONNECT_FILE_NAME = "pending-connect.yml"
 TOKEN_ENV_VAR = "DCT_CLOUD_TOKEN"
 DEFAULT_HOST = "https://dbtcharts.com"
 
@@ -54,6 +56,60 @@ class CloudConfig(BaseModel):
         return value.rstrip("\r\n")
 
 
+class PendingLogin(BaseModel):
+    """A device grant ``dct cloud login --start`` began but has not finished.
+
+    Persisted next to the token so ``--wait`` can resume it from a separate
+    process invocation -- an agent backgrounds ``--start``, hands the printed
+    URL to the user, then runs ``--wait`` in its own foreground call.
+    ``device_code``/``token_endpoint`` are exactly what ``poll_device_token``
+    needs; ``interval``/``expires_in`` are the device authorization's own
+    values, so ``--wait`` polls at the rate and for the window Cloud actually
+    granted rather than guessing new ones.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    device_code: str = Field(description="The code to poll the token endpoint with.")
+    token_endpoint: str = Field(description="Where to poll for the device token.")
+    interval: float = Field(description="Minimum seconds between polls.")
+    expires_in: float = Field(
+        description="Seconds until device_code stops being valid."
+    )
+    host: str = Field(description="The Cloud deployment this login is against.")
+
+
+class PendingConnect(BaseModel):
+    """A GitHub repo pick ``dct cloud project connect --start`` began but has
+    not finished.
+
+    Persisted next to the token so ``--wait`` can resume it from a separate
+    process invocation, the same split as ``PendingLogin``. There is no
+    device-code equivalent here: Cloud's repo-pick endpoint is keyed by
+    ``(caller, org)``, not a token this client mints, so ``org``/``host`` are
+    the whole server-side handle -- resuming means polling that same org
+    again (``CloudClient.wait_for_pick``). The rest is exactly what
+    ``create_project_from_pick`` needs once the pick lands.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    org: str = Field(description="The org the repo pick is against.")
+    host: str = Field(description="The Cloud deployment this connect is against.")
+    name: str | None = Field(
+        default=None, description="Project name (default: the repo's)."
+    )
+    slug: str | None = Field(
+        default=None, description="Project slug (default: from the name)."
+    )
+    trunk: str | None = Field(
+        default=None, description="Branch Cloud pulls from (default: the repo's)."
+    )
+    root: str | None = Field(
+        default=None, description="Folder holding dbt_project.yml inside the repo."
+    )
+
+
 def config_dir() -> Path:
     """The directory this deployment's user config lives in."""
     if os.name == "nt":
@@ -69,16 +125,21 @@ def config_path() -> Path:
     return config_dir() / CONFIG_FILE_NAME
 
 
-def read_config() -> CloudConfig:
-    """The stored config, exactly as the file has it.
+def pending_login_path() -> Path:
+    return config_dir() / PENDING_LOGIN_FILE_NAME
 
-    An absent file is an empty config — nothing has been configured yet. A file
-    that is there but unreadable is an error: silently treating a typo'd config
-    as "no config" would send the next verb at the default host with no token.
-    """
-    path = config_path()
+
+def pending_connect_path() -> Path:
+    return config_dir() / PENDING_CONNECT_FILE_NAME
+
+
+def _read_private_yaml(path: Path) -> dict[str, object] | None:
+    """A private YAML file's top-level mapping, or ``None`` if it doesn't
+    exist. Shared by every file in this module that holds a credential or
+    sits next to one -- an absent file is silence, not an error, but one that
+    exists and can't be parsed always is (see the note above `_where`)."""
     if not path.exists():
-        return CloudConfig()
+        return None
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -88,18 +149,92 @@ def read_config() -> CloudConfig:
     except yaml.YAMLError as exc:
         raise CloudConfigError(f"{path} is not valid YAML{_where(exc)}.") from exc
     if raw is None:
-        return CloudConfig()
+        return None
     if not isinstance(raw, dict):
         raise CloudConfigError(
             f"{path} must be a mapping of settings, found {type(raw).__name__}."
         )
+    return raw
+
+
+def _write_private_yaml(path: Path, data: dict[str, object]) -> Path:
+    """Write *data* as YAML, owner-readable only."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Create private, then narrow a pre-existing file: touch() sets the mode
+    # only on creation, and a credential must never land in a world-readable
+    # file.
+    path.touch(mode=0o600, exist_ok=True)
+    path.chmod(0o600)
+    path.write_text(yaml.safe_dump(data, sort_keys=True), encoding="utf-8")
+    return path
+
+
+def read_config() -> CloudConfig:
+    """The stored config, exactly as the file has it.
+
+    An absent file is an empty config — nothing has been configured yet. A file
+    that is there but unreadable is an error: silently treating a typo'd config
+    as "no config" would send the next verb at the default host with no token.
+    """
+    raw = _read_private_yaml(config_path())
+    if raw is None:
+        return CloudConfig()
     try:
         return CloudConfig.model_validate(raw)
     except ValidationError as exc:
         raise CloudConfigError(
-            f"{path} has settings this version cannot use: {rejected_fields(exc)}."
-            f" Valid settings: {', '.join(CloudConfig.model_fields)}."
+            f"{config_path()} has settings this version cannot use:"
+            f" {rejected_fields(exc)}. Valid settings:"
+            f" {', '.join(CloudConfig.model_fields)}."
         ) from exc
+
+
+def read_pending_login() -> PendingLogin | None:
+    """The login `--start` began, or ``None`` if there isn't one."""
+    raw = _read_private_yaml(pending_login_path())
+    if raw is None:
+        return None
+    try:
+        return PendingLogin.model_validate(raw)
+    except ValidationError as exc:
+        raise CloudConfigError(
+            f"{pending_login_path()} has settings this version cannot use:"
+            f" {rejected_fields(exc)}."
+        ) from exc
+
+
+def save_pending_login(pending: PendingLogin) -> Path:
+    """Persist the login `--start` began, owner-readable only."""
+    return _write_private_yaml(pending_login_path(), pending.model_dump())
+
+
+def clear_pending_login() -> None:
+    """Remove the pending login, if there is one."""
+    pending_login_path().unlink(missing_ok=True)
+
+
+def read_pending_connect() -> PendingConnect | None:
+    """The connect `--start` began, or ``None`` if there isn't one."""
+    raw = _read_private_yaml(pending_connect_path())
+    if raw is None:
+        return None
+    try:
+        return PendingConnect.model_validate(raw)
+    except ValidationError as exc:
+        raise CloudConfigError(
+            f"{pending_connect_path()} has settings this version cannot use:"
+            f" {rejected_fields(exc)}."
+        ) from exc
+
+
+def save_pending_connect(pending: PendingConnect) -> Path:
+    """Persist the connect `--start` began, owner-readable only."""
+    return _write_private_yaml(pending_connect_path(), pending.model_dump())
+
+
+def clear_pending_connect() -> None:
+    """Remove the pending connect, if there is one."""
+    pending_connect_path().unlink(missing_ok=True)
 
 
 # Nothing derived from an exception's own text may reach these messages: every
@@ -150,13 +285,4 @@ def credential_source() -> Literal["env", "config"]:
 
 def save_config(config: CloudConfig) -> Path:
     """Write the config back, owner-readable only."""
-    path = config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Create private, then narrow a pre-existing file: touch() sets the mode
-    # only on creation, and the token must never land in a world-readable file.
-    path.touch(mode=0o600, exist_ok=True)
-    path.chmod(0o600)
-    path.write_text(
-        yaml.safe_dump(config.model_dump(), sort_keys=True), encoding="utf-8"
-    )
-    return path
+    return _write_private_yaml(config_path(), config.model_dump())

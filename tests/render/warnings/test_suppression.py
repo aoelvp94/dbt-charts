@@ -234,6 +234,43 @@ rows:
     assert any("WARN-PIE-TOO-MANY-SEGMENT" in e.message for e in result.errors)
 
 
+def test_query_ignore_suppresses_fanout_risk() -> None:
+    """queries.<name>.ignore: actually suppresses a query-domain diagnostic.
+
+    This is the correct, already-working lever for FR-79's trap: chart-scoped
+    `warnings_ignore` can never reach WARN-FANOUT-RISK/WARN-REAGGREGATION
+    (they never carry a chart id), so this is where an author must suppress
+    them instead."""
+    from dbt_charts.core.compile.compiler import validate_compiled_queries
+
+    board_yaml = """
+title: Test
+charts:
+  c:
+    query: q
+    type: bar
+    x: category
+    y: value
+queries:
+  q:
+    sql: >-
+      SELECT o.id AS category, COUNT(*) AS value
+      FROM orders o JOIN line_items li ON o.id = li.order_id
+      GROUP BY o.id
+    source: test_source
+    ignore:
+      - WARN-FANOUT-RISK
+rows:
+  - c
+"""
+    result = compile(board_yaml)
+    assert result.success
+    validate_compiled_queries(result)
+
+    assert not any(w.code == "WARN-FANOUT-RISK" for w in result.warnings)
+    assert any(w.code == "WARN-FANOUT-RISK" for w in result.suppressed_warnings)
+
+
 # ---------------------------------------------------------------------------
 # render() integration: ignore_codes parameter (CLI seam)
 # ---------------------------------------------------------------------------
@@ -467,6 +504,14 @@ def test_get_project_warnings_ignore_rejects_non_string_entries(
 # Per-chart ignore (warnings_ignore: [CODE] on chart in board yaml)
 # ---------------------------------------------------------------------------
 
+# These plumbing tests use WARN-REDUNDANT-ENCODING (a render-domain code) via a
+# fake detector, not because that code is realistically chart-suppressible in
+# production — they're proving the per-chart suppression mechanics work for any
+# diagnostic that actually carries a chart id. A *query*-domain code (e.g.
+# WARN-FANOUT-RISK) would be wrong here: `from_query_diagnostic` never sets a
+# chart id (a query can back more than one chart), so chart-scoped
+# `warnings_ignore` can never match it — see
+# test_chart_warnings_ignore_rejects_query_domain_code below.
 _BOARD_WITH_WARNINGS_IGNORE = """
 title: Test
 charts:
@@ -476,7 +521,7 @@ charts:
     x: category
     y: value
     warnings_ignore:
-      - WARN-FANOUT-RISK
+      - WARN-REDUNDANT-ENCODING
 queries:
   q:
     sql: SELECT 'a' AS category, 1 AS value
@@ -499,7 +544,7 @@ charts:
     x: category
     y: value
     warnings_ignore:
-      - WARN-FANOUT-RISK
+      - WARN-REDUNDANT-ENCODING
 queries:
   q:
     sql: SELECT 'a' AS category, 1 AS value
@@ -518,18 +563,20 @@ def test_per_chart_warnings_ignore_suppresses_own_chart_warning(
     assert result.success
     assert result.board is not None
     # Verify the field compiled through
-    assert result.board.charts["c"].warnings_ignore == ["WARN-FANOUT-RISK"]
+    assert result.board.charts["c"].warnings_ignore == ["WARN-REDUNDANT-ENCODING"]
 
     executor = _make_executor(result.board, result.query_registry)
 
     monkeypatch.setattr(
-        _registry, "DETECTORS", [_fake_detector("WARN-FANOUT-RISK", chart_id="c")]
+        _registry,
+        "DETECTORS",
+        [_fake_detector("WARN-REDUNDANT-ENCODING", chart_id="c")],
     )
 
     render_result = render(result.board, executor, format="json")
     assert render_result.warnings == []
     assert len(render_result.suppressed_warnings) == 1
-    assert render_result.suppressed_warnings[0].code == "WARN-FANOUT-RISK"
+    assert render_result.suppressed_warnings[0].code == "WARN-REDUNDANT-ENCODING"
 
 
 def test_per_chart_warnings_ignore_does_not_suppress_different_chart(
@@ -544,12 +591,14 @@ def test_per_chart_warnings_ignore_does_not_suppress_different_chart(
 
     # Detector emits warning tagged to "c" (not c2 which has the ignore list)
     monkeypatch.setattr(
-        _registry, "DETECTORS", [_fake_detector("WARN-FANOUT-RISK", chart_id="c")]
+        _registry,
+        "DETECTORS",
+        [_fake_detector("WARN-REDUNDANT-ENCODING", chart_id="c")],
     )
 
     render_result = render(result.board, executor, format="json")
     assert len(render_result.warnings) == 1
-    assert render_result.warnings[0].code == "WARN-FANOUT-RISK"
+    assert render_result.warnings[0].code == "WARN-REDUNDANT-ENCODING"
     assert render_result.suppressed_warnings == []
 
 
@@ -565,13 +614,48 @@ def test_per_chart_warnings_ignore_does_not_suppress_board_level_warning(
 
     # Detector emits board-level warning (chart=None)
     monkeypatch.setattr(
-        _registry, "DETECTORS", [_fake_detector("WARN-FANOUT-RISK", chart_id=None)]
+        _registry,
+        "DETECTORS",
+        [_fake_detector("WARN-REDUNDANT-ENCODING", chart_id=None)],
     )
 
     render_result = render(result.board, executor, format="json")
     assert len(render_result.warnings) == 1
     assert render_result.warnings[0].chart is None
     assert render_result.suppressed_warnings == []
+
+
+def test_chart_warnings_ignore_rejects_query_domain_code() -> None:
+    """A query-domain code (WARN-FANOUT-RISK) in a chart's warnings_ignore:
+    fails compile with an actionable message, instead of silently no-oping.
+
+    Query-lint diagnostics (`from_query_diagnostic`) never carry a chart id —
+    a query can back more than one chart — so chart-scoped suppression can
+    never match one of these codes; without this guard the author sees a
+    clean compile and an unsuppressed warning (FR-79)."""
+    board_yaml = """
+title: Test
+charts:
+  c:
+    query: q
+    type: bar
+    x: category
+    y: value
+    warnings_ignore:
+      - WARN-FANOUT-RISK
+queries:
+  q:
+    sql: SELECT 'a' AS category, 1 AS value
+    source: test_source
+rows:
+  - c
+"""
+    result = compile(board_yaml)
+    assert not result.success
+    assert any(
+        "WARN-FANOUT-RISK" in e.message and "queries.<name>.ignore" in e.message
+        for e in result.errors
+    ), [e.message for e in result.errors]
 
 
 # ---------------------------------------------------------------------------

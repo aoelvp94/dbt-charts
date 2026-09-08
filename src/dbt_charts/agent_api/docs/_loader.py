@@ -7,17 +7,26 @@ description per H2). `docs(topic="<slug>")` returns one slice.
 the auto-generated field spec from yaml-reference.md.
 `docs(topic="error-reference")` / `docs(topic="warning-reference")` return the
 auto-generated diagnostic references from error-reference.md / warning-reference.md.
-`docs(search=...)` substring-matches across topics.
+`docs(search=...)` ranks H2/H3 units of the syntax file and the generated
+references with BM25.
 """
 
 from __future__ import annotations
 
 import difflib
 import importlib.resources
+import math
 import re
-from typing import Literal
+from collections import Counter
+from itertools import zip_longest
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from dbt_charts.core.compile.models.chart.authored import SUPPORTED_AUTHORED_CHART_TYPES
+
+if TYPE_CHECKING:
+    from importlib.abc import Traversable
 
 _SYNTAX_FILE = importlib.resources.files("dbt_charts") / "DBT_CHARTS_SYNTAX.md"
 
@@ -41,6 +50,8 @@ _ALL_TOPIC = "all"
 _REFERENCE_TOPIC = "reference"
 _ERROR_REFERENCE_TOPIC = "error-reference"
 _WARNING_REFERENCE_TOPIC = "warning-reference"
+_DIAGNOSTIC_TOPICS = {_ERROR_REFERENCE_TOPIC, _WARNING_REFERENCE_TOPIC}
+_CHARTS_TOPIC = "charts"
 
 DocsMode = Literal["index", "topic", "search"]
 
@@ -70,23 +81,27 @@ class TopicEntry(BaseModel):
 class DocsSearchHit(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    topic: str
-    title: str
-    score: float = 0.0
-    snippet: str
+    topic: str = Field(description="Topic slug accepted by `docs(topic=...)`")
+    title: str = Field(description="H2 heading of the topic")
+    section: str = Field(description="Nearest heading (H3 or H2) around the hit")
+    score: float
+    content: str = Field(
+        description="The whole matched unit (an H3 subsection, or an H2's text before its first H3), heading included"
+    )
 
 
 class DocsArgs(BaseModel):
-    """Browse the dbt charts YAML reference offline. Modes: no args = topic index (slug + one-line description per H2), topic='<slug>' = one section, topic='all' = whole reference unsliced, search='<query>' = substring search across topics. Use this before writing YAML to learn field names, valid values, and examples. Call with no args first to see the available topics."""
+    """Browse the dbt charts YAML reference offline. Modes: no args = topic index (slug + one-line description per H2), topic='<slug>' = one section, topic='all' = whole reference unsliced, search='<query>' = ranked term search across every section and the generated references. Use this before writing YAML to learn field names, valid values, and examples. Call with no args first to see the available topics."""
 
     topic: str | None = Field(
         None,
-        description="Topic slug from the `dct docs` topic index (e.g. 'board', 'charts', 'all', 'reference', 'error-reference', 'warning-reference')",
+        description="Topic slug from the `dct docs` topic index (e.g. 'board', 'charts', 'all', 'reference', 'error-reference', 'warning-reference'). With `search`, scopes the hits to that topic.",
     )
     search: str | None = Field(
-        None, description="Full-text query — runs substring search across all topics"
+        None,
+        description="Free-text query — BM25-ranked across every topic section and the generated field/error/warning references; multi-word queries match on terms, not the exact phrase",
     )
-    limit: int = Field(5, ge=1, le=50, description="Max search hits to return")
+    limit: int = Field(5, ge=1, le=20, description="Max search hits to return")
 
     model_config = ConfigDict(extra="forbid")
 
@@ -116,31 +131,22 @@ def docs(
     - ``docs(topic="reference")`` — return the auto-generated field spec.
     - ``docs(topic="error-reference")`` / ``docs(topic="warning-reference")`` —
       return the auto-generated diagnostic reference.
-    - ``docs(search="grid")`` — substring search across H2 sections.
+    - ``docs(search="grid")`` — BM25-ranked hits over H2/H3 units of every
+      topic plus the generated references; ``topic`` scopes the hits.
     """
-    if topic is not None and search is not None:
-        return DocsResult(
-            success=False,
-            mode="topic",
-            errors=["topic and --search are mutually exclusive; use one"],
-        )
-
     if search is not None:
-        # The prose syntax doc ranks first — it's the hand-curated surface a
-        # query like "grid" should surface (`## Layout`, not a scan of every
-        # generated field). The generated schema reference only backfills
-        # remaining slots, for identifiers (like `endpoint_labels`) that live
-        # solely in the schema and never appear in the prose doc at all.
-        hits = _search(search, _load_sections(), limit=limit)
-        remaining = limit - len(hits)
-        if remaining > 0:
-            hits += _search(
-                search,
-                _load_reference_sections(),
-                limit=remaining,
-                topic_override=_REFERENCE_TOPIC,
+        if topic == _ALL_TOPIC:
+            topic = None
+        if topic is not None and topic not in _search_scopes():
+            return DocsResult(
+                success=False,
+                mode="search",
+                errors=[f"Unknown topic: {topic}"],
+                hints=[
+                    "Run `dct docs` for the topic index, or search without a topic to cover everything"
+                ],
             )
-        return DocsResult(mode="search", search=hits)
+        return DocsResult(mode="search", search=_search(search, limit, topic))
 
     if topic is None:
         return DocsResult(mode="index", topics=_topic_index())
@@ -153,27 +159,7 @@ def docs(
             ),
         )
 
-    # Rebuilt on every call (not module-level) so tests that monkeypatch
-    # _REFERENCE_FILE / _ERROR_REFERENCE_FILE / _WARNING_REFERENCE_FILE on
-    # this module see their patched value — a frozen module-level dict would
-    # keep the file reference bound at import time.
-    generated_topics = {
-        _REFERENCE_TOPIC: (
-            _REFERENCE_FILE,
-            "dbt charts YAML Field Reference (generated)",
-            "yaml-reference.md not found inside the dbt_charts package. Regenerate with the repo's `gen-references`/`gen-yaml-reference` recipe and commit the result.",
-        ),
-        _ERROR_REFERENCE_TOPIC: (
-            _ERROR_REFERENCE_FILE,
-            "dbt charts Error Reference (generated)",
-            "error-reference.md is missing from the installed package.",
-        ),
-        _WARNING_REFERENCE_TOPIC: (
-            _WARNING_REFERENCE_FILE,
-            "dbt charts Warning Reference (generated)",
-            "warning-reference.md is missing from the installed package.",
-        ),
-    }
+    generated_topics = _generated_topics()
     if topic in generated_topics:
         generated_file, title, missing_message = generated_topics[topic]
         try:
@@ -182,6 +168,17 @@ def docs(
             return DocsResult(success=False, mode="topic", errors=[missing_message])
         return DocsResult(
             mode="topic", topic=Topic(id=topic, title=title, content=content)
+        )
+
+    if topic in SUPPORTED_AUTHORED_CHART_TYPES:
+        # Chart types (bar, kpi, heatmap, spark_bar, ...) are documented as
+        # part of the `charts` H2, not one H2 each, and some (spark_bar,
+        # point_map, bubble_map) contain underscores _TOPIC_RE rejects --
+        # route the type name to that topic instead of "Unknown topic" /
+        # "Invalid topic id", keeping the requested id on the result.
+        title, body = _load_sections()[_CHARTS_TOPIC]
+        return DocsResult(
+            mode="topic", topic=Topic(id=topic, title=title, content=body)
         )
 
     if not _TOPIC_RE.fullmatch(topic):
@@ -242,60 +239,61 @@ def slugify(heading: str) -> str:
     return re.sub(r"[^a-z0-9-]+", "", text)
 
 
-def _slice_h2_sections(text: str) -> dict[str, tuple[str, str]]:
-    """Slice a markdown doc on H2 headers.
+def _generated_topics() -> dict[str, tuple[Traversable, str, str]]:
+    """``{topic: (file, title, missing-file message)}`` for the generated references.
 
-    Returns an insertion-ordered mapping ``{slug: (title, body)}`` where body
-    starts at the H2 line and runs up to (but not including) the next H2 line.
-    Order matches the file.
+    Rebuilt on every call (not module-level) so tests that monkeypatch
+    _REFERENCE_FILE / _ERROR_REFERENCE_FILE / _WARNING_REFERENCE_FILE on
+    this module see their patched value — a frozen module-level dict would
+    keep the file reference bound at import time.
     """
-    lines = text.splitlines(keepends=True)
-    sections: dict[str, tuple[str, str]] = {}
-    current_title: str | None = None
-    current_lines: list[str] = []
-    for line in lines:
-        if line.startswith("## "):
-            if current_title is not None:
-                sections[slugify(current_title)] = (
-                    current_title,
-                    "".join(current_lines).rstrip() + "\n",
-                )
-            current_title = line[3:].strip()
-            current_lines = [line]
-        elif current_title is not None:
-            current_lines.append(line)
-    if current_title is not None:
-        sections[slugify(current_title)] = (
-            current_title,
-            "".join(current_lines).rstrip() + "\n",
-        )
+    return {
+        _REFERENCE_TOPIC: (
+            _REFERENCE_FILE,
+            "dbt charts YAML Field Reference (generated)",
+            "yaml-reference.md not found inside the dbt_charts package. Regenerate with the repo's `gen-references`/`gen-yaml-reference` recipe and commit the result.",
+        ),
+        _ERROR_REFERENCE_TOPIC: (
+            _ERROR_REFERENCE_FILE,
+            "dbt charts Error Reference (generated)",
+            "error-reference.md is missing from the installed package.",
+        ),
+        _WARNING_REFERENCE_TOPIC: (
+            _WARNING_REFERENCE_FILE,
+            "dbt charts Warning Reference (generated)",
+            "warning-reference.md is missing from the installed package.",
+        ),
+    }
+
+
+def _slice(text: str, marker: str) -> list[tuple[str, str]]:
+    """Split markdown into ``(heading, body)`` at lines starting with ``marker``.
+
+    Body starts at the heading line and runs up to (not including) the next
+    heading at that level. Text before the first heading is dropped. Order
+    matches the file.
+    """
+    sections: list[tuple[str, str]] = []
+    title: str | None = None
+    chunk: list[str] = []
+    for line in text.splitlines(keepends=True):
+        if line.startswith(marker):
+            if title is not None:
+                sections.append((title, "".join(chunk).rstrip() + "\n"))
+            title = line[len(marker) :].strip()
+            chunk = [line]
+        elif title is not None:
+            chunk.append(line)
+    if title is not None:
+        sections.append((title, "".join(chunk).rstrip() + "\n"))
     return sections
 
 
 def _load_sections() -> dict[str, tuple[str, str]]:
-    """Read DBT_CHARTS_SYNTAX.md and slice on H2 headers.
-
-    Used by the topic index to preserve reading order (see `_slice_h2_sections`).
-    """
-    return _slice_h2_sections(read_full_text())
-
-
-def _load_reference_sections() -> dict[str, tuple[str, str]]:
-    """Read the generated yaml-reference.md and slice on its own H2 headers.
-
-    Included in the search corpus (not the topic index — `reference` stays a
-    single fetchable topic) so a field name like `endpoint_labels`, present
-    only in the generated schema reference and not in the prose syntax doc,
-    is still findable by `dct docs --search`. Returns {} rather than raising
-    when the generated file is missing: the search corpus degrades quietly,
-    since `docs(topic="reference")` is the codepath that already surfaces
-    that failure as an error.
-    """
-    try:
-        text = _REFERENCE_FILE.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return {}
-    return _slice_h2_sections(text)
+    """Slice DBT_CHARTS_SYNTAX.md on H2 headers into ``{slug: (title, body)}``."""
+    return {
+        slugify(title): (title, body) for title, body in _slice(read_full_text(), "## ")
+    }
 
 
 def _first_description_line(body: str) -> str:
@@ -330,44 +328,123 @@ def _topic_index() -> list[TopicEntry]:
     ]
 
 
-def _search(
-    query: str,
-    sections: dict[str, tuple[str, str]],
-    limit: int = 5,
-    topic_override: str | None = None,
-) -> list[DocsSearchHit]:
-    """Substring search across H2 slices with bucketed scoring (1.0 / 0.8 / 0.5).
+class _Unit(NamedTuple):
+    """One searchable slice: an H3 subsection, or an H2's text before its first H3."""
 
-    ``topic_override`` stamps every hit with a fixed topic id instead of the
-    per-heading slug — for a corpus (the generated reference) whose headings
-    aren't individually fetchable topics, only the whole file is.
+    topic: str
+    title: str
+    section: str
+    body: str
+
+
+_TOKEN_RE = re.compile(r"[a-z0-9_]+")
+_TITLE_BOOST = 3
+_BM25_K1 = 1.2
+_BM25_B = 0.75
+
+
+def _tokens(text: str) -> list[str]:
+    """Lowercase word tokens; a snake_case field also yields its parts, so
+    `axis y` finds `axis_y` and `axis_y` still matches exactly."""
+    out: list[str] = []
+    for tok in _TOKEN_RE.findall(text.lower()):
+        out.append(tok)
+        if "_" in tok:
+            out.extend(part for part in tok.split("_") if part)
+    return out
+
+
+def _units() -> list[_Unit]:
+    units = [
+        _Unit(slugify(title), title, section, body)
+        for title, h2_body in _slice(read_full_text(), "## ")
+        for section, body in _subsections(title, h2_body)
+    ]
+    for topic, (file, _, _) in _generated_topics().items():
+        try:
+            text = file.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            # A missing generated file is reported by docs(topic=...); search
+            # just covers less rather than failing every query.
+            continue
+        units.extend(
+            _Unit(topic, title, section, body)
+            for title, h2_body in _slice(text, "## ")
+            for section, body in _subsections(title, h2_body)
+        )
+    return units
+
+
+def _subsections(title: str, h2_body: str) -> list[tuple[str, str]]:
+    """Split an H2 body into its preamble and H3 units, dropping any with no
+    prose (a bare `## charts` domain header in the diagnostics references)."""
+    head, _, rest = h2_body.partition("\n### ")
+    units = [(title, head)]
+    if rest:
+        units.extend(_slice("### " + rest, "### "))
+    return [(section, body) for section, body in units if _first_description_line(body)]
+
+
+def _search_scopes() -> set[str]:
+    return set(_load_sections()) | set(_generated_topics())
+
+
+def _source(unit: _Unit) -> str:
+    if unit.topic in _DIAGNOSTIC_TOPICS:
+        return "diagnostics"
+    return "reference" if unit.topic == _REFERENCE_TOPIC else "syntax"
+
+
+def _search(query: str, limit: int, scope: str | None) -> list[DocsSearchHit]:
+    """BM25 over H2/H3 units; title tokens count `_TITLE_BOOST` times.
+
+    Hits are interleaved across the three sources (syntax narrative, field
+    reference, diagnostics), each in its own BM25 order, so the best hit from
+    each reaches the top.
     """
-    q = query.lower()
-    hits: list[DocsSearchHit] = []
-    for slug, (title, body) in sections.items():
-        topic = topic_override or slug
-        if q in slug:
-            snippet = _first_matching_line(body, q) or title
-            hits.append(
-                DocsSearchHit(topic=topic, title=title, score=1.0, snippet=snippet)
-            )
-        elif q in title.lower():
-            snippet = _first_matching_line(body, q) or title
-            hits.append(
-                DocsSearchHit(topic=topic, title=title, score=0.8, snippet=snippet)
-            )
-        else:
-            line = _first_matching_line(body, q)
-            if line:
-                hits.append(
-                    DocsSearchHit(topic=topic, title=title, score=0.5, snippet=line)
-                )
-    hits.sort(key=lambda h: h.score, reverse=True)
-    return hits[:limit]
-
-
-def _first_matching_line(content: str, query: str) -> str:
-    for line in content.splitlines():
-        if query in line.lower():
-            return line.strip()
-    return ""
+    terms = set(_tokens(query))
+    if not terms:
+        return []
+    units = [u for u in _units() if scope is None or u.topic == scope]
+    docs_tf = [
+        Counter(_tokens(u.body) + _tokens(u.section) * _TITLE_BOOST) for u in units
+    ]
+    avg_len = sum(sum(tf.values()) for tf in docs_tf) / max(len(docs_tf), 1)
+    n = len(units)
+    idf = {
+        t: math.log(1 + (n - df + 0.5) / (df + 0.5))
+        for t in terms
+        if (df := sum(t in tf for tf in docs_tf))
+    }
+    scored: list[tuple[float, _Unit]] = []
+    for unit, tf in zip(units, docs_tf, strict=True):
+        norm = _BM25_K1 * (1 - _BM25_B + _BM25_B * sum(tf.values()) / avg_len)
+        score = sum(
+            idf[t] * tf[t] * (_BM25_K1 + 1) / (tf[t] + norm) for t in idf if t in tf
+        )
+        if score > 0:
+            scored.append((score, unit))
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    by_source: dict[str, list[tuple[float, _Unit]]] = {
+        "syntax": [],
+        "reference": [],
+        "diagnostics": [],
+    }
+    for score, unit in scored:
+        by_source[_source(unit)].append((score, unit))
+    interleaved = [
+        pair
+        for round_ in zip_longest(*by_source.values())
+        for pair in round_
+        if pair is not None
+    ]
+    return [
+        DocsSearchHit(
+            topic=unit.topic,
+            title=unit.title,
+            section=unit.section,
+            score=round(score, 2),
+            content=unit.body.strip(),
+        )
+        for score, unit in interleaved[:limit]
+    ]

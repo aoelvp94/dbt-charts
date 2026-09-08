@@ -114,7 +114,14 @@ def _make_chart(chart_id: str = "c1") -> Chart:
 
 
 def _executor_good_bad(good_rows, bad_exc):
-    """Executor where q_good succeeds and q_bad raises."""
+    """Executor where q_good succeeds and q_bad raises.
+
+    Both ``execute_chart`` (the data-format walk's own lookup, keyed by
+    chart id — board_to_dict.py) and ``execute_query`` (the real svg draw's
+    lookup, keyed by query name — layout_sizing.build_chart_datasets) must
+    fail the same way: render() now draws the board for every format, not
+    just svg, so both call sites run regardless of the requested format.
+    """
     mock = MagicMock(spec=Executor)
 
     def _execute_chart_side_effect(chart, variables):
@@ -122,8 +129,25 @@ def _executor_good_bad(good_rows, bad_exc):
             return good_rows
         raise bad_exc
 
+    def _execute_query_side_effect(query_name, variables=None):
+        if query_name == "q_good":
+            return good_rows
+        raise bad_exc
+
     mock.execute_chart.side_effect = _execute_chart_side_effect
+    mock.execute_query.side_effect = _execute_query_side_effect
     mock._query_errors = {}
+    # render() now draws the board for every format (not just svg), and the
+    # svg footer/timestamp code iterates this attribute directly — it must be
+    # a real (empty) list, not the default MagicMock attribute.
+    mock.cache_hit_ats = []
+    # An unconfigured MagicMock.is_cached() is truthy for any input, which
+    # would route every query through render()'s synchronous cache-hit
+    # pre-pass (a plain, un-isolated `execute_query` call) instead of the
+    # mocked-out `execute_queries_parallel` — raising bad_exc there, outside
+    # any chart-isolation try/except, rather than where each test means it to
+    # fire (the per-chart draw/data-walk calls below).
+    mock.is_cached.return_value = False
     return mock
 
 
@@ -138,7 +162,9 @@ def test_render_returns_render_result():
 
     mock_executor = MagicMock(spec=Executor)
     mock_executor.execute_chart.return_value = [{"value": 42}]
+    mock_executor.execute_query.return_value = [{"value": 42}]
     mock_executor._query_errors = {}
+    mock_executor.cache_hit_ats = []
 
     with (
         patch.object(_renderer_mod, "execute_queries_parallel"),
@@ -625,6 +651,46 @@ def test_render_dashboard_status_failed_when_compile_fails(
 
     assert result.status == "failed"
     assert result.data is None
+
+
+def test_render_dashboard_board_error_preserves_walked_data_payload(
+    tmp_path, local_project: Callable[..., Project]
+):
+    """A board-level draw failure whose data-format walk still produced a
+    payload must reach the caller as ``data`` — not just ``board_error``.
+
+    render() already keeps RenderResult.output in this case (see
+    test_board_level_draw_failure_still_returns_data_format_payload); before
+    this test, render_dashboard's board_error branch dropped it on the floor.
+    """
+    from dbt_charts.core.board import render_dashboard
+    from dbt_charts.core.execute.adapters import AdapterRegistry
+    from dbt_charts.core.project import InMemoryBoard
+    from dbt_charts.core.render.render_result import RenderResult
+
+    mock_registry = MagicMock(spec=AdapterRegistry)
+    wrapped = RenderError.from_code(ERR_INTERNAL, message="draw exploded")
+    render_result = RenderResult(
+        output='{"id": "test", "title": "Two Charts", "items": []}',
+        board_error=wrapped.to_diagnostic(),
+    )
+
+    project = local_project(tmp_path)
+    with (
+        patch("dbt_charts.core.board.render", return_value=render_result),
+        patch("dbt_charts.core.board.Executor"),
+    ):
+        result = render_dashboard(
+            board=InMemoryBoard(_TWO_CHART_YAML, path=project.path("charts/_t.yml")),
+            adapter_registry=mock_registry,
+            format="json",
+            project=project,
+            result_cache=None,
+        )
+
+    assert result.status == "failed"
+    assert result.board_error is not None
+    assert result.data == {"id": "test", "title": "Two Charts", "items": []}
 
 
 # ---------------------------------------------------------------------------
@@ -1223,6 +1289,98 @@ def test_executor_construction_failure_stays_board_fatal(
     assert result.status == "failed"
     assert result.board_error is not None
     assert result.chart_errors == []
+
+
+def test_board_level_draw_failure_still_returns_data_format_payload() -> None:
+    """A board-level draw failure (render_board_svg raising) must not destroy
+    the data-format walk's own payload — board_error still surfaces, but the
+    walk runs independently of the draw and its payload survives.
+    """
+    board = _compile_two_chart_board()
+    executor = _resolve_stage_executor(
+        {"q_good": [{"value": 1}], "q_bad": [{"value": 2}]}
+    )
+
+    with (
+        patch.object(_renderer_mod, "execute_queries_parallel"),
+        patch.object(
+            _board_resolve_mod,
+            "build_resolved_board",
+            return_value=(build_resolved_board_static(board), {}),
+        ),
+        patch.object(
+            _renderer_mod,
+            "render_board_svg",
+            side_effect=RenderError.from_code(ERR_INTERNAL, message="draw exploded"),
+        ),
+    ):
+        result = render(board, executor, format="json")
+
+    assert result.board_error is not None
+    assert result.output is not None
+    assert "good" in result.output
+
+
+def test_data_format_walk_exception_becomes_board_error_not_raise() -> None:
+    """An exception escaping the data-format walk itself (e.g. a payload
+    holding a value its serializer can't handle) must degrade to
+    board_error=ERR-INTERNAL rather than propagate out of render() uncaught.
+    """
+    board = _compile_two_chart_board()
+    executor = _resolve_stage_executor(
+        {"q_good": [{"value": 1}], "q_bad": [{"value": 2}]}
+    )
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise TypeError("Object of type X is not JSON serializable")
+
+    with (
+        patch.object(_renderer_mod, "execute_queries_parallel"),
+        patch.object(
+            _board_resolve_mod,
+            "build_resolved_board",
+            return_value=(build_resolved_board_static(board), {}),
+        ),
+        patch.object(_renderer_mod, "_data_format_renderer", return_value=_boom),
+    ):
+        result = render(board, executor, format="json")
+
+    assert result.board_error is not None
+    assert result.board_error.code == ERR_INTERNAL.code
+    assert result.output is None
+
+
+def test_draw_board_error_takes_priority_over_walk_board_error() -> None:
+    """When both the draw and the data-format walk fail, the draw's
+    board_error wins — it is the more fundamental failure (renderer.py's
+    ``if board_error is None:`` guard around the walk's except clauses).
+    """
+    board = _compile_two_chart_board()
+    executor = _resolve_stage_executor(
+        {"q_good": [{"value": 1}], "q_bad": [{"value": 2}]}
+    )
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise TypeError("walk exploded")
+
+    with (
+        patch.object(_renderer_mod, "execute_queries_parallel"),
+        patch.object(
+            _board_resolve_mod,
+            "build_resolved_board",
+            return_value=(build_resolved_board_static(board), {}),
+        ),
+        patch.object(
+            _renderer_mod,
+            "render_board_svg",
+            side_effect=RenderError.from_code(ERR_INTERNAL, message="draw exploded"),
+        ),
+        patch.object(_renderer_mod, "_data_format_renderer", return_value=_boom),
+    ):
+        result = render(board, executor, format="json")
+
+    assert result.board_error is not None
+    assert result.board_error.message == "draw exploded"
 
 
 # ---------------------------------------------------------------------------

@@ -170,16 +170,20 @@ def _direct_join_sources(select: exp.Select) -> list[exp.Table | exp.Subquery]:
     """Get direct table/subquery sources from JOIN clauses (non-recursive)."""
     sources: list[exp.Table | exp.Subquery] = []
     for join in select.find_all(exp.Join):
-        # Skip joins that belong to subqueries
-        if join.find_ancestor(exp.Subquery):
+        # Skip joins that don't belong directly to `select`'s own scope.
+        # `find_all` walks the whole tree regardless of scope, so a nested
+        # subquery's or CTE's own join would otherwise leak into `select`'s
+        # source list as if it joined there directly. This must be checked
+        # scope-relative (nearest enclosing SELECT) rather than by ancestor
+        # chain: `select` is itself a CTE body when this runs via lineage
+        # propagation, and an ancestor-chain check for exp.CTE can't tell
+        # "this join is inside a CTE nested in select" apart from "this join
+        # IS select's own body, which happens to sit inside a CTE".
+        if join.parent_select is not select:
             continue
         for child in join.iter_expressions():
-            if isinstance(child, exp.Subquery):
+            if isinstance(child, (exp.Subquery, exp.Table)):
                 sources.append(child)
-            elif isinstance(child, exp.Table):
-                parent_subquery = child.find_ancestor(exp.Subquery)
-                if parent_subquery is None:
-                    sources.append(child)
     return sources
 
 
@@ -212,7 +216,10 @@ def _find_cross_joins(select: exp.Select) -> list[tuple[str, str]]:
     left_name = _source_name(from_sources[0])
 
     for join in select.find_all(exp.Join):
-        if join.find_ancestor(exp.Subquery):
+        # Same scope guard as _direct_join_sources — a cross join inside a
+        # CTE or subquery nested in `select` is that scope's own problem,
+        # not `select`'s.
+        if join.parent_select is not select:
             continue
         if join.args.get("on") or join.args.get("using"):
             continue
@@ -224,9 +231,7 @@ def _find_cross_joins(select: exp.Select) -> list[tuple[str, str]]:
             # Find the table/subquery in this join
             for child in join.iter_expressions():
                 if isinstance(child, (exp.Table, exp.Subquery)):
-                    parent_subquery = child.find_ancestor(exp.Subquery)
-                    if parent_subquery is None or parent_subquery is child:
-                        pairs.append((left_name, _source_name(child)))
+                    pairs.append((left_name, _source_name(child)))
                     break
     return pairs
 
@@ -457,6 +462,29 @@ def _detect_missing_join_predicates(
     return diags
 
 
+def _resolve_unqualified_agg_source(
+    col_name: str,
+    known_sources: dict[str, str],
+    agg_map: dict[str, dict[str, bool]],
+) -> str | None:
+    """Resolve an unqualified aggregate column to the one source that defines it.
+
+    Whether a column is written qualified or not is cosmetic — the fanout
+    verdict must be driven by which table it actually belongs to (FR-79).
+    Only sources we've actually analyzed (``known_sources``, from CTEs/inline
+    subqueries) count as evidence. Exactly one match resolves the column to
+    that source, to be treated identically to a qualified reference. Zero
+    matches (no lineage evidence at all — e.g. a raw base table) or 2+
+    matches (a genuine name collision across sources) stay unresolved, since
+    neither case lets us safely name a single owning table.
+    """
+    # known_sources.values() are, by construction, all agg_map keys — direct
+    # indexing, not .get(s, {}), since a miss here would mean the resolver
+    # above is broken, not that the source is merely unanalyzed.
+    containing = {s for s in known_sources.values() if col_name in agg_map[s]}
+    return next(iter(containing)) if len(containing) == 1 else None
+
+
 def _detect_fanout_risk(
     select: exp.Select,
     relationship_context: RelationshipContext | None,
@@ -487,6 +515,8 @@ def _detect_fanout_risk(
 
     alias_map = _build_alias_map(select)
     table_count = len(_direct_from_sources(select)) + len(_direct_join_sources(select))
+    agg_lineage_map = _propagate_aggregate_columns(select)
+    known_sources = _resolve_known_sources(select, agg_lineage_map)
 
     # Check for COUNT(*) — always risky with joins
     has_count_star = any(
@@ -505,6 +535,16 @@ def _detect_fanout_risk(
             if ref:
                 agg_source_refs.add(ref)
                 agg_resolved_tables.add(_resolve_table(ref, alias_map))
+                continue
+            # Unqualified — try to resolve it against known lineage before
+            # falling back to "ambiguous" so a mere qualification change
+            # doesn't flip the verdict (FR-79).
+            resolved = _resolve_unqualified_agg_source(
+                col.name.lower(), known_sources, agg_lineage_map
+            )
+            if resolved is not None:
+                agg_source_refs.add(resolved)
+                agg_resolved_tables.add(resolved)
             else:
                 has_unqualified_agg_cols = True
 
@@ -688,6 +728,58 @@ def _propagate_aggregate_columns(
     return agg_map
 
 
+def _resolve_known_sources(
+    select: exp.Select, agg_map: dict[str, dict[str, bool]]
+) -> dict[str, str]:
+    """Map each FROM/JOIN source name visible in ``select`` to its ``agg_map`` key.
+
+    Only sources we've actually analyzed — CTEs and inline subqueries, whose
+    own output columns ``agg_map`` tracks — resolve to an entry. A raw base
+    table never appears here since we have no way to see its columns.
+
+    Shared by re-aggregation and fanout-risk detection: both need to resolve
+    a column reference (qualified or not) back to the source that actually
+    defines it, rather than guessing from the column's name alone.
+    """
+    resolved: dict[str, str] = {}
+    for src in _direct_from_sources(select) + _direct_join_sources(select):
+        name = _source_name(src).lower()
+        if isinstance(src, exp.Table):
+            table_name = src.name.lower()
+            if table_name in agg_map:
+                resolved[name] = table_name
+        elif name in agg_map:
+            resolved[name] = name
+    return resolved
+
+
+def _column_inherits_aggregate(
+    col_name: str,
+    ref: str,
+    source_keys: dict[str, str],
+    agg_map: dict[str, dict[str, bool]],
+) -> bool:
+    """Whether an output column inherits aggregate-derived status from lineage.
+
+    A qualified reference (``ref`` present in ``source_keys``) binds
+    unambiguously to that one source — trust it directly. An unqualified
+    reference must NOT be resolved by matching the column's *name* against
+    any joined source: a join used only for filtering can carry an unrelated
+    column that happens to share a name with a genuinely aggregate one
+    elsewhere in the query (FR-79). Instead, only the sources that actually
+    define the column count as evidence, and all of them must agree it's
+    aggregate-derived — a real name collision (some agree, some don't) must
+    not silently propagate as if it were unambiguous.
+    """
+    # source_keys.values() are, by construction, all agg_map keys — direct
+    # indexing throughout, not .get(..., {}), matching _resolve_unqualified_
+    # agg_source's reasoning above.
+    if ref and ref in source_keys:
+        return bool(agg_map[source_keys[ref]].get(col_name))
+    containing = [s for s in source_keys.values() if col_name in agg_map[s]]
+    return bool(containing) and all(agg_map[s][col_name] for s in containing)
+
+
 def _inherit_aggregate_lineage(
     select: exp.Select,
     outputs: dict[str, bool],
@@ -702,15 +794,7 @@ def _inherit_aggregate_lineage(
     Limitations:
     - ``SELECT *`` pass-throughs are not tracked (same as ``_select_output_columns``).
     """
-    # Build source name → agg_map key for this SELECT's FROM and JOIN sources
-    source_keys: dict[str, str] = {}
-    for src in _direct_from_sources(select) + _direct_join_sources(select):
-        if isinstance(src, exp.Table):
-            name = (src.alias or src.name).lower()
-            table_name = src.name.lower()
-            if table_name in agg_map:
-                source_keys[name] = table_name
-
+    source_keys = _resolve_known_sources(select, agg_map)
     if not source_keys:
         return
 
@@ -721,15 +805,8 @@ def _inherit_aggregate_lineage(
             if outputs.get(col_name):
                 continue
             ref = (expr.table or "").lower()
-            sources = (
-                [source_keys[ref]]
-                if ref and ref in source_keys
-                else list(source_keys.values())
-            )
-            for agg_key in sources:
-                if agg_map.get(agg_key, {}).get(col_name):
-                    outputs[col_name] = True
-                    break
+            if _column_inherits_aggregate(col_name, ref, source_keys, agg_map):
+                outputs[col_name] = True
         elif isinstance(expr, exp.Alias):
             inner = expr.this
             alias_name = expr.alias.lower()
@@ -739,15 +816,8 @@ def _inherit_aggregate_lineage(
             if isinstance(inner, exp.Column):
                 col_name = inner.name.lower()
                 ref = (inner.table or "").lower()
-                sources = (
-                    [source_keys[ref]]
-                    if ref and ref in source_keys
-                    else list(source_keys.values())
-                )
-                for agg_key in sources:
-                    if agg_map.get(agg_key, {}).get(col_name):
-                        outputs[alias_name] = True
-                        break
+                if _column_inherits_aggregate(col_name, ref, source_keys, agg_map):
+                    outputs[alias_name] = True
 
 
 # Hash-of-a-key expressions, as sqlglot types the BigQuery/Snowflake spellings —
@@ -839,20 +909,7 @@ def _detect_reaggregation(
     if not agg_map:
         return []
 
-    # Also resolve table aliases from FROM — CTE references appear as tables
-    # Build a map of alias/table name → source name in agg_map
-    source_names: dict[str, str] = {}
-    for src in _direct_from_sources(select) + _direct_join_sources(select):
-        name = _source_name(src).lower()
-        if isinstance(src, exp.Table):
-            table_name = src.name.lower()
-            # CTE references appear as Table nodes
-            if table_name in agg_map:
-                source_names[name] = table_name
-        else:
-            if name in agg_map:
-                source_names[name] = name
-
+    source_names = _resolve_known_sources(select, agg_map)
     if not source_names:
         return []
 

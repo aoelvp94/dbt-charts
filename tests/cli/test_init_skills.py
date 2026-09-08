@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from dbt_charts.cli import main as cli_main
@@ -61,10 +62,26 @@ def test_init_skills_check_dry_run(tmp_path: Path) -> None:
         assert not Path(".agents/skills").exists()
 
 
-def test_init_skills_no_markers_errors(tmp_path: Path) -> None:
+def test_init_skills_no_markers_defaults_to_agents(tmp_path: Path) -> None:
+    """FR-69: bare `dct init skills` in a fresh repo (no .cursor/, AGENTS.md,
+    CLAUDE.md) must install to the tool-agnostic `agents` target rather than
+    erroring — a fresh project legitimately has none of those markers yet, and
+    the docs tell users to run this command bare."""
     with runner.isolated_filesystem(temp_dir=tmp_path):
         _seed_project()
         result = runner.invoke(cli_main.app, ["init", "skills"])
+
+        assert result.exit_code == 0, result.output
+        assert Path(".agents/skills/board-build/SKILL.md").exists()
+        assert not Path(".claude/skills").exists()
+
+
+def test_init_skills_all_with_no_markers_still_errors(tmp_path: Path) -> None:
+    """`--all` keeps its own contract: install to every *detected* target, so
+    it still errors with no markers rather than silently falling back to one."""
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        _seed_project()
+        result = runner.invoke(cli_main.app, ["init", "skills", "--all"])
 
         assert result.exit_code == 1, result.output
         assert "No agent skill targets detected" in result.output
@@ -81,6 +98,81 @@ def test_init_skills_dir_override(tmp_path: Path) -> None:
         assert Path("custom-skills/board-build/SKILL.md").exists()
 
 
+def test_init_skills_global_installs_into_home_claude(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".claude").mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        _seed_project()
+        result = runner.invoke(cli_main.app, ["init", "skills", "--global"])
+
+        assert result.exit_code == 0, result.output
+        assert (home / ".claude/skills/board-build/SKILL.md").exists()
+
+
+def test_init_skills_global_installs_into_home_agents_via_codex(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".codex").mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        _seed_project()
+        result = runner.invoke(cli_main.app, ["init", "skills", "--global"])
+
+        assert result.exit_code == 0, result.output
+        assert (home / ".agents/skills/board-build/SKILL.md").exists()
+
+
+def test_init_skills_global_no_markers_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        _seed_project()
+        result = runner.invoke(cli_main.app, ["init", "skills", "--global"])
+
+        assert result.exit_code == 1, result.output
+        assert "~/.claude/skills" in result.output
+        assert "~/.agents/skills" in result.output
+        assert "--dir" in result.output
+
+
+def test_init_skills_global_with_target_errors(tmp_path: Path) -> None:
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        _seed_project()
+        result = runner.invoke(cli_main.app, ["init", "skills", "agents", "--global"])
+
+        assert result.exit_code == 1, result.output
+
+
+def test_init_skills_global_with_all_errors(tmp_path: Path) -> None:
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        _seed_project()
+        result = runner.invoke(cli_main.app, ["init", "skills", "--all", "--global"])
+
+        assert result.exit_code == 1, result.output
+
+
+def test_init_skills_global_with_dir_errors(tmp_path: Path) -> None:
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        _seed_project()
+        result = runner.invoke(
+            cli_main.app, ["init", "skills", "--dir", "custom-skills", "--global"]
+        )
+
+        assert result.exit_code == 1, result.output
+
+
 def test_init_mcp_does_not_write_skill_dirs(tmp_path: Path) -> None:
     with runner.isolated_filesystem(temp_dir=tmp_path):
         _seed_project()
@@ -92,3 +184,37 @@ def test_init_mcp_does_not_write_skill_dirs(tmp_path: Path) -> None:
         assert not Path(".cursor/skills").exists()
         assert not Path(".codex/skills").exists()
         assert not Path(".claude/skills").exists()
+
+
+def test_init_skills_global_prints_a_home_path_not_a_repo_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        _seed_project()
+        result = runner.invoke(cli_main.app, ["init", "skills", "--global"])
+        assert result.exit_code == 0, result.output
+        assert "~/.claude/skills/" in result.output
+
+
+def test_init_skills_global_ignores_dct_project_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ProjectDirOption reads DCT_PROJECT_DIR; a global install must neither
+    refuse on it nor write into that project."""
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    project = tmp_path / "proj"
+    project.mkdir()
+    monkeypatch.setenv("DCT_PROJECT_DIR", str(project))
+
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        result = runner.invoke(cli_main.app, ["init", "skills", "--global"])
+
+        assert result.exit_code == 0, result.output
+        assert (home / ".claude/skills/board-build/SKILL.md").exists()
+        assert not (project / ".claude").exists()
+        assert not (project / ".agents").exists()

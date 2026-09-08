@@ -1,5 +1,6 @@
 """Tests for the compiled global config contract (Settings)."""
 
+import re
 from collections.abc import Callable
 
 import pytest
@@ -13,6 +14,7 @@ from dbt_charts.core.compile.config import (
     reset_config,
 )
 from dbt_charts.core.compile.models.config import (
+    PUBLISHED_TO_FORM,
     ChartRenderingConfig,
     Config,
     ConfigNode,
@@ -50,6 +52,39 @@ def test_config_requires_shipped_public_url() -> None:
     del compiled["public_url"]
 
     with pytest.raises(ValidationError, match="public_url"):
+        Config.model_validate(compiled)
+
+
+def test_published_to_defaults_to_none() -> None:
+    assert get_config().published_to is None
+
+
+def test_published_to_accepts_a_well_formed_url() -> None:
+    compiled = get_config().to_plain_dict(exclude_none=False)
+    compiled["published_to"] = "https://dbtcharts.com/acme-data/analytics/"
+
+    config = Config.model_validate(compiled)
+
+    assert config.published_to == "https://dbtcharts.com/acme-data/analytics/"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "acme-data/analytics",
+        "https://dbtcharts.com/acme-data/",
+        "https://dbtcharts.com/acme-data/analytics/extra/",
+        "ftp://dbtcharts.com/acme-data/analytics/",
+        "https://dbtcharts.com/",
+    ],
+)
+def test_published_to_rejects_anything_but_an_absolute_org_project_url(
+    value: str,
+) -> None:
+    compiled = get_config().to_plain_dict(exclude_none=False)
+    compiled["published_to"] = value
+
+    with pytest.raises(ValidationError, match=re.escape(PUBLISHED_TO_FORM)):
         Config.model_validate(compiled)
 
 

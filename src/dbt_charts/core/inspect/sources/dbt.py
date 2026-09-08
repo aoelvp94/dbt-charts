@@ -26,6 +26,7 @@ from dbt_common.exceptions.base import DbtRuntimeError
 
 from dbt_charts.core.dbt_manifest import load_manifest
 from dbt_charts.core.dialects import get_dialect
+from dbt_charts.core.execute.adapters.dbt_adapter_factory import open_connection
 from dbt_charts.core.execute.sql_literals import sql_string_literal
 from dbt_charts.core.inspect.partition_types import (
     PartitionEntry,
@@ -161,7 +162,7 @@ class DbtSchemaSource:
 
     def list_schemas(self) -> dict[str, Any] | None:
         database = self._credentials_database()
-        with self._adapter.connection_named("dct_schema_list_schemas"):
+        with open_connection(self._adapter, "dct_schema_list_schemas"):
             schemas = list(self._adapter.list_schemas(database))
         # De-duplicate while preserving first-seen order. dbt's list_schemas
         # may return duplicates across databases (e.g. DuckDB returns 'main'
@@ -187,7 +188,7 @@ class DbtSchemaSource:
         self._duckdb_database_resolved = True
         if self._adapter.type() != "duckdb":
             return None
-        with self._adapter.connection_named("dct_schema_resolve_db"):
+        with open_connection(self._adapter, "dct_schema_resolve_db"):
             self._duckdb_database = duckdb_resolve_database(
                 self._adapter, self._db_path
             )
@@ -209,7 +210,7 @@ class DbtSchemaSource:
         if cached is not None:
             return cached
         database = self._resolve_duckdb_database() or self._credentials_database()
-        with self._adapter.connection_named("dct_schema_list_relations"):
+        with open_connection(self._adapter, "dct_schema_list_relations"):
             relations = list(self._adapter.list_relations(database, schema))
         self._relations_by_schema[schema] = relations
         return relations
@@ -235,7 +236,7 @@ class DbtSchemaSource:
         relation = next((r for r in relations if r.identifier == table), None)
         if relation is None:
             return None
-        with self._adapter.connection_named("dct_schema_profile_table"):
+        with open_connection(self._adapter, "dct_schema_profile_table"):
             adapter_columns = list(self._adapter.get_columns_in_relation(relation))
 
         entry = self._lookup_model(schema=schema, table=table)
@@ -318,7 +319,7 @@ class DbtSchemaSource:
             f" AND partition_id NOT IN ('__NULL__', '__STREAMING_UNPARTITIONED__')"
             f" ORDER BY partition_id DESC"
         )
-        with self._adapter.connection_named("dct_schema_bq_partitions"):
+        with open_connection(self._adapter, "dct_schema_bq_partitions"):
             _, col_result = self._adapter.execute(col_sql, fetch=True)
             partition_col = str(col_result.rows[0][0]) if col_result.rows else None
             partition_data_type = (
@@ -373,7 +374,7 @@ class DbtSchemaSource:
             f" AND TABLE_NAME = {sql_string_literal(table, dialect)}"
             f" LIMIT 1"
         )
-        with self._adapter.connection_named("dct_schema_snowflake_partitions"):
+        with open_connection(self._adapter, "dct_schema_snowflake_partitions"):
             _, result = self._adapter.execute(sql, fetch=True)
         if not result.rows:
             return TablePartitions(type="unpartitioned", supported=True)
@@ -387,7 +388,7 @@ class DbtSchemaSource:
 
     def _fetch_last_modified(self, relation: Any) -> datetime | None:
         try:
-            with self._adapter.connection_named("dct_schema_freshness"):
+            with open_connection(self._adapter, "dct_schema_freshness"):
                 _, freshness = self._adapter.calculate_freshness_from_metadata(relation)
         except (NotImplementedError, DbtRuntimeError):
             # NotImplementedError: adapter explicitly declares no support.
@@ -400,7 +401,7 @@ class DbtSchemaSource:
         return max_loaded_at if isinstance(max_loaded_at, datetime) else None
 
     def describe_query(self, sql: str) -> dict[str, Any] | None:
-        with self._adapter.connection_named("dct_schema_describe_query"):
+        with open_connection(self._adapter, "dct_schema_describe_query"):
             cols = list(self._adapter.get_column_schema_from_query(sql))
         if not cols:
             return None

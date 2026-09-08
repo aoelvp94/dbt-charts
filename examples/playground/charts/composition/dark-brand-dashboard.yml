@@ -1,8 +1,7 @@
 # Visible board that extends the _dark-brand hidden base.
 #
 # ./_dark-brand.yml is a path ref anchored to this file's directory.
-# Theme name ("neon") must come first so _dark-brand.yml (last) wins in
-# the style merge — later extends entries have higher priority.
+# The base already extends the neon theme, so this board names only the base.
 # style.accent is inherited from _dark-brand; not set here.
 
 title: Product Performance (dark brand)
@@ -12,9 +11,7 @@ notes: >
 
 source: examples_db
 
-extends:
-  - neon
-  - ./_dark-brand.yml
+extends: ./_dark-brand.yml
 
 queries:
   category_revenue:

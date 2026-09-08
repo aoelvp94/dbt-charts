@@ -79,11 +79,16 @@ def test_no_destructive_verb(body: str) -> None:
 
 
 def test_login_waits_for_approval_itself(body: str) -> None:
-    """The agent must surface the URL at once and then block on the CLI's own
-    `Logged in` line — not background the login and wait to be told."""
-    assert "Logged in" in body
-    assert "until grep" in body
-    lowered = body.lower()
+    """The agent must surface the URL at once via `--start`, then block on
+    the CLI's own `--wait` -- not grep a shared log file for the URL or the
+    `Logged in` line (FR-67: two agents/users sharing `/tmp/dct-login.log`
+    read each other's device code)."""
+    step1 = body[body.index("## Step 1") : body.index("## Step 2")]
+    assert "dct cloud login --start" in step1
+    assert "dct cloud login --wait" in step1
+    assert "Logged in" in step1
+    assert "/tmp/dct-login.log" not in body
+    lowered = step1.lower()
     assert "which account" in lowered, "must say whose browser account approves"
 
 
@@ -118,6 +123,17 @@ def test_render_gated_on_mapped_sources(body: str) -> None:
     assert "unmapped" in body[render_at:].lower()
 
 
+def test_blocked_is_not_a_state_to_re_render_past(body: str) -> None:
+    """`blocked` means a mapped connection never passed its last test, so no
+    render can hold real data. An agent that reads it as a transient render
+    state will loop on `dct cloud render` forever, which is how a project sat
+    serving three empty boards behind a credential that never worked."""
+    render_at = body.index("Step 7")
+    step7 = body[render_at:]
+    assert "`blocked`" in step7
+    assert "dct cloud connection test" in step7
+
+
 def test_github_only(body: str) -> None:
     """Cloud connects GitHub repositories only; the skill must not promise any
     other git host, and must keep the public-URL path to GitHub URLs."""
@@ -130,12 +146,36 @@ def test_github_only(body: str) -> None:
 
 def test_connect_runs_right_after_login(body: str) -> None:
     """The GitHub App install is the only other browser hop, so it follows login
-    in the same sitting and waits in the background while boards get authored."""
+    in the same sitting (FR-82: two agents/users sharing `/tmp/dct-connect.log`
+    could read each other's install URL)."""
     connect_at = body.index("Connect the project")
     assert body.index("## Step 1") < connect_at < body.index("Boards, if none exist")
     connect_section = body[connect_at : body.index("Boards, if none exist")]
-    assert "/tmp/dct-connect.log" in connect_section
-    assert "Picked" in connect_section, "must wait on the CLI's own pick line"
+    assert "dct cloud project connect --org <org> --start" in connect_section
+    assert "dct cloud project connect --wait" in connect_section
+    assert "/tmp/dct-connect.log" not in body
+
+
+def test_connect_wait_is_not_deferred_past_board_authoring(body: str) -> None:
+    """FR-87: an onboarding trial ran `--start`, handed over the URL, then
+    authored boards for ~12 minutes and never ran `--wait` -- the project was
+    never created and `status` sat at `missing_project` until nudged. `--start`
+    and `--wait` must read as one inseparable unit, with `--wait` run before
+    Step 4 (board authoring), not deferred until just before some later step."""
+    connect_at = body.index("Connect the project")
+    boards_at = body.index("Boards, if none exist")
+    connect_section = body[connect_at:boards_at]
+    lowered = connect_section.lower()
+    assert "inseparable unit" in lowered
+    assert "before any board authoring" in lowered
+    start_at = connect_section.index("dct cloud project connect --org <org> --start")
+    wait_at = connect_section.index("dct cloud project connect --wait")
+    assert start_at < wait_at
+    between = connect_section[start_at:wait_at]
+    assert "step 4" not in between.lower(), (
+        "the text between --start and --wait must not send the agent off to "
+        "board authoring before running --wait"
+    )
 
 
 def test_serves_locally_and_keeps_going(body: str) -> None:
@@ -161,16 +201,19 @@ def test_file_source_projects_skip_the_warehouse_step(body: str) -> None:
 
 def test_says_how_to_ship_a_change_after_setup(body: str) -> None:
     """Day two is 'I edited a board, get it live'. A push republishes on its
-    own, on a latency that depends on how the repo is connected, and `ready` is
-    not evidence the live render is yours."""
+    own, on a latency that depends on how the repo is connected, and `ready`
+    is not evidence the live render is yours -- RENDERED_AT and COMMIT are.
+    (This last assertion replaced a "no timestamp" one: the listing carries
+    both facts now, which is what this branch added.)"""
     step8 = body.index("## Step 8")
     section = body[step8 : body.index("## The loop that actually drives this")]
     lowered = section.lower()
-    assert "republishes on its own" in lowered
     assert "github app" in lowered
     assert "hourly" in lowered
     assert "dct cloud project sync" in section
-    assert "no timestamp" in lowered
+    assert "`ready` is not proof" in section
+    assert "RENDERED_AT" in section
+    assert "COMMIT" in section
 
 
 def test_day_two_is_reachable_from_the_status_loop(body: str) -> None:
@@ -208,3 +251,67 @@ def test_verifies_each_board_with_its_own_token(body: str) -> None:
     lowered = section.lower()
     assert "unverified" in lowered, "a refused fetch is not a broken board"
     assert "never echo" in lowered, "must warn against printing the credential"
+
+
+def test_does_not_promise_connect_always_writes_published_to(body: str) -> None:
+    """Connect writes `published_to:` only into an existing dbt_charts.yml in
+    a checkout of the repo it connected -- the common first-connect case is a
+    printed key the agent has to add itself, so the skill must not tell it to
+    expect a file change."""
+    claim = body[body.index("published_to:", body.index("## Step 3")) :]
+    flowed = " ".join(claim[: claim.index("## Step 4")].split())
+    assert "writes only when that file already exists" in flowed
+    assert "prints the exact key and value" in flowed
+
+
+def test_proves_a_change_is_live_by_commit_not_by_status(body: str) -> None:
+    """`ready` means a render exists, not a render of the agent's commit. The
+    skill has to name the check that tells them apart, or an agent reports a
+    silently dropped edit as shipped."""
+    assert "COMMIT" in body
+    assert "RENDERED_AT" in body
+    assert "dct cloud boards" in body
+
+
+def test_liveness_is_not_equality_with_the_local_head(body: str) -> None:
+    """The check is "these two values moved", never "COMMIT equals your
+    `git rev-parse HEAD`". Cloud commits board edits to a work branch and
+    merges the upstream branch into it on every sync, so on a project ever
+    edited in Cloud that equality is unreachable and an agent waiting on it
+    never stops."""
+    step = body[body.index("## Step 8") :]
+    assert "not to your `git rev-parse HEAD`" in step
+    assert "work branch" in step
+    assert "does not terminate" in step
+
+
+def test_an_unmoved_board_is_reported_unconfirmed_not_diagnosed(body: str) -> None:
+    """A sync only *queues* the re-renders; they run behind live page views and
+    re-run each board's queries. So "neither value moved" is "not rendered
+    yet", and an agent that turns it into a cause -- the wrong branch, a
+    dropped push -- sends the user to debug something that is not broken."""
+    # Whitespace-collapsed: these are prose sentences the markdown hard-wraps,
+    # so a phrase assertion would otherwise pin where the line happens to break.
+    step = " ".join(body[body.index("## Step 8") :].split())
+    assert '"not confirmed yet"' in step
+    assert "still queued" in step
+    assert "a render that fails writes no new" in step.lower()
+    # All three `warning`/`errored` cases, since a gap in the split sends the
+    # agent to wait on a render that already ran and failed.
+    assert "`warning` that **appeared** since your before-reading is the answer" in step
+    assert "`warning` that was **already there** is undated and therefore" in step
+    assert "the previous render's chart diagnostic" in step
+    assert "`ready` or `not_rendered` with nothing moved" in step
+    for wrong_cause in (
+        "the commit is not on the branch Cloud serves",
+        "check which branch the project tracks",
+    ):
+        assert wrong_cause not in body
+
+
+def test_states_that_pushing_does_not_publish(body: str) -> None:
+    """An agent that pushes and walks away leaves the work unpublished for up
+    to an hour on a repository-URL project."""
+    lowered = body.lower()
+    assert "dct cloud project sync" in body
+    assert "does not publish" in lowered

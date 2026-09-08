@@ -75,6 +75,23 @@ def detect_skill_targets(project_root: Path) -> list[str]:
     return targets
 
 
+def detect_global_skill_targets() -> list[Path]:
+    """Return user-level skill dirs detected under ``Path.home()``.
+
+    Mirrors ``detect_skill_targets`` but at the machine level: installs into
+    each agent's directory whose parent config dir exists. An existing
+    ``~/.codex/`` also signals ``~/.agents/skills``, since Codex's older
+    ``~/.codex/skills`` is deprecated in favor of the shared location.
+    """
+    home = Path.home()
+    targets: list[Path] = []
+    if (home / ".claude").is_dir():
+        targets.append(home / ".claude" / "skills")
+    if (home / ".agents").is_dir() or (home / ".codex").is_dir():
+        targets.append(home / ".agents" / "skills")
+    return targets
+
+
 def detect_legacy_skill_dirs(
     project_root: Path, wheel_skill_names: Set[str]
 ) -> list[Path]:
@@ -104,6 +121,14 @@ def _rendered_skill_md(skill: Skill) -> str:
     return f"---{parts[1]}---\n{rendered_body}"
 
 
+def _is_wheel_authored(skill_md: Path) -> bool:
+    """Only a SKILL.md this tool wrote carries the wheel's author line; a
+    user's own skill that happens to share a retired name is not ours to sweep."""
+    return skill_md.is_file() and "author: fivetran" in skill_md.read_text(
+        encoding="utf-8"
+    )
+
+
 def install_skills(
     *,
     target_dir: Path,
@@ -122,7 +147,7 @@ def install_skills(
         target_dir.mkdir(parents=True, exist_ok=True)
         for name in RETIRED_SKILL_NAMES:
             retired_path = target_dir / name
-            if retired_path.is_dir():
+            if _is_wheel_authored(retired_path / "SKILL.md"):
                 shutil.rmtree(retired_path)
                 retired_removed.append(name)
 

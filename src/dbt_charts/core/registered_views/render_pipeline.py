@@ -316,7 +316,7 @@ def render_registered_view(
             )
         )
 
-    if render_result.board_error is None and not render_result.chart_errors:
+    if render_result.board_error is None and not render_result.payload_errors:
         raw_output = render_result.output
         output = (
             raw_output.decode("utf-8")

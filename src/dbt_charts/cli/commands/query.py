@@ -69,12 +69,51 @@ def _rows_table(columns: list[str], data: list[dict[str, Any]]) -> Table:
     return t
 
 
+def _print_table(t: Table) -> None:
+    """Print a table without Rich's default 80-column fallback truncating it.
+
+    Off a real terminal (piped output, an agent's captured stdout) Rich
+    assumes an 80-column width and ellipsizes every cell to fit -- a
+    29-column query result collapses to single-character column names.
+    Measure what the table actually needs (uncapped by the console's current
+    width) and widen the console to that before printing.
+    """
+    if not console.is_terminal:
+        needed = t.__rich_measure__(console, console.options.update(max_width=100_000))
+        if needed.maximum > console.width:
+            console.width = needed.maximum
+    console.print(t)
+
+
+_METADATA_SQL_PREFIXES = ("DESCRIBE", "DESC ", "SHOW", "PRAGMA")
+
+
+def _looks_like_metadata_sql(sql: str) -> bool:
+    """True for schema-introspection statements (DESCRIBE/SHOW/PRAGMA).
+
+    These return one row per column/object, not data -- the default row cap
+    clips schema discovery invisibly unless the truncation notice calls out
+    --describe as the uncapped alternative.
+    """
+    return sql.strip().upper().startswith(_METADATA_SQL_PREFIXES)
+
+
 def _print_rows(
-    columns: list[str], data: list[dict[str, Any]], row_count: int, truncated: bool
+    columns: list[str],
+    data: list[dict[str, Any]],
+    row_count: int,
+    truncated: bool,
+    sql: str | None = None,
 ) -> None:
     if columns:
-        console.print(_rows_table(columns, data))
-    err_console.print(f"\n{row_count} rows{' (truncated)' if truncated else ''}")
+        _print_table(_rows_table(columns, data))
+    if not truncated:
+        err_console.print(f"\n{row_count} rows")
+        return
+    hint = "raise with --limit N"
+    if sql and _looks_like_metadata_sql(sql):
+        hint += ", or --describe for the full schema (uncapped)"
+    err_console.print(f"\n{row_count} rows (truncated -- {hint})")
 
 
 def _print_diagnostic(d: QueryDiagnostic, target: Console = err_console) -> None:
@@ -108,15 +147,19 @@ def _print_query_board_rich(result: QueryBoardResult) -> None:
                 f"Available queries: {escape(', '.join(result.available_queries))}"
             )
         raise typer.Exit(1)
-    _print_rows(result.columns, result.data, result.row_count, result.truncated)
+    _print_rows(
+        result.columns, result.data, result.row_count, result.truncated, sql=result.sql
+    )
 
 
-def _print_execute_query_rich(result: ExecuteQueryResult) -> None:
+def _print_execute_query_rich(result: ExecuteQueryResult, sql: str) -> None:
     if not result.success:
         for err in result.errors:
             err_console.print(f"[red]Error:[/red] {escape(err)}")
         raise typer.Exit(1)
-    _print_rows(result.columns, result.data, result.row_count, result.truncated)
+    _print_rows(
+        result.columns, result.data, result.row_count, result.truncated, sql=sql
+    )
 
 
 def _print_validate_result(
@@ -173,7 +216,7 @@ def _print_describe_result(
         t.add_column("type")
         for col in result.columns:
             t.add_row(escape(col.name), escape(col.type))
-        console.print(t)
+        _print_table(t)
 
     for d in result.diagnostics:
         _print_diagnostic(d)
@@ -352,7 +395,7 @@ def query_command(
                     if not exec_result.success:
                         raise SystemExit(1)
                 else:
-                    _print_execute_query_rich(exec_result)
+                    _print_execute_query_rich(exec_result, sql=sql_text)
             return
 
         # raw-SQL validate-only — no named-query lookup needed.

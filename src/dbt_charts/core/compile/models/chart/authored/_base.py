@@ -262,7 +262,9 @@ class _BaseChartFields(BaseModel):
     @classmethod
     def _validate_warnings_ignore_codes(cls, v: list[str] | None) -> list[str] | None:
         if v is not None:
-            validate_suppression_codes(v, source="chart.warnings_ignore")
+            validate_suppression_codes(
+                v, source="chart.warnings_ignore", forbid_domains=frozenset({"query"})
+            )
         return v
 
 

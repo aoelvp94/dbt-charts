@@ -202,6 +202,29 @@ def _input_error(message: str) -> BoardRenderResult:
     )
 
 
+def _preserved_walk_data(
+    output: str | bytes | None, format: str
+) -> dict[str, Any] | str | bytes | None:  # type-state: explicit_any — walked payload
+    """Convert a data-format walk's raw output into BoardRenderResult.data's shape.
+
+    For a board-level draw failure whose walk still ran (renderer.py's
+    board_error branch runs the walk regardless of the draw), ``output`` may
+    still hold a payload. ``json.loads`` can fail if that payload was
+    truncated by the same fault that set ``board_error``; return ``None``
+    rather than raising on top of an already-failed render.
+    """
+    if output is None:
+        return None
+    if format in ("json", "data"):
+        import json
+
+        try:
+            return json.loads(output)
+        except ValueError:
+            return None
+    return output
+
+
 def render_dashboard(
     board: BoardFile | None = None,
     variables: dict[str, Any] | None = None,
@@ -473,6 +496,7 @@ def render_dashboard(
             return BoardRenderResult(
                 status="failed",
                 board_error=render_result.board_error,
+                data=_preserved_walk_data(render_result.output, format),
                 chart_errors=render_result.chart_errors,
                 warnings=[*compile_active, *render_result.warnings],
                 suppressed_warnings=[

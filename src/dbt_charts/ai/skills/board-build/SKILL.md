@@ -66,7 +66,7 @@ search. It never renders:
 
 Keep each note short and factual (one sentence).
 
-Labels and titles are inferred from object keys, and schema defaults are applied automatically. Omit `label`, `title`, `input: auto`, `required: false`, and `visible: true` unless you are intentionally changing the inferred/default value.
+A variable's `label` is inferred from its object key, and its `input: auto`, `required: false`, and `visible: true` are schema defaults — omit all four unless you are intentionally changing the inferred/default value. A chart's own caption is **not** inferred from its object key for any chart type: set `label:` on every `type: kpi` chart and `title:` on every other chart type, or it renders with no visible caption at all.
 
 ## The Workflow
 

@@ -281,6 +281,28 @@ class TestDftRenderFormatValueClass:
         assert result.exit_code == 0, result.output + (result.stderr or "")
         assert out.exists()
 
+    def test_render_dash_o_is_an_alias_for_output(self, tmp_path: Path) -> None:
+        """`-o` is the short alias for `--output` (a papercut: agents keep
+        typing `dct render -o <path>` and hitting "No such option")."""
+        shutil.copytree(_FIXTURE_DIR / "no-warehouse-board", tmp_path / "project")
+        (tmp_path / "project" / "dbt_charts.yml").write_text("# project marker\n")
+        out = tmp_path / "out.svg"
+        result = runner.invoke(
+            app,
+            [
+                "render",
+                "charts/board.yml",
+                "--format",
+                "svg",
+                "-o",
+                str(out),
+                "--project-dir",
+                str(tmp_path / "project"),
+            ],
+        )
+        assert result.exit_code == 0, result.output + (result.stderr or "")
+        assert out.exists()
+
     def test_render_html_format_writes_file(self, tmp_path: Path) -> None:
         shutil.copytree(_FIXTURE_DIR / "no-warehouse-board", tmp_path / "project")
         (tmp_path / "project" / "dbt_charts.yml").write_text("# project marker\n")

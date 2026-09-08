@@ -381,6 +381,76 @@ class TestRenderRegisteredViewFragmentFormat:
         assert captured.get("controls") is True
 
 
+class TestRenderRegisteredViewPayloadErrorsGate:
+    """``render_registered_view``'s success gate must judge the *payload* the
+    requested format actually produced, not every chart error render() saw.
+
+    A chart that paints no marks fails the draw but not the yaml format's
+    layout-tree walk — Cloud's "Make this a board" clone (which requests
+    ``format="yaml"`` purely to get the round-trip dump) must still succeed
+    for such a board, while the same board requested as ``format="svg"``
+    (whose payload IS the drawing) must still report failure.
+    """
+
+    def test_draw_only_failure_still_materializes_yaml_but_fails_svg(
+        self, project_with_duckdb: Project, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys
+
+        from dbt_charts.core.diagnostics import ERR_CHART_PAINTED_NO_MARKS, Diagnostic
+        from dbt_charts.core.render.render_result import RenderResult
+
+        render_pkg = sys.modules["dbt_charts.core.render"]
+        paint_error = Diagnostic.from_code(
+            ERR_CHART_PAINTED_NO_MARKS,
+            message="Chart 'c1' received 1 row(s) but painted no marks",
+            fields={"chart_id": "c1"},
+        )
+
+        def fake_render(
+            board: object, executor: object, format: str = "html", **kwargs: object
+        ) -> RenderResult:
+            if format == "svg":
+                return RenderResult(
+                    output="<svg></svg>",
+                    chart_errors=[paint_error],
+                    payload_errors=[paint_error],
+                )
+            # A data-bearing format's payload is the layout-tree walk, which
+            # never draws — the draw-only failure reaches chart_errors (an
+            # agent asking for json must still see it) but not payload_errors.
+            return RenderResult(
+                output="title: fake\ncharts: {}\n",
+                chart_errors=[paint_error],
+                payload_errors=[],
+            )
+
+        monkeypatch.setattr(render_pkg, "render", fake_render)
+        adapter_registry = _make_adapter_registry(project_with_duckdb)
+
+        yaml_result = render_registered_view(
+            request_path="/data/",
+            project=project_with_duckdb,
+            adapter_registry=adapter_registry,
+            result_cache=None,
+            format="yaml",
+        )
+        assert isinstance(yaml_result, RenderSuccess), (
+            "a draw-only chart error must not fail the yaml 'make this a "
+            f"board' clone, got {yaml_result}"
+        )
+
+        svg_result = render_registered_view(
+            request_path="/data/",
+            project=project_with_duckdb,
+            adapter_registry=adapter_registry,
+            result_cache=None,
+            format="svg",
+        )
+        assert isinstance(svg_result, RenderError)
+        assert svg_result.dashboard.chart_errors == [paint_error]
+
+
 class TestRenderRegisteredViewYamlFormat:
     """``format="yaml"`` dumps a registered view's compiled board to
     re-compilable authored YAML — collapsed into ``render_registered_view``

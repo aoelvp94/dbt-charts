@@ -7,11 +7,21 @@ that, field by field, and this prints their answer.
 
 **Signing in.** ``dct cloud login`` runs the OAuth 2.0 device grant (RFC 8628)
 against the host's discovered endpoints: it prints a code and a URL, waits for
-the browser approval, then stores the token. ``dct cloud logout`` revokes and
-clears it; ``dct cloud whoami`` reports the host, where the credential came
-from, and what it can reach. A token may also come from the ``DCT_CLOUD_TOKEN``
-environment variable (CI, agents) or a hand-written ``token:`` line in the user
-config file — every verb that needs one says exactly that when it is missing.
+the browser approval, then stores the token. A script that cannot block for
+that approval splits it: ``login --start`` prints the approval URL to stdout
+and exits immediately (persisting the pending grant), and a later
+``login --wait`` blocks for the approval and finishes the login.
+``dct cloud logout`` revokes and clears the credential; ``dct cloud whoami``
+reports the host, where the credential came from, and what it can reach. A
+token may also come from the ``DCT_CLOUD_TOKEN`` environment variable (CI,
+agents) or a hand-written ``token:`` line in the user config file — every
+verb that needs one says exactly that when it is missing.
+
+**Connecting a project.** ``project connect`` (with no ``--git-url``) hands a
+repository pick to the browser and waits for it. The same split applies:
+``connect --start`` prints the install/pick URL and exits immediately
+(persisting the pending connect), and a later ``connect --wait`` blocks for
+the pick and finishes the project.
 
 **Secrets never reach argv** (the initiative's warehouse-secret decision):
 ``connection create`` takes key material from a file, from stdin, or from a
@@ -52,38 +62,65 @@ from dbt_charts.cloud_client.client import (
 from dbt_charts.cloud_client.config import (
     TOKEN_ENV_VAR,
     CloudConfig,
+    PendingConnect,
+    PendingLogin,
+    clear_pending_connect,
+    clear_pending_login,
     credential_source,
     load_config,
     read_config,
+    read_pending_connect,
+    read_pending_login,
     save_config,
+    save_pending_connect,
+    save_pending_login,
 )
 from dbt_charts.cloud_client.context import (
     REFUSE_DEFAULT_CONNECT,
     REFUSE_DEFAULT_DESTRUCTIVE,
     CloudContext,
     git_remotes,
+    repo_key,
     resolve_org,
     resolve_project,
 )
 from dbt_charts.cloud_client.contract import (
     DBT_ROOT_OTHER,
     DBT_ROOT_REPO_ROOT,
+    AuthorizationServerMetadata,
     BoardList,
+    BoardSummary,
     ConnectionList,
     DeleteResult,
+    DeviceAuthorization,
+    DeviceLoginStarted,
+    DeviceToken,
     GrantList,
     InvitationList,
     LoginResult,
     MemberList,
     OrgList,
     OrgStatus,
+    ProjectConnectStarted,
     ProjectList,
     ProjectSummary,
     RepoPick,
     SourceList,
     WhoAmI,
 )
-from dbt_charts.cloud_client.errors import CloudError, EnvCredentialActive
+from dbt_charts.cloud_client.errors import (
+    CloudError,
+    EnvCredentialActive,
+    NoPendingConnect,
+    NoPendingLogin,
+)
+from dbt_charts.cloud_client.published_to import (
+    DBT_CHARTS_YML,
+    find_local_project_dir,
+    published_to_url,
+    resolve_published_to,
+    set_published_to,
+)
 
 err_console = dct_console(stderr=True)
 
@@ -142,7 +179,8 @@ Operate dbt charts Cloud from the terminal.
   dct cloud project connect        Connect this repository as a project
 
 Every verb takes --json. Context resolves from --org/--project, then this
-repository's git remote, then `dct cloud use`.
+repository's own published_to (written by `project connect`), then its git
+remote, then `dct cloud use`.
 """,
     no_args_is_help=True,
     pretty_exceptions_show_locals=False,
@@ -299,6 +337,7 @@ def _org(
         org_flag,
         config,
         git_remotes(Path.cwd()),
+        Path.cwd(),
         refuse_default=refuse_default,
     )
 
@@ -316,6 +355,7 @@ def _context(
         project_flag,
         config,
         git_remotes(Path.cwd()),
+        Path.cwd(),
         refuse_default=refuse_default,
     )
 
@@ -358,23 +398,130 @@ def use(
     typer.echo(f"Default context set to {target} ({path}).")
 
 
+def _begin_device_grant(
+    host: str | None,
+) -> tuple[AuthorizationServerMetadata, DeviceAuthorization, str]:
+    """Discover endpoints and start the device grant -- the half bare
+    `login` and `--start` share; only what happens with the result differs."""
+    stored = read_config()
+    target_host = host or stored.host
+    metadata = discover_endpoints(target_host, transport=_oauth_transport())
+    device = start_device_login(
+        metadata.device_authorization_endpoint, transport=_oauth_transport()
+    )
+    return metadata, device, target_host
+
+
+def _device_login_prompt(device: DeviceAuthorization) -> str:
+    return device.verification_uri_complete or (
+        f"{device.verification_uri} (code: {device.user_code})"
+    )
+
+
+def _finish_login(target_host: str, token: DeviceToken, as_json: bool) -> None:
+    """Save the token and report success -- the half bare `login` and
+    `--wait` share once a token exists."""
+    stored = read_config()
+    replaced = bool(stored.token)
+    new_config = CloudConfig.model_validate(
+        {**stored.model_dump(), "token": token.access_token, "host": target_host}
+    )
+    save_config(new_config)
+    with client_from_config(new_config, target_host) as client:
+        organizations = client.list_orgs().organizations
+    if as_json:
+        print_json_result(LoginResult(host=target_host, organizations=organizations))
+        return
+    note = " (replaced the previous credential)" if replaced else ""
+    typer.echo(f"Logged in to {target_host}{note}.")
+    _print_orgs(OrgList(organizations=organizations))
+
+
 @cloud_app.command("login")
-def login(host: HostOption = None, as_json: JsonOption = False) -> None:
-    """Sign in via the OAuth device grant: approve in a browser, once per machine."""
+def login(
+    host: HostOption = None,
+    start: Annotated[
+        bool,
+        typer.Option(
+            "--start",
+            help="Begin the device grant, print the approval URL, and exit"
+            " without waiting for approval",
+        ),
+    ] = False,
+    wait: Annotated[
+        bool,
+        typer.Option(
+            "--wait", help="Wait for a login begun with --start to be approved"
+        ),
+    ] = False,
+    as_json: JsonOption = False,
+) -> None:
+    """Sign in via the OAuth device grant: approve in a browser.
+
+    Bare `dct cloud login` starts the grant and blocks until it is approved
+    -- for a human at a terminal. Approval can legitimately take as long as
+    the user needs at the browser, which outlasts most tool timeouts an
+    agent runs commands under -- so a script splits it into two
+    invocations: `--start` prints the approval URL and returns immediately;
+    a later `--wait` blocks for the approval `--start` began.
+    """
+    if start and wait:
+        raise typer.BadParameter(
+            "pass only one of --start/--wait", param_hint="--start/--wait"
+        )
     with _reporting(as_json):
         if credential_source() == "env":
             raise EnvCredentialActive(TOKEN_ENV_VAR)
-        stored = read_config()
-        target_host = host or stored.host
-        metadata = discover_endpoints(target_host, transport=_oauth_transport())
-        device = start_device_login(
-            metadata.device_authorization_endpoint, transport=_oauth_transport()
-        )
-        prompt = device.verification_uri_complete or (
-            f"{device.verification_uri} (code: {device.user_code})"
-        )
+        if wait:
+            pending = read_pending_login()
+            if pending is None:
+                raise NoPendingLogin()
+            try:
+                token = poll_device_token(
+                    pending.token_endpoint,
+                    pending.device_code,
+                    pending.interval,
+                    pending.expires_in,
+                    transport=_oauth_transport(),
+                    sleep=_sleep,
+                )
+            finally:
+                clear_pending_login()
+            _finish_login(pending.host, token, as_json)
+            return
+        metadata, device, target_host = _begin_device_grant(host)
+        if start:
+            save_pending_login(
+                PendingLogin(
+                    device_code=device.device_code,
+                    token_endpoint=metadata.token_endpoint,
+                    interval=float(device.interval),
+                    expires_in=float(device.expires_in),
+                    host=target_host,
+                )
+            )
+            if as_json:
+                print_json_result(
+                    DeviceLoginStarted(
+                        host=target_host,
+                        verification_uri=device.verification_uri,
+                        verification_uri_complete=device.verification_uri_complete,
+                        user_code=device.user_code,
+                        expires_in=device.expires_in,
+                    )
+                )
+                return
+            # Bare stdout, no wrapping prose: an agent captures this with
+            # plain command substitution (`URL=$(dct cloud login --start)`).
+            typer.echo(_device_login_prompt(device))
+            err_console.print(
+                "Next: dct cloud login --wait to finish signing in once"
+                " you've approved it in the browser."
+            )
+            return
         err_console.print(
-            f"Open {escape(prompt)} to approve this login.", soft_wrap=True
+            f"Open {escape(_device_login_prompt(device))} to approve this login.",
+            soft_wrap=True,
         )
         token = poll_device_token(
             metadata.token_endpoint,
@@ -384,20 +531,7 @@ def login(host: HostOption = None, as_json: JsonOption = False) -> None:
             transport=_oauth_transport(),
             sleep=_sleep,
         )
-        replaced = bool(stored.token)
-        new_config = CloudConfig.model_validate(
-            {**stored.model_dump(), "token": token.access_token, "host": target_host}
-        )
-        save_config(new_config)
-        with client_from_config(new_config, target_host) as client:
-            organizations = client.list_orgs().organizations
-    result = LoginResult(host=target_host, organizations=organizations)
-    if as_json:
-        print_json_result(result)
-        return
-    note = " (replaced the previous credential)" if replaced else ""
-    typer.echo(f"Logged in to {target_host}{note}.")
-    _print_orgs(OrgList(organizations=organizations))
+        _finish_login(target_host, token, as_json)
 
 
 @cloud_app.command("logout")
@@ -432,7 +566,8 @@ def logout(host: HostOption = None, as_json: JsonOption = False) -> None:
 
 @cloud_app.command("whoami")
 def whoami(host: HostOption = None, as_json: JsonOption = False) -> None:
-    """Show the Cloud host, where the credential came from, and what it reaches."""
+    """Show the Cloud host, credential source, what it reaches -- and, inside
+    a published checkout, which org/project owns it."""
     with _cloud(host, as_json) as (client, _config):
         result = WhoAmI(
             host=client.host,
@@ -446,7 +581,33 @@ def whoami(host: HostOption = None, as_json: JsonOption = False) -> None:
         "DCT_CLOUD_TOKEN" if result.credential_source == "env" else "the config file"
     )
     typer.echo(f"{result.host} — credential from {label}")
-    _print_orgs(OrgList(organizations=result.organizations))
+    here, note = _published_here(result.host, Path.cwd())
+    _print_orgs(OrgList(organizations=result.organizations), here=here)
+    if note:
+        typer.echo(note)
+
+
+def _published_here(
+    host: str, start: Path
+) -> tuple[tuple[str, str] | None, str | None]:
+    """(org, project) this checkout's published_to names on *host*, plus a
+    note to print when it exists but doesn't answer that (a host mismatch or
+    a malformed record). Never raises -- whoami is the orientation command,
+    not a resolution gate, so a bad record degrades to "nothing to mark"
+    rather than aborting the whole command.
+    """
+    try:
+        published = resolve_published_to(start)
+    except ValueError as exc:
+        return None, str(exc)
+    if published is None:
+        return None, None
+    if published.host != host:
+        return None, (
+            f"{published.yml_path} declares published_to on {published.host}, not"
+            f" {host} -- pass --host {published.host} to match it."
+        )
+    return (published.org, published.project), None
 
 
 @cloud_app.command("status")
@@ -555,7 +716,9 @@ def member_remove(
 ) -> None:
     """Remove a member from the organization."""
     with _cloud(host, as_json) as (client, config):
-        result = client.remove_member(_org(client, config, org), email)
+        result = client.remove_member(
+            _org(client, config, org, refuse_default=REFUSE_DEFAULT_DESTRUCTIVE), email
+        )
     if as_json:
         print_json_result(result)
         return
@@ -601,7 +764,9 @@ def invite_revoke(
 ) -> None:
     """Revoke a pending invitation."""
     with _cloud(host, as_json) as (client, config):
-        result = client.revoke_invitation(_org(client, config, org), email)
+        result = client.revoke_invitation(
+            _org(client, config, org, refuse_default=REFUSE_DEFAULT_DESTRUCTIVE), email
+        )
     if as_json:
         print_json_result(result)
         return
@@ -648,7 +813,10 @@ def grant_revoke(
 ) -> None:
     """Revoke a connector grant. May cut the credential making this call."""
     with _cloud(host, as_json) as (client, config):
-        result = client.revoke_grant(_org(client, config, org), grant_id)
+        result = client.revoke_grant(
+            _org(client, config, org, refuse_default=REFUSE_DEFAULT_DESTRUCTIVE),
+            grant_id,
+        )
     if as_json:
         print_json_result(result)
         return
@@ -698,6 +866,17 @@ def project_connect(
     poll_interval: Annotated[
         float, typer.Option("--poll-interval", help="Seconds between pick checks")
     ] = PICK_POLL_SECONDS,
+    start: Annotated[
+        bool,
+        typer.Option(
+            "--start",
+            help="Print the install/pick URL and exit without waiting for the pick",
+        ),
+    ] = False,
+    wait: Annotated[
+        bool,
+        typer.Option("--wait", help="Wait for a connect begun with --start to finish"),
+    ] = False,
     org: RefusingOrgOption = None,
     host: HostOption = None,
     as_json: JsonOption = False,
@@ -712,35 +891,96 @@ def project_connect(
 
     The browser pick is not bypassable: Cloud authorizes it from your own
     GitHub account's list of repositories you administer.
+
+    Bare connect blocks until the pick lands -- for a human at a terminal.
+    A script splits it: `--start` prints the install/pick URL and returns
+    immediately (persisting the pending connect); a later `--wait` blocks
+    for the pick `--start` began and finishes the project. Neither applies
+    to `--git-url`, which is already headless.
     """
+    if start and wait:
+        raise typer.BadParameter(
+            "pass only one of --start/--wait", param_hint="--start/--wait"
+        )
+    if git_url and (start or wait):
+        raise typer.BadParameter(
+            "--git-url has no browser pick to start or wait for",
+            param_hint="--git-url",
+        )
     if poll_interval < MIN_POLL_INTERVAL_SECONDS:
         raise typer.BadParameter(
             f"must be at least {MIN_POLL_INTERVAL_SECONDS}s, got {poll_interval!r}",
             param_hint="--poll-interval",
         )
-    with _cloud(host, as_json) as (client, config):
-        org_slug = _org(client, config, org, refuse_default=REFUSE_DEFAULT_CONNECT)
-        if git_url:
-            project = client.create_project(
-                org_slug,
-                name or _repo_name(git_url),
-                slug or _slugify(name or _repo_name(git_url)),
-                git_url,
-                trunk or "",
-                root or "",
+    if wait:
+        with _reporting(as_json):
+            pending = read_pending_connect()
+            if pending is None:
+                raise NoPendingConnect()
+        with _cloud(pending.host, as_json) as (client, _config):
+            pick = client.wait_for_pick(pending.org, timeout, poll_interval)
+            project = _finish_from_pick(
+                client,
+                pending.org,
+                pending.name,
+                pending.slug,
+                pending.trunk,
+                pending.root,
+                pick,
             )
-        else:
-            project = _connect_through_github(
-                client, org_slug, name, slug, trunk, root, timeout, poll_interval
-            )
+        clear_pending_connect()
+        org_slug = pending.org
+    else:
+        with _cloud(host, as_json) as (client, config):
+            org_slug = _org(client, config, org, refuse_default=REFUSE_DEFAULT_CONNECT)
+            if start:
+                save_pending_connect(
+                    PendingConnect(
+                        org=org_slug,
+                        host=client.host,
+                        name=name,
+                        slug=slug,
+                        trunk=trunk,
+                        root=root,
+                    )
+                )
+                url = client.connect_url(org_slug)
+                if as_json:
+                    print_json_result(ProjectConnectStarted(org=org_slug, url=url))
+                    return
+                # Bare stdout, no wrapping prose: an agent captures this with
+                # plain command substitution (`URL=$(dct cloud project connect
+                # --start)`).
+                typer.echo(url)
+                err_console.print(
+                    "Next: dct cloud project connect --wait to finish connecting"
+                    " once you've picked the repo."
+                )
+                return
+            if git_url:
+                project = client.create_project(
+                    org_slug,
+                    name or _repo_name(git_url),
+                    slug or _slugify(name or _repo_name(git_url)),
+                    git_url,
+                    trunk or "",
+                    root or "",
+                )
+            else:
+                project = _connect_through_github(
+                    client, org_slug, name, slug, trunk, root, timeout, poll_interval
+                )
+    # The project exists in Cloud from here on: the result is emitted first,
+    # so no local bookkeeping can take it away from the caller.
     if as_json:
         print_json_result(project)
-        return
-    typer.echo(
-        f"Connected {project.slug}: {project.repo_label}"
-        f" (trunk: {project.trunk_branch}, work: {project.work_branch})"
-    )
-    typer.echo(_connect_next_step(org_slug, project))
+    else:
+        typer.echo(
+            f"Connected {project.slug}: {project.repo_label}"
+            f" (trunk: {project.trunk_branch}, work: {project.work_branch})"
+        )
+        typer.echo(_connect_next_step(org_slug, project))
+    _record_published_to(client.host, org_slug, project, git_url)
 
 
 def _connect_next_step(org: str, project: ProjectSummary) -> str:
@@ -764,6 +1004,78 @@ def _connect_next_step(org: str, project: ProjectSummary) -> str:
     return f"Next: dct cloud project sync --org {org} --project {project.slug}"
 
 
+def _record_published_to(
+    host: str, org: str, project: ProjectSummary, git_url: str | None
+) -> None:
+    """Record `published_to:` locally, reporting instead of raising.
+
+    The connect already succeeded and its result is already out, so a local
+    file this cannot edit is a note on stderr -- never a traceback that
+    replaces the slug a `--json` caller needs to sync or clean up.
+    """
+    try:
+        url = published_to_url(host, org, project.slug)
+        _write_published_to(url, project, git_url)
+    except (ValueError, OSError) as exc:
+        err_console.print(
+            f"Connected, but published_to was not recorded: {escape(str(exc))}",
+            soft_wrap=True,
+        )
+
+
+def _write_published_to(url: str, project: ProjectSummary, git_url: str | None) -> None:
+    """Splice `published_to: "<url>"` into the just-connected project's
+    dbt_charts.yml, or say what to add and where instead.
+
+    Writes only inside a checkout of the repository that was just connected:
+    `published_to` outranks the git-remote match, so a `--git-url` connect run
+    from some other repository would otherwise commit a record that points
+    every later verb there at the wrong project. Never writes outside the
+    resolved project root, and never writes a fresh dbt_charts.yml that didn't
+    already exist -- connecting is not scaffolding.
+    """
+    here = Path.cwd()
+    target = find_local_project_dir(here, project.git_subdirectory)
+    if target is None:
+        err_console.print(
+            "Could not find a local git checkout to record this in. Once you"
+            f' have one, add to its {DBT_CHARTS_YML}:\n  published_to: "{url}"'
+        )
+        return
+    if not _checkout_is(project, git_url, here):
+        err_console.print(
+            f"This checkout is not {escape(project.repo_label)}, so nothing was"
+            f" written here. In a checkout of that repository, add to its"
+            f' {DBT_CHARTS_YML}:\n  published_to: "{url}"',
+            soft_wrap=True,
+        )
+        return
+    yml_path = target / DBT_CHARTS_YML
+    if not yml_path.exists():
+        err_console.print(
+            f"No {DBT_CHARTS_YML} yet at {target} -- once scaffolded, add:\n"
+            f'  published_to: "{url}"'
+        )
+        return
+    yml_path.write_text(
+        set_published_to(yml_path.read_text(encoding="utf-8"), url), encoding="utf-8"
+    )
+    err_console.print(f"Recorded published_to: {url} in {yml_path} -- commit this.")
+
+
+def _checkout_is(project: ProjectSummary, git_url: str | None, start: Path) -> bool:
+    """Whether the checkout at *start* is the repository just connected.
+
+    `repo_label` is Cloud's own name for it and `git_url` is what a headless
+    connect passed; `repo_key` is what makes either comparable to a local
+    remote.
+    """
+    connected = {repo_key(project.repo_label)}
+    if git_url:
+        connected.add(repo_key(git_url))
+    return bool(connected & {repo_key(remote) for remote in git_remotes(start)})
+
+
 def _connect_through_github(
     client: CloudClient,
     org: str,
@@ -780,6 +1092,20 @@ def _connect_through_github(
     err_console.print(f"  {client.connect_url(org)}", soft_wrap=True)
     err_console.print("Waiting for the pick…")
     pick = client.wait_for_pick(org, timeout, poll_interval)
+    return _finish_from_pick(client, org, name, slug, trunk, root, pick)
+
+
+def _finish_from_pick(
+    client: CloudClient,
+    org: str,
+    name: str | None,
+    slug: str | None,
+    trunk: str | None,
+    root: str | None,
+    pick: RepoPick,
+) -> ProjectSummary:
+    """Finish the project once the browser pick has landed -- the half the
+    blocking connect and `--wait` share; only how they get *pick* differs."""
     err_console.print(f"Picked {escape(pick.full_name)}.")
     repo_name = pick.full_name.rpartition("/")[2]
     return client.create_project_from_pick(
@@ -821,6 +1147,17 @@ def project_sync(
         print_json_result(result)
         return
     typer.echo(result.message)
+    # The ordering the product used to leave the user to discover: a push puts
+    # the commit on the git host, a sync is what brings it into Cloud and
+    # re-renders the boards it changed. "A sync", not "this sync": on the
+    # `queued=False` response one was already in flight and this invocation
+    # started nothing.
+    typer.echo(
+        "A git push does not publish; a sync does. Confirm with "
+        "`dct cloud boards`: each board your commit changed gets a new "
+        "RENDERED_AT and a new COMMIT once its re-render lands. Boards it "
+        "did not change keep both, and are already serving the right content."
+    )
 
 
 @project_app.command("scaffold")
@@ -1164,11 +1501,16 @@ def render(
         return
     if force:
         typer.echo(f"Re-rendering {result.started} board(s).")
-        return
-    typer.echo(
-        f"Started {result.started} board render(s);"
-        f" {result.unrendered_remaining} still unrendered."
-    )
+    else:
+        typer.echo(
+            f"Started {result.started} board render(s);"
+            f" {result.unrendered_remaining} still unrendered."
+        )
+    # Printed under either count: forcing starts the renders but does not make
+    # the warehouse answer, so a re-render over a connection that has not
+    # passed its last test still produces boards of error cards.
+    if result.blocked:
+        typer.echo(result.blocked)
 
 
 # =============================================================================
@@ -1183,13 +1525,19 @@ def _table(*columns: str) -> Table:
     return table
 
 
-def _print_orgs(result: OrgList) -> None:
+def _print_orgs(result: OrgList, here: tuple[str, str] | None = None) -> None:
     if not result.organizations:
         typer.echo("No organizations yet. Create one: dct cloud org create <name>")
         return
-    table = _table("SLUG", "NAME", "ROLE")
+    columns = ["SLUG", "NAME", "ROLE"]
+    if here is not None:
+        columns.append("PUBLISHED HERE")
+    table = _table(*columns)
     for org in result.organizations:
-        table.add_row(org.slug, org.name, org.role)
+        row = [org.slug, org.name, org.role]
+        if here is not None:
+            row.append(here[1] if org.slug == here[0] else "")
+        table.add_row(*row)
     dct_console().print(table)
 
 
@@ -1284,17 +1632,80 @@ def _print_invitations(result: InvitationList) -> None:
     dct_console().print(table)
 
 
+def _board_is_skewed(board: BoardSummary) -> bool:
+    """Whether this row came from a Cloud that predates the two new fields.
+
+    ``model_fields_set``, not a ``None`` check: ``None`` is a real value on
+    both fields (the board has no complete render), so only "was the key in
+    the body" tells the two apart.
+    """
+    return not {"rendered_at", "commit"} <= board.model_fields_set
+
+
+def _rendered_at_cell(board: BoardSummary) -> str:
+    """A render time in the reader's own timezone, to the minute.
+
+    Minute precision is the granularity the question needs -- "did this render
+    happen before or after my push" -- and seconds only make the column wider.
+    ``-`` when the board has no complete render; nothing stands in for it.
+    """
+    if _board_is_skewed(board):
+        return "unknown"
+    if board.rendered_at is None:
+        return "-"
+    return board.rendered_at.astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+def _commit_cell(board: BoardSummary) -> str:
+    """The render's commit, abbreviated for reading.
+
+    Seven characters is what `git log --oneline` prints and enough to see the
+    sha change between two listings, which is what says a re-render landed;
+    the full sha stays on the wire for anything machine-read. ``-`` when the
+    board has no complete render.
+    """
+    if _board_is_skewed(board):
+        return "unknown"
+    if board.commit is None:
+        return "-"
+    return board.commit[:7]
+
+
 def _print_boards(result: BoardList) -> None:
     if not result.boards:
         typer.echo("This project has no boards.")
         return
-    table = _table("SLUG", "STATUS", "URL")
+    table = _table("SLUG", "STATUS", "RENDERED_AT", "COMMIT", "URL")
+    # A truncated slug or URL is not a slug or a URL. Rich ellipsizes a cell
+    # it cannot word-wrap, and neither of these contains a space; at the 80
+    # columns Rich assumes whenever stdout is not a terminal -- every agent,
+    # every pipe -- five columns squeeze both. Folding wraps them on character
+    # boundaries instead, so nothing is lost. STATUS wraps on its own, between
+    # the words of its diagnostic.
+    table.columns[0].overflow = "fold"
+    table.columns[-1].overflow = "fold"
     for board in result.boards:
         status_text = board.render_status
         if board.error:
             status_text = f"{status_text}: {escape(board.error)}"
-        table.add_row(board.slug, status_text, board.url)
-    dct_console().print(table)
+        table.add_row(
+            board.slug,
+            status_text,
+            _rendered_at_cell(board),
+            _commit_cell(board),
+            board.url,
+        )
+    console = dct_console()
+    console.print(table)
+    if any(_board_is_skewed(board) for board in result.boards):
+        # Blank line first: the URL column folds, so without one the advisory
+        # reads as another continuation line of the last row.
+        console.print()
+        console.print(
+            "This Cloud is older than this dct and does not report the render"
+            " time or the served commit yet — both print as `unknown`, which"
+            " is not the `-` a board that has never rendered gets."
+        )
 
 
 def _print_grants(result: GrantList) -> None:

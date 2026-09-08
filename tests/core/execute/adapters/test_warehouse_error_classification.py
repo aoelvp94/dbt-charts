@@ -18,9 +18,14 @@ for named warehouse sources, and the one the original bug report exercised).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
+
+import pytest
+import yaml
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -233,6 +238,144 @@ class TestDbtAdapterSurfacesClassifiedErrorCode:
         adapter._adapter.execute.assert_not_called()
 
 
+# --- dct query: the cleanup crash must not replace the real cause -------------
+
+_PEM_FAILURE = (
+    "Database Error\n  Unable to load PEM file. See "
+    "https://cryptography.io/en/latest/faq/ for more details. "
+    "InvalidData(InvalidPadding)"
+)
+
+# A private key that fails PEM parsing before any network call is attempted.
+_UNPARSEABLE_KEYFILE_JSON = {
+    "type": "service_account",
+    "project_id": "my-project",
+    "private_key_id": "abc123",
+    "private_key": "-----BEGIN PRIVATE KEY-----\nNOTAREALKEY\n-----END PRIVATE KEY-----\n",
+    "client_email": "svc@my-project.iam.gserviceaccount.com",
+    "client_id": "1",
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+}
+
+
+class _UnopenableConnection:
+    """dbt's Connection after a failed open: no handle, and asking for one raises."""
+
+    def __init__(self, open_error: Exception) -> None:
+        self._open_error = open_error
+
+    @property
+    def handle(self) -> Any:
+        raise self._open_error
+
+
+class _CleanupCrashingAdapter:
+    """dbt-bigquery's release: a bare handle.close(), whatever the open did."""
+
+    def __init__(self, connection: object) -> None:
+        self.connections = MagicMock()
+        self.connections.get_thread_connection.return_value = connection
+        self.execute = MagicMock(
+            return_value=(None, MagicMock(column_names=[], rows=[]))
+        )
+
+    @contextmanager
+    def connection_named(self, name: str) -> Generator[None]:
+        try:
+            yield
+        finally:
+            # BigQueryConnectionManager.close, verbatim in effect.
+            raise AttributeError("'NoneType' object has no attribute 'close'")
+
+
+class TestDbtAdapterConnectFailureSurvivesCleanupCrash:
+    def test_reports_the_credential_error_not_the_cleanup_crash(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        adapter = DbtAdapter(
+            project=local_project(tmp_path),
+            dbt_project_path=tmp_path,
+            target_name="dev",
+        )
+        adapter._adapter = _CleanupCrashingAdapter(
+            _UnopenableConnection(RuntimeError(_PEM_FAILURE))
+        )
+        adapter._dialect = "bigquery"
+        with patch.object(adapter, "_resolve_dbt_sql", return_value="SELECT 1"):
+            result = adapter._execute(SqlQuery(sql="SELECT 1", source="bq"))
+
+        assert result.error is not None
+        assert "'NoneType' object has no attribute 'close'" not in result.error
+        assert "Unable to load PEM file" in result.error
+        assert result.error_code is ERR_WAREHOUSE_CONNECTION
+        adapter._adapter.execute.assert_not_called()
+
+    def test_a_release_crash_after_a_clean_open_still_raises(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """Only an open failure may outrank the release's own error: a crash
+        after the query ran is neither a connect failure nor a rejection."""
+        adapter = DbtAdapter(
+            project=local_project(tmp_path),
+            dbt_project_path=tmp_path,
+            target_name="dev",
+        )
+        adapter._adapter = _CleanupCrashingAdapter(MagicMock(handle=object()))
+        adapter._dialect = "bigquery"
+        with (
+            patch.object(adapter, "_resolve_dbt_sql", return_value="SELECT 1"),
+            pytest.raises(AttributeError, match="has no attribute 'close'"),
+        ):
+            adapter._execute(SqlQuery(sql="SELECT 1", source="bq"))
+        adapter._adapter.execute.assert_called_once()
+
+    def test_names_an_unparseable_bigquery_key(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The whole path, against the real dbt-bigquery adapter.
+
+        Offline: PEM parsing fails while the credential is being built, long
+        before anything would reach Google.
+        """
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        (tmp_path / "profiles.yml").write_text(
+            yaml.safe_dump(
+                {
+                    "bq": {
+                        "target": "dev",
+                        "outputs": {
+                            "dev": {
+                                "type": "bigquery",
+                                "method": "service-account-json",
+                                "project": "my-project",
+                                "dataset": "analytics",
+                                "keyfile_json": _UNPARSEABLE_KEYFILE_JSON,
+                            }
+                        },
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        adapter = DbtAdapter(
+            project=local_project(tmp_path),
+            dbt_project_path=tmp_path,
+            target_name="dev",
+            profile_name="bq",
+        )
+        with patch.object(adapter, "_resolve_dbt_sql", return_value="SELECT 1"):
+            result = adapter._execute(SqlQuery(sql="SELECT 1", source="bq"))
+
+        assert result.error is not None
+        assert "'NoneType' object has no attribute 'close'" not in result.error
+        assert "PEM" in result.error
+        assert result.error_code is ERR_WAREHOUSE_CONNECTION
+
+
 class TestSqlAdapterSurfacesClassifiedErrorCode:
     """End-to-end through SqlAdapter._execute_via_dbt_adapter — the
     production path for `source:`-declaring queries, i.e. the path the
@@ -289,7 +432,7 @@ class TestSqlAdapterSurfacesClassifiedErrorCode:
         cause. This is the real-adapter path (unlike the other tests in this
         class, which stub _get_source_pool): it exercises the actual
         _SourcePool.execute -> _ensure_connected failure, raised as
-        _ConnectionSetupFailed and routed to connection_failure (typed
+        ConnectionSetupFailed and routed to connection_failure (typed
         ERR-WAREHOUSE-CONNECTION) instead of classify_warehouse_error.
         """
         adapter = SqlAdapter(

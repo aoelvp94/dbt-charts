@@ -8,6 +8,7 @@ import pytest
 
 from dbt_charts.agent_api.skill_install import (
     RETIRED_SKILL_NAMES,
+    detect_global_skill_targets,
     detect_legacy_skill_dirs,
     detect_skill_targets,
     install_skills,
@@ -49,12 +50,30 @@ def test_install_removes_retired_skill_dirs(install_root: Path) -> None:
     target = install_root / ".agents/skills"
     retired = RETIRED_SKILL_NAMES[0]
     (target / retired).mkdir(parents=True)
-    (target / retired / "SKILL.md").write_text("stale\n")
+    (target / retired / "SKILL.md").write_text(
+        "---\nname: kpi-row\nmetadata:\n  author: fivetran\n---\nstale\n"
+    )
 
     result = install_skills(target_dir=target, project_root=install_root)
 
     assert retired in result.retired_removed
     assert not (target / retired).exists()
+
+
+def test_install_keeps_a_user_authored_dir_that_shares_a_retired_name(
+    install_root: Path,
+) -> None:
+    target = install_root / ".agents/skills"
+    retired = RETIRED_SKILL_NAMES[0]
+    (target / retired).mkdir(parents=True)
+    (target / retired / "SKILL.md").write_text("---\nname: kpi-row\n---\nmine\n")
+
+    result = install_skills(target_dir=target, project_root=install_root)
+
+    assert result.retired_removed == []
+    assert (
+        target / retired / "SKILL.md"
+    ).read_text() == "---\nname: kpi-row\n---\nmine\n"
 
 
 def test_install_preserves_user_authored_skill(install_root: Path) -> None:
@@ -124,3 +143,38 @@ def test_target_dir_for_aliases() -> None:
     assert target_dir_for("agents", project_root=root) == root / ".agents/skills"
     assert target_dir_for("codex", project_root=root) == root / ".agents/skills"
     assert target_dir_for("claude", project_root=root) == root / ".claude/skills"
+
+
+def test_detect_global_skill_targets_claude_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".claude").mkdir()
+
+    assert detect_global_skill_targets() == [tmp_path / ".claude" / "skills"]
+
+
+def test_detect_global_skill_targets_agents_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".agents").mkdir()
+
+    assert detect_global_skill_targets() == [tmp_path / ".agents" / "skills"]
+
+
+def test_detect_global_skill_targets_codex_signals_agents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".codex").mkdir()
+
+    assert detect_global_skill_targets() == [tmp_path / ".agents" / "skills"]
+
+
+def test_detect_global_skill_targets_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    assert detect_global_skill_targets() == []

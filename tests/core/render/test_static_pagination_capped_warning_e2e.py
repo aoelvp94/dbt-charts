@@ -3,8 +3,11 @@ whose static export exceeds the pre-render page cap.
 
 Proves the full seam — the table renderer records the real cap it hit, then
 renderer.py threads that capture into the WarningContext, and the detector's
-warning lands on RenderResult.warnings — and that a table within the cap,
-and non-SVG formats, stay silent.
+warning lands on RenderResult.warnings — that a table within the cap stays
+silent, and that a data format (json/text/yaml/data) reports the same
+warning as svg: every format draws the board before choosing what to emit,
+so the capture that feeds this detector is never empty just because the
+caller asked for data instead of svg.
 """
 
 from __future__ import annotations
@@ -87,8 +90,10 @@ def test_table_within_cap_silent() -> None:
     assert "WARN-STATIC-PAGINATION-CAPPED" not in codes
 
 
-def test_non_svg_format_silent() -> None:
-    """JSON output never rasterizes a table, so it captures no page cap."""
+def test_non_svg_format_reports_same_warning_as_svg() -> None:
+    """JSON output draws the board the same as svg, so it reports the same
+    page-cap warning — not the empty capture a data walk alone would produce.
+    """
     result = compile(_BOARD)
     assert result.success and result.board is not None, result.errors
     n_rows = (_STATIC_MULTI_PAGE_MAX_PAGES + 5) * 5
@@ -97,4 +102,4 @@ def test_non_svg_format_silent() -> None:
     render_result = render(result.board, executor, format="json")
 
     codes = {w.code for w in render_result.warnings}
-    assert "WARN-STATIC-PAGINATION-CAPPED" not in codes
+    assert "WARN-STATIC-PAGINATION-CAPPED" in codes

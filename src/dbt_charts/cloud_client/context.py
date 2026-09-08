@@ -1,15 +1,26 @@
 """Which org and project a ``dct cloud`` call is about.
 
 Auth is user-global; context is per-invocation. It resolves in the order the
-initiative's spec fixes: explicit ``--org``/``--project`` flags, then the
-repository the command runs in (its git remotes, matched against the org's
-connected projects), then the ``dct cloud use`` default, then a loud error
-listing the candidates.
+initiative's spec fixes: explicit ``--org``/``--project`` flags, then this
+repository's own ``published_to:`` record (the nearest ``dbt_charts.yml``
+above the invocation, written by ``project connect``), then the repository
+the command runs in (its git remotes, matched against the org's connected
+projects), then the ``dct cloud use`` default, then a loud error listing the
+candidates.
 
 The repo step is exact-match-or-error, never a preference: one repository can
 back several Cloud projects (nested dbt roots), and picking one of them
 silently is how a render lands on the wrong board set. Two matches list both
-and exit non-zero.
+and exit non-zero. A ``published_to`` naming a different host than the one in
+use is the same kind of refusal, not a silent skip: it names both hosts and
+lets the caller pick a remedy (``--host``, or fixing the record).
+
+The record never names the target of a verb that refuses the stored default
+(``org``/``project``/``connection delete``, ``member remove``, ``invite
+revoke``, ``grant revoke``, and ``project connect``). A fork of a connected repository carries ``published_to``
+verbatim and, unlike a git-remote match, a file record does not correct
+itself in a fork -- so ``dct cloud project delete`` run in one would delete
+the upstream project. Those verbs take an explicit flag or a repo match.
 """
 
 from __future__ import annotations
@@ -23,6 +34,7 @@ from urllib.parse import urlsplit
 from dbt_charts.cloud_client.client import CloudClient
 from dbt_charts.cloud_client.config import CloudConfig
 from dbt_charts.cloud_client.errors import ContextUnresolved
+from dbt_charts.cloud_client.published_to import resolve_published_to
 
 # How ProjectSummary.repo_label spells a GitHub-backed project.
 GITHUB_LABEL_PREFIX = "GitHub: "
@@ -106,6 +118,7 @@ def resolve_org(
     org_flag: str | None,
     config: CloudConfig,
     remotes: list[str],
+    start: Path,
     *,
     refuse_default: str | None = None,
 ) -> str:
@@ -113,10 +126,15 @@ def resolve_org(
 
     With ``refuse_default`` — the verb's reason for never answering from
     ``config.org`` — only an explicit ``--org`` or an unambiguous repo match
-    may answer; the refusal leads with that reason.
+    may answer; ``published_to`` is skipped too (a fork carries the record
+    verbatim), and the refusal leads with that reason.
     """
     if org_flag:
         return org_flag
+    if refuse_default is None:
+        published = _published_context(client, start)
+        if published is not None:
+            return published[0]
     matches = _repo_matches(client, None, remotes)
     orgs = {org for org, _project in matches}
     if len(orgs) == 1:
@@ -139,19 +157,26 @@ def resolve_project(
     project_flag: str | None,
     config: CloudConfig,
     remotes: list[str],
+    start: Path,
     *,
     refuse_default: str | None = None,
 ) -> CloudContext:
     """The organization and project this call is about.
 
     ``refuse_default`` (the verb's reason, see ``resolve_org``) never
-    returns ``config.org`` or ``config.project`` — only explicit flags or an
-    unambiguous repo match may answer. The ranking's "repo match outranks
-    the stored default" step is otherwise unchanged; refusing simply removes
-    the stored-default step that would follow it.
+    returns ``config.org`` or ``config.project`` and never reads
+    ``published_to`` — only explicit flags or an unambiguous repo match may
+    answer. The ranking's "repo match outranks the stored default" step is
+    otherwise unchanged; refusing simply removes the steps a fork or a stale
+    default could answer wrongly.
     """
     if org_flag and project_flag:
         return CloudContext(org_flag, project_flag)
+
+    if refuse_default is None and org_flag is None and project_flag is None:
+        published = _published_context(client, start)
+        if published is not None:
+            return CloudContext(*published)
 
     matches = _repo_matches(client, org_flag, remotes)
     if project_flag:
@@ -174,6 +199,29 @@ def resolve_project(
     if org and project:
         return CloudContext(org, project)
     raise ContextUnresolved(_unresolved_context_message(client, org, project_flag))
+
+
+def _published_context(client: CloudClient, start: Path) -> tuple[str, str] | None:
+    """(org, project) named by this checkout's own ``published_to``, if any.
+
+    Raises ``ContextUnresolved`` when the nearest ``dbt_charts.yml`` cannot be
+    read, declares a ``published_to`` that doesn't parse, or names a different
+    host than this call is using — a corrupted or stale record is worth
+    failing over, not silently skipping past.
+    """
+    try:
+        published = resolve_published_to(start)
+    except ValueError as exc:
+        raise ContextUnresolved(str(exc)) from None
+    if published is None:
+        return None
+    if published.host != client.host:
+        raise ContextUnresolved(
+            f"{published.yml_path} declares published_to on {published.host},"
+            f" but this call is using {client.host}. Pass --host {published.host}"
+            " to match it, or fix published_to if this project moved."
+        )
+    return published.org, published.project
 
 
 def _repo_matches(

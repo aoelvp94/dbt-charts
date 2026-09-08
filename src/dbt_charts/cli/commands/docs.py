@@ -146,7 +146,10 @@ def docs_command(
             typer.echo("No results found.")
             return
         for hit in result.search:
-            typer.echo(f"{hit.topic}  ({hit.score:.2f})  {hit.snippet}")
+            typer.echo(f"[{hit.topic}]")
+            _emit_markdown(hit.content + "\n")
+            typer.echo("")
+        typer.echo("Run `dct docs <topic>` to read a hit's whole topic.")
         return
 
     if result.topic is not None:

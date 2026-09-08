@@ -11,11 +11,21 @@ import pytest
 from dbt_charts.cloud_client import config as config_module
 from dbt_charts.cloud_client.config import (
     CloudConfig,
+    PendingConnect,
+    PendingLogin,
+    clear_pending_connect,
+    clear_pending_login,
     config_path,
     credential_source,
     load_config,
+    pending_connect_path,
+    pending_login_path,
     read_config,
+    read_pending_connect,
+    read_pending_login,
     save_config,
+    save_pending_connect,
+    save_pending_login,
 )
 
 
@@ -170,3 +180,124 @@ def test_a_yaml_syntax_error_reports_its_position_not_the_line(
     # A position, so the user can find it — the parser's own mark, not its
     # rendering of the line it read.
     assert "line" in message and "column" in message
+
+
+# --- pending login (`dct cloud login --start`/`--wait`) --------------------
+
+
+def _pending() -> PendingLogin:
+    return PendingLogin(
+        device_code="devc-secret-123",
+        token_endpoint="https://cloud.example/o/token/",
+        interval=5.0,
+        expires_in=600.0,
+        host="https://cloud.example",
+    )
+
+
+def test_pending_login_path_sits_beside_the_config_file(config_home: Path) -> None:
+    assert pending_login_path() == config_home / "pending-login.yml"
+
+
+def test_absent_pending_login_reads_as_none(config_home: Path) -> None:
+    assert read_pending_login() is None
+
+
+def test_pending_login_round_trips_through_the_file(config_home: Path) -> None:
+    save_pending_login(_pending())
+    assert read_pending_login() == _pending()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_saved_pending_login_is_readable_only_by_its_owner(config_home: Path) -> None:
+    path = save_pending_login(_pending())
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_clear_pending_login_removes_the_file(config_home: Path) -> None:
+    save_pending_login(_pending())
+    clear_pending_login()
+    assert read_pending_login() is None
+    assert not pending_login_path().exists()
+
+
+def test_clear_pending_login_is_a_noop_with_no_pending_login(
+    config_home: Path,
+) -> None:
+    clear_pending_login()  # must not raise
+
+
+def test_a_malformed_pending_login_file_is_a_loud_error(config_home: Path) -> None:
+    config_home.mkdir(parents=True)
+    (config_home / "pending-login.yml").write_text(
+        "- not: a mapping\n", encoding="utf-8"
+    )
+    with pytest.raises(config_module.CloudConfigError) as caught:
+        read_pending_login()
+    assert str(pending_login_path()) in str(caught.value)
+
+
+# --- pending connect (`dct cloud project connect --start`/`--wait`) --------
+
+
+def _pending_connect() -> PendingConnect:
+    return PendingConnect(org="acme-data", host="https://cloud.example")
+
+
+def test_pending_connect_path_sits_beside_the_config_file(config_home: Path) -> None:
+    assert pending_connect_path() == config_home / "pending-connect.yml"
+
+
+def test_absent_pending_connect_reads_as_none(config_home: Path) -> None:
+    assert read_pending_connect() is None
+
+
+def test_pending_connect_round_trips_through_the_file(config_home: Path) -> None:
+    save_pending_connect(_pending_connect())
+    assert read_pending_connect() == _pending_connect()
+
+
+def test_pending_connect_round_trips_its_optional_project_fields(
+    config_home: Path,
+) -> None:
+    pending = PendingConnect(
+        org="acme-data",
+        host="https://cloud.example",
+        name="Analytics",
+        slug="an",
+        trunk="trunk",
+        root="warehouse",
+    )
+    save_pending_connect(pending)
+    assert read_pending_connect() == pending
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_saved_pending_connect_is_readable_only_by_its_owner(
+    config_home: Path,
+) -> None:
+    path = save_pending_connect(_pending_connect())
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_clear_pending_connect_removes_the_file(config_home: Path) -> None:
+    save_pending_connect(_pending_connect())
+    clear_pending_connect()
+    assert read_pending_connect() is None
+    assert not pending_connect_path().exists()
+
+
+def test_clear_pending_connect_is_a_noop_with_no_pending_connect(
+    config_home: Path,
+) -> None:
+    clear_pending_connect()  # must not raise
+
+
+def test_a_malformed_pending_connect_file_is_a_loud_error(config_home: Path) -> None:
+    config_home.mkdir(parents=True)
+    (config_home / "pending-connect.yml").write_text(
+        "- not: a mapping\n", encoding="utf-8"
+    )
+    with pytest.raises(config_module.CloudConfigError) as caught:
+        read_pending_connect()
+    assert str(pending_connect_path()) in str(caught.value)

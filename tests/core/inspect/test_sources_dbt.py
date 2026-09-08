@@ -20,6 +20,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -104,6 +105,10 @@ class FakeAdapter:
         self, source: Any, _macro_resolver: Any = None
     ) -> Any:
         raise NotImplementedError
+
+    connections = SimpleNamespace(
+        get_thread_connection=lambda: SimpleNamespace(handle=object())
+    )
 
     @contextmanager
     def connection_named(self, name: str) -> Any:
@@ -785,6 +790,10 @@ class _PartitionCaptureAdapter:
 
     def type(self) -> str:  # noqa: A003 — mirrors dbt adapter method name
         return self.adapter_type
+
+    connections = SimpleNamespace(
+        get_thread_connection=lambda: SimpleNamespace(handle=object())
+    )
 
     @contextmanager
     def connection_named(self, name: str) -> Any:

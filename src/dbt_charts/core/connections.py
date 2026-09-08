@@ -125,15 +125,9 @@ def test_connection(source_config: SourceConfig) -> tuple[bool, str]:
     lets GC clean up when the local reference drops at function exit. The temp
     target dir is removed by the weakref.finalize registered in build_adapter.
 
-    The connection is opened explicitly, before any SQL, for the same reason
-    ``dct query`` does it (execute/adapters/dbt_adapter.py): a connect failure is
-    not a warehouse rejection, and it gets the ERR-WAREHOUSE-CONNECTION sentence
-    rather than a bare driver string. Holding that failure in ``open_error``
-    rather than returning on the spot is what keeps it: ``connection_named``
-    releases on *every* exit, and dbt-bigquery's release dereferences the handle
-    a failed open left as None, so the AttributeError it raises would otherwise
-    replace a verdict already reached — including the value of a plain ``return``
-    from inside the block.
+    A connect failure gets the ERR-WAREHOUSE-CONNECTION sentence rather than a
+    bare driver string: ``open_connection`` raises it typed, before any SQL, and
+    ahead of whatever the release raises on the way out.
 
     Args:
         source_config: Typed SourceConfig instance (DuckDBSourceConfig,
@@ -145,26 +139,23 @@ def test_connection(source_config: SourceConfig) -> tuple[bool, str]:
         network unreachable, unsupported type, etc.
     """
     from dbt_charts.core.execute.adapters.base import connection_failure_message
-    from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+    from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        ConnectionSetupFailed,
+        build_adapter,
+        open_connection,
+    )
 
     creds = source_config.model_dump(
         by_alias=True, exclude_unset=True, exclude_none=True
     )
-    open_error: Exception | None = None
     try:
         adapter = build_adapter(creds)
-        with adapter.connection_named("test"):
-            try:
-                _ = adapter.connections.get_thread_connection().handle
-            except Exception as e:  # noqa: BLE001 — any driver's connect failure
-                open_error = e
-            else:
-                adapter.execute("SELECT 1", auto_begin=False, fetch=True)
+        with open_connection(adapter, "test"):
+            adapter.execute("SELECT 1", auto_begin=False, fetch=True)
+    except ConnectionSetupFailed as e:
+        return False, connection_failure_message(source_config.type, e.cause)
     except Exception as e:  # noqa: BLE001 — driver-level errors become messages
-        if open_error is None:
-            return False, str(e) or type(e).__name__
-    if open_error is not None:
-        return False, connection_failure_message(source_config.type, open_error)
+        return False, str(e) or type(e).__name__
     return True, "Connection successful"
 
 
@@ -194,7 +185,10 @@ def bulk_schema_for_config(source_config: SourceConfig) -> SchemaTree:
         apply_row_limit_truncation,
         resolve_effective_row_limit,
     )
-    from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+    from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        build_adapter,
+        open_connection,
+    )
     from dbt_charts.core.inspect.bulk_schema import (
         bulk_schema_scope,
         parse_bulk_schema_rows,
@@ -221,7 +215,7 @@ def bulk_schema_for_config(source_config: SourceConfig) -> SchemaTree:
         # keeps the adapter (and its warehouse session) alive until a gen-GC
         # sweep.
         adapter = build_adapter(creds, register_macros=False)
-        with adapter.connection_named("bulk_schema_for_config"):
+        with open_connection(adapter, "bulk_schema_for_config"):
             _response, table = adapter.execute(
                 sql, auto_begin=False, fetch=True, limit=driver_limit
             )
@@ -265,7 +259,10 @@ def probe_relation_readability(
         relation, unreachable warehouse. Never raises: a caller probes many
         relations in a loop and one failure must not abort the rest.
     """
-    from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
+    from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+        build_adapter,
+        open_connection,
+    )
 
     creds = source_config.model_dump(
         by_alias=True, exclude_unset=True, exclude_none=True
@@ -277,7 +274,7 @@ def probe_relation_readability(
             for part in (relation.database, relation.schema, relation.name)
             if part
         )
-        with adapter.connection_named("probe_relation_readability"):
+        with open_connection(adapter, "probe_relation_readability"):
             adapter.execute(
                 f"SELECT * FROM {qualified} LIMIT 0", auto_begin=False, fetch=True
             )

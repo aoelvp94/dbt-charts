@@ -13,6 +13,8 @@ import multiprocessing
 import shutil
 import tempfile
 import weakref
+from collections.abc import Generator
+from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -123,9 +125,9 @@ def build_adapter(
             SQL execution needs no macro context.
 
     Returns:
-        A dbt adapter instance. Callers use adapter.connection_named("name")
-        as a context manager before calling adapter.execute(...). The temp
-        target directory is deleted automatically when the adapter is GC'd.
+        A dbt adapter instance. Callers enter ``open_connection(adapter, name)``
+        before calling adapter.execute(...). The temp target directory is
+        deleted automatically when the adapter is GC'd.
 
     Raises:
         ValueError: 'type' key is missing or names an unsupported adapter.
@@ -303,6 +305,48 @@ def build_adapter(
     if register_macros:
         _bootstrap_macros(adapter, adapter_type_lower)
     return adapter
+
+
+class ConnectionSetupFailed(Exception):
+    """Building or connecting a dbt adapter failed (bad credentials, unreachable
+    host, misconfigured source) before any SQL reached the warehouse.
+
+    Raised instead of the driver's own exception so a caller can route it to
+    ``connection_failure`` rather than ``classify_warehouse_error``.
+    """
+
+    def __init__(self, cause: Exception) -> None:
+        self.cause = cause
+        super().__init__(str(cause))
+
+
+@contextmanager
+def open_connection(
+    adapter: Any,  # type-state: explicit_any — a dbt adapter; dbt ships no Protocol for it
+    name: str,
+) -> Generator[None]:
+    """``adapter.connection_named(name)`` with the warehouse handle forced open first.
+
+    A connect failure raises as ``ConnectionSetupFailed`` before any SQL is
+    sent. ``connection_named`` releases on every exit, and dbt-bigquery's
+    release dereferences the handle a failed open left as None, so without this
+    the AttributeError it raises would replace the credential error — or a
+    ``return`` from inside the block — and the caller would see the cleanup
+    crash. Anything else the block or the release raises propagates as itself.
+    """
+    open_error: Exception | None = None
+    try:
+        with adapter.connection_named(name):
+            try:
+                _ = adapter.connections.get_thread_connection().handle
+            except Exception as e:  # noqa: BLE001 — any driver's connect failure
+                open_error = e
+                raise
+            yield
+    except Exception:  # noqa: BLE001 — must see everything leaving the block to consult open_error
+        if open_error is None:
+            raise
+        raise ConnectionSetupFailed(open_error) from open_error
 
 
 def _bootstrap_macros(adapter: Any, adapter_type: str) -> None:

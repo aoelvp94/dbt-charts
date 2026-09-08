@@ -24,7 +24,8 @@ def _plain(text: str) -> str:
 
 @pytest.fixture(autouse=True)
 def patch_syntax_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Monkeypatch ``_SYNTAX_FILE`` to a controlled corpus for every CLI test."""
+    """Point ``_SYNTAX_FILE`` at a controlled corpus and the generated
+    references at missing paths, so no CLI test scores against the wheel."""
     fake = tmp_path / "DBT_CHARTS_SYNTAX.md"
     fake.write_text(
         "# dbt charts YAML Syntax\n\n"
@@ -32,11 +33,16 @@ def patch_syntax_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "## Board\nThe board is the root dashboard object.\n\n"
         "## Queries\nQueries are the data layer.\n\n"
         "## Charts\nBar chart documentation. Use x and y fields.\n\n"
+        "### Shared chart fields\n"
+        "Every chart accepts `legend` under style.\n"
+        "Set `legend: false` to hide the legend.\n\n"
         "## Layout\nGrid layout for arranging charts.\n\n"
     )
     import dbt_charts.agent_api.docs._loader as _loader
 
     monkeypatch.setattr(_loader, "_SYNTAX_FILE", fake)
+    for name in ("_REFERENCE_FILE", "_ERROR_REFERENCE_FILE", "_WARNING_REFERENCE_FILE"):
+        monkeypatch.setattr(_loader, name, tmp_path / f"missing-{name}.md")
 
 
 class TestDocsTopicIndex:
@@ -102,6 +108,19 @@ class TestDocsSearch:
         assert result.exit_code == 0, result.output
         assert "layout" in result.output
 
+    def test_search_hit_prints_topic_label_then_the_unit_body(self) -> None:
+        result = runner.invoke(app, ["docs", "--search", "hide legend", "--limit", "1"])
+        assert result.exit_code == 0, result.output
+        label, _, rest = result.output.partition("\n")
+        assert label == "[charts]"
+        body, _, footer = rest.rstrip().rpartition("\n\n")
+        assert body.splitlines() == [
+            "### Shared chart fields",
+            "Every chart accepts `legend` under style.",
+            "Set `legend: false` to hide the legend.",
+        ]
+        assert footer == "Run `dct docs <topic>` to read a hit's whole topic."
+
     def test_search_short_flag(self) -> None:
         result = runner.invoke(app, ["docs", "-s", "grid"])
         assert result.exit_code == 0, result.output
@@ -116,7 +135,7 @@ class TestDocsSearch:
         topics = [hit["topic"] for hit in data["search"]]
         assert "layout" in topics
         for hit in data["search"]:
-            assert set(hit.keys()) >= {"topic", "title", "score", "snippet"}
+            assert set(hit.keys()) >= {"topic", "title", "section", "score", "content"}
 
 
 class TestDocsUnknownTopic:
@@ -141,7 +160,7 @@ class TestDocsUnknownTopic:
 
 
 class TestDocsLimitBounds:
-    @pytest.mark.parametrize("limit", ["1", "5", "50"])
+    @pytest.mark.parametrize("limit", ["1", "5", "20"])
     def test_in_range_limit_accepted(self, limit: str) -> None:
         result = runner.invoke(
             app, ["docs", "--search", "grid", "--limit", limit, "--json"]
@@ -154,7 +173,7 @@ class TestDocsLimitBounds:
         assert "--limit" in _plain(result.stderr)
 
     def test_oversize_limit_exit_two(self) -> None:
-        result = runner.invoke(app, ["docs", "--search", "grid", "--limit", "51"])
+        result = runner.invoke(app, ["docs", "--search", "grid", "--limit", "21"])
         assert result.exit_code == 2
         assert "--limit" in _plain(result.stderr)
 
@@ -169,7 +188,8 @@ class TestDftDocsHelpLayout:
             "dct docs                    # Topic index (one row per H2 section)",
             "dct docs cheatsheet         # One-page essentials",
             "dct docs all                # Whole reference, unsliced",
-            'dct docs --search "grid"    # Substring search across all topics',
+            'dct docs --search "grid"    # Ranked search across all topics',
+            'dct docs charts -s "legend" # Ranked search scoped to one topic',
         ):
             assert form in lines, (
                 f"Docs mode {form!r} not on its own line. Full output:\n{text}"

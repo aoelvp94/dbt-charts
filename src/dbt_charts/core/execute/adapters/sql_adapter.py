@@ -52,6 +52,7 @@ from dbt_charts.core.execute.adapters.base import (
     resolve_effective_row_limit,
     resolve_setup_sql,
 )
+from dbt_charts.core.execute.adapters.dbt_adapter_factory import ConnectionSetupFailed
 from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
 from dbt_charts.core.execute.sql_literals import (
     INLINE_PLACEHOLDERS,
@@ -124,23 +125,6 @@ class _QueryDurationExceeded(Exception):
     def __init__(self, seconds: int) -> None:
         self.seconds = seconds
         super().__init__(f"query exceeded max_query_duration_seconds={seconds}s")
-
-
-class _ConnectionSetupFailed(Exception):
-    """Building or connecting the per-worker dbt adapter failed (bad
-    credentials, unreachable host, misconfigured source) before any SQL
-    reached the warehouse.
-
-    Raised instead of letting the underlying exception propagate so the
-    caller can route it to handle_adapter_error instead of
-    classify_warehouse_error — a credentials failure is not a "warehouse
-    rejected the query" outcome, and labeling it that way asserts a cause
-    that is false.
-    """
-
-    def __init__(self, cause: Exception) -> None:
-        self.cause = cause
-        super().__init__(str(cause))
 
 
 class _SourcePool:
@@ -330,7 +314,7 @@ class _SourcePool:
     def _ensure_connected(self) -> Any:
         """Return this thread's adapter, building + connecting it on first use.
 
-        Failures here raise _ConnectionSetupFailed (bad credentials, unreachable
+        Failures here raise ConnectionSetupFailed (bad credentials, unreachable
         host): they happen before any SQL reaches the warehouse, so the caller
         routes them to connection_failure (typed ERR-WAREHOUSE-CONNECTION)
         rather than classify_warehouse_error — distinct from _run() raising,
@@ -360,7 +344,7 @@ class _SourcePool:
 
             # Force the LazyHandle open here, for every dialect: a connect
             # failure (bad credentials, unreachable host) must raise inside
-            # this try so the caller wraps it as _ConnectionSetupFailed
+            # this try so the caller wraps it as ConnectionSetupFailed
             # instead of surfacing later from _run() as a false "warehouse
             # rejected the query" outcome. Postgres/Snowflake already force it
             # via the statement_timeout_sql send below; BigQuery needs the
@@ -392,7 +376,7 @@ class _SourcePool:
             if self._timeout_sql is not None:
                 adapter.execute(self._timeout_sql, auto_begin=False, fetch=False)
         except Exception as e:  # noqa: BLE001 — reclassified by caller, not swallowed
-            raise _ConnectionSetupFailed(e) from e
+            raise ConnectionSetupFailed(e) from e
 
         self._tls.adapter = adapter
         self._tls.ctx = ctx
@@ -738,7 +722,7 @@ class SqlAdapter(BaseAdapter):
                 ),
                 error_code=ERR_QUERY_DURATION_EXCEEDED,
             )
-        except _ConnectionSetupFailed as e:
+        except ConnectionSetupFailed as e:
             # Building/connecting the worker's dbt adapter failed (bad
             # credentials, unreachable host) — the warehouse never saw the
             # query, so this is not a warehouse rejection either.

@@ -112,10 +112,9 @@ from dbt_charts.core.render.warnings import (
 )
 from dbt_charts.core.utils import Rows
 
-# Formats that produce SVG output (require vl-convert chart rendering).
-_SVG_FORMATS = frozenset({"svg", "html", "png", "pdf"})
-
-# Formats that walk the layout tree for data instead of rasterizing an SVG.
+# Formats whose payload is a layout-tree walk instead of the drawn svg — every
+# format still draws the board once (below) so the measurement-warning family
+# and ERR-CHART-PAINTED-NO-MARKS are detected the same way regardless of format.
 _DATA_FORMATS = frozenset({"json", "text", "yaml", "data"})
 
 
@@ -582,8 +581,9 @@ def render(
     # sizing-pass failure that is not chart-scoped would land here.
     # Calculate layout with data awareness — table heights use actual row counts,
     # and Vega-Lite charts are rendered to get true heights (render-first sizing).
-    # Render-first sizing is skipped for non-SVG formats (yaml/json/text) since
-    # those formats don't render charts and don't benefit from actual heights.
+    # render_first=True unconditionally: a data-bearing format's own
+    # layout-tree walk never computes real heights, so it needs the same ones
+    # every other format gets from this pass.
     # Single-resolution pass: each chart is resolved once and the sizing pass
     # reuses that resolution rather than resolving a second time.
     from dbt_charts.core.render.board_resolve import build_resolved_board
@@ -625,7 +625,7 @@ def render(
                 board,
                 executor,
                 merged_variables,
-                render_first=format in _SVG_FORMATS,
+                render_first=True,
                 authored_slot_heights=authored_chart_heights,
             )
         except DbtChartsError as e:
@@ -633,6 +633,7 @@ def render(
             return RenderResult(
                 output=None,
                 chart_errors=error_collector,
+                payload_errors=error_collector,
                 board_error=e.to_diagnostic(),
                 warnings=[],
                 suppressed_warnings=[],
@@ -645,6 +646,7 @@ def render(
             return RenderResult(
                 output=None,
                 chart_errors=error_collector,
+                payload_errors=error_collector,
                 board_error=wrapped.to_diagnostic(),
                 warnings=[],
                 suppressed_warnings=[],
@@ -653,10 +655,10 @@ def render(
     # resolved_board is now a plain ResolvedBoard for the rest of this function.
 
     # Run warning detectors now that queries are cached, partitioning into
-    # active vs suppressed via the union of three ignore layers. TABLE_COLUMNS_OVERFLOW
-    # reads real render-time overflow, which only exists once the SVG is rendered —
-    # so finalize is a closure recomputed with the populated capture on the SVG path,
-    # and with an empty capture for formats that never rasterize a table.
+    # active vs suppressed via the union of three ignore layers. finalize is
+    # a closure, recomputed with the populated capture once the draw below
+    # runs; the error paths above pass an empty capture instead, since no
+    # draw happened there.
     _per_chart_codes: dict[str, set[str]] = {
         chart_id: set(chart.warnings_ignore)
         for chart_id, chart in board.charts.items()
@@ -694,11 +696,6 @@ def render(
             per_chart_codes=_per_chart_codes,
         )
 
-    # Warnings are finalized once per path: json/text/yaml (below) and error
-    # paths use an empty capture since they never rasterize a table; the SVG
-    # render finalizes afterward with the real overflow capture. No path runs the
-    # detectors — or rebuilds vega specs — more than once.
-
     # Resolve SVG canvas background: API override wins, otherwise use the
     # cascaded board background (theme default or authored override, already merged).
     override = options.get("background")
@@ -708,38 +705,43 @@ def render(
         resolved_bg = resolved_board.style.background
         background = None if resolved_bg == "transparent" else resolved_bg
 
-    # Second try: data-format branch and SVG render. resolved_board is guaranteed
-    # bound here, so _finalize_warnings can run on error paths too.
+    # Second try: draw the board once. resolved_board is guaranteed bound
+    # here, so _finalize_warnings can run on error paths too. A data format's
+    # own payload comes from a separate, lightweight layout-tree walk below
+    # (`_data_format_renderer` — resolves each chart's metadata and embeds its
+    # raw query rows, no spec, no drawing), and this pass's svg_content is
+    # discarded for those formats — only the capture sinks and error_collector
+    # populated below are kept.
+    #
+    # A board-level failure here does NOT return immediately: a data format's
+    # walk below is independent of the draw (it never touches svg_content), so
+    # it may still produce a real payload even though the draw that would
+    # have populated warnings/error_collector failed. board_error is recorded
+    # and the walk still runs; only the SVG-family formats (which have no
+    # other source of output) return early on it, further down.
+    svg_content: str | None = None
+    board_error: Diagnostic | None = None
+    render_warnings: list[Diagnostic] = []
+    suppressed_warnings: list[Diagnostic] = []
+    # Declared here rather than inside the try below so they stay defined for
+    # the `if board_error is None:` read further down on every path — mypy's
+    # possibly-undefined check can't otherwise prove they survive a `with`
+    # target that a chained context manager's own __enter__ could in theory
+    # raise before assigning.
+    _table_overflows: dict[str, TableOverflow] = {}
+    _table_crampings: dict[str, TableCramping] = {}
+    _text_truncations: dict[str, list[TextTruncation]] = {}
+    _static_pagination_caps: dict[str, StaticPaginationCap] = {}
+    _table_page_squeezes: dict[str, TablePageSqueeze] = {}
+    _endpoint_label_gap_overflows: dict[str, EndpointLabelGapOverflow | None] = {}
+    _x_domain_paint_orders: dict[str, XDomainPaintOrder] = {}
+    _plot_width_share_warnings: dict[str, PlotWidthShareWarning] = {}
     try:
-        # Data-bearing formats: skip SVG rendering entirely — walk layout tree directly.
-        if format in _DATA_FORMATS:
-            output = _data_format_renderer(format)(
-                board,
-                executor,
-                merged_variables,
-                error_collector=error_collector,
-                max_rows_per_query=max_rows_per_query,
-            )
-            _active, _suppressed = _finalize_warnings({}, {}, {}, {}, {}, {}, {}, {})
-            return RenderResult(
-                output=output,
-                chart_errors=error_collector,
-                warnings=_active,
-                suppressed_warnings=_suppressed,
-            )
-
         # Render the canonical SVG once; output formats only wrap or convert it.
         # The capture sinks record each table's real post-cascade column overflow,
         # all text truncations, the static-export page cap, and any endpoint-label
         # rail that couldn't fit its intended gap, so warnings can be finalized
         # against what actually rendered.
-        _table_overflows: dict[str, TableOverflow] = {}
-        _table_crampings: dict[str, TableCramping] = {}
-        _text_truncations: dict[str, list[TextTruncation]] = {}
-        _static_pagination_caps: dict[str, StaticPaginationCap] = {}
-        _endpoint_label_gap_overflows: dict[str, EndpointLabelGapOverflow | None] = {}
-        _x_domain_paint_orders: dict[str, XDomainPaintOrder] = {}
-        _plot_width_share_warnings: dict[str, PlotWidthShareWarning] = {}
         grid_enabled = options.get("grid", False)
         margins_enabled = options.get("margins", False)
         # Interactivity is opt-in and only meaningful on a host that can re-run
@@ -793,69 +795,146 @@ def render(
     except DbtChartsError as e:
         # Board-level fatal: a render-domain code escaped chart isolation
         # (e.g. ERR_NO_LAYOUT, MissingRequiredVariablesError). Surface as
-        # board_error so callers see the structured code unwrapped.
-        _reset_contexts()
+        # board_error so callers see the structured code unwrapped. Do not
+        # return here — a data format's walk below is independent of this
+        # failed draw and may still produce a payload.
+        board_error = e.to_diagnostic()
         # Render failed before a table could rasterize: finalize with an empty
         # capture so detector warnings still surface alongside the board error.
-        _active, _suppressed = _finalize_warnings({}, {}, {}, {}, {}, {}, {}, {})
-        return RenderResult(
-            output=None,
-            chart_errors=error_collector,
-            board_error=e.to_diagnostic(),
-            warnings=_active,
-            suppressed_warnings=_suppressed,
+        render_warnings, suppressed_warnings = _finalize_warnings(
+            {}, {}, {}, {}, {}, {}, {}, {}
         )
     except Exception as e:  # noqa: BLE001
         from dbt_charts.core.diagnostics import ERR_INTERNAL
 
-        _reset_contexts()
-        wrapped = RenderError.from_code(ERR_INTERNAL, message=str(e))
-        _active, _suppressed = _finalize_warnings({}, {}, {}, {}, {}, {}, {}, {})
-        return RenderResult(
-            output=None,
-            chart_errors=error_collector,
-            board_error=wrapped.to_diagnostic(),
-            warnings=_active,
-            suppressed_warnings=_suppressed,
+        board_error = RenderError.from_code(
+            ERR_INTERNAL, message=str(e)
+        ).to_diagnostic()
+        render_warnings, suppressed_warnings = _finalize_warnings(
+            {}, {}, {}, {}, {}, {}, {}, {}
         )
     finally:
         _reset_contexts()
 
-    # The SVG render is done — finalize warnings against the real table overflow,
-    # text truncations, and static-pagination cap captured across both passes.
-    # The render pass (_text_truncations) wins per chart-id when both passes
-    # record the same chart (e.g. spark_bar). All SVG-family outputs below derive
-    # from this same svg_content, so they share this capture.
-    # Endpoint-label overflow entries are `None`-able (a chart's most recent
-    # recascade fit): the merge lets a main-pass verdict — fit or not — fully
-    # replace a sizing-pass one for a chart the main pass actually touched,
-    # then None entries (nothing overflowed, or a stale sizing-pass trial
-    # that a later fit cleared) are dropped before the detector ever sees
-    # this dict, since WarningContext expects only genuine overflows.
-    _merged_endpoint_label_gap_overflows = {
-        **_sizing_endpoint_label_gap_overflows,
-        **_endpoint_label_gap_overflows,
-    }
-    render_warnings, suppressed_warnings = _finalize_warnings(
-        _table_overflows,
-        _table_crampings,
-        {**_sizing_truncations, **_text_truncations},
-        _static_pagination_caps,
-        _table_page_squeezes,
-        {
-            chart_id: overflow
-            for chart_id, overflow in _merged_endpoint_label_gap_overflows.items()
-            if overflow is not None
-        },
-        {**_sizing_x_domain_paint_orders, **_x_domain_paint_orders},
-        {**_sizing_plot_width_share_warnings, **_plot_width_share_warnings},
-    )
+    if board_error is None:
+        # The SVG render is done — finalize warnings against the real table overflow,
+        # text truncations, and static-pagination cap captured across both passes.
+        # The render pass (_text_truncations) wins per chart-id when both passes
+        # record the same chart (e.g. spark_bar). All SVG-family outputs below derive
+        # from this same svg_content, so they share this capture.
+        # Endpoint-label overflow entries are `None`-able (a chart's most recent
+        # recascade fit): the merge lets a main-pass verdict — fit or not — fully
+        # replace a sizing-pass one for a chart the main pass actually touched,
+        # then None entries (nothing overflowed, or a stale sizing-pass trial
+        # that a later fit cleared) are dropped before the detector ever sees
+        # this dict, since WarningContext expects only genuine overflows.
+        _merged_endpoint_label_gap_overflows = {
+            **_sizing_endpoint_label_gap_overflows,
+            **_endpoint_label_gap_overflows,
+        }
+        render_warnings, suppressed_warnings = _finalize_warnings(
+            _table_overflows,
+            _table_crampings,
+            {**_sizing_truncations, **_text_truncations},
+            _static_pagination_caps,
+            _table_page_squeezes,
+            {
+                chart_id: overflow
+                for chart_id, overflow in _merged_endpoint_label_gap_overflows.items()
+                if overflow is not None
+            },
+            {**_sizing_x_domain_paint_orders, **_x_domain_paint_orders},
+            {**_sizing_plot_width_share_warnings, **_plot_width_share_warnings},
+        )
 
-    # Convert to requested format
+    if format in _DATA_FORMATS:
+        # svg_content above ran purely to populate the capture sinks and
+        # error_collector; the actual payload is this separate, lightweight
+        # walk of the normalized layout tree, which fails per chart into its
+        # own list (also embedded inline as `_error` in the payload, by
+        # board_to_dict). The two streams are merged by chart rather than
+        # concatenated: they enter the executor by different doors — the draw
+        # through `execute_query` (keyed by query name), the walk through
+        # `execute_chart` (keyed by chart id, and resolving runtime inputs on
+        # the way) — so the same broken chart normally fails in both and
+        # concatenating would report it twice. A chart that fails only in the
+        # walk still has to reach `chart_errors`: it is what `board.py` reads
+        # to call a render "partial", so dropping it would return status "ok"
+        # for a payload that carries an error inline.
+        #
+        # The walk runs even when the draw above failed board-level
+        # (board_error is set): it takes no input from the draw, so a draw
+        # failure doesn't imply a walk failure. An exception escaping the
+        # walk itself (e.g. a payload holding a value its serializer can't
+        # handle) is caught here rather than left to propagate — a draw's
+        # board_error, if one is already set, takes priority over a fresh one
+        # from the walk, since the draw's failure is the more fundamental one.
+        _data_format_errors: list[Diagnostic] = []
+        try:
+            output = _data_format_renderer(format)(
+                board,
+                executor,
+                merged_variables,
+                error_collector=_data_format_errors,
+                max_rows_per_query=max_rows_per_query,
+            )
+        except DbtChartsError as e:
+            output = None
+            if board_error is None:
+                board_error = e.to_diagnostic()
+        except Exception as e:  # noqa: BLE001
+            from dbt_charts.core.diagnostics import ERR_INTERNAL
+
+            output = None
+            if board_error is None:
+                board_error = RenderError.from_code(
+                    ERR_INTERNAL, message=str(e)
+                ).to_diagnostic()
+        # Keyed on (fields["chart_id"], code) — chart_id is the identity
+        # channel both streams stamp (chart_diagnostics.stamp_chart_diagnostic;
+        # `Diagnostic.chart` is not set on either side of this merge), but a
+        # chart id is unique only within one board, not across a nested-board
+        # tree (data_format.py), so two *different* charts sharing an id
+        # would collide on chart_id alone.
+        _drawn_errors = {(d.fields.get("chart_id"), d.code) for d in error_collector}
+        error_collector.extend(
+            d
+            for d in _data_format_errors
+            if (d.fields.get("chart_id"), d.code) not in _drawn_errors
+        )
+        return RenderResult(
+            output=output,
+            chart_errors=error_collector,
+            payload_errors=_data_format_errors,
+            board_error=board_error,
+            warnings=render_warnings,
+            suppressed_warnings=suppressed_warnings,
+        )
+
+    if board_error is not None:
+        # No fallback payload for the SVG-family formats (svg/html/png/pdf) —
+        # the payload IS the drawing this pass failed to produce. terminal is
+        # grouped here too even though its own payload is actually an
+        # independent walk, same shape as a data format's.
+        return RenderResult(
+            output=None,
+            chart_errors=error_collector,
+            payload_errors=error_collector,
+            board_error=board_error,
+            warnings=render_warnings,
+            suppressed_warnings=suppressed_warnings,
+        )
+    if svg_content is None:
+        raise AssertionError("board_error is None only when the draw succeeded")
+
+    # Convert to requested format. svg/html/png/pdf: the payload IS the
+    # drawing (svg_content), so payload_errors always equals chart_errors.
+    # terminal is the exception — see the board_error branch above.
     if format == "svg":
         return RenderResult(
             output=svg_content,
             chart_errors=error_collector,
+            payload_errors=error_collector,
             warnings=render_warnings,
             suppressed_warnings=suppressed_warnings,
         )
@@ -872,6 +951,7 @@ def render(
         return RenderResult(
             output=html_output,
             chart_errors=error_collector,
+            payload_errors=error_collector,
             warnings=render_warnings,
             suppressed_warnings=suppressed_warnings,
         )
@@ -883,6 +963,7 @@ def render(
         return RenderResult(
             output=to_png(strip_pagination_chrome(svg_content), png_scale),
             chart_errors=error_collector,
+            payload_errors=error_collector,
             warnings=render_warnings,
             suppressed_warnings=suppressed_warnings,
         )
@@ -891,6 +972,7 @@ def render(
         return RenderResult(
             output=to_pdf(strip_pagination_chrome(svg_content)),
             chart_errors=error_collector,
+            payload_errors=error_collector,
             warnings=render_warnings,
             suppressed_warnings=suppressed_warnings,
         )
@@ -901,6 +983,7 @@ def render(
                 board, executor, merged_variables, resolved_board.style, **options
             ),
             chart_errors=error_collector,
+            payload_errors=error_collector,
             warnings=render_warnings,
             suppressed_warnings=suppressed_warnings,
         )

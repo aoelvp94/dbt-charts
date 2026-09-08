@@ -188,13 +188,13 @@ class TestConnectFailureDetection:
         """databricks has no statement_timeout_sql and isn't bigquery, so
         _ensure_connected() previously never touched the lazy connection
         handle for it — a connect failure (bad token, unreachable host) leaked
-        past _ConnectionSetupFailed and was only raised later from _run(),
+        past ConnectionSetupFailed and was only raised later from _run(),
         landing in classify_warehouse_error as a false "warehouse rejected
         the query" outcome. _ensure_connected() must force the handle open
         for every dialect so this is caught here instead.
         """
-        from dbt_charts.core.execute.adapters.sql_adapter import (
-            _ConnectionSetupFailed,
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+            ConnectionSetupFailed,
         )
 
         class _FailingHandleConnection:
@@ -212,7 +212,7 @@ class TestConnectFailureDetection:
         sa = _make_sql_adapter(tmp_path, local_project)
         with patch(_BUILD_ADAPTER, side_effect=_build):
             pool = sa._get_source_pool(_DATABRICKS_SOURCE)
-            with pytest.raises(_ConnectionSetupFailed, match="Invalid access token"):
+            with pytest.raises(ConnectionSetupFailed, match="Invalid access token"):
                 pool.execute("SELECT 1", setup_sql=None)
             pool.close()
 

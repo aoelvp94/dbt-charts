@@ -134,6 +134,31 @@ class LoginResult(ContractModel):
     )
 
 
+class DeviceLoginStarted(ContractModel):
+    """What `dct cloud login --start` reports: the approval URL, never a
+    token -- the device grant hasn't been approved yet."""
+
+    host: str = Field(description="The Cloud deployment this login is against.")
+    verification_uri: str = Field(description="Where the user approves the login.")
+    verification_uri_complete: str | None = Field(
+        default=None, description="verification_uri with the user_code pre-filled."
+    )
+    user_code: str = Field(
+        description="The code the user types at the verification URI."
+    )
+    expires_in: int = Field(description="Seconds until the code stops being valid.")
+
+
+class ProjectConnectStarted(ContractModel):
+    """What `dct cloud project connect --start` reports: the install/pick
+    URL, never a project -- the browser pick hasn't landed yet."""
+
+    org: str = Field(description="The org this connect is against.")
+    url: str = Field(
+        description="Where to install the GitHub App and pick a repository."
+    )
+
+
 class WhoAmI(ContractModel):
     """What `dct cloud whoami` reports."""
 
@@ -265,7 +290,13 @@ class BoardSummary(ContractModel):
     render_status: str = Field(
         description=(
             "`ready`, `errored` (rendered, but some charts came back as error "
-            "cards), `warning` (last render failed), or `not_rendered`."
+            "cards), `warning` (last render failed), `blocked` (a source this "
+            "board names maps to a connection that has not passed its last "
+            "test, so no render of this board can hold real data; a board "
+            "naming no source is judged against every source its project "
+            "maps), or `not_rendered`. "
+            "`blocked` outranks the render-derived values: a render over a "
+            "credential that never worked describes the credential."
         )
     )
     error: str = Field(
@@ -273,7 +304,37 @@ class BoardSummary(ContractModel):
         description=(
             "Why this board is not serving correct content — the failed "
             "render's text under `warning`, the first chart diagnostic under "
-            "`errored`. Empty otherwise."
+            "`errored`, and under `blocked` the source plus, for a connection "
+            "this token may list, its slug, whether it failed its last test "
+            "or has never been tested, and the `dct cloud connection test` "
+            "command. Never the warehouse driver's own error text: run that "
+            "command to see it. Empty otherwise."
+        ),
+    )
+    rendered_at: datetime | None = Field(
+        default=None,
+        description=(
+            "When this board's most recent complete render finished. Null "
+            "for a board with no complete render. A Cloud older than this "
+            "field omits the key entirely, which the CLI reports as unknown "
+            "rather than as no-render; `--json` cannot tell the two apart."
+        ),
+    )
+    commit: str | None = Field(
+        default=None,
+        description=(
+            "Full SHA of the commit whose tree that render read the board "
+            "from, in Cloud's own copy of the repository -- on a project "
+            "edited in Cloud that is a work-branch commit, not one the "
+            "caller has locally. It advances when the board's own content "
+            "changes, not on every commit: a board a push did not touch is "
+            "not normally re-rendered, so it keeps the commit it was last "
+            "rendered from (a board whose query results have their own TTL "
+            "re-renders on that schedule, and moves it). "
+            "Null for a board with no complete render, and for a render made "
+            "before Cloud recorded the commit; never guessed after the fact. "
+            "A Cloud older than this field omits the key entirely. "
+            "`dct cloud boards` prints the 7-character prefix."
         ),
     )
     url: str = Field(description="Where to view this board.")
@@ -429,6 +490,20 @@ class RenderResult(ContractModel):
     unrendered_remaining: int = Field(
         description="Boards still unrendered after this batch."
     )
+    blocked: str = Field(
+        default="",
+        description=(
+            "Why the first `blocked` board in the listing was not started:"
+            " the source it names, and the connection slug plus the `dct"
+            " cloud connection test` command when this token may list that"
+            " connection. Boards over passing connections or repo file"
+            " sources start beside it. Empty when nothing blocks any board,"
+            " which is not the same as"
+            " everything being rendered: a project whose every board's last"
+            " render failed also reports `started: 0` with this empty. Read"
+            " `dct cloud status`'s per-project counts for that case."
+        ),
+    )
 
 
 class SetupStage(str, enum.Enum):
@@ -508,7 +583,17 @@ class ProjectStatus(ContractModel):
         ),
     )
     board_count: int = Field(
-        description="Boards visible to the caller in this project."
+        description=(
+            "Boards visible to the caller in this project. A `blocked` board "
+            "(see `BoardSummary.render_status`) counts here and in none of "
+            "`ready`, `unrendered`, `failed` or `errored` below, since none "
+            "of those says anything true about it until the connection its "
+            "sources map to passes its test; its siblings over passing "
+            "connections keep their own counts. `rendering` is the exception "
+            "and can include a blocked board: a render already in flight is "
+            "a fact about the queue, not a claim about the board. `stage` and "
+            "`next_step` name the test to run."
+        )
     )
     ready_board_count: int | None = Field(
         default=None,

@@ -12,9 +12,15 @@ from ._board_utils import _default_chart_style_context, _default_resolved_style
 
 
 def _make_executor(data: list[dict]) -> MagicMock:
-    """Create a mock executor that returns the given data for any chart."""
+    """Create a mock executor that returns the given data for any chart.
+
+    ``cache_hit_ats`` must be a real (empty) list, not the default MagicMock
+    attribute: render() now draws the board for every format (not just svg),
+    and the svg footer/timestamp code iterates this attribute directly.
+    """
     executor = MagicMock(spec=Executor)
     executor.execute_chart.return_value = data
+    executor.cache_hit_ats = []
     return executor
 
 

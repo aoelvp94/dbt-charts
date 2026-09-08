@@ -246,6 +246,130 @@ class TestSafeAggregationPatterns:
         assert len(reagg) == 0
 
 
+class TestAliasReuseAcrossScopes:
+    """Reusing a column name across independent CTEs must not cause a false
+    re-aggregation finding purely because the names collide (FR-79).
+
+    ``_inherit_aggregate_lineage`` propagates aggregate-derived status through
+    a pass-through CTE's unqualified columns. When that CTE joins two other
+    known sources, an unqualified column must only inherit aggregate status
+    from a source that actually defines it — matching by name against *any*
+    joined source (regardless of whether that source is the real origin) is
+    exactly the trap: a join used only for filtering can carry an unrelated
+    column that happens to share a name.
+    """
+
+    def test_unrelated_join_partner_does_not_leak_aggregate_status(self) -> None:
+        """`net_usd` is genuinely aggregate-derived in `ltv` and genuinely a
+        raw column in `iap`. `per_player` selects the `iap` value (unqualified)
+        while joining `ltv` only to filter by player — it must not inherit
+        `ltv`'s aggregate-ness just because the names collide. The outer
+        query's own aggregate (SUM) is real, but it aggregates the `iap`
+        value, not a pre-aggregated one."""
+        sql = """
+            WITH
+              ltv AS (
+                SELECT player_id, SUM(revenue) AS net_usd
+                FROM transactions
+                GROUP BY player_id
+              ),
+              iap AS (
+                SELECT player_id, amount AS net_usd
+                FROM iap_purchases
+              ),
+              per_player AS (
+                SELECT iap.player_id, net_usd
+                FROM iap
+                JOIN ltv ON ltv.player_id = iap.player_id
+              )
+            SELECT COUNT(*) AS iap_payers, SUM(net_usd) AS total_iap
+            FROM per_player
+        """
+        diags = validate_query(sql)
+        reagg = [d for d in diags if d.code == "WARN-REAGGREGATION"]
+        assert reagg == [], f"expected no reaggregation finding, got: {reagg}"
+
+    def test_join_partners_agreeing_on_aggregate_status_still_flagged(self) -> None:
+        """When the unqualified column IS aggregate-derived in every joined
+        source that defines it, re-aggregation is real and must still fire —
+        the fix must not blanket-silence unqualified passthrough columns."""
+        sql = """
+            WITH
+              a AS (SELECT k, SUM(x) AS total FROM t1 GROUP BY k),
+              b AS (SELECT k, SUM(y) AS total FROM t2 GROUP BY k),
+              combined AS (
+                SELECT a.k, total
+                FROM a JOIN b ON a.k = b.k
+              )
+            SELECT SUM(total) FROM combined
+        """
+        diags = validate_query(sql)
+        reagg = [d for d in diags if d.code == "WARN-REAGGREGATION"]
+        assert len(reagg) == 1
+
+
+class TestAggregateSourceReachedViaCteInternalJoin:
+    """The FR-79 scope guard must exclude a join only when it belongs to a
+    *different* scope than the select under analysis — never the select's
+    own JOIN clauses, even when that select is itself a CTE body.
+
+    ``_direct_join_sources`` runs both on the outer query (where a CTE's
+    internal join must be excluded) and, via lineage propagation, on each
+    CTE body itself (where that CTE's own joins must be *included*). A
+    whole-ancestor-chain check can't tell these apart — a join inside a CTE
+    body has that CTE as an ancestor either way. Only a scope-relative check
+    (is this join directly in the select being analyzed?) gets both right.
+    """
+
+    def test_aggregate_joined_into_dimension_cte_then_reaggregated(self) -> None:
+        """`agg_cte` is aggregate; `dim_cte` reaches it via its own internal
+        JOIN (not its FROM) and passes `total_amount` through unqualified
+        via alias. The outer query's AVG re-aggregates it — must fire."""
+        sql = """
+            WITH
+              agg_cte AS (
+                SELECT customer_id, SUM(amount) AS total_amount
+                FROM orders
+                GROUP BY customer_id
+              ),
+              dim_cte AS (
+                SELECT c.customer_id, c.region, a.total_amount
+                FROM customers c
+                JOIN agg_cte a ON a.customer_id = c.customer_id
+              )
+            SELECT region, AVG(total_amount) AS avg_total
+            FROM dim_cte
+            GROUP BY region
+        """
+        diags = validate_query(sql)
+        reagg = [d for d in diags if d.code == "WARN-REAGGREGATION"]
+        assert len(reagg) == 1, f"expected reaggregation finding, got: {diags}"
+
+    def test_aggregate_source_first_in_from_dimension_joined_in(self) -> None:
+        """Same shape with join direction flipped — the aggregate source is
+        in `dim_cte`'s FROM and the dimension table is the JOIN partner.
+        Re-aggregation must still fire regardless of which side is which."""
+        sql = """
+            WITH
+              agg_cte AS (
+                SELECT customer_id, SUM(amount) AS total_amount
+                FROM orders
+                GROUP BY customer_id
+              ),
+              dim_cte AS (
+                SELECT a.customer_id, c.region, a.total_amount
+                FROM agg_cte a
+                JOIN customers c ON a.customer_id = c.customer_id
+              )
+            SELECT region, AVG(total_amount) AS avg_total
+            FROM dim_cte
+            GROUP BY region
+        """
+        diags = validate_query(sql)
+        reagg = [d for d in diags if d.code == "WARN-REAGGREGATION"]
+        assert len(reagg) == 1, f"expected reaggregation finding, got: {diags}"
+
+
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------

@@ -40,9 +40,12 @@ Confirm the tools and access exist before relying on them:
   supported. `gh` is optional: it lets you pre-check admin rights on the repo
   (Step 3) and is how a repo that isn't on GitHub yet gets there (`gh repo
   create`). Offer `gh auth login` if it is installed but signed out.
-- `dct cloud status` needs a project directory only if you plan to infer org
-  and project from `git remote`; run it from the repo you're connecting once
-  one exists.
+- `dct cloud status` needs a project directory only if you plan to resolve
+  org and project from context: it reads a `published_to:` key in the
+  nearest `dbt_charts.yml` first (written by a previous `project connect` in
+  this repo, and only when neither `--org` nor `--project` is passed), then
+  falls back to matching `git remote`. Run it from the repo you're
+  connecting once one exists.
 - Warehouse CLI detection, so you know which credential-minting path applies
   later: `gcloud auth list` (BigQuery), `which snowsql` (Snowflake), `which
   psql` (Postgres/Redshift). Missing tooling isn't fatal — it just means the
@@ -87,8 +90,8 @@ before Step 3; boards can follow, every push syncs.
 
 Run a read-only verb (`dct cloud orgs`) first — if `DCT_CLOUD_TOKEN` is
 already set or a token is already stored, it just works and this step is
-done. Otherwise run `dct cloud login`. It prints a code and a URL; hand that
-URL to the user — only they can complete the browser approval.
+done. Otherwise run `dct cloud login --start`; hand the URL it prints to the
+user — only they can complete the browser approval.
 
 **You are not creating an account, and not having one is not a blocker.** All
 you do is hand the user the login URL; on that page **signing in and signing
@@ -98,32 +101,31 @@ an account," and never point the user at another product's login. Let them
 sign in or sign up at the `dct cloud login` URL, then pick or create the
 organization the CLI should reach and approve.
 
-`dct cloud login` blocks until the approval lands (it prints `Logged in`) or
-the code expires (about 30 minutes; an expired code's page is a dead end, and
-the only fix is running login again). Your shell tool's timeout is shorter
-than that and the user may be slow, so run it like this:
+Bare `dct cloud login` blocks until the approval lands or the code expires
+(about 30 minutes) — longer than your shell tool's timeout and the user may
+be slow, so use the two-step form instead of backgrounding the blocking one:
 
 ```bash
-dct cloud login > /tmp/dct-login.log 2>&1 &
-sleep 2 && grep -o 'https://[^ ]*' /tmp/dct-login.log
+URL=$(dct cloud login --start)
 ```
 
-Hand the user that URL **immediately, as the only thing you say** — no
-summary first; every minute spent writing notes eats the code's lifetime.
-Also say **which account** to approve with when they have several: the CLI
-becomes whoever approves, so the org this creates or joins belongs to that
-account, and the board URLs only open in a browser signed in as a member.
-Then, in the same turn, wait in the foreground with your longest timeout:
+This returns immediately: it prints the approval URL to stdout and stores
+the pending grant for `--wait` to pick up. Hand `$URL` to the user
+**immediately, as the only thing you say** — no summary first; every minute
+spent writing notes eats the code's lifetime. Also say **which account** to
+approve with when they have several: the CLI becomes whoever approves, so
+the org this creates or joins belongs to that account, and the board URLs
+only open in a browser signed in as a member. Then, in the same turn, wait
+in the foreground with your longest timeout:
 
 ```bash
-until grep -qE 'Logged in|expired|denied|error' /tmp/dct-login.log; do sleep 5; done
-cat /tmp/dct-login.log
+dct cloud login --wait
 ```
 
-This returns the moment the user approves, so you continue on your own —
-don't ask the user to tell you when they're done. If the wait times out,
-run the same `until` loop again; if the log says expired, start over from
-the login command and hand over the new URL. Never guess a token value, and
+This blocks until the user approves (it prints `Logged in`), then returns,
+so you continue on your own, don't ask the user to tell you when they're
+done. If it reports the code expired or denied, run `dct cloud login
+--start` again and hand over the new URL. Never guess a token value, and
 never try to complete the browser step yourself — it is the user signing in,
 not you.
 
@@ -154,20 +156,43 @@ Two paths, both naming the org from Step 2 with `--org <org>`:
 - **Public GitHub repo**: connect headlessly with
   `dct cloud project connect --org <org> --git-url
   https://github.com/<owner>/<repo>`. No browser hop.
-- **Otherwise**: connect without a URL. It prints an install link and waits
-  for the user to install the GitHub App and pick the repository. Run it in
-  the background like login, hand over the link at once, and carry on with
-  Step 4 while it waits:
+- **Otherwise**: connect without a URL. `--start` prints an install/pick URL
+  and returns immediately, no backgrounding needed. `--start` and `--wait`
+  are one inseparable unit, not two steps split across other work: hand over
+  the URL, then immediately run `--wait` in the same turn, before Step 4 and
+  before any board authoring. The project does not exist in Cloud until
+  `--wait` completes — running `--start` and moving on leaves the connect
+  silently unfinished, and `dct cloud status` stays `missing_project` until
+  someone notices and re-runs `--wait`.
 
   ```bash
-  dct cloud project connect --org <org> --timeout 1800 > /tmp/dct-connect.log 2>&1 &
-  sleep 2 && grep -o 'https://[^ ]*' /tmp/dct-connect.log
+  URL=$(dct cloud project connect --org <org> --start)
   ```
 
-  Before Step 5, wait for it: `until grep -qE 'Picked|Connected|rror'
-  /tmp/dct-connect.log; do sleep 5; done`. If the App already covers the
-  repo, the pick is a single click. The page after the pick tells the user
-  to come back to the terminal; nothing on it needs pressing.
+  Hand `$URL` to the user, then right away, still in this turn:
+
+  ```bash
+  dct cloud project connect --wait
+  ```
+
+  This blocks until the pick lands (it prints `Connected`), then returns,
+  so you continue on your own, don't ask the user to tell you when they're
+  done. If the App already covers the repo, the pick is a single click. The
+  page after the pick tells the user to come back to the terminal; nothing
+  on it needs pressing. If `--wait` times out, run it again: the pick has
+  no expiry of its own, so it resumes the same pending connect rather than
+  needing a fresh `--start`.
+
+A successful connect records where the project now lives — `published_to:
+"https://<host>/<org>/<project>/"` — in the repo's `dbt_charts.yml`, and
+prints a reminder to commit it. It writes only when that file already exists
+and the checkout's git remote is the repo just connected; otherwise it prints
+the exact key and value, and you add it (creating `dbt_charts.yml` is
+scaffolding, which connect does not do). Read what connect printed. Once the
+key is in place and committed, resolve org and project from it (`dct cloud
+status` and every other verb read it first) rather than passing
+`--org`/`--project` again or re-inferring from `git remote` later in the
+session.
 
 ## Step 4: Boards, if none exist yet
 
@@ -175,8 +200,8 @@ This skill connects a repo and a warehouse; it doesn't author boards. If the
 repo has no boards the user actually authored — an empty `charts/`, or only
 the starter board `dct init` scaffolds — hand off to the board-build skill
 first: inspect the warehouse schema, author board YAML, validate and render
-locally, commit, push. Don't render the starter board as if it were the
-user's own board.
+locally, commit, push, then publish the push (Step 8). Don't render the
+starter board as if it were the user's own board.
 
 **Show the work.** As soon as one board renders locally, serve it:
 
@@ -255,21 +280,87 @@ warehouse opened a firewall, a credential was rotated on the connection —
 It is a project admin's act: a Creator or Viewer gets the same not-found
 answer any admin-only verb gives them.
 
-## Step 8: Tell the user how to ship a change
+`dct cloud boards` reports `blocked` when a connection the project's sources
+map to has not passed its last test — it failed, or nobody has run it. Neither
+re-rendering nor `--force` clears it, because the credential is the problem:
+the `error` names the source, and names the connection and the exact test
+command when your token may list connections at all. It does not carry the
+warehouse's own error text: run that command to see it. Fix the credential,
+confirm it with `dct cloud connection test <slug>`, then render. `dct cloud
+render` on such a project says so rather than reporting a bare count of zero.
 
-Setup is day one; every day after is "I edited a board, get it live." Two
-facts decide whether that works, and neither is discoverable:
+## Step 8: Publish the commit, and prove it is the one being served
 
-- **A push republishes on its own, but not instantly.** For a repo
-  connected through the GitHub App the push webhook syncs within seconds; a
-  `--git-url` project is polled hourly and has no webhook at all. Don't sit
-  watching for either — `dct cloud project sync` pulls the new commit and
-  re-renders what changed. The verb returns as soon as the sync is queued;
-  the new render is usually live about eight seconds later.
-- **`ready` does not mean "your version".** `dct cloud boards` reports
-  whether *a* render exists, not whether it is a render of your commit —
-  there is no timestamp and no SHA. After a sync, confirm the change by
-  looking at the board, not by reading a status.
+A `git push` does not publish. It puts the commit on the git host; Cloud
+serves it only after a **sync** pulls it and re-renders the boards it
+changed. A GitHub App project syncs itself
+within seconds of a push; a project connected by repository URL has nothing
+watching the remote and waits for an hourly sweep. So after every push:
+
+```bash
+dct cloud project sync
+```
+
+Read `dct cloud boards` **before** the push, then again after the sync:
+
+```bash
+git diff --name-only HEAD~1 HEAD -- charts/   # the boards this commit changed
+dct cloud boards
+```
+
+```
+SLUG            STATUS  RENDERED_AT       COMMIT   URL
+exec-overview   ready   2026-09-06 10:50  8a2f27c  https://dbtcharts.com/acme/analytics/d/exec-overview
+```
+
+**A board is live once its own two values move.** For each board your commit
+changed, `RENDERED_AT` becomes a time after your push and `COMMIT` becomes a
+different sha.
+
+**Neither moved means "not confirmed yet", never "not published."** The sync
+only *queues* the re-renders, they run behind live page loads, and each one
+re-runs the board's queries — so a slow warehouse alone can hold this open for
+several minutes.
+
+`STATUS` needs its own reading, because **a render that fails writes no new
+complete render** — so `RENDERED_AT` and `COMMIT` cannot move for it. The two
+columns only ever prove success.
+
+- `warning` that **appeared** since your before-reading is the answer: the
+  only way a board reaches it is a newer failed attempt, so your re-render
+  ran and failed. Its message is the thing to fix. Stop waiting.
+- `warning` that was **already there** is undated and therefore
+  **inconclusive**: it may be the old failure, or a fresh failure of your own
+  commit that happens to read the same. Open the board; never dismiss the
+  message and never call it queued.
+- `errored` is read off the very render `RENDERED_AT` names, so while that
+  time is unmoved it *is* the previous render's chart diagnostic. Don't
+  re-fix a board off a stale `errored`.
+- `ready` or `not_rendered` with nothing moved means the re-render is simply
+  still queued.
+
+Check twice, a minute or so apart. If nothing has moved, report exactly what
+you see — "queued, not yet rendered", or "still `warning`, cannot tell whether
+that failure is mine" — and let the user decide, rather than polling on or
+guessing at a cause.
+
+A board your commit did not touch normally keeps both values, and that is
+correct, not a failure to publish: its content did not change, so nothing
+needs to re-render it. Never wait for it to catch up.
+
+**Compare `COMMIT` to itself, not to your `git rev-parse HEAD`.** It is the
+commit in *Cloud's* copy of the repository that the render read the board
+from. Cloud commits its own board edits to a work branch and merges your
+branch into it on every sync, so those histories diverge the moment anyone
+edits a board in Cloud, and this sha is Cloud's coordinate rather than yours.
+The sha *changing* is the proof; equality with your `HEAD` is not, and waiting
+for it does not terminate.
+
+**`ready` is not proof.** It means a render exists, not that it is a render of
+your edit, so a board whose edit was never pulled reads `ready` before your
+push and `ready` after. `COMMIT` is the field that tells those apart, and `-`
+in both columns means no render has ever finished for that board. Never tell
+the user a change is live off `STATUS` alone.
 
 Record where the project lives, too. Nothing in the repo says which org
 publishes it, and the org slug is chosen at org creation — it has no

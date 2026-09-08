@@ -340,6 +340,56 @@ class TestSafeQueriesComprehensive:
 
 
 # ---------------------------------------------------------------------------
+# D2. Qualification must not flip the verdict (FR-79)
+# ---------------------------------------------------------------------------
+
+
+class TestQualificationDoesNotFlipVerdict:
+    """Whether a column is written qualified or not is cosmetic — the verdict
+    must be driven by which table it actually belongs to (known from the
+    CTE's own tracked output columns), not by the presence of a dot prefix."""
+
+    def test_unqualified_single_cte_column_not_flagged(self) -> None:
+        """`net_usd` unambiguously belongs to `tx` (the only known source that
+        defines it) even though it's written unqualified — no fanout risk."""
+        sql = """
+            WITH tx AS (
+                SELECT player_id, amount AS net_usd FROM raw_events
+            )
+            SELECT SUM(net_usd) AS total
+            FROM tx
+            JOIN players p ON p.id = tx.player_id
+        """
+        assert not _has_fanout(validate_query(sql))
+
+    def test_qualified_single_cte_column_not_flagged(self) -> None:
+        """Same query, column qualified — must produce the identical verdict
+        as the unqualified spelling above."""
+        sql = """
+            WITH tx AS (
+                SELECT player_id, amount AS net_usd FROM raw_events
+            )
+            SELECT SUM(tx.net_usd) AS total
+            FROM tx
+            JOIN players p ON p.id = tx.player_id
+        """
+        assert not _has_fanout(validate_query(sql))
+
+    def test_genuinely_ambiguous_unqualified_column_still_flagged(self) -> None:
+        """Two joined CTEs both define the same column name — this is real
+        ambiguity, not cosmetic, so it must still warn."""
+        sql = """
+            WITH
+              tx AS (SELECT player_id, amount AS net_usd FROM raw_events),
+              other AS (SELECT player_id, revenue AS net_usd FROM other_events)
+            SELECT SUM(net_usd) AS total
+            FROM tx
+            JOIN other ON other.player_id = tx.player_id
+        """
+        assert _has_fanout(validate_query(sql))
+
+
+# ---------------------------------------------------------------------------
 # E. Error message clarity
 # ---------------------------------------------------------------------------
 

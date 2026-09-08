@@ -263,6 +263,10 @@ def test_bulk_schema_for_config_scopes_bigquery_to_the_region(
     captured: dict[str, str] = {}
 
     class _CapturingAdapter:
+        connections = SimpleNamespace(
+            get_thread_connection=lambda: SimpleNamespace(handle=object())
+        )
+
         def connection_named(self, name: str):
             from contextlib import nullcontext
 

@@ -2,8 +2,11 @@
 
 Proves the full seam — the table renderer records its real slot overflow, then
 renderer.py threads that capture into the WarningContext, and the detector's
-warning lands on RenderResult.warnings — and that a table with room to
-render, and non-SVG formats, stay silent.
+warning lands on RenderResult.warnings — that a table with room to render
+stays silent, and that a data format (json/text/yaml/data) reports the same
+warning as svg: every format draws the board before choosing what to emit, so
+the capture that feeds this detector is never empty just because the caller
+asked for data instead of svg.
 """
 
 from __future__ import annotations
@@ -113,8 +116,10 @@ def test_roomy_table_silent() -> None:
     assert "WARN-TABLE-COLUMNS-OVERFLOW" not in codes
 
 
-def test_non_svg_format_silent() -> None:
-    """JSON output never rasterizes a table, so it captures no overflow."""
+def test_non_svg_format_reports_same_warning_as_svg() -> None:
+    """JSON output draws the board the same as svg, so it reports the same
+    overflow warning — not the empty capture a data walk alone would produce.
+    """
     result = compile(_NARROW)
     assert result.success and result.board is not None, result.errors
     executor = _make_executor(result.board, result.query_registry, _rows(5))
@@ -122,4 +127,4 @@ def test_non_svg_format_silent() -> None:
     render_result = render(result.board, executor, format="json")
 
     codes = {w.code for w in render_result.warnings}
-    assert "WARN-TABLE-COLUMNS-OVERFLOW" not in codes
+    assert "WARN-TABLE-COLUMNS-OVERFLOW" in codes

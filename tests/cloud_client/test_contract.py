@@ -38,6 +38,7 @@ def test_there_are_modules_to_check() -> None:
         "context.py",
         "contract.py",
         "errors.py",
+        "published_to.py",
     }
 
 

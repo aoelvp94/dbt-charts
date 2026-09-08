@@ -163,6 +163,7 @@ def run_wizard(
                 target=target,
                 all_targets=False,
                 dir_override=None,
+                global_install=False,
                 force=force,
                 check=False,
                 project_dir=root,

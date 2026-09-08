@@ -205,6 +205,26 @@ class DeviceLoginFailed(CloudError):
     code: ClassVar[ErrorCode] = ErrorCode.UNAUTHENTICATED
 
 
+class NoPendingLogin(CloudError):
+    """`dct cloud login --wait` found no login `--start` began."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.INVALID_REQUEST
+
+    def __init__(self) -> None:
+        super().__init__("No pending login. Run `dct cloud login --start` first.")
+
+
+class NoPendingConnect(CloudError):
+    """`dct cloud project connect --wait` found no connect `--start` began."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.INVALID_REQUEST
+
+    def __init__(self) -> None:
+        super().__init__(
+            "No pending connect. Run `dct cloud project connect --start` first."
+        )
+
+
 class EnvCredentialActive(CloudError):
     """`dct cloud login`/`logout` refuse to touch a config token the env var
     shadows.

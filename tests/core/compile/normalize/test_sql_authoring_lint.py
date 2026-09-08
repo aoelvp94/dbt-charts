@@ -15,6 +15,7 @@ from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.normalize.queries import normalize_query
 from dbt_charts.core.compile.normalize.sql_authoring_lint import (
+    find_date_literal_variable,
     has_literal_escaped_newlines,
 )
 
@@ -84,6 +85,67 @@ class TestHasLiteralEscapedNewlines:
         assert has_literal_escaped_newlines(sql, dialect="mariadb") is True
 
 
+class TestFindDateLiteralVariable:
+    """Unit tests for the `date '{{ var }}'` authoring-mistake detector.
+
+    Only the bound-parameter adapters (duckdb, sqlite) bind a variable through
+    a driver placeholder that `_clean_parameter_quotes` strips the quotes
+    from, so only there does `date '{{ var }}'` compile to invalid `date $1`.
+    Every other adapter (SqlAdapter for postgres/snowflake/bigquery/etc.,
+    DbtAdapter for dbt_profile) renders variables as inline literal text, so
+    `date '{{ var }}'` compiles to valid `date '2024-01-01'` there -- the
+    detector must not flag it. `cast('{{ var }}' as date)` is the
+    dialect-agnostic fix.
+    """
+
+    def test_date_literal_variable_flagged_on_duckdb(self):
+        sql = "SELECT 1 WHERE d <= date '{{ latest_month }}'"
+        match = find_date_literal_variable(sql, dialect="duckdb")
+        assert match is not None
+        assert match.group(1) == "date"
+        assert match.group(2) == "latest_month"
+
+    def test_date_literal_variable_flagged_on_sqlite(self):
+        sql = "SELECT 1 WHERE d <= date '{{ latest_month }}'"
+        match = find_date_literal_variable(sql, dialect="sqlite")
+        assert match is not None
+
+    def test_timestamp_literal_variable_flagged_case_insensitive(self):
+        sql = "SELECT 1 WHERE ts <= TIMESTAMP '{{ cutoff }}'"
+        match = find_date_literal_variable(sql, dialect="duckdb")
+        assert match is not None
+        assert match.group(1).lower() == "timestamp"
+        assert match.group(2) == "cutoff"
+
+    def test_ordinary_string_literal_variable_passes(self):
+        """`status = '{{ status }}'` is the normal, working shape -- not flagged."""
+        sql = "SELECT 1 WHERE status = '{{ status }}'"
+        assert find_date_literal_variable(sql, dialect="duckdb") is None
+
+    def test_already_cast_variable_passes(self):
+        """The documented fix, `cast('{{ var }}' as date)`, is never flagged."""
+        sql = "SELECT 1 WHERE d <= cast('{{ latest_month }}' as date)"
+        assert find_date_literal_variable(sql, dialect="duckdb") is None
+
+    def test_date_literal_with_static_value_passes(self):
+        """A plain date literal with no Jinja variable is ordinary, valid SQL."""
+        sql = "SELECT 1 WHERE d <= date '2024-01-01'"
+        assert find_date_literal_variable(sql, dialect="duckdb") is None
+
+    def test_date_literal_variable_on_inline_dialect_passes(self):
+        """A warehouse adapter (SqlAdapter) renders variables as inline literal
+        text -- `date '{{ var }}'` compiles to valid `date '2024-01-01'` there,
+        so the bound-param-only detector must not flag it."""
+        sql = "SELECT 1 WHERE d <= date '{{ latest_month }}'"
+        assert find_date_literal_variable(sql, dialect="snowflake") is None
+
+    def test_date_literal_variable_on_unknown_dialect_passes(self):
+        """dialect=None (e.g. dbt_profile, whose real dialect isn't known until
+        execute) means the bound-param path can't be confirmed -- do not flag."""
+        sql = "SELECT 1 WHERE d <= date '{{ latest_month }}'"
+        assert find_date_literal_variable(sql, dialect=None) is None
+
+
 class TestLiteralNewlinesWiredIntoNormalizeQuery:
     """Integration: normalize_query raises CompilationError for literal \\n SQL."""
 
@@ -132,3 +194,68 @@ class TestLiteralNewlinesWiredIntoNormalizeQuery:
         err_msg = str(exc_info.value)
         assert "my_query" in err_msg
         assert "setup_sql" in err_msg
+
+
+class TestDateLiteralVariableWiredIntoNormalizeQuery:
+    """Integration: normalize_query raises a typed, authoring-tier CompilationError
+    for `date '{{ var }}'` on a bound-param source (duckdb/sqlite) -- not left
+    to surface as a confusing warehouse or internal error at execution time
+    (FR-74). On every other source, the variable renders as inline literal
+    text and the same SQL is valid, so normalize_query must not raise."""
+
+    def test_normalize_query_raises_for_date_literal_variable_on_duckdb(self):
+        with pytest.raises(CompilationError) as exc_info:
+            normalize_query(
+                "my_query",
+                {
+                    "sql": "SELECT 1 WHERE d <= date '{{ latest_month }}'",
+                    "source": "mydb",
+                },
+                sources={"mydb": {"type": "duckdb"}},
+            )
+        error = exc_info.value
+        assert error.code is not None
+        assert error.code.code != "ERR-INTERNAL"
+        err_msg = str(error)
+        assert "my_query" in err_msg
+        assert "cast('{{ latest_month }}' as date)" in err_msg
+
+    def test_normalize_query_date_literal_variable_on_warehouse_source_passes(self):
+        """Snowflake goes through SqlAdapter, which renders variables as inline
+        literal text -- `date '{{ var }}'` compiles to valid SQL there."""
+        result = normalize_query(
+            "my_query",
+            {
+                "sql": "SELECT 1 WHERE d <= date '{{ latest_month }}'",
+                "source": "mydb",
+            },
+            sources={"mydb": {"type": "snowflake"}},
+        )
+        assert isinstance(result, SqlQuery)
+
+    def test_normalize_query_date_literal_variable_on_dbt_profile_passes(self):
+        """dbt_profile sources go through DbtAdapter, which also renders
+        variables as inline literal text. dialect_for_source cannot resolve a
+        dbt_profile's real dialect at compile time (it lives in the profile),
+        so this also exercises the dialect=None path."""
+        result = normalize_query(
+            "my_query",
+            {
+                "sql": "SELECT 1 WHERE d <= date '{{ latest_month }}'",
+                "source": "mydb",
+            },
+            sources={"mydb": {"type": "dbt_profile"}},
+        )
+        assert isinstance(result, SqlQuery)
+
+    def test_normalize_query_cast_form_is_accepted(self):
+        """The documented fix must compile without raising, on any source."""
+        result = normalize_query(
+            "my_query",
+            {
+                "sql": "SELECT 1 WHERE d <= cast('{{ latest_month }}' as date)",
+                "source": "mydb",
+            },
+            sources={"mydb": {"type": "duckdb"}},
+        )
+        assert isinstance(result, SqlQuery)

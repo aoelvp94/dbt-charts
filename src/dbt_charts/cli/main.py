@@ -361,6 +361,16 @@ def init_skills(
             resolve_path=True,
         ),
     ] = None,
+    global_install: Annotated[
+        bool,
+        typer.Option(
+            "--global",
+            help=(
+                "Install into your user-level directories "
+                "(~/.claude/skills, ~/.agents/skills) instead of a repository"
+            ),
+        ),
+    ] = False,
     force: Annotated[
         bool,
         typer.Option("--force", "-f", help="Overwrite existing skill files"),
@@ -377,8 +387,11 @@ def init_skills(
     """Install dbt charts workflow skills for file-based agent auto-discovery.
 
     Writes CLI-rendered skill files to ``.agents/skills/`` (Cursor, Codex,
-    Copilot) and/or ``.claude/skills/`` (Claude Code). Does not configure MCP
-    or modify AGENTS.md / CLAUDE.md.
+    Copilot) and/or ``.claude/skills/`` (Claude Code) inside the current
+    repository. Pass ``--global`` to install into your user-level directories
+    instead (``~/.claude/skills/``, ``~/.agents/skills/``), so any new project
+    on this machine picks up the skills without a per-repo install. Does not
+    configure MCP or modify AGENTS.md / CLAUDE.md.
 
     \b
     Examples:
@@ -387,6 +400,7 @@ def init_skills(
       dct init skills claude          # .claude/skills/ only
       dct init skills --all           # Every detected target dir
       dct init skills --dir PATH      # Explicit destination
+      dct init skills --global        # ~/.claude/skills and/or ~/.agents/skills
       dct init skills --check         # Dry run
       dct init skills -f              # Overwrite existing files
     """
@@ -394,6 +408,7 @@ def init_skills(
         target=target,
         all_targets=all_targets,
         dir_override=dir_override,
+        global_install=global_install,
         force=force,
         check=check,
         project_dir=project_dir,
@@ -738,10 +753,12 @@ def render(
     output: Annotated[
         str | None,
         typer.Option(
+            "--output",
+            "-o",
             help=(
                 "Output file path. For multiple inputs, use {stem} or {dir} "
                 "placeholders (e.g. renders/{stem}.svg). Default: renders/<board>.<ext>."
-            )
+            ),
         ),
     ] = None,
     format: Annotated[
@@ -1479,7 +1496,11 @@ def docs(
     ] = None,
     search: Annotated[
         str | None,
-        typer.Option("--search", "-s", help="Full-text query across all topics"),
+        typer.Option(
+            "--search",
+            "-s",
+            help="Ranked term search across every section and the generated references; add a topic to scope it",
+        ),
     ] = None,
     json_output: Annotated[
         bool,
@@ -1490,7 +1511,7 @@ def docs(
         typer.Option(
             "--limit",
             min=1,
-            max=50,
+            max=20,
             help="Max search hits to return (default 5, max 50)",
         ),
     ] = 5,
@@ -1508,7 +1529,8 @@ def docs(
       dct docs errors <CODE>      # Full doc for one error code
       dct docs warnings           # List all warning codes
       dct docs warnings <CODE>    # Full doc for one warning code
-      dct docs --search "grid"    # Substring search across all topics
+      dct docs --search "grid"    # Ranked search across all topics
+      dct docs charts -s "legend" # Ranked search scoped to one topic
 
     Use --json for stable, machine-readable output.
     """

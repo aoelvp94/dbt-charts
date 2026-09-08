@@ -81,6 +81,15 @@ dct init mcp
 
 ### Quick Start
 
+Using a coding agent? Hand it one sentence; `dct skills intro` teaches it the
+tool and which skill to read next:
+
+```text
+Make charts of this with dbt charts. Start with: uv tool install dbt-charts && dct skills intro
+```
+
+By hand:
+
 ```bash
 # Bootstrap a new project
 dct init

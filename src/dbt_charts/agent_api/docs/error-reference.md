@@ -1675,6 +1675,20 @@ Query {query_name!r}: SQL queries must have a source. Set it on the query (`sour
 
 Fired when a SQL query has no `source:` set at the query, board, or folder meta.yaml level and no default source is configured. Set `source: my_db` on the query or as a default at a higher level.
 
+### ERR-SQL-DATE-LITERAL-VARIABLE: Variable quoted as a date/time/timestamp literal will not compile
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Query {query_name!r} {field_label} casts a variable with {keyword} '{{{{ {variable} }}}}'. This source binds the variable as a query parameter, so its quotes are stripped and this compiles to {keyword} $N, which the warehouse does not parse. Use cast('{{{{ {variable} }}}}' as {keyword}) instead.
+```
+
+Fired when a query casts a Jinja variable to a date/time/timestamp using the SQL literal syntax (`date '{{{{ var }}}}'`) on a source whose adapter binds variables as real query parameters (duckdb, sqlite). The parameterizer strips the quotes around every placeholder, so `date '{{{{ var }}}}'` compiles to `date $1` -- syntax the warehouse does not accept. Other sources (postgres, snowflake, bigquery, dbt_profile, etc.) render variables as inline literal text instead, so the same SQL is valid there and this check does not fire. Use `cast('{{{{ var }}}}' as date)` (or `time`/`timestamp`) instead, which keeps the variable an ordinary string parameter and works on every source.
+
 ### ERR-SQL-LITERAL-NEWLINES: SQL contains literal backslash-n from single-quoted YAML
 
 - **Level:** error

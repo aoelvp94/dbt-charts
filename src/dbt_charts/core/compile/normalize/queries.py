@@ -43,6 +43,7 @@ from dbt_charts.core.compile.models.source import (
     source_cache_layer,
 )
 from dbt_charts.core.compile.normalize.sql_authoring_lint import (
+    find_date_literal_variable,
     has_literal_escaped_newlines,
 )
 from dbt_charts.core.compile.sql_guard import (
@@ -57,6 +58,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_SOURCE_INLINE_FORBIDDEN,
     ERR_SOURCE_NOT_FOUND,
     ERR_SOURCE_REQUIRED,
+    ERR_SQL_DATE_LITERAL_VARIABLE,
     ERR_SQL_LITERAL_NEWLINES,
 )
 from dbt_charts.core.diagnostics.execution import MutatingSqlError, UnparseableSqlError
@@ -431,6 +433,33 @@ def normalize_query(
                 query_name=name,
                 field_label="setup_sql",
             )
+
+        # Authoring lint: detect a variable quoted as a date/time/timestamp
+        # literal (`date '{{ var }}'`) on a bound-param dialect (duckdb,
+        # sqlite), where it compiles to invalid SQL (see
+        # find_date_literal_variable's docstring) -- must run before
+        # validate_select_only for the same reason as the \n check above.
+        date_literal_match = find_date_literal_variable(query.sql, dialect=dialect)
+        if date_literal_match:
+            raise CompilationError.from_code(
+                ERR_SQL_DATE_LITERAL_VARIABLE,
+                query_name=name,
+                field_label="sql",
+                keyword=date_literal_match.group(1).lower(),
+                variable=date_literal_match.group(2).strip(),
+            )
+        if query.setup_sql:
+            setup_date_literal_match = find_date_literal_variable(
+                query.setup_sql, dialect=dialect
+            )
+            if setup_date_literal_match:
+                raise CompilationError.from_code(
+                    ERR_SQL_DATE_LITERAL_VARIABLE,
+                    query_name=name,
+                    field_label="setup_sql",
+                    keyword=setup_date_literal_match.group(1).lower(),
+                    variable=setup_date_literal_match.group(2).strip(),
+                )
 
         try:
             validate_select_only(query.sql, dialect=dialect)

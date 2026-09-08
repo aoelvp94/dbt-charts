@@ -17,9 +17,15 @@ from ._board_utils import _default_chart_style_context, _default_resolved_style
 
 
 def _make_executor(data: list[dict]) -> MagicMock:
-    """Create a mock executor that returns the given data for any chart."""
+    """Create a mock executor that returns the given data for any chart.
+
+    ``cache_hit_ats`` must be a real (empty) list, not the default MagicMock
+    attribute: render() now draws the board for every format (not just svg),
+    and the svg footer/timestamp code iterates this attribute directly.
+    """
     executor = MagicMock(spec=Executor)
     executor.execute_chart.return_value = data
+    executor.cache_hit_ats = []
     return executor
 
 
@@ -327,8 +333,16 @@ rows: [grid]
         chart2 = make_chart("line", id="c2", query_name="q2")
         board = _make_board([chart1, chart2])
 
+        # A callable side_effect (keyed by query_name, not call order) survives
+        # the extra execute_chart calls the svg draw pass now makes before the
+        # yaml data walk runs — a fixed-length side_effect list would exhaust
+        # on the third call and silently fail the whole render.
+        def _pick_data(chart: Chart, *_args: object, **_kwargs: object) -> list[dict]:
+            return data1 if chart.query_name == "q1" else data2
+
         executor = MagicMock(spec=Executor)
-        executor.execute_chart.side_effect = [data1, data2]
+        executor.execute_chart.side_effect = _pick_data
+        executor.cache_hit_ats = []
 
         result = render(board, executor, format="yaml").output
 

@@ -155,7 +155,10 @@ FROZEN_RESULT_INSTANCES: list[tuple[BaseModel, str]] = [
     (LayoutDescription(primitive="p"), "primitive"),
     (Topic(id="i", title="t"), "id"),
     (TopicEntry(id="i", title="t"), "id"),
-    (DocsSearchHit(topic="t", title="ti", snippet="s"), "topic"),
+    (
+        DocsSearchHit(topic="t", title="ti", section="ti", score=1.0, content="s"),
+        "topic",
+    ),
     (InspectTemplate(name="n"), "name"),
     (ChartTypeDisplay(label="l", icon="i"), "label"),
     (

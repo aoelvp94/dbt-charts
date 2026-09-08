@@ -50,6 +50,10 @@ from dbt_charts.core.execute.adapters.base import (
     handle_adapter_error,
     resolve_effective_row_limit,
 )
+from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+    ConnectionSetupFailed,
+    open_connection,
+)
 from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
 from dbt_charts.core.execute.dbt_jinja import has_dbt_jinja
 from dbt_charts.core.execute.sql_literals import (
@@ -351,25 +355,21 @@ class DbtAdapter(BaseAdapter):
         # auto_begin=False, like dbt's own select path: a SELECT needs no
         # transaction, and one opened here is only ended by the release on
         # context exit. Nothing to end is stronger than something to clean up.
-        with adapter.connection_named("dbt_charts_query"):
-            try:
-                # Force the lazy connection handle open before any SQL is
-                # sent: a connect failure here (bad credentials, unreachable
-                # host) must not be classified as a warehouse rejection —
-                # nothing has read the query yet.
-                _ = adapter.connections.get_thread_connection().handle
-            except Exception as e:  # noqa: BLE001 — connect failure, not a query rejection
-                return connection_failure(self._dialect, e)
-
-            try:
-                _, table = adapter.execute(
-                    resolved_sql,
-                    auto_begin=False,
-                    fetch=True,
-                    limit=driver_limit,
-                )
-            except Exception as e:  # noqa: BLE001
-                return classify_warehouse_error("dbt SQL execution", e, self._dialect)
+        try:
+            with open_connection(adapter, "dbt_charts_query"):
+                try:
+                    _, table = adapter.execute(
+                        resolved_sql,
+                        auto_begin=False,
+                        fetch=True,
+                        limit=driver_limit,
+                    )
+                except Exception as e:  # noqa: BLE001 — any driver's rejection, classified below
+                    return classify_warehouse_error(
+                        "dbt SQL execution", e, self._dialect
+                    )
+        except ConnectionSetupFailed as e:
+            return connection_failure(self._dialect, e.cause)
 
         # Result materialization is client-side (no further warehouse round
         # trip) — left unguarded so a defect here surfaces as a crash, not a

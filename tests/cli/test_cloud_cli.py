@@ -8,6 +8,7 @@ parsing, context resolution, output, exit codes) is the real code path.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -25,8 +26,14 @@ from dbt_charts.cloud_client.client import CLIENT_ID, CloudClient
 from dbt_charts.cloud_client.config import (
     TOKEN_ENV_VAR,
     CloudConfig,
+    PendingConnect,
+    PendingLogin,
     read_config,
+    read_pending_connect,
+    read_pending_login,
     save_config,
+    save_pending_connect,
+    save_pending_login,
 )
 from dbt_charts.cloud_client.contract import (
     DBT_ROOT_OTHER,
@@ -35,12 +42,14 @@ from dbt_charts.cloud_client.contract import (
     BoardList,
     ConnectionList,
     ConnectionTestResult,
+    DeviceLoginStarted,
     GrantList,
     InvitationList,
     LoginResult,
     MemberList,
     OrgList,
     OrgStatus,
+    ProjectConnectStarted,
     ProjectList,
     ProjectSummary,
     RenderResult,
@@ -119,6 +128,22 @@ class FakeApi:
             if (seen_method, seen_path) == (method, path):
                 return payload
         raise AssertionError(f"{method} {path} was never called")
+
+
+GIT_URL = "https://github.com/acme/analytics"
+
+
+def _connect(*extra: str) -> list[str]:
+    return ["cloud", "project", "connect", "--org", "acme-data", *extra]
+
+
+def _checkout(
+    path: Path, monkeypatch: pytest.MonkeyPatch, remote: str = GIT_URL
+) -> None:
+    """Stand *path* up as a clone of *remote*: the `.git` marker the write
+    target walks to, plus the remote the connect verifies itself against."""
+    (path / ".git").mkdir()
+    monkeypatch.setattr(cloud_cmd, "git_remotes", _remotes(remote))
 
 
 def _no_sleep(seconds: float) -> None:
@@ -324,6 +349,122 @@ class TestLogin:
         assert read_config().token == ""
 
 
+def _pending() -> PendingLogin:
+    return PendingLogin(
+        device_code="devc-1",
+        token_endpoint="https://cloud.example/o/token/",
+        interval=5.0,
+        expires_in=600.0,
+        host="https://cloud.example",
+    )
+
+
+class TestLoginStartWait:
+    """`--start`/`--wait` split the device grant across two invocations, so an
+    agent that cannot block for a browser approval can hand the URL over and
+    poll separately -- see FR-67/FR-82 in the task this ships."""
+
+    def test_start_prints_the_url_to_stdout_and_does_not_poll(
+        self, api: FakeApi
+    ) -> None:
+        api.add("GET", "/.well-known/oauth-authorization-server", DISCOVERY_DOC)
+        api.add("POST", "/o/device-authorization/", DEVICE_AUTH_RESPONSE)
+
+        result = runner.invoke(app, ["cloud", "login", "--start"])
+
+        assert result.exit_code == 0, out(result)
+        assert result.stdout.strip() == (
+            "https://cloud.example/activate?user_code=ABCD-EFGH"
+        )
+        pending = read_pending_login()
+        assert pending is not None
+        assert pending.device_code == "devc-1"
+        assert pending.token_endpoint == "https://cloud.example/o/token/"
+        assert pending.host == "https://cloud.example"
+        assert read_config().token == ""
+
+    def test_start_hints_at_wait_on_stderr_not_stdout(self, api: FakeApi) -> None:
+        """An agent that runs --start and never runs --wait leaves login
+        half-done (FR-87) -- the hint nudges it, on stderr so it never
+        pollutes a `URL=$(dct cloud login --start)` capture."""
+        api.add("GET", "/.well-known/oauth-authorization-server", DISCOVERY_DOC)
+        api.add("POST", "/o/device-authorization/", DEVICE_AUTH_RESPONSE)
+
+        result = runner.invoke(app, ["cloud", "login", "--start"])
+
+        assert result.exit_code == 0, out(result)
+        assert "dct cloud login --wait" in result.stderr
+        assert "--wait" not in result.stdout
+
+    def test_start_json_emits_the_device_login_started_shape(
+        self, api: FakeApi
+    ) -> None:
+        api.add("GET", "/.well-known/oauth-authorization-server", DISCOVERY_DOC)
+        api.add("POST", "/o/device-authorization/", DEVICE_AUTH_RESPONSE)
+
+        result = runner.invoke(app, ["cloud", "login", "--start", "--json"])
+
+        assert result.exit_code == 0, out(result)
+        parsed = DeviceLoginStarted.model_validate_json(result.stdout)
+        assert parsed.host == "https://cloud.example"
+        assert parsed.user_code == "ABCD-EFGH"
+
+    def test_wait_polls_the_pending_login_and_saves_the_token(
+        self, api: FakeApi
+    ) -> None:
+        save_pending_login(_pending())
+        api.add("POST", "/o/token/", TOKEN_RESPONSE)
+        api.add("GET", "/api/orgs", {"organizations": []})
+
+        result = runner.invoke(app, ["cloud", "login", "--wait"])
+
+        assert result.exit_code == 0, out(result)
+        assert read_config().token == "new-token-xyz"
+        assert read_pending_login() is None
+
+    def test_wait_json_emits_the_login_result(self, api: FakeApi) -> None:
+        save_pending_login(_pending())
+        api.add("POST", "/o/token/", TOKEN_RESPONSE)
+        api.add(
+            "GET",
+            "/api/orgs",
+            {"organizations": [{"slug": "acme-data", "name": "Acme", "role": "ADMIN"}]},
+        )
+
+        result = runner.invoke(app, ["cloud", "login", "--wait", "--json"])
+
+        assert result.exit_code == 0, out(result)
+        parsed = LoginResult.model_validate_json(result.stdout)
+        assert parsed.host == "https://cloud.example"
+        assert parsed.organizations[0].slug == "acme-data"
+
+    def test_wait_with_no_pending_login_is_a_clear_error(self, api: FakeApi) -> None:
+        result = runner.invoke(app, ["cloud", "login", "--wait"])
+
+        assert result.exit_code != 0
+        assert "--start" in out(result)
+        assert api.calls == []
+
+    def test_wait_on_a_denied_login_clears_the_pending_record(
+        self, api: FakeApi
+    ) -> None:
+        save_pending_login(_pending())
+        api.add("POST", "/o/token/", {"error": "access_denied"}, status=400)
+
+        result = runner.invoke(app, ["cloud", "login", "--wait"])
+
+        assert result.exit_code != 0
+        assert "denied" in out(result).lower()
+        assert read_pending_login() is None
+        assert read_config().token == ""
+
+    def test_start_and_wait_together_are_rejected(self, api: FakeApi) -> None:
+        result = runner.invoke(app, ["cloud", "login", "--start", "--wait"])
+
+        assert result.exit_code != 0
+        assert api.calls == []
+
+
 class TestLogout:
     def test_revokes_and_clears_the_token(self, api: FakeApi) -> None:
         save_config(CloudConfig(host="https://cloud.example", token="old-token"))
@@ -422,6 +563,53 @@ class TestWhoAmi:
         parsed = WhoAmI.model_validate_json(result.stdout)
         assert parsed.credential_source == "config"
         assert parsed.organizations[0].slug == "acme-data"
+
+    def test_marks_the_published_org_inside_a_published_checkout(
+        self, api: FakeApi, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`whoami` marks which of the listed orgs owns this checkout
+        instead of leaving the caller to guess among all of them."""
+        (tmp_path / ".git").mkdir()
+        (tmp_path / "dbt_charts.yml").write_text(
+            'published_to: "https://cloud.example/acme-data/analytics/"\n'
+        )
+        monkeypatch.chdir(tmp_path)
+        api.add(
+            "GET",
+            "/api/orgs",
+            {
+                "organizations": [
+                    {"slug": "acme-data", "name": "Acme", "role": "ADMIN"},
+                    {"slug": "other-co", "name": "Other Co", "role": "ADMIN"},
+                ]
+            },
+        )
+
+        result = runner.invoke(app, ["cloud", "whoami"])
+
+        assert result.exit_code == 0, out(result)
+        assert "PUBLISHED HERE" in out(result)
+        assert "analytics" in out(result)
+
+    def test_a_host_mismatch_is_noted_but_does_not_abort(
+        self, api: FakeApi, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / ".git").mkdir()
+        (tmp_path / "dbt_charts.yml").write_text(
+            'published_to: "https://other-host.example/acme-data/analytics/"\n'
+        )
+        monkeypatch.chdir(tmp_path)
+        api.add(
+            "GET",
+            "/api/orgs",
+            {"organizations": [{"slug": "acme-data", "name": "Acme", "role": "ADMIN"}]},
+        )
+
+        result = runner.invoke(app, ["cloud", "whoami"])
+
+        assert result.exit_code == 0, out(result)
+        assert "other-host.example" in out(result)
+        assert "--host https://other-host.example" in out(result)
 
 
 class TestOrgs:
@@ -1051,6 +1239,64 @@ class TestProjects:
         assert result.exit_code == 0, out(result)
         assert "Sync queued." in result.output
 
+    def test_sync_says_a_push_is_not_a_publish(self, api: FakeApi) -> None:
+        """The ordering nothing in the product used to state: pushing does not
+        publish, syncing does. Phrased about syncing rather than about "this
+        sync", since a `queued=False` response means one was already running
+        and this invocation started nothing."""
+        api.add(
+            "POST",
+            "/api/orgs/acme-data/projects/analytics/sync",
+            {"queued": True, "message": "Sync queued."},
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "project",
+                "sync",
+                "--org",
+                "acme-data",
+                "--project",
+                "analytics",
+            ],
+        )
+
+        assert result.exit_code == 0, out(result)
+        assert "does not publish" in result.output
+        assert "dct cloud boards" in result.output
+        assert "RENDERED_AT" in result.output
+        assert "COMMIT" in result.output
+
+    def test_sync_advises_even_when_it_queued_nothing(self, api: FakeApi) -> None:
+        """`queued=False` means a sync was already in flight, so this
+        invocation started nothing -- which is exactly why the advisory talks
+        about syncing rather than about "this sync"."""
+        api.add(
+            "POST",
+            "/api/orgs/acme-data/projects/analytics/sync",
+            {"queued": False, "message": "A sync is already queued."},
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "project",
+                "sync",
+                "--org",
+                "acme-data",
+                "--project",
+                "analytics",
+            ],
+        )
+
+        assert result.exit_code == 0, out(result)
+        assert "A sync is already queued." in result.output
+        assert "does not publish" in result.output
+        assert "this sync" not in result.output
+
     def test_sync_json_is_the_contract_model(self, api: FakeApi) -> None:
         api.add(
             "POST",
@@ -1119,6 +1365,206 @@ class TestProjects:
         )
         assert result.exit_code == 0, out(result)
         assert SyncResult.model_validate_json(result.stdout).queued is True
+
+
+class TestProjectConnectPublishedTo:
+    """A successful `project connect` records `published_to:` in the local
+    `dbt_charts.yml` so a cold clone states its own Cloud destination instead
+    of relying on git-remote inference -- but only in a checkout of the
+    repository it just connected, and never at the cost of the result.
+    """
+
+    URL = "https://cloud.example/acme-data/analytics/"
+
+    def test_git_url_path_writes_published_to(
+        self, api: FakeApi, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _checkout(tmp_path, monkeypatch)
+        yml = tmp_path / "dbt_charts.yml"
+        yml.write_text("cache:\n  path: x\n")
+        monkeypatch.chdir(tmp_path)
+        api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
+
+        result = runner.invoke(app, _connect("--git-url", GIT_URL))
+
+        assert result.exit_code == 0, out(result)
+        assert f"Recorded published_to: {self.URL}" in out(result)
+        assert f'published_to: "{self.URL}"' in yml.read_text()
+
+    def test_browser_pick_path_writes_published_to(
+        self, api: FakeApi, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _checkout(tmp_path, monkeypatch)
+        yml = tmp_path / "dbt_charts.yml"
+        yml.write_text("cache:\n  path: x\n")
+        monkeypatch.chdir(tmp_path)
+        pick = {
+            "repo_id": "42",
+            "full_name": "acme/analytics",
+            "default_branch": "main",
+            "private": True,
+            "picked_at": "2026-08-30T00:00:00Z",
+            "dbt_roots": [],
+        }
+        api.add("GET", "/api/orgs/acme-data/github/pick", pick)
+        api.add(
+            "POST", "/api/orgs/acme-data/projects/from-pick", _project(), status=201
+        )
+
+        result = runner.invoke(app, _connect("--poll-interval", "1"))
+
+        assert result.exit_code == 0, out(result)
+        assert f"Recorded published_to: {self.URL}" in out(result)
+        assert f'published_to: "{self.URL}"' in yml.read_text()
+
+    def test_never_writes_into_a_checkout_of_another_repository(
+        self, api: FakeApi, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`published_to` outranks the git-remote match, so recording one
+        repository's destination in another's tracked config would point every
+        later verb in that repository at the wrong project."""
+        _checkout(tmp_path, monkeypatch, remote="https://github.com/other/unrelated")
+        yml = tmp_path / "dbt_charts.yml"
+        yml.write_text("cache:\n  path: x\n")
+        monkeypatch.chdir(tmp_path)
+        api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
+
+        result = runner.invoke(app, _connect("--git-url", GIT_URL))
+
+        assert result.exit_code == 0, out(result)
+        assert "published_to" not in yml.read_text()
+        assert "GitHub: acme/analytics" in out(result)
+        assert f'published_to: "{self.URL}"' in out(result)
+
+    def test_prints_the_key_to_add_when_no_dbt_charts_yml_exists(
+        self, api: FakeApi, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _checkout(tmp_path, monkeypatch)
+        monkeypatch.chdir(tmp_path)
+        api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
+
+        result = runner.invoke(app, _connect("--git-url", GIT_URL))
+
+        assert result.exit_code == 0, out(result)
+        assert f'published_to: "{self.URL}"' in out(result)
+        assert "No dbt_charts.yml yet" in out(result)
+        assert not (tmp_path / "dbt_charts.yml").exists()
+
+    def test_prints_instructions_with_no_local_git_checkout(
+        self, api: FakeApi, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A `--git-url` connect run with no local clone (e.g. from an
+        unrelated directory) has nowhere on disk to write -- it must still
+        name the exact key/value to add, never fail or write outside cwd."""
+        monkeypatch.chdir(tmp_path)
+        api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
+
+        result = runner.invoke(app, _connect("--git-url", GIT_URL))
+
+        assert result.exit_code == 0, out(result)
+        assert f'published_to: "{self.URL}"' in out(result)
+        assert "Could not find a local git checkout" in out(result)
+
+    def test_a_failed_write_never_replaces_the_connect_result(
+        self, api: FakeApi, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The project exists in Cloud by the time this runs: a file this
+        cannot edit safely must report itself, not abort the verb."""
+        _checkout(tmp_path, monkeypatch)
+        yml = tmp_path / "dbt_charts.yml"
+        yml.write_text("a: 1\n---\nb: 2\n")
+        monkeypatch.chdir(tmp_path)
+        api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
+
+        result = runner.invoke(app, _connect("--git-url", GIT_URL))
+
+        assert result.exit_code == 0, out(result)
+        assert "Connected analytics" in out(result)
+        assert "Next: " in out(result)
+        assert "published_to was not recorded" in out(result)
+
+    def test_json_stays_the_contract_model_when_the_write_fails(
+        self, api: FakeApi, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A `--json` caller that never receives the project cannot learn the
+        slug to sync or clean up, and retries into a second project."""
+        _checkout(tmp_path, monkeypatch)
+        (tmp_path / "dbt_charts.yml").write_text("a: 1\n---\nb: 2\n")
+        monkeypatch.chdir(tmp_path)
+        api.add("POST", "/api/orgs/acme-data/projects", _project(), status=201)
+
+        result = runner.invoke(app, _connect("--git-url", GIT_URL, "--json"))
+
+        assert result.exit_code == 0, out(result)
+        assert ProjectSummary.model_validate_json(result.stdout).slug == "analytics"
+        assert "published_to was not recorded" in result.stderr
+
+    def test_refuses_to_record_a_value_the_config_schema_would_reject(
+        self, api: FakeApi, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A path-bearing --host would write a three-segment value that
+        `Config` rejects, breaking `dct render` for the whole project."""
+        _checkout(tmp_path, monkeypatch)
+        yml = tmp_path / "dbt_charts.yml"
+        yml.write_text("cache:\n  path: x\n")
+        monkeypatch.chdir(tmp_path)
+        api.add("POST", "/dct/api/orgs/acme-data/projects", _project(), status=201)
+
+        result = runner.invoke(
+            app, _connect("--git-url", GIT_URL, "--host", "https://cloud.example/dct")
+        )
+
+        assert result.exit_code == 0, out(result)
+        assert "published_to was not recorded" in out(result)
+        assert "published_to" not in yml.read_text()
+
+
+class TestCloudVerbsInAHalfEditedCheckout:
+    def test_an_unparseable_dbt_charts_yml_is_a_reported_error(
+        self, api: FakeApi, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every context-resolving verb reads dbt_charts.yml now; a file
+        mid-edit must fail the way every other `dct cloud` failure does."""
+        (tmp_path / "dbt_charts.yml").write_text("published_to: [unclosed\n")
+        monkeypatch.chdir(tmp_path)
+        api.add("GET", "/api/orgs", {"organizations": []})
+
+        result = runner.invoke(app, ["cloud", "status"])
+
+        assert result.exit_code != 0
+        assert "Traceback" not in out(result)
+        assert str(tmp_path / "dbt_charts.yml") in out(result)
+
+    def test_whoami_notes_it_and_still_answers(
+        self, api: FakeApi, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """whoami is the orientation command, not a resolution gate: a record
+        it cannot read is a note beside the answer, never the answer."""
+        (tmp_path / "dbt_charts.yml").write_text("published_to: [unclosed\n")
+        monkeypatch.chdir(tmp_path)
+        api.add(
+            "GET",
+            "/api/orgs",
+            {"organizations": [{"slug": "acme-data", "name": "Acme", "role": "ADMIN"}]},
+        )
+
+        result = runner.invoke(app, ["cloud", "whoami"])
+
+        assert result.exit_code == 0, out(result)
+        assert "acme-data" in out(result)
+        assert str(tmp_path / "dbt_charts.yml") in out(result)
+
+    def test_the_json_error_body_is_the_contract_shape(
+        self, api: FakeApi, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "dbt_charts.yml").write_text("published_to: [unclosed\n")
+        monkeypatch.chdir(tmp_path)
+        api.add("GET", "/api/orgs", {"organizations": []})
+
+        result = runner.invoke(app, ["cloud", "status", "--json"])
+
+        assert result.exit_code != 0
+        assert ApiError.model_validate_json(result.stdout).code == "invalid_request"
 
 
 class TestProjectConnectGithub:
@@ -1341,6 +1787,180 @@ class TestProjectConnectGithub:
         )
         assert result.exit_code == 0, out(result)
         assert ProjectSummary.model_validate_json(result.stdout).slug == "analytics"
+
+
+class TestProjectConnectStartWait:
+    """`--start`/`--wait` split the browser repo pick across two invocations,
+    exactly like `login`'s FR-67 split (#8662) -- see FR-82. The server
+    handle here is the org itself: `github/pick` is keyed by (caller, org),
+    not a token this client mints, so `--wait` just resumes polling it."""
+
+    PICK = {
+        "repo_id": "42",
+        "full_name": "acme/analytics",
+        "default_branch": "main",
+        "private": True,
+        "picked_at": "2026-08-30T00:00:00Z",
+        "dbt_roots": [{"path": "warehouse", "is_dct": True}],
+    }
+
+    def _pending(self) -> PendingConnect:
+        return PendingConnect(org="acme-data", host="https://cloud.example")
+
+    def test_start_prints_the_url_and_does_not_poll(self, api: FakeApi) -> None:
+        result = runner.invoke(app, _connect("--start"))
+
+        assert result.exit_code == 0, out(result)
+        assert result.stdout.strip() == (
+            "https://cloud.example/acme-data/github/connect/?landing=terminal"
+        )
+        pending = read_pending_connect()
+        assert pending is not None
+        assert pending.org == "acme-data"
+        assert pending.host == "https://cloud.example"
+        assert api.calls == []
+
+    def test_start_hints_at_wait_on_stderr_not_stdout(self, api: FakeApi) -> None:
+        """An agent that runs --start, hands over the URL, then authors
+        boards for a while can forget the second step -- the project never
+        gets created and `status` sits at missing_project (FR-87). The hint
+        goes to stderr so it never pollutes a
+        `URL=$(dct cloud project connect --start)` capture."""
+        result = runner.invoke(app, _connect("--start"))
+
+        assert result.exit_code == 0, out(result)
+        assert "dct cloud project connect --wait" in result.stderr
+        assert "--wait" not in result.stdout
+
+    def test_start_persists_the_project_fields_wait_will_need(
+        self, api: FakeApi
+    ) -> None:
+        result = runner.invoke(
+            app,
+            _connect(
+                "--start", "--name", "Analytics", "--slug", "an", "--trunk", "trunk"
+            ),
+        )
+
+        assert result.exit_code == 0, out(result)
+        pending = read_pending_connect()
+        assert pending is not None
+        assert pending.name == "Analytics"
+        assert pending.slug == "an"
+        assert pending.trunk == "trunk"
+
+    def test_start_json_emits_the_project_connect_started_shape(
+        self, api: FakeApi
+    ) -> None:
+        result = runner.invoke(app, _connect("--start", "--json"))
+
+        assert result.exit_code == 0, out(result)
+        parsed = ProjectConnectStarted.model_validate_json(result.stdout)
+        assert parsed.org == "acme-data"
+        assert parsed.url == (
+            "https://cloud.example/acme-data/github/connect/?landing=terminal"
+        )
+
+    def test_wait_polls_the_pending_org_and_finishes_the_project(
+        self, api: FakeApi
+    ) -> None:
+        save_pending_connect(self._pending())
+        api.add("GET", "/api/orgs/acme-data/github/pick", self.PICK)
+        api.add(
+            "POST", "/api/orgs/acme-data/projects/from-pick", _project(), status=201
+        )
+
+        result = runner.invoke(app, ["cloud", "project", "connect", "--wait"])
+
+        assert result.exit_code == 0, out(result)
+        body = api.body("POST", "/api/orgs/acme-data/projects/from-pick")
+        assert body["slug"] == "analytics"
+        assert read_pending_connect() is None
+
+    def test_wait_json_emits_the_project_summary(self, api: FakeApi) -> None:
+        save_pending_connect(self._pending())
+        api.add("GET", "/api/orgs/acme-data/github/pick", self.PICK)
+        api.add(
+            "POST", "/api/orgs/acme-data/projects/from-pick", _project(), status=201
+        )
+
+        result = runner.invoke(app, ["cloud", "project", "connect", "--wait", "--json"])
+
+        assert result.exit_code == 0, out(result)
+        assert ProjectSummary.model_validate_json(result.stdout).slug == "analytics"
+
+    def test_wait_with_no_pending_connect_is_a_clear_error(self, api: FakeApi) -> None:
+        result = runner.invoke(app, ["cloud", "project", "connect", "--wait"])
+
+        assert result.exit_code != 0
+        assert "--start" in out(result)
+        assert api.calls == []
+
+    def test_wait_ignores_org_and_host_flags_using_the_pending_ones(
+        self, api: FakeApi
+    ) -> None:
+        """The whole point of the split (FR-82): a concurrent shell's
+        `--org`/`--host` must never leak into a `--wait` this call did not
+        `--start` -- the pending record, not ambient flags, decides."""
+        save_pending_connect(self._pending())
+        api.add("GET", "/api/orgs/acme-data/github/pick", self.PICK)
+        api.add(
+            "POST", "/api/orgs/acme-data/projects/from-pick", _project(), status=201
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "project",
+                "connect",
+                "--wait",
+                "--org",
+                "some-other-org",
+                "--host",
+                "https://evil.example",
+            ],
+        )
+
+        assert result.exit_code == 0, out(result)
+        assert ("GET", "/api/orgs/some-other-org/github/pick") not in [
+            (method, path) for method, path, _payload in api.calls
+        ]
+
+    def test_a_timed_out_wait_keeps_the_pending_record(self, api: FakeApi) -> None:
+        """Unlike login's device code, the pick has no server-side expiry --
+        a local `--wait` timeout is just this invocation giving up, so a
+        second `--wait` should resume the same pending connect rather than
+        forcing a fresh `--start`."""
+        save_pending_connect(self._pending())
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/github/pick",
+            {"code": "not_found", "message": "No repository pick.", "field_errors": {}},
+            status=404,
+        )
+
+        result = runner.invoke(
+            app,
+            ["cloud", "project", "connect", "--wait", "--timeout", "0"],
+        )
+
+        assert result.exit_code != 0
+        assert read_pending_connect() is not None
+
+    def test_start_and_wait_together_are_rejected(self, api: FakeApi) -> None:
+        result = runner.invoke(app, _connect("--start", "--wait"))
+
+        assert result.exit_code != 0
+        assert api.calls == []
+
+    def test_start_with_a_git_url_is_rejected(self, api: FakeApi) -> None:
+        """`--git-url` is already headless -- there is no browser pick to
+        start or wait for."""
+        result = runner.invoke(app, _connect("--start", "--git-url", GIT_URL))
+
+        assert result.exit_code != 0
+        assert api.calls == []
 
 
 class TestConnections:
@@ -1893,6 +2513,30 @@ class TestRender:
         assert result.exit_code == 0, out(result)
         assert "14" in result.output
 
+    def test_a_blocked_project_gets_a_reason_not_a_bare_zero(
+        self, api: FakeApi
+    ) -> None:
+        """``Started 0 board render(s); 0 still unrendered.`` was the
+        whole answer on a project whose connection had never passed a test."""
+        api.add(
+            "POST",
+            "/api/orgs/acme-data/projects/analytics/render",
+            {
+                "started": 0,
+                "unrendered_remaining": 0,
+                "blocked": (
+                    "Source `warehouse` maps to connection `prod-dwh`, whose last"
+                    " test failed. Run `dct cloud connection test prod-dwh`."
+                ),
+            },
+        )
+        result = runner.invoke(
+            app, ["cloud", "render", "--org", "acme-data", "--project", "analytics"]
+        )
+        assert result.exit_code == 0, out(result)
+        assert "whose last test failed" in result.output
+        assert "dct cloud connection test prod-dwh" in result.output
+
     def test_json_is_the_contract_model(self, api: FakeApi) -> None:
         api.add(
             "POST",
@@ -1931,6 +2575,45 @@ class TestRender:
         assert result.exit_code == 0, out(result)
         assert ("POST", path, {}) in api.calls
         assert "Re-rendering 47" in result.output
+
+    def test_force_still_reports_a_connection_that_has_not_passed(
+        self, api: FakeApi
+    ) -> None:
+        """Forcing starts the renders; it does not make the warehouse answer,
+        so the reason is printed under the re-rendering count too. The skill
+        tells an agent `--force` will not clear a block, and this is where it
+        sees that."""
+        path = "/api/orgs/acme-data/projects/analytics/render/all"
+        api.add(
+            "POST",
+            path,
+            {
+                "started": 3,
+                "unrendered_remaining": 0,
+                "blocked": (
+                    "Source `warehouse` maps to connection `prod-dwh`, whose"
+                    " last test failed. Run `dct cloud connection test"
+                    " prod-dwh`."
+                ),
+            },
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "render",
+                "--org",
+                "acme-data",
+                "--project",
+                "analytics",
+                "--force",
+            ],
+        )
+
+        assert result.exit_code == 0, out(result)
+        assert "Re-rendering 3" in result.output
+        assert "dct cloud connection test prod-dwh" in result.output
 
     def test_without_force_the_server_starts_only_unrendered_boards(
         self, api: FakeApi
@@ -2202,6 +2885,37 @@ class TestInvites:
         assert "new@example.com" in result.output
 
 
+def board_row(output: str) -> dict[str, str]:
+    """Reassemble a one-board listing into {column header: cell}.
+
+    Rich renders at 80 columns whenever stdout is not a terminal — every agent,
+    every pipe — and five columns do not fit a board URL on one line there, so
+    a cell continues on the lines below it *within its own column*. Reading a
+    cell means slicing by the header's column offsets; splitting on runs of
+    spaces interleaves the continuations of neighbouring columns instead.
+
+    Each cell comes back as its own lines joined by a newline — the caller
+    rejoins with `""` for a folded value (slug, URL: broken mid-word, no space
+    was there) or `" "` for a word-wrapped one (the STATUS diagnostic).
+    """
+    header, *rest = output.splitlines()
+    starts: list[int] = []
+    for name in header.split():
+        # From the previous column's end, so a header word that is also a
+        # substring of an earlier one cannot silently mis-slice every row.
+        starts.append(header.index(name, starts[-1] + 1 if starts else 0))
+    bounds = list(zip(starts, [*starts[1:], len(header) + 1], strict=True))
+    cells: list[list[str]] = [[] for _ in starts]
+    for line in rest:
+        # Rich separates anything printed after the table with a blank line;
+        # past it the text is prose (the version-skew advisory), not cells.
+        if not line.strip():
+            break
+        for cell, (lo, hi) in zip(cells, bounds, strict=True):
+            cell.append(line[lo:hi].strip())
+    return dict(zip(header.split(), ["\n".join(c).strip() for c in cells], strict=True))
+
+
 class TestBoards:
     def test_lists_boards_with_render_state(self, api: FakeApi) -> None:
         api.add(
@@ -2214,6 +2928,8 @@ class TestBoards:
                         "title": "Revenue",
                         "render_status": "warning",
                         "error": "warehouse unreachable",
+                        "rendered_at": None,
+                        "commit": None,
                         "url": "https://cloud.example/acme-data/analytics/d/revenue",
                     }
                 ]
@@ -2224,8 +2940,88 @@ class TestBoards:
             ["cloud", "boards", "--org", "acme-data", "--project", "analytics"],
         )
         assert result.exit_code == 0, out(result)
-        assert "revenue" in result.output
-        assert "warehouse unreachable" in result.output
+        row = board_row(result.output)
+        assert row["SLUG"] == "revenue"
+        # Word-wrapped across lines at 80 columns; wrapped is not lost.
+        assert " ".join(row["STATUS"].split()) == "warning: warehouse unreachable"
+
+    def test_json_render_status_matches_the_table(self, api: FakeApi) -> None:
+        """The STATUS column and ``render_status`` in ``--json`` must
+        agree for the same board -- an onboarding agent scripts off
+        ``--json`` and must see the same value a human reads in the table."""
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/projects/analytics/boards",
+            {
+                "boards": [
+                    {
+                        "slug": "revenue",
+                        "title": "Revenue",
+                        "render_status": "ready",
+                        "error": "",
+                        "rendered_at": "2026-09-06T17:50:12.481000Z",
+                        "commit": "8a2f27c9b1e4d0a3f5c6721e8d94ab3c15f7e0d2",
+                        "url": "https://cloud.example/acme-data/analytics/d/revenue",
+                    }
+                ]
+            },
+        )
+        table = runner.invoke(
+            app,
+            ["cloud", "boards", "--org", "acme-data", "--project", "analytics"],
+        )
+        assert table.exit_code == 0, out(table)
+        assert board_row(table.output)["STATUS"] == "ready"
+
+        as_json = runner.invoke(
+            app,
+            [
+                "cloud",
+                "boards",
+                "--org",
+                "acme-data",
+                "--project",
+                "analytics",
+                "--json",
+            ],
+        )
+        assert as_json.exit_code == 0, out(as_json)
+        payload = json.loads(as_json.stdout)["boards"][0]
+        assert payload["render_status"] == "ready"
+
+    def test_a_blocked_board_names_the_connection_to_test(self, api: FakeApi) -> None:
+        """the listing printed ``ready`` with an empty error over a
+        credential that had never passed a test."""
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/projects/analytics/boards",
+            {
+                "boards": [
+                    {
+                        "slug": "revenue",
+                        "title": "Revenue",
+                        "render_status": "blocked",
+                        "error": (
+                            "Source `warehouse` maps to connection `prod-dwh`,"
+                            " which has never been tested. Run `dct cloud"
+                            " connection test prod-dwh`."
+                        ),
+                        "url": "https://cloud.example/acme-data/analytics/d/revenue",
+                    }
+                ]
+            },
+        )
+        result = runner.invoke(
+            app,
+            ["cloud", "boards", "--org", "acme-data", "--project", "analytics"],
+        )
+        assert result.exit_code == 0, out(result)
+        # RENDERED_AT and COMMIT narrowed STATUS, so the diagnostic now wraps
+        # mid-sentence; it is all there, just not on one line.
+        flowed = " ".join(result.output.split())
+        assert "blocked" in flowed
+        assert "never been tested" in flowed
+        assert "dct cloud connection test prod-dwh" in flowed
 
     def test_a_chart_diagnostic_with_brackets_does_not_crash_the_table(
         self, api: FakeApi
@@ -2243,6 +3039,8 @@ class TestBoards:
                         "title": "Revenue",
                         "render_status": "errored",
                         "error": "column [region] is 42.1 MB, over the cap",
+                        "rendered_at": "2026-09-06T17:50:12.481000Z",
+                        "commit": "8a2f27c9b1e4d0a3f5c6721e8d94ab3c15f7e0d2",
                         "url": "https://cloud.example/acme-data/analytics/d/revenue",
                     }
                 ]
@@ -2256,6 +3054,185 @@ class TestBoards:
 
         assert result.exit_code == 0, out(result)
         assert "[region]" in result.output
+
+    @pytest.mark.usefixtures("non_utc_tz")
+    def test_names_the_render_time_and_commit_being_served(self, api: FakeApi) -> None:
+        """RENDERED_AT is the reader's local time, not the API's UTC: a reader
+        seven hours off UTC reading a UTC stamp concludes the render is seven
+        hours old. `non_utc_tz` pins America/Phoenix, since every CI runner is
+        UTC and the assertion would pass either way there."""
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/projects/analytics/boards",
+            {
+                "boards": [
+                    {
+                        "slug": "exec-overview",
+                        "title": "Exec overview",
+                        "render_status": "ready",
+                        "error": "",
+                        "rendered_at": "2026-09-06T17:50:12.481000Z",
+                        "commit": "8a2f27c9b1e4d0a3f5c6721e8d94ab3c15f7e0d2",
+                        "url": "https://cloud.example/acme-data/analytics/d/exec",
+                    }
+                ]
+            },
+        )
+
+        result = runner.invoke(
+            app,
+            ["cloud", "boards", "--org", "acme-data", "--project", "analytics"],
+        )
+
+        assert result.exit_code == 0, out(result)
+        assert "RENDERED_AT" in result.output
+        assert "COMMIT" in result.output
+        # Phoenix is UTC-7 year round, so 17:50 UTC reads as 10:50.
+        assert "2026-09-06 10:50" in result.output
+        assert "8a2f27c" in result.output
+        assert "8a2f27c9b1e" not in result.output
+
+    def test_a_board_with_no_complete_render_shows_dashes(self, api: FakeApi) -> None:
+        """Null is "no render of anything yet", printed as a dash — never a
+        blank cell that reads as a value, and never a nearby sha."""
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/projects/analytics/boards",
+            {
+                "boards": [
+                    {
+                        "slug": "new-board",
+                        "title": "New board",
+                        "render_status": "not_rendered",
+                        "error": "",
+                        "rendered_at": None,
+                        "commit": None,
+                        "url": "https://cloud.example/acme-data/analytics/d/new",
+                    }
+                ]
+            },
+        )
+
+        result = runner.invoke(
+            app,
+            ["cloud", "boards", "--org", "acme-data", "--project", "analytics"],
+        )
+
+        assert result.exit_code == 0, out(result)
+        line = next(ln for ln in result.output.splitlines() if "new-board" in ln)
+        cells = re.split(r"\s{2,}", line.strip())
+        assert cells[:4] == ["new-board", "not_rendered", "-", "-"]
+
+    def test_a_long_slug_and_url_are_folded_never_truncated(self, api: FakeApi) -> None:
+        """Rich ellipsizes a cell it cannot word-wrap, and neither a slug nor a
+        URL contains a space. Five columns at the 80 Rich assumes off a
+        terminal squeeze both, and both are identifiers a reader matches
+        against something else: a truncated slug names no file and a truncated
+        URL opens nothing."""
+        url = "https://cloud.example/acme-data/analytics/d/quarterly-exec-overview"
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/projects/analytics/boards",
+            {
+                "boards": [
+                    {
+                        "slug": "quarterly-exec-overview",
+                        "title": "Quarterly exec overview",
+                        "render_status": "ready",
+                        "error": "",
+                        "rendered_at": "2026-09-06T17:50:12.481000Z",
+                        "commit": "8a2f27c9b1e4d0a3f5c6721e8d94ab3c15f7e0d2",
+                        "url": url,
+                    }
+                ]
+            },
+        )
+
+        result = runner.invoke(
+            app,
+            ["cloud", "boards", "--org", "acme-data", "--project", "analytics"],
+        )
+
+        assert result.exit_code == 0, out(result)
+        assert "…" not in result.output
+        row = board_row(result.output)
+        assert "".join(row["SLUG"].split()) == "quarterly-exec-overview"
+        assert "".join(row["URL"].split()) == url
+
+    def test_json_keeps_a_null_render_time_and_commit(self, api: FakeApi) -> None:
+        """`--json` is the API's own shape: a null key must stay present, not
+        vanish into "the key is just missing"."""
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/projects/analytics/boards",
+            {
+                "boards": [
+                    {
+                        "slug": "new-board",
+                        "title": "New board",
+                        "render_status": "not_rendered",
+                        "error": "",
+                        "rendered_at": None,
+                        "commit": None,
+                        "url": "https://cloud.example/acme-data/analytics/d/new",
+                    }
+                ]
+            },
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "boards",
+                "--org",
+                "acme-data",
+                "--project",
+                "analytics",
+                "--json",
+            ],
+        )
+
+        payload = json.loads(result.stdout)["boards"][0]
+        assert payload["rendered_at"] is None
+        assert payload["commit"] is None
+        board = BoardList.model_validate_json(result.stdout).boards[0]
+        assert board.rendered_at is None
+        assert board.commit is None
+
+    def test_a_cloud_without_the_two_fields_still_lists_boards(
+        self, api: FakeApi
+    ) -> None:
+        """A `dct` newer than the deployed Cloud must not lose the whole
+        listing -- not even the three columns that Cloud does answer.
+        `unknown`, not `-`: `-` means the board has never rendered."""
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/projects/analytics/boards",
+            {
+                "boards": [
+                    {
+                        "slug": "revenue",
+                        "title": "Revenue",
+                        "render_status": "ready",
+                        "error": "",
+                        "url": "https://cloud.example/acme-data/analytics/d/rev",
+                    }
+                ]
+            },
+        )
+
+        result = runner.invoke(
+            app,
+            ["cloud", "boards", "--org", "acme-data", "--project", "analytics"],
+        )
+
+        assert result.exit_code == 0, out(result)
+        row = board_row(result.output)
+        assert row["SLUG"] == "revenue"
+        assert row["RENDERED_AT"] == "unknown"
+        assert row["COMMIT"] == "unknown"
+        assert "older than this dct" in " ".join(result.output.split())
 
     def test_json_is_the_contract_model(self, api: FakeApi) -> None:
         api.add("GET", "/api/orgs/acme-data/projects/analytics/boards", {"boards": []})
@@ -2473,6 +3450,32 @@ class TestDestructiveConfirm:
         )
         assert result.exit_code == 0, out(result)
         assert "acme-data/warehouse" in out(result)
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["member", "remove", "bob@acme.com"],
+            ["invite", "revoke", "bob@acme.com"],
+            ["grant", "revoke", "grant-1"],
+        ],
+    )
+    def test_admin_verbs_refuse_a_stale_default_with_no_org_flag(
+        self, api: FakeApi, argv: list[str]
+    ) -> None:
+        """Removing a member, revoking an invite, or revoking a grant is as
+        destructive as a delete: with no --org and no repo match they refuse
+        the stored default (and, in a fork, the published_to record) rather
+        than act on an org the user did not name."""
+        save_config(CloudConfig(org="stale-org", project=""))
+        api.add("GET", "/api/orgs", OrgList(organizations=[]).model_dump(mode="json"))
+
+        result = runner.invoke(app, ["cloud", *argv])
+
+        assert result.exit_code != 0
+        assert "destructive" in out(result)
+        assert not any(
+            method in ("DELETE", "POST") for method, _path, _body in api.calls
+        )
 
     def test_org_delete_refuses_a_stale_default_with_no_org_flag(
         self, api: FakeApi

@@ -91,6 +91,35 @@ ERR_SQL_LITERAL_NEWLINES = REGISTRY.register(
     )
 )
 
+ERR_SQL_DATE_LITERAL_VARIABLE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-SQL-DATE-LITERAL-VARIABLE",
+        domain="compile",
+        title="Variable quoted as a date/time/timestamp literal will not compile",
+        message_template=(
+            "Query {query_name!r} {field_label} casts a variable with "
+            "{keyword} '{{{{ {variable} }}}}'. This source binds the variable "
+            "as a query parameter, so its quotes are stripped and this "
+            "compiles to {keyword} $N, which the warehouse does not parse. "
+            "Use cast('{{{{ {variable} }}}}' as {keyword}) instead."
+        ),
+        doc=(
+            "Fired when a query casts a Jinja variable to a date/time/timestamp "
+            "using the SQL literal syntax (`date '{{{{ var }}}}'`) on a source "
+            "whose adapter binds variables as real query parameters (duckdb, "
+            "sqlite). The parameterizer strips the quotes around every "
+            "placeholder, so `date '{{{{ var }}}}'` compiles to `date $1` -- "
+            "syntax the warehouse does not accept. Other sources (postgres, "
+            "snowflake, bigquery, dbt_profile, etc.) render variables as "
+            "inline literal text instead, so the same SQL is valid there and "
+            "this check does not fire. Use `cast('{{{{ var }}}}' as date)` (or "
+            "`time`/`timestamp`) instead, which keeps the variable an ordinary "
+            "string parameter and works on every source."
+        ),
+        docs_topic="queries",
+    )
+)
+
 ERR_SOURCE_REQUIRED = REGISTRY.register(
     ErrorCode(
         code="ERR-SOURCE-REQUIRED",

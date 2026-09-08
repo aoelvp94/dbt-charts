@@ -21,6 +21,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -76,6 +77,10 @@ class _FakeAdapter:
     @classmethod
     def type(cls) -> str:  # noqa: A003
         return "duckdb"
+
+    connections = SimpleNamespace(
+        get_thread_connection=lambda: SimpleNamespace(handle=object())
+    )
 
     @contextmanager
     def connection_named(self, name: str) -> Any:
