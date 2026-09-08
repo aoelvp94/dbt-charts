@@ -8,10 +8,9 @@ composition invariant.
 
 ## Implementation philosophy
 
-Exceeds the default budget: five distinct invariants below (composition, the
+Exceeds the usual length budget: the five invariants below (composition, the
 family/shared boundary, no inheritance, the axis-cascade context, the zero-anchor
-decision) each need a code-anchored citation to stay reviewer-checkable, per
-`docs/contributing/implementation-philosophy-style.md`.
+decision) each need a code-anchored citation to stay reviewer-checkable.
 
 ### Compose shared policy, never hand-roll it
 
@@ -123,7 +122,7 @@ valid routes.
 ### Adding a family
 
 A sixth cartesian family extends
-`dbt-charts/tests/core/compile/resolve/test_cartesian_family_invariants.py`'s
+`tests/core/compile/resolve/test_cartesian_family_invariants.py`'s
 parametrization for every invariant. An invariant that does not apply is an
 explicit `pytest.param(..., marks=pytest.mark.skip(reason=...))` naming why, never
 a parametrization the family is simply absent from.

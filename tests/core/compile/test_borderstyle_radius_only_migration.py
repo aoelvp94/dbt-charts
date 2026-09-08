@@ -2,7 +2,7 @@
 
 ``width``/``color``/``dash_array``/``line_cap``/``dash_offset`` were
 schema-valid and inert on four ``border:`` slots (see
-``compile/migrations/versions/current.py`` for the full list). A board or
+``compile/migrations/versions/v0_6_0.py`` for the full list). A board or
 custom theme file authoring the old shape migrates clean; only ``radius``
 survives.
 """
@@ -90,11 +90,11 @@ def test_inert_border_fields_stripped_from_authored_board(
     AuthoredBoard.model_validate(migrated)
 
 
-def test_registry_declares_the_pending_border_deletions(
-    catalog: YamlSchemaCatalog,
-) -> None:
+def test_registry_declares_the_0_5_0_border_deletions() -> None:
+    """Declared at the 0.5.0 -> 0.6.0 boundary, now frozen -- not at
+    ``catalog.latest.version``, which is 0.6.0 itself post-freeze."""
     _, registry = _board_migration_context()
-    deletions = registry.deletions_from(catalog.latest.version)
+    deletions = registry.deletions_from("0.5.0")
 
     declared_first_segments = {d.path[0] for d in deletions}
     assert {"input", "columns", "spark", "spark_bar"} <= declared_first_segments

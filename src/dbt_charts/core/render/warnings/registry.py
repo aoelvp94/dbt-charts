@@ -36,6 +36,7 @@ from __future__ import annotations
 import logging
 from types import ModuleType
 
+import dbt_charts.core.render.warnings.axis_label_collision as axis_label_collision
 import dbt_charts.core.render.warnings.axis_title_truncated as axis_title_truncated
 import dbt_charts.core.render.warnings.bar_band_width_too_narrow as bar_band_width_too_narrow
 import dbt_charts.core.render.warnings.bar_grouped_series_coincide as bar_grouped_series_coincide
@@ -84,6 +85,7 @@ logger = logging.getLogger(__name__)
 # Reads ctx.vega_specs or another render-at-a-real-width WarningContext
 # field; silent for a chart that never laid out (see module docstring).
 _GEOMETRY_DETECTORS: list[ModuleType] = [
+    axis_label_collision,
     axis_title_truncated,
     bar_band_width_too_narrow,
     bar_grouped_series_coincide,

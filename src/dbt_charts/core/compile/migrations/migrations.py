@@ -656,6 +656,46 @@ def _board_migration_context() -> tuple[YamlSchemaCatalog, MigrationRegistry]:
         _schema_branches_cached.cache_clear()
 
 
+@cache
+def retired_theme_renames() -> dict[MappedScalar, MappedScalar]:
+    """Merge every version module's ``THEME_RENAMES`` table, frozen and pending.
+
+    ``extends: <retired-theme-name>`` (``merge.py``'s ``_retired_theme_redirect``)
+    needs a retired theme name to keep resolving forever, the same as
+    ``theme:``'s Move-based rename already does via ``_apply_identity_moves`` --
+    so this walks the same ``catalog.entries`` + pending-module boundary
+    ``_build_board_migration_context`` does, merging each module's declared
+    table instead of building ``Move``/``Deletion``/``ConditionalMove`` objects.
+    """
+    from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
+        load_yaml_schema_catalog,
+    )
+
+    catalog = load_yaml_schema_catalog()
+    combined: dict[MappedScalar, MappedScalar] = {}
+    for entry in catalog.entries:
+        if entry.predecessor is None:
+            continue
+        dotted = f"dbt_charts.core.compile.migrations.versions.v{entry.version.replace('.', '_')}"
+        module = _load_migration_module(dotted)
+        if module is not None:
+            combined.update(
+                getattr(
+                    module, "THEME_RENAMES", {}
+                )  # type-state: silent_fallback — most frozen versions never touch a theme name; absent THEME_RENAMES means none, not a bug
+            )
+    pending = _load_migration_module(
+        "dbt_charts.core.compile.migrations.versions.current"
+    )
+    if pending is not None:
+        combined.update(
+            getattr(
+                pending, "THEME_RENAMES", {}
+            )  # type-state: silent_fallback — same as above: no theme rename pending yet is the common case, not a bug
+        )
+    return combined
+
+
 def _build_board_migration_context() -> tuple[YamlSchemaCatalog, MigrationRegistry]:
     from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
         load_yaml_schema_catalog,

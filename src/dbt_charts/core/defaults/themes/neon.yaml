@@ -49,8 +49,8 @@ style:
       font:
         color: *mid
   text:
-    font:
-      color: *high
+    # Color inherits from `font.color` (InheritSlot) — no pin here so a
+    # board-root style.font.color override reaches prose.
     code:
       theme: monokai
       font:

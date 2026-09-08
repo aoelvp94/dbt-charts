@@ -19,18 +19,18 @@ Single-file domains (`config.py`, `source.py`, `primitives.py`, `factories.py`) 
 A structural change to an `authored.py` model or a `*Patch` type (a field
 rename, move, or removal) is a change to the dbt charts YAML grammar. It must
 ship with a corresponding migration module in
-`dbt-charts/src/dbt_charts/core/compile/migrations/versions/`, or a clear reason
+`src/dbt_charts/core/compile/migrations/versions/`, or a clear reason
 one is not needed. A pure addition qualifies. "It cannot be migrated safely"
-does not, unless a test in `dbt-charts/tests/core/compile/` demonstrates the
-failure — that claim has twice been asserted and twice been wrong. Read
-`dbt-charts/src/dbt_charts/core/compile/migrations/AGENTS.md` (`## Implementation
-philosophy`) before declaring the
-change unmigratable, and `docs/guides/dbt-charts-yaml-schemas-and-migrations.md`
-before making it; a PR missing this is a CRITICAL review finding.
+does not, unless a test in `tests/core/compile/` demonstrates the
+failure — that claim has twice been asserted and twice been wrong. Read the
+migrations `AGENTS.md` (`../migrations/AGENTS.md`, its `## Implementation
+philosophy`) before declaring the change unmigratable; a PR missing this is a
+CRITICAL review finding.
 
 ## Implementation philosophy
 
-Exceeds the default budget deliberately: the default_factory decision tree and inherit-marker semantics are dense, load-bearing, and have no docs home that wouldn't just re-split them (`docs/contributing/implementation-philosophy-style.md`).
+Exceeds the usual length budget deliberately: the default_factory decision tree and
+inherit-marker semantics are dense and load-bearing, and splitting them loses the thread.
 
 ### Stage-suffix conventions
 
@@ -42,15 +42,15 @@ Two equivalent forms are allowed for the authored stage:
 | Domain-prefixed names | chart, query | `AuthoredChart` (discriminated union alias), `ChartSort`, `AuthoredQuery` |
 | `*Patch` suffix | style | `ChartStylePatch`, `ScaleStylePatch`, `AxisStylePatch` |
 
-These coexist because each form is the most natural fit for its domain — board has a single root authored shape, chart spreads authored input across several shapes that share a `Chart` root, and style is entirely patch-shaped (all-Optional cascade overlays). For the normalized stage, names are always unprefixed (`Board`, `Chart`, `Style`, `FrameStyle`, `AxisStyle`). For the resolved tier, names use the `Resolved*` prefix (`ResolvedBoard`, `ResolvedStyle`, `ResolvedChart`). These are frozen dataclasses produced by merging a normalized `Style` with optional `*Patch` overlays; they are the final resolved shape consumed by renderers — construction-final, never copied-with-update (`dataclasses.replace()`/`model_copy(update=...)` on a `Resolved*` value is a boundary violation; see `dbt-charts/tests/test_no_replace_on_resolved.py`). Theme-stage Pydantic classes (`TitleStyle`, `TextStyle`, `LayoutStyle`, etc.) are themselves the final shape where no per-board cascade is needed — they live in `style/theme/` and carry no prefix.
+These coexist because each form is the most natural fit for its domain — board has a single root authored shape, chart spreads authored input across several shapes that share a `Chart` root, and style is entirely patch-shaped (all-Optional cascade overlays). For the normalized stage, names are always unprefixed (`Board`, `Chart`, `Style`, `FrameStyle`, `AxisStyle`). For the resolved tier, names use the `Resolved*` prefix (`ResolvedBoard`, `ResolvedStyle`, `ResolvedChart`). These are frozen dataclasses produced by merging a normalized `Style` with optional `*Patch` overlays; they are the final resolved shape consumed by renderers — construction-final, never copied-with-update (`dataclasses.replace()`/`model_copy(update=...)` on a `Resolved*` value is a boundary violation; see `tests/test_no_replace_on_resolved.py`). Theme-stage Pydantic classes (`TitleStyle`, `TextStyle`, `LayoutStyle`, etc.) are themselves the final shape where no per-board cascade is needed — they live in `style/theme/` and carry no prefix.
 
-`ChartStyleContext` (`style/context.py`) is the deliberate exception to the `Resolved*` naming rule: it is compiler *working state* for the chart-local style cascade — sparse axis overlays, chart-local patch sentinels, palette/role token bindings, and the pre-inherit `Style` tree — produced alongside `ResolvedStyle` by the same board-level cascade (`resolve_style_and_context()`) but never exposed by `ResolvedBoard` itself (no field on `ResolvedBoard`/`ResolvedChart`/`ResolvedStyle` carries it, and it never serializes into the board-resolved artifact). It does cross into a handful of render entry points that perform runtime chart resolution rather than mechanical emission — `render/layout_sizing.py`'s sizing pass, `render/board_resolve.py`'s static resolvers, `render/board_to_dict.py`'s row-truncated resolution, and the two documented `render/chart/vega_lite.py` entry points (`render_chart()`, `generate_vega_lite_spec()`) — see `dbt-charts/src/dbt_charts/core/AGENTS.md`'s render-boundary section for the full list and why each is resolution, not emission. Runtime chart resolution (`compile/resolve/`, `compile/support_table.py`, normalized `Board.chart_style_context`, execute orchestration, and those render entry points) consumes it directly; render's other, mechanical consumers only ever see the final `Resolved*` outputs it projects into (`ResolvedStyle`, `ResolvedChartDefaults`, and each chart's own `Resolved<Family>Style`). Because it carries no `Resolved` prefix, `dataclasses.replace()` on a `ChartStyleContext` is legitimate — that is exactly the working-state cascade this split exists to keep off `Resolved*` types.
+`ChartStyleContext` (`style/context.py`) is the deliberate exception to the `Resolved*` naming rule: it is compiler *working state* for the chart-local style cascade — sparse axis overlays, chart-local patch sentinels, palette/role token bindings, and the pre-inherit `Style` tree — produced alongside `ResolvedStyle` by the same board-level cascade (`resolve_style_and_context()`) but never exposed by `ResolvedBoard` itself (no field on `ResolvedBoard`/`ResolvedChart`/`ResolvedStyle` carries it, and it never serializes into the board-resolved artifact). It does cross into a handful of render entry points that perform runtime chart resolution rather than mechanical emission — `render/layout_sizing.py`'s sizing pass, `render/board_resolve.py`'s static resolvers, `render/board_to_dict.py`'s row-truncated resolution, and the two documented `render/chart/vega_lite.py` entry points (`render_chart()`, `generate_vega_lite_spec()`) — see core's `AGENTS.md` (`../../AGENTS.md`) render-boundary section for the full list and why each is resolution, not emission. Runtime chart resolution (`compile/resolve/`, `compile/support_table.py`, normalized `Board.chart_style_context`, execute orchestration, and those render entry points) consumes it directly; render's other, mechanical consumers only ever see the final `Resolved*` outputs it projects into (`ResolvedStyle`, `ResolvedChartDefaults`, and each chart's own `Resolved<Family>Style`). Because it carries no `Resolved` prefix, `dataclasses.replace()` on a `ChartStyleContext` is legitimate — that is exactly the working-state cascade this split exists to keep off `Resolved*` types.
 
-Do not add a `Compiled*` prefix to any new class in this tree. The `dbt-charts/scripts/check_models.py` checker enforces this.
+Do not add a `Compiled*` prefix to any new class in this tree. The `scripts/check_models.py` checker enforces this.
 
 ### Enforcement
 
-`dbt-charts/scripts/check_models.py` runs as a pre-commit hook and as a `just ci-lint` step. It enforces five rules on this tree:
+`scripts/check_models.py` enforces five rules on this tree; run it directly with `uv run python scripts/check_models.py` (`dbt-charts/scripts/check_models.py` from the monorepo root, where it is also wired into pre-commit and lint CI).
 
 1. No bare-dict `model_config = {...}` — use `ConfigDict(...)`.
 2. Every direct `BaseModel` subclass declares `model_config = ConfigDict(extra="forbid")`.
@@ -58,19 +58,19 @@ Do not add a `Compiled*` prefix to any new class in this tree. The `dbt-charts/s
 4. No `*_types.py` module names.
 5. `T | None = None` fields on theme-populated classes (`style/theme/`, `config.py`, `chart/normalized.py`) require a justification comment.
 
-Add new rules by editing `dbt-charts/scripts/check_models.py` and `tests/core/test_model_conventions.py`.
+Add new rules by editing `scripts/check_models.py` and `tests/core/test_model_conventions.py`.
 
 ### `Field(description=...)` is published API copy, not an engineering note
 
 A description is not an engineering note — it ships verbatim to users, across five regenerated artifacts (the docs site, the wheel's `dct docs reference`, and the JSON Schema the IDE serves as hover text among them). Write for a board author who has never seen this repo and cannot open any file you name.
 
-Banned: Python symbols, module/file paths, compile-stage jargon, change narrative, review rationale. The test: **would this sentence help someone who has only ever seen the YAML?** If it only lands for someone holding the diff, move it to a `#` comment, the PR body, or the task worksheet — none of those ship. Hold internal-tier models (`normalized.py`, `resolved.py`) to the same standard; tiers get promoted. Worked examples per category: the `pydantic-conventions` skill.
+Banned: Python symbols, module/file paths, compile-stage jargon, change narrative, review rationale. The test: **would this sentence help someone who has only ever seen the YAML?** If it only lands for someone holding the diff, move it to a `#` comment, the PR body, or the task worksheet — none of those ship. Hold internal-tier models (`normalized.py`, `resolved.py`) to the same standard; tiers get promoted.
 
-Regenerating after a description edit takes five commands, each gated by its own drift test: `just gen-yaml-reference`, `just gen-highlight-artifacts`, `just ide schema`, `just playground gen-completion-schema`, `uv run python scripts/gen_board_resolved_schema.py`.
+Regenerating after a description edit takes five commands, each gated by its own drift test: `just gen-yaml-reference`, `just gen-highlight-artifacts`, `just ide schema`, `just playground gen-completion-schema`, `just gen-board-resolved-schema`. Three of those are monorepo-only: `gen-yaml-reference` and the `ide` / `playground` legs, the latter two regenerating other packages' artifacts. Standalone, `just gen-references` replaces `gen-yaml-reference` and writes the yaml, error, and warning references in one pass.
 
 ### Design + coding patterns
 
-For the broader Pydantic conventions that `check_models.py` can't enforce mechanically — discriminated unions, inheritance for variant style slots, the three-stage cascade discipline, `Field(description=...)` requirements, `Annotated` style preference, the validator hierarchy, `exclude_unset` merging, `frozen=True` for immutables, and the full red-flag list — see the `pydantic-conventions` skill at `.claude/skills/pydantic-conventions/SKILL.md`. It auto-loads when an agent is editing Pydantic models.
+For the broader Pydantic conventions that `check_models.py` can't enforce mechanically — discriminated unions, inheritance for variant style slots, the three-stage cascade discipline, `Field(description=...)` requirements, `Annotated` style preference, the validator hierarchy, `exclude_unset` merging, `frozen=True` for immutables, and the full red-flag list — the rules above are the contract; an existing model that breaks one is debt, not precedent. Never hand-write an all-Optional patch group: `build_patch_model` recurses per field to generate them.
 
 ### Engine config types in `config.py`
 

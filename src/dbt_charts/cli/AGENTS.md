@@ -61,6 +61,6 @@ SQL and named board queries — common forms:
 
 ## Tests
 
-Every new `dct <verb>` gets a subprocess test at `dbt-charts/tests/cli/test_<verb>.py`. Use the `project_dir` fixture from `dbt-charts/tests/cli/conftest.py`.
+Every new `dct <verb>` gets a subprocess test at `tests/cli/test_<verb>.py`. Use the `project_dir` fixture from `tests/cli/conftest.py`.
 
-In-process tests of CLI internals (help rendering, error panels, console / TTY detection, optional-dependency gating) live in `dbt-charts/tests/cli/test_<thing>.py`. Import from `dbt_charts.cli._*` directly. PTY-driven tests (proving plain-vs-rich rendering branches) go here too — see `_subprocess_help.py` for the helper.
+In-process tests of CLI internals (help rendering, error panels, console / TTY detection, optional-dependency gating) live in `tests/cli/test_<thing>.py`. Import from `dbt_charts.cli._*` directly. PTY-driven tests (proving plain-vs-rich rendering branches) go here too — see `_subprocess_help.py` for the helper.

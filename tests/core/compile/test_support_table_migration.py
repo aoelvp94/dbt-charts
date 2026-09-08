@@ -1,7 +1,7 @@
-"""Migration test for the 0.5.0 -> current data_table -> support_table rename.
+"""Migration test for the 0.5.0 -> 0.6.0 data_table -> support_table rename.
 
 ``data_table:`` renamed to ``support_table:`` — declared as a ``Move`` via
-``suffix_rename_moves`` in ``compile/migrations/versions/current.py``'s
+``suffix_rename_moves`` in ``compile/migrations/versions/v0_6_0.py``'s
 ``SUPPORT_TABLE_RENAMES`` (see that module's docstring for the full position
 set and the self-nesting caveat it shares with ``TONES_RENAMES``). An
 authored board using any pre-rename position migrates transparently.
@@ -239,11 +239,11 @@ def test_resolved_move_set_is_exactly_the_documented_positions(
     a board that authored it; gaining one means the tail matched somewhere it was
     never meant to, which is how a rename reaches an unrelated feature.
     """
-    from dbt_charts.core.compile.migrations.versions.current import moves
+    from dbt_charts.core.compile.migrations.versions.v0_6_0 import moves
 
     data_table_moves = [
         move
-        for move in moves("0.5.0", "current", catalog=catalog)
+        for move in moves("0.5.0", "0.6.0", catalog=catalog)
         if move.old_path[-1] == "data_table"
     ]
     resolved = tuple(sorted(".".join(move.old_path) for move in data_table_moves))

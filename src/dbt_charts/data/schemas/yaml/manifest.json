@@ -27,6 +27,13 @@
       "file": "0.5.0.json",
       "sha256": "a274d9c4595df8e2afcaeffc415e042568c6013e72383e44a1cb7d89251ba713",
       "predecessor": "0.4.0"
+    },
+    {
+      "version": "0.6.0",
+      "released_at": "2026-09-08",
+      "file": "0.6.0.json",
+      "sha256": "93e3ffa9d073ea5249de25c2dd8818c51eeaaf30d13af9faae67172d14d2f10d",
+      "predecessor": "0.5.0"
     }
   ]
 }

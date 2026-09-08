@@ -29,13 +29,28 @@ from dbt_charts.core.text.format_d3 import portable_strftime
 
 
 class AxisLabelLayout(NamedTuple):
-    """Render-local choices that never mutate the resolved axis style."""
+    """Render-local choices that never mutate the resolved axis style.
+
+    ``collision_label_count`` is ``None`` whenever this module didn't measure
+    a residual collision — either because the layout it picked (skip/tilt/
+    coarsen) is known to fit, or because no measurement applies (overlap
+    disabled, no x field/data, a quantitative axis). It is set to the size of
+    the label set actually measured — after whatever skip-narrowing, temporal
+    coarsen/anchor thinning, or parity halving that call site applied — only
+    at the exact point a "no more strategies left" fallback still doesn't
+    fit. Consumed by ``render/chart/axis_label_collision.py`` to record a
+    warning fact — this module has no warning-domain knowledge of its own. A
+    re-count over the raw input data, as opposed to the set actually
+    measured, would misreport by whatever factor that site's narrowing
+    applied.
+    """
 
     label_overlap: Literal["allow", "parity"] | None
     angle: float | None
     visibility_time_unit: str | None
     anchor_index: int
     format_time_unit: str
+    collision_label_count: int | None = None
 
 
 AxisDatum = str | int | float | Decimal | datetime.date | datetime.datetime | None
@@ -96,9 +111,27 @@ def _generic_layout(
         if _fits_flat(considered_widths, usable_width):
             return AxisLabelLayout(directive, 0.0, None, 0, "")
     if overlap.tilt:
-        angle, _ = _pick_tilt_for_widths(axis.labels, considered_widths, usable_width)
-        return AxisLabelLayout(directive, angle, None, 0, "")
-    return AxisLabelLayout(directive, 0.0, None, 0, "")
+        angle, fits = _pick_tilt_for_widths(
+            axis.labels, considered_widths, usable_width
+        )
+        return AxisLabelLayout(
+            directive,
+            angle,
+            None,
+            0,
+            "",
+            collision_label_count=None if fits else len(considered_widths),
+        )
+    # Reached only when flat and (if attempted) skip both failed, and tilt
+    # is disabled — no strategy left to try, and it does not fit.
+    return AxisLabelLayout(
+        directive,
+        0.0,
+        None,
+        0,
+        "",
+        collision_label_count=len(considered_widths),
+    )
 
 
 def _max_pair(widths: list[float]) -> float:
@@ -271,10 +304,10 @@ def _temporal_layout(
             widths = [
                 measurer.measure(str(dates[index].day), font.size) for index in indices
             ]
-            angle = (
-                _pick_tilt_for_widths(axis.labels, widths, usable_width)[0]
+            angle, fits = (
+                _pick_tilt_for_widths(axis.labels, widths, usable_width)
                 if overlap.tilt
-                else 0.0
+                else (0.0, _fits_flat(widths, usable_width))
             )
             return AxisLabelLayout(
                 "allow",
@@ -282,6 +315,7 @@ def _temporal_layout(
                 candidate if candidate != encoding_time_unit else None,
                 indices[0],
                 candidate,
+                collision_label_count=None if fits else len(widths),
             )
     elif encoding_time_unit in {
         "yearweek",
@@ -403,9 +437,11 @@ def _temporal_layout(
         )
     ]
     directive: Literal["allow", "parity"] = "allow"
+    narrowed_further = False
     if overlap.skip and visibility == "year":
         directive = "parity"
         visible_dates = visible_dates[::2]
+        narrowed_further = True
     if promoted_format_time_unit == "yearmonthdate":
         # _day_label renders two rows ("%-d" over a possibly-blank month/year
         # row) — measure that shape, not a single-row string nothing draws.
@@ -436,12 +472,29 @@ def _temporal_layout(
             for date in visible_dates
         ]
     if overlap.tilt:
-        angle, _ = _pick_tilt_for_widths(axis.labels, widths, usable_width)
+        angle, fits = _pick_tilt_for_widths(axis.labels, widths, usable_width)
         return AxisLabelLayout(
-            directive, angle, visibility, anchor_index, promoted_format_time_unit
+            directive,
+            angle,
+            visibility,
+            anchor_index,
+            promoted_format_time_unit,
+            collision_label_count=None if fits else len(widths),
         )
+    # No tilt to try. Absent further narrowing, `widths` is the exact set
+    # `resolve_temporal_label_visibility` already judged not-fit via its
+    # flush-edge-aware pairwise check above — re-deriving with `_fits_flat`'s
+    # coarser uniform-band average could disagree and silently overwrite a
+    # real collision. Only the year-cadence parity skip produces a set that
+    # was never checked and needs a fresh verdict.
+    fits = _fits_flat(widths, usable_width) if narrowed_further else False
     return AxisLabelLayout(
-        directive, 0.0, visibility, anchor_index, promoted_format_time_unit
+        directive,
+        0.0,
+        visibility,
+        anchor_index,
+        promoted_format_time_unit,
+        collision_label_count=None if fits else len(widths),
     )
 
 
@@ -514,7 +567,22 @@ def resolve_axis_x_overlap(
     gap = get_chart_rendering().axis.label_gap_spaces * measurer.measure(" ", font.size)
     widths = [width + gap for width in widths]
     usable_width = chart_width * label_usable_ratio
-    if overlap.tilt and not _fits_flat(widths, usable_width):
-        angle, _ = _pick_tilt_for_widths(axis.labels, widths, usable_width)
-        return AxisLabelLayout("allow", angle, None, 0, "")
-    return AxisLabelLayout("allow", 0.0, None, 0, "")
+    flat_fits = _fits_flat(widths, usable_width)
+    if overlap.tilt and not flat_fits:
+        angle, fits = _pick_tilt_for_widths(axis.labels, widths, usable_width)
+        return AxisLabelLayout(
+            "allow",
+            angle,
+            None,
+            0,
+            "",
+            collision_label_count=None if fits else len(widths),
+        )
+    return AxisLabelLayout(
+        "allow",
+        0.0,
+        None,
+        0,
+        "",
+        collision_label_count=None if flat_fits else len(widths),
+    )

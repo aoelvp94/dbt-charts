@@ -90,6 +90,22 @@ Chart {chart_id!r}: axis_y.labels.align = {authored_align!r} has no effect: the 
 
 Fired when a chart authors axis_y.labels.align alongside a house-rule format alias (percent, currency, etc.) on a right-edge quantitative axis. The alias forces label.align = 'right' for place-value alignment; the authored align value is silently discarded.
 
+### WARN-AXIS-LABEL-COLLISION: X-axis tick labels overlap with no room left to fix it
+
+- **Level:** warning
+- **Domain:** render
+- **Suppressible:** yes
+
+**Message template:**
+
+```
+Chart {chart_id!r}: x field {field!r} has {label_count} tick labels that overlap even after skipping and tilting labels — they will render on top of each other.
+```
+
+**Fix:** Widen the chart, reduce the number of x categories (roll up to a coarser time grain, filter the data), or shorten the labels.
+
+Fires on a line/area/scatter chart whose x-axis tick labels still overlap after the render tried every enabled overlap strategy (`style.axis_x.labels.overlap.skip`/`.tilt`, both on by default) — the same collision a table's cramped-columns warning reports for width, applied to axis tick text. Unlike `WARN-TOO-MANY-X-CATEGORIES` (a fixed category-count ceiling on a categorical band axis), this fires on any x-axis shape, including a continuous temporal axis whose auto-picked ticks simply don't fit the chart's width.
+
 ### WARN-AXIS-TITLE-TRUNCATED: Axis title was too long and was truncated with an ellipsis
 
 - **Level:** warning

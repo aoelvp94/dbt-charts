@@ -210,35 +210,6 @@ def test_migrate_paths_surfaces_deletion_reason_for_a_real_board(
     assert f'_schema_version: "{v2}"' in rewritten
 
 
-def test_migrate_paths_never_reports_a_field_removed_that_is_still_in_the_file(
-    tmp_path: Path,
-    in_memory_project: Callable[[Path, dict[str, str]], Project],
-) -> None:
-    """The real dct migrate file-rewrite path, no monkeypatch, real catalog.
-
-    style.charts.bar.font's `_card_style_deletion_reason` Deletion is
-    declared on the pending 0.5.0 -> current boundary, so it is never applied
-    by the capped writer -- the field stays in the file. A real frozen-
-    boundary change (`style.board:`, renamed to `style.frame:` at 0.4.0 ->
-    0.5.0) also fires, which is what makes migrate_paths write the file at
-    all -- _schema_version is only stamped alongside a real change. The
-    verification re-parse still walks the rest of the way to the live schema
-    in memory, which re-triggers the pending font Deletion's reason warning.
-    That warning must never reach MigrateSummary.notes: it would tell the
-    user a field was removed from a file that still contains it.
-    """
-    board = _BAR_FONT_BOARD.replace("style:\n", "style:\n  board:\n    width: 800\n", 1)
-    project = in_memory_project(tmp_path, {"charts/bar.yaml": board})
-
-    summary = migrate_paths([PurePosixPath("bar.yaml")], project=project, dry_run=False)
-
-    assert summary.updated == [PurePosixPath("charts/bar.yaml")]
-    assert summary.notes == []
-    rewritten = project.read_text("charts/bar.yaml")
-    assert "font:" in rewritten, "the pending-boundary deletion must not have applied"
-    assert "frame:" in rewritten, "the frozen-boundary rename must have applied"
-
-
 def test_migrate_paths_records_parse_error_as_migrate_error(
     tmp_path: Path,
     in_memory_project: Callable[[Path, dict[str, str]], Project],

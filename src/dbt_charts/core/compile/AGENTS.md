@@ -7,9 +7,6 @@ cascade, validates, and emits the normalized document that `execute/` and
 A field rename, move, or removal is a grammar change and ships its migration
 in the same PR — see `migrations/AGENTS.md`.
 
-Read `docs/guides/dbt-charts-yaml-schemas-and-migrations.md` before changing
-authored board models, schema generation, or the board-loading pipeline.
-
 ## Package layout
 
 The pipeline's four stages are packages: `parse/` (YAML/markdown text →
@@ -51,9 +48,9 @@ if it's a genuine cross-stage primitive.
 
 ## Implementation philosophy
 
-Exceeds the default budget deliberately: the load-bearing invariants list is the
-compile stage's whole-system contract and has no docs home that wouldn't just
-re-split it (`docs/contributing/implementation-philosophy-style.md`).
+Exceeds the usual length budget deliberately: the load-bearing invariants list is the
+compile stage's whole-system contract, and a reader who sees only part of it
+will violate the rest.
 
 ### Load-bearing invariants
 
@@ -112,8 +109,7 @@ obviously screaming*. Hold these when touching `compile/`:
 - **The type ladder is coupled to board geometry.** Object-title width tiers
   (`resolve/style/typography.py`) derive from the default board's 24-column grid via a single
   global reference. Changing `frame.width` / `frame.margin` in `_base.yaml` moves the
-  thresholds, and the failure is silent (titles shrink and lose their serif). Read
-  `docs/guides/typographic-tiers.md` first.
+  thresholds, and the failure is silent (titles shrink and lose their serif).
 
 See `../AGENTS.md` → **Two validation boundaries** for the boundary these sit behind.
 

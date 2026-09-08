@@ -3,6 +3,10 @@
 This directory vendors the custom fonts required for the chart-lab import
 review experience in dbt charts.
 
+The fonts themselves ship with this package. The `just rebuild-*` /
+`gen-font-face-css` recipes and the `design/` build tooling cited throughout are
+monorepo-only — they regenerate the vendored files, they are not needed to use them.
+
 Included assets:
 
 - `InterVariable.ttf`
@@ -24,7 +28,7 @@ Included assets:
     Medium/SemiBold pair below — see "Select figure style by family". Built
     with `just rebuild-weight-faces`.
 - `DBTSansTabular-Regular.ttf`
-  - Internal Fivetran numeric companion font used for tabular figures and
+  - In-house numeric companion font (derived from InterVariable) used for tabular figures and
     chart value labels. Variable font with wght axis 100–900 (default 400),
     so `font-weight` requests resolve to the correct master. The tabular
     `tnum` substitution is baked across all masters so digits are
@@ -32,7 +36,6 @@ Included assets:
   - Rebuilt from `InterVariable.ttf` via
     `design/experiments/chart-lab/tools/build_dbt_charts_sans_tabular.py`
     (run `just rebuild-dbt-sans-tabular` to regenerate).
-  - Design rationale: `ai_notes/considerations/DBT_SANS_TABULAR_AS_NUMERIC_COMPANION.md`
 - `DBTSansTabular-Regular.woff2`
   - Served at `/static/fonts/DBTSansTabular-Regular.woff2` so quantitative axis
     tick columns render in tabular figures (instead of falling back to
@@ -44,24 +47,23 @@ Included assets:
     Serif Medium/SemiBold pair above — see "Select figure style by family".
     Built with `just rebuild-weight-faces`.
 - `DBTSerifOldstyleTabular-Regular.ttf`
-  - Internal Fivetran serif companion with baked oldstyle figures that remain
+  - In-house serif companion with baked oldstyle figures that remain
     tabular for aligned numeric surfaces.
-  - Design rationale: `ai_notes/considerations/DBT_SERIF_OLDSTYLE_TABULAR_AS_DERIVED_COMPANION.md`
 - `DBTSerifOldstyleTabular-Regular.woff2`
   - The same font in a woff2 container, served at
     `/static/fonts/DBTSerifOldstyleTabular-Regular.woff2` so a theme font stack
     naming the family resolves in the browser.
 - `DBTSerifOldstyleProportional-Regular.ttf`
-  - Internal Fivetran serif companion with baked proportional oldstyle figures
+  - In-house serif companion with baked proportional oldstyle figures
     for editorial or narrative serif surfaces that want oldstyle numerals
     without tabular alignment.
-  - Design rationale: `ai_notes/considerations/DBT_SERIF_OLDSTYLE_PROPORTIONAL_AS_DERIVED_COMPANION.md`
 - `DBTSerifOldstyleProportional-Regular.woff2`
   - Browser-facing container for the proportional cut, same arrangement.
   - Both oldstyle woff2 files are **lossless** conversions rather than recipe
     subsets like `InterVariable.woff2` beside them: these are narrative faces set
     in running prose, so the ~37 KB a subset would save is not worth dropping 513
-    of the TTF's 920 codepoints. `build_text_font_subsets.py` skips them by name
+    of the TTF's 920 codepoints. `design/experiments/chart-lab/tools/build_text_font_subsets.py`
+    skips them by name
     and `tests/core/render/test_font_registry.py` pins the full-coverage choice.
     Rebuild either with `TTFont(ttf).flavor = "woff2"; save(...)`. Because the
     glyph table is carried over untouched, advance widths are identical by
@@ -107,7 +109,6 @@ Included assets:
     TTFs beside them. Rebuild with `just rebuild-text-font-subsets`.
   - Both serif assets are used for chart titles and other narrative serif
     surfaces.
-  - Design rationale: `ai_notes/considerations/SOURCE_SERIF_4_AS_NARRATIVE_SERIF.md`
   - License text is included in `SOURCE_SERIF_4_LICENSE.txt`.
 - `SourceSerif4-Italic.ttf`
   - Adobe Source Serif 4 variable italic TTF, used when prose asks for
@@ -168,7 +169,9 @@ Included assets:
     `Version 3.005` per the facts above, not necessarily what the page serves
     today)
   - SHA-256 (pristine copy): `3c4aea565060fa91575a851e2718a5b14b9fe8856ead696b374c5a7e672179cb` —
-    pinned in `dbt-charts/tests/core/render/test_font_registry.py::test_pristine_noto_emoji_source_matches_pinned_sha256`,
+    pinned by `test_pristine_noto_emoji_source_matches_pinned_sha256` in the
+    monorepo's chart-lab tests (deliberately not in this package's
+    `test_font_registry.py`, which pins the vendored copy, not the source),
     since nothing else reads this file's hash and a silent source refresh
     would otherwise replace all 72 glyph outlines with the codepoint-set
     checks none the wiser.
@@ -204,8 +207,6 @@ Included assets:
     those glyphs; it was kept deliberately rather than stripped back out,
     because vl-convert/resvg static exports (PNG/SVG) have no such
     colour-font-preference override — only the browser path is defeated.
-    Screenshot:
-    `tasks/activity/screenshots/delete-the-color-emoji-font-and-curate-noto-emoji-to-a-chart-set/`.
     Don't test or document composition against a VS16 spelling, or against a
     sequence this font doesn't carry both halves of.
 
@@ -305,7 +306,7 @@ mechanism as oldstyle figures: `fonts.WEIGHT_FACE_ALIASES` maps every
 `(vendored family, cascaded weight)` pair the built-in theme system produces to a
 dedicated static face selected by family name, and
 `font_support.normalize_svg_font_weights_for_vl_convert` rewrites the vl-convert-bound
-SVG copy only. `dbt-charts/tests/core/render/test_theme_weight_face_coverage.py` walks
+SVG copy only. `tests/core/render/test_theme_weight_face_coverage.py` walks
 every built-in theme and fails if one starts cascading a weight with no row in
 `WEIGHT_FACE_ALIASES` — the covered set is closed (currently 500 and 600 across all
 three variable families) and is meant to stay that way; a new weight needs a new

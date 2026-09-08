@@ -59,6 +59,9 @@ from dbt_charts.core.execute.parallel import execute_queries_parallel
 from dbt_charts.core.render.board_to_dict import NO_ROW_CAP
 from dbt_charts.core.render.board_variables import board_variables
 from dbt_charts.core.render.boards import render_board_svg
+from dbt_charts.core.render.chart.axis_label_collision import (
+    collect_axis_label_collisions,
+)
 from dbt_charts.core.render.chart.endpoint_label_overflow import (
     EndpointLabelGapOverflow,
     collect_endpoint_label_gap_overflows,
@@ -335,6 +338,7 @@ def _collect_render_warnings(
         collect_series_label_truncations() as series_label_truncations,
         collect_text_truncations() as _detection_truncations,
         collect_plot_width_share_warnings() as _detection_plot_width_share_warnings,
+        collect_axis_label_collisions() as axis_label_collisions,
     ):
         for chart_id, (chart, layout_width, _layout_height) in active_charts.items():
             if chart.query_name not in pre_executed_query_names:
@@ -386,6 +390,7 @@ def _collect_render_warnings(
             chart_id: chart for chart_id, (chart, _w, _h) in active_charts.items()
         },
         series_label_truncations=series_label_truncations,
+        axis_label_collisions=axis_label_collisions,
         text_truncations=merged_truncations,
         endpoint_label_gap_overflows=endpoint_label_gap_overflows,
         x_domain_paint_orders=x_domain_paint_orders,

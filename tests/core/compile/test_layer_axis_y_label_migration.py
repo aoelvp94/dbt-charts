@@ -1,11 +1,11 @@
-"""Migration test for the 0.5.0 -> current layer axis_y label -> labels rename.
+"""Migration test for the 0.5.0 -> 0.6.0 layer axis_y label -> labels rename.
 
 Layer-level ``axis_y.label:`` (tick-label format patch, ``LayerAxisYLabel`` in
 0.5.0) renamed to ``axis_y.labels:`` (``LayerAxisYLabels`` now) so the
 layer-level ``axis_y`` grammar matches the chart-level ``AxisYStyle`` spelling
 (``style.axis_y.labels``, inherited from ``BaseAxisStyle``) — the only field
 name the two ``axis_y`` grammars disagreed on. Declared via
-``suffix_rename_moves`` in ``compile/migrations/versions/current.py``'s
+``suffix_rename_moves`` in ``compile/migrations/versions/v0_6_0.py``'s
 ``AXIS_Y_LABEL_RENAMES``, anchored two segments deep (``("axis_y", "labels")``
 -> ``("axis_y", "label")``) — see that module's docstring for why the anchor
 is hygiene, not a load-bearing guard against ``TypedLayerBase.label``, the
@@ -191,12 +191,12 @@ def test_resolved_move_set_is_exactly_the_documented_positions(
     the field there — see ``test_sub_board_charts_map_strands_layer_axis_y_label``
     above; gaining one means the tail matched somewhere unintended) — not a
     claim about the anchor's necessity, which the module docstring in
-    ``current.py`` addresses separately."""
-    from dbt_charts.core.compile.migrations.versions.current import moves
+    ``v0_6_0.py`` addresses separately."""
+    from dbt_charts.core.compile.migrations.versions.v0_6_0 import moves
 
     axis_y_label_moves = [
         move
-        for move in moves("0.5.0", "current", catalog=catalog)
+        for move in moves("0.5.0", "0.6.0", catalog=catalog)
         if move.old_path[-2:] == ("axis_y", "label")
     ]
     resolved = tuple(sorted(".".join(move.old_path) for move in axis_y_label_moves))

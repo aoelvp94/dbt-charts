@@ -524,6 +524,9 @@ def compact_style_kwargs(
     assert _text_font_family is not None, "style.text.font.family must be configured"
     _default_family = apply_emoji_to_family(_text_font_family, _rs.emoji_mode)
 
+    _text_font_color = _rs.text.font.color
+    assert _text_font_color is not None, "style.text.font.color must be configured"
+
     title_sizes = _rs.title.sizes
     if len(title_sizes) != 6:
         raise ValueError(
@@ -543,7 +546,7 @@ def compact_style_kwargs(
     _code = _rs.text.code
     _bq = _rs.text.blockquote
     _bold = _rs.text.bold
-    # code_color: prefer code font color if set; fall back to body ink
+    # code_color: prefer code font color if set; fall back to board chrome ink
     _code_color: str = _code.font.color or _rs.font.color
 
     # table header background: prefer table.header.background, fall back to canvas
@@ -565,7 +568,7 @@ def compact_style_kwargs(
         "paragraph_spacing": float(_text_font_size)
         * float(_text_line_height)
         * float(max(_rs.text.paragraph.margin_top, _rs.text.paragraph.margin_bottom)),
-        "text_color": _rs.font.color,
+        "text_color": _text_font_color,
         "heading_color": _rs.title.font.color,
         "link_color": _rs.accent,
         "code_color": _code_color,

@@ -57,6 +57,10 @@ from dbt_charts.core.diagnostics.codes_render import (
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
+from dbt_charts.core.render.chart.axis_label_collision import (
+    AxisLabelCollision,
+    record_axis_label_collision,
+)
 from dbt_charts.core.render.chart.emitters._label_overlap import resolve_axis_x_overlap
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.text_truncation import record_text_truncation
@@ -364,6 +368,13 @@ def resolve_cartesian_x(
         chart_width=chart_width - reserved_width,
         domain_values=domain_values,
     )
+    if label_layout.collision_label_count is not None:
+        record_axis_label_collision(
+            chart_id,
+            AxisLabelCollision(
+                field=x_field, label_count=label_layout.collision_label_count
+            ),
+        )
     ax_vl_raw = axis_to_vl(
         ax,
         label_overlap=label_layout.label_overlap,

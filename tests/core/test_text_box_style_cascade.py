@@ -173,17 +173,6 @@ class TestGetCompactStyleMapper:
         with pytest.raises(ValueError, match="Invalid Pygments code theme"):
             TextCodeStyle.model_validate(data)
 
-    def test_text_color_from_font_color(self) -> None:
-        """text_color in the compact style comes from rs.font.color."""
-        from dbt_charts.core.compile.config import (
-            get_theme_style,
-        )
-        from dbt_charts.core.render.sizing import get_compact_style
-
-        rs = resolve_style(get_theme_style())
-        style = get_compact_style(rs)
-        assert style.text_color == rs.font.color
-
     def test_link_color_from_accent(self) -> None:
         """link_color in the compact style comes from rs.accent."""
         from dbt_charts.core.compile.config import (

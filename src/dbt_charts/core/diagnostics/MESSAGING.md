@@ -3,9 +3,11 @@
 Rules for authoring a new `ErrorCode` or `WarningCode` in
 `dbt_charts/core/diagnostics/codes_*.py`. Both are `DiagnosticCode` subclasses
 registered on the same `REGISTRY` and share every rule below except where
-called out. The full reference these rules produce is generated: `just
-gen-error-reference` → `dbt-charts/src/dbt_charts/agent_api/docs/error-reference.md`,
-served via `dct docs error-reference` / MCP `docs(topic="error-reference")`.
+called out. The full reference these rules produce is generated into this package's
+`src/dbt_charts/agent_api/docs/error-reference.md` (`dbt-charts/src/...` from the
+monorepo root) and served via `dct docs
+error-reference` / MCP `docs(topic="error-reference")`. Regenerate it with `just
+gen-references` (`just gen-error-reference` in the monorepo).
 
 ## Code naming
 
@@ -92,6 +94,7 @@ audience:
    or `REGISTRY.register(WarningCode(...))`.
 2. Import it in `diagnostics/__init__.py` if any other module needs the constant
    (side-effect registration happens on import either way).
-3. Run `just gen-error-reference` and commit the regenerated
-   `error-reference.md` — `test_generated_error_reference_in_sync.py` fails
-   CI otherwise.
+3. Run `just gen-references` (`just gen-error-reference` in the monorepo) and
+   commit the regenerated `error-reference.md` —
+   `tests/core/diagnostics/test_generated_reference_in_sync.py` fails CI
+   otherwise.

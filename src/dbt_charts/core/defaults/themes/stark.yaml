@@ -217,9 +217,10 @@ style:
             color: *color_ink
 
   text:
+    # Color inherits from `font.color` (InheritSlot) — no pin here so a
+    # board-root style.font.color override reaches prose.
     font:
       family: *font_sans
-      color: *color_ink
 
     code:
       highlight: true

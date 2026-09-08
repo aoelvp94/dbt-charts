@@ -61,9 +61,10 @@ def _board(style: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_registry_declares_the_theme_level_deletion() -> None:
+    """The removal was declared at the 0.5.0 -> 0.6.0 boundary, now frozen --
+    not at ``catalog.latest.version``, which is 0.6.0 itself post-freeze."""
     _, registry = _board_migration_context()
-    catalog = load_yaml_schema_catalog()
-    deletions = registry.deletions_from(catalog.latest.version)
+    deletions = registry.deletions_from("0.5.0")
 
     declared = {d.path for d in deletions}
     assert ("charts", "heatmap", "axis_quantitative") in declared
@@ -75,10 +76,12 @@ def test_tail_was_in_the_released_grammar_and_is_gone_from_the_live_one(
     """Both halves of what makes a Deletion legal, asserted directly.
 
     Source-present is what makes the key worth migrating; target-absent is
-    what stops the tail stripping a slot that still works.
+    what stops the tail stripping a slot that still works. Source is pinned
+    to 0.5.0, the grammar the tail actually shipped in -- not
+    ``catalog.latest.version``, which is 0.6.0 post-freeze and never had it.
     """
     tail = ("charts", "heatmap", "axis_quantitative")
-    assert _schema_has_tail(catalog.schema_for(catalog.latest.version), tail)
+    assert _schema_has_tail(catalog.schema_for("0.5.0"), tail)
     assert not _schema_has_tail(catalog.current_schema, tail)
 
 

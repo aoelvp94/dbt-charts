@@ -1,8 +1,8 @@
 """The four inert ``grid:`` keys and how each one goes away.
 
 ``row_height``, ``default_width`` and ``default_height`` were schema-valid and
-ignored, so they leave through the pending ``Deletion`` boundary in
-``versions/current.py`` -- authored boards migrate clean.
+ignored, so they leave through the ``Deletion`` boundary declared in
+``versions/v0_6_0.py`` (0.5.0 -> 0.6.0) -- authored boards migrate clean.
 
 ``gap`` cannot: its tail still matches the live ``style.layout.grid.gap``, so a
 Deletion would both fail registry validation and strip the working style key.
@@ -64,11 +64,11 @@ def _grid_board(**grid_keys: Any) -> dict[str, Any]:
     }
 
 
-def test_registry_declares_the_pending_grid_deletions(
-    catalog: YamlSchemaCatalog,
-) -> None:
+def test_registry_declares_the_0_5_0_grid_deletions() -> None:
+    """Declared at the 0.5.0 -> 0.6.0 boundary, now frozen -- not at
+    ``catalog.latest.version``, which is 0.6.0 itself post-freeze."""
     _, registry = _board_migration_context()
-    deletions = registry.deletions_from(catalog.latest.version)
+    deletions = registry.deletions_from("0.5.0")
 
     declared = {d.path for d in deletions if d.path[0] == "grid"}
     assert declared == {("grid", key) for key in DELETED_GRID_KEYS}

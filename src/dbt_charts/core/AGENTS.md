@@ -1,10 +1,10 @@
 # dbt_charts/core
 
-Engine internals: compile, resolve, execute, render, inspect, serve. The CLI and AI surfaces are thin wrappers over this. Read `dbt-charts/AGENTS.md` first for project-wide rules; this file covers core-specific invariants.
+Engine internals: compile, resolve, execute, render, inspect, serve. The CLI and AI surfaces are thin wrappers over this. Read the package root `AGENTS.md` first for project-wide rules; this file covers core-specific invariants.
 
 ## Implementation philosophy
 
-Everything below is reviewer-enforced. (This section exceeds the default budget — core is the engine's invariant home; see `docs/contributing/implementation-philosophy-style.md`.)
+Everything below is reviewer-enforced. This section exceeds the usual length budget deliberately: core is the engine's invariant home.
 
 ### Module dependency direction
 
@@ -32,7 +32,7 @@ hold types and services shared by compile *and* render/execute — and, for
 `to_plain_dict`, `is_year_shaped`, `SQLDialect`/`get_dialect`/`VALID_OPERATORS`,
 strict font measurement, `sanitize_color`/`is_sanitizable_color`, …) — anything
 `compile/` needs that would otherwise force `compile → render` or
-`compile → execute`. `dbt-charts/tach.toml` enforces `compile ↛ render` and
+`compile → execute`. `tach.toml` enforces `compile ↛ render` and
 `compile ↛ execute`, except pre-existing compile→execute edges each carrying an
 inline `# tach-ignore(...)` — accepted debt, not yet relocated (the remaining
 edges are real adapter-class usage — `DbtAdapter`/`SqlAdapter` — not leaf
@@ -40,7 +40,7 @@ behavior; `sql_guard.py` lives inside `compile/` itself since its only real
 dependency is `compile.config`).
 `compile ↛ render` is no longer just
 intent — it's structurally enforced by `dbt_charts.core.compile`'s `depends_on`
-list (which omits `render`/`execute`) plus `dbt-charts/tests/core/test_layering.py`.
+list (which omits `render`/`execute`) plus `tests/core/test_layering.py`.
 
 The `dct mcp serve` lazy import of `run_server` in `dbt_charts.cli.main` is debt carrying a `# tach-ignore` — the remaining edge is `cli → ai`, whose fix is an `agent_api` entry point (burn-down task). Its optional-dependency gate already routes through `dbt_charts.cli._extras`.
 
@@ -88,7 +88,7 @@ Compile-stage invariants (variables board-global, one layout per board, ids from
 
 ### Project-file access goes through `Project`, never raw `Path`
 
-`Project` / `ProjectPath` / `ProjectDirectory` (`core/project.py`) model a project; core reads/writes project content (board YAML, `meta.yaml`, extends/includes, data files) only through these handles — a raw `Path` read hard-codes local disk and breaks under any other store (`docs/contributing/architecture/execution-seams.md`).
+`Project` / `ProjectPath` / `ProjectDirectory` (`core/project.py`) model a project; core reads/writes project content (board YAML, `meta.yaml`, extends/includes, data files) only through these handles — a raw `Path` read hard-codes local disk and breaks under any other store.
 
 - Never touch the filesystem for a project path: no `Path.read_text()` / `.write_text()` / `.exists()` / `open()` / `os.walk` — go through a `Project` handle.
 - `Project` is an ABC with no filesystem default: `read_text`, `read_bytes`, `exists`, `iter_files`, `write_text`, `sources`, and `config_document()` are abstract, so each host supplies its own store. Hosts: `FilesystemProject` (`dbt_charts.cli.filesystem_project`, built at the `dbt_charts.cli` composition root, imported by core only under `TYPE_CHECKING`) and Cloud's `CloudManagedProject` (git-blob store).
@@ -139,9 +139,6 @@ When you promote a theme-populated field to required, the theme YAML must supply
 ### Render layer
 
 Render-layer invariants live in `render/chart/AGENTS.md` (its `## Implementation philosophy`) — re-read it before adding anything that touches data shape. Quick highlights:
-
-The discriminated `ResolvedXStyle` per-family slice architecture is documented in
-`docs/contributing/architecture/render-v2.md`.
 
 - All chart-local axis variants go through encoding-level (`resolved_axis_style()` in `compile/resolve/style/axis_cascade.py`), not config-level. No half-state. The cascade runs theme tier (1 global, 2 channel, 3 quantitative, 4 chart-type), then a label-forced title default (5), then board tier (6-9, the author's own `style.charts.*` in the same slot order), then the chart's own format fallback (10), then chart-local patches (11-13). Layer 4 sits after type-conditional so chart-type patches win over `axis_quantitative`/`axis_band`; the board tier sits above the whole theme tier so an authored leaf is never overwritten by a theme default, and the label default sits below the board tier so a board-level `title.visible: false` still wins.
 
@@ -206,7 +203,7 @@ this doesn't reopen the data-belongs-to-queries rule. Don't add further reach-ba
 beyond these eight; if you need a dbt charts value at render time, add it to
 `Resolved*` at the resolved boundary.
 
-**Enforced, empty, no allowlist.** `dbt-charts/tests/core/render/chart/test_render_boundary.py`
+**Enforced, empty, no allowlist.** `tests/core/render/chart/test_render_boundary.py`
 scans every `.py` file under `render/` (not just `render/chart/`) for the banned
 imports (`compile.resolve.chart.channel`, `compile.resolve.style.palette`,
 `compile.resolve.style.axis_cascade`, `compile.resolve.style.chart_context`,
@@ -248,7 +245,7 @@ caller holds rather than calling `build_chart_style_context` itself.
 
 Render is a strict consumer of `Resolved*` — it must never construct a mutated copy of one. `model_copy(update=...)` or `dataclasses.replace(...)` on a `ResolvedChart`/`ResolvedStyle` (or any nested field) inside `render/` is the reach-back above in disguise: it patches a value after the fact instead of getting it right at the resolved boundary. If render needs a different value, fix resolution (`compile/resolve/style/` or wherever the field is baked) — don't build a second, edited copy of the resolved object downstream.
 
-**Enforced, empty, no allowlist.** `dbt-charts/tests/test_no_replace_on_resolved.py` AST-scans every `.py` file under `dbt-charts/src` — render included — for any `.model_copy(...)` or `dataclasses.replace(...)` call whose operand is a locally-tracked `Resolved*`-typed value, and fails immediately on a hit. It supersedes the render-only, type-blind guard this section used to cite (`test_no_resolved_model_copy.py`, deleted): that one banned every `model_copy`/`replace` call under `render/` regardless of operand type, which happened to match today's code but stated the rule more bluntly than intended. `compile/` is not exempted by directory this time — the guard is type-aware instead: `model_copy`/`replace` remains the sanctioned mechanism for *building* `ChartStyleContext` (non-`Resolved*`) during cascade resolution there, and the guard simply never flags a non-`Resolved*`-typed operand.
+**Enforced, empty, no allowlist.** `tests/test_no_replace_on_resolved.py` AST-scans every `.py` file under `src` — render included — for any `.model_copy(...)` or `dataclasses.replace(...)` call whose operand is a locally-tracked `Resolved*`-typed value, and fails immediately on a hit. It supersedes the render-only, type-blind guard this section used to cite (`test_no_resolved_model_copy.py`, deleted): that one banned every `model_copy`/`replace` call under `render/` regardless of operand type, which happened to match today's code but stated the rule more bluntly than intended. `compile/` is not exempted by directory this time — the guard is type-aware instead: `model_copy`/`replace` remains the sanctioned mechanism for *building* `ChartStyleContext` (non-`Resolved*`) during cascade resolution there, and the guard simply never flags a non-`Resolved*`-typed operand.
 
 ### Authored chart surface — accepted vs rejected fields
 
@@ -298,9 +295,9 @@ Two gates enforce these rejections:
 
 1. **`type:` is mandatory** — `_SharedChartFields.type` is declared `str` (required, no default). Missing or unknown `type:` raises a `union_tag_not_found` ValidationError from the `AuthoredChart` discriminated union before any family-level validation runs. There is no fallback catch-all class. The concept of an untyped chart is rejected at the authored-model level.
 
-2. **`extra="forbid"` on every per-family chart class** (`BarChart`, `KpiChart`, etc.) — inherited from `_BaseChartFields.model_config = ConfigDict(extra="forbid")`. Any field not declared on the family is unconditionally rejected by Pydantic. Structural narrowing also applies: for example, `size` and `shape` are only declared on `ScatterChart` where they are meaningful — attempting to set `size` on a `LineChart` raises `extra_forbidden` (pinned by `test_line_patch_rejects_size` in `dbt-charts/tests/core/compile/test_chart_discriminated_union.py`). `conditional_formatting` follows the same pattern via a standalone `_ConditionalFormattingField` mixin applied individually to `BarChart`, `LineChart`, `AreaChart`, `ScatterChart`, `KpiChart`, `TableChart`, `PieChart`, `GeoshapeChart`, and `PointMapChart` — the families in `_MARK_FILL_CHART_TYPES` plus table; authoring it on any other family (e.g. `CalloutChart`, `HeatmapChart`) raises `extra_forbidden` (pinned by `test_callout_patch_rejects_conditional_formatting` in `dbt-charts/tests/core/compile/test_chart_discriminated_union.py`). `stack` is a style-cascade field on the authored surface (`style.stack` / `style.<family>.stack`); chart-root `stack:` is rejected on every authored chart family (pinned by `test_chart_families_reject_root_stack` in `dbt-charts/tests/core/compile/test_chart_discriminated_union.py`). The compiled `Chart.stack` field exists on the compiled-stage model and may be populated directly by tests that construct compiled Chart objects; on real authored input the cascade output lives on `ResolvedChart.stack`, resolved from `style.<family>.stack` in the per-family resolver modules under `dbt-charts/src/dbt_charts/core/compile/resolve/`.
+2. **`extra="forbid"` on every per-family chart class** (`BarChart`, `KpiChart`, etc.) — inherited from `_BaseChartFields.model_config = ConfigDict(extra="forbid")`. Any field not declared on the family is unconditionally rejected by Pydantic. Structural narrowing also applies: for example, `size` and `shape` are only declared on `ScatterChart` where they are meaningful — attempting to set `size` on a `LineChart` raises `extra_forbidden` (pinned by `test_line_patch_rejects_size` in `tests/core/compile/test_chart_discriminated_union.py`). `conditional_formatting` follows the same pattern via a standalone `_ConditionalFormattingField` mixin applied individually to `BarChart`, `LineChart`, `AreaChart`, `ScatterChart`, `KpiChart`, `TableChart`, `PieChart`, `GeoshapeChart`, and `PointMapChart` — the families in `_MARK_FILL_CHART_TYPES` plus table; authoring it on any other family (e.g. `CalloutChart`, `HeatmapChart`) raises `extra_forbidden` (pinned by `test_callout_patch_rejects_conditional_formatting` in `tests/core/compile/test_chart_discriminated_union.py`). `stack` is a style-cascade field on the authored surface (`style.stack` / `style.<family>.stack`); chart-root `stack:` is rejected on every authored chart family (pinned by `test_chart_families_reject_root_stack` in `tests/core/compile/test_chart_discriminated_union.py`). The compiled `Chart.stack` field exists on the compiled-stage model and may be populated directly by tests that construct compiled Chart objects; on real authored input the cascade output lives on `ResolvedChart.stack`, resolved from `style.<family>.stack` in the per-family resolver modules under `src/dbt_charts/core/compile/resolve/`.
 
-Test coverage: `dbt-charts/tests/core/compile/test_removed_vl_passthrough_fields.py` parametrizes over all 11 rejected fields.
+Test coverage: `tests/core/compile/test_removed_vl_passthrough_fields.py` parametrizes over all 11 rejected fields.
 
 ### Test patterns
 

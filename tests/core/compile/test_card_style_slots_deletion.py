@@ -1,7 +1,8 @@
 """Migration coverage for the font/border removal on the card-less families.
 
 Board-level ``style.charts.<family>.font`` / ``.border`` were accepted by the
-0.5.0 grammar and are auto-stripped by ``dct migrate``. The chart-local
+0.5.0 grammar and are auto-stripped by ``dct migrate`` (Deletion declared at
+the 0.5.0 -> 0.6.0 boundary in ``versions/v0_6_0.py``). The chart-local
 position (``charts.<id>.style.font`` / ``.border``) cannot ship a Deletion --
 its only available tails are still live -- so it fails loud instead.
 """
@@ -66,9 +67,10 @@ def _board(style: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_registry_declares_the_board_level_card_style_deletions() -> None:
+    """Declared at the 0.5.0 -> 0.6.0 boundary, now frozen -- not at
+    ``catalog.latest.version``, which is 0.6.0 itself post-freeze."""
     _, registry = _board_migration_context()
-    catalog = load_yaml_schema_catalog()
-    deletions = registry.deletions_from(catalog.latest.version)
+    deletions = registry.deletions_from("0.5.0")
 
     # Scoped to the card-style fields this test is about. `charts`-anchored
     # deletions are not exclusively card-style -- heatmap's inert
@@ -94,10 +96,12 @@ def test_tail_was_in_the_released_grammar_and_is_gone_from_the_live_one(
     """Both halves of what makes a Deletion legal, asserted directly.
 
     Source-present is what makes the key worth migrating; target-absent is what
-    stops the tail stripping a slot that still works.
+    stops the tail stripping a slot that still works. Source is pinned to
+    0.5.0, the grammar the tail actually shipped in -- not
+    ``catalog.latest.version``, which is 0.6.0 post-freeze and never had it.
     """
     tail = ("charts", family, field)
-    assert _schema_has_tail(catalog.schema_for(catalog.latest.version), tail)
+    assert _schema_has_tail(catalog.schema_for("0.5.0"), tail)
     assert not _schema_has_tail(catalog.current_schema, tail)
 
 

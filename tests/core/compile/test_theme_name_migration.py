@@ -1,5 +1,5 @@
 """Migration coverage for the built-in theme-set collapse
-(dbt_charts.core.compile.migrations.versions.current), the identity-path
+(dbt_charts.core.compile.migrations.versions.v0_6_0), the identity-path
 value-mapped ``theme:`` Move that renames retired built-in theme names in
 memory.
 """
@@ -22,7 +22,7 @@ from dbt_charts.core.compile.migrations.migrations import (
     Move,
     _apply_move,
 )
-from dbt_charts.core.compile.migrations.versions.current import THEME_VALUE_MAP
+from dbt_charts.core.compile.migrations.versions.v0_6_0 import THEME_VALUE_MAP
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     load_yaml_schema_catalog,
 )

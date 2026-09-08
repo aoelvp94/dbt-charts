@@ -72,6 +72,7 @@ from dbt_charts.core.compile.models.board.resolved import ResolvedBoard
 from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
 from dbt_charts.core.execute.executor import TruncationInfo
 from dbt_charts.core.render.chart._types import VLDict
+from dbt_charts.core.render.chart.axis_label_collision import AxisLabelCollision
 from dbt_charts.core.render.chart.endpoint_label_overflow import (
     EndpointLabelGapOverflow,
 )
@@ -140,6 +141,12 @@ class WarningContext(BaseModel):
     # the single measure site (render/chart/features/endpoint_labels.py). Sparse —
     # only charts whose rail was actually degraded appear.
     series_label_truncations: dict[str, list[SeriesLabelTruncation]] = {}
+    # chart id → the x-axis label collision the render captured when every
+    # enabled overlap strategy (skip/tilt) still left labels overlapping.
+    # Sparse — only line/area/scatter charts (see axis_label_collision.py's
+    # module docstring for the bar/heatmap scoping) whose axis genuinely
+    # never fit appear.
+    axis_label_collisions: dict[str, AxisLabelCollision] = {}
     # chart id → list of text truncations captured at render time across all
     # surfaces (axis titles included). Sparse — only charts with truncated
     # text appear.

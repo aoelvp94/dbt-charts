@@ -144,11 +144,38 @@ class TestCompactStyleColorsTrackTheme:
     hardcoded light/dark table — so prose tracks the active theme like the
     rest of the board."""
 
-    def test_text_color_tracks_font_color(self):
+    def test_text_color_tracks_text_font_color(self):
         from dbt_charts.core.render.sizing import get_compact_style
 
         rs = resolve_style(get_theme_style())
-        assert get_compact_style(rs).text_color == rs.font.color
+        assert get_compact_style(rs).text_color == rs.text.font.color
+
+    def test_text_color_independent_of_font_color_override(self):
+        from dbt_charts.core.compile.models.style.authored import StylePatch
+        from dbt_charts.core.render.sizing import get_compact_style
+
+        # #a1a1a1/#b2b2b2 are picked to collide with no built-in theme's
+        # resolved ink (e.g. clarity's is #222222) — a colliding sentinel
+        # would let the old, wrong wiring pass this assertion vacuously.
+        patch = StylePatch.model_validate(
+            {"font": {"color": "#a1a1a1"}, "text": {"font": {"color": "#b2b2b2"}}}
+        )
+        rs = resolve_style(get_theme_style(), patch)
+
+        assert rs.font.color == "#a1a1a1"
+        assert rs.text.font.color == "#b2b2b2"
+        assert get_compact_style(rs).text_color == "#b2b2b2"
+
+    @pytest.mark.parametrize("theme", ["clarity", "paper", "stark", "vivid", "neon"])
+    def test_text_color_inherits_bare_font_color_override(self, theme):
+        from dbt_charts.core.compile.models.style.authored import StylePatch
+        from dbt_charts.core.render.sizing import get_compact_style
+
+        patch = StylePatch.model_validate({"font": {"color": "#a1a1a1"}})
+        rs = resolve_style(get_theme_style(theme), patch)
+
+        assert rs.text.font.color == "#a1a1a1"
+        assert get_compact_style(rs).text_color == "#a1a1a1"
 
     def test_heading_color_tracks_title_color(self):
         from dbt_charts.core.render.sizing import get_compact_style

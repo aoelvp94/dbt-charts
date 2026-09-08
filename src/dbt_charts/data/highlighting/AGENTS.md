@@ -9,7 +9,9 @@ of truth every dbt charts editor surface derives its highlighting from:
 | VS Code extension | `top_level_keys`, `enum_values_by_key` | `apps/ide/vscode-extension/syntaxes/dbt-charts.tmLanguage.json` (generated) |
 | Cloud + Playground web editors | `sql_block_scalar_keys` | `libs/codemirror-dbt-charts/src/{language,highlight}.ts` (hand-written, manifest passed in) |
 
-Renderers live in `dbt-charts/src/dbt_charts/core/compile/schema/renderers/`
+Both derived artifacts live in the monorepo, not in this package.
+
+Renderers live in `src/dbt_charts/core/compile/schema/renderers/`
 (`highlight_manifest.py`, `textmate_grammar.py`). Generated artifacts are never hand-edited
 — change the renderer and regenerate.
 
@@ -31,7 +33,8 @@ Renderers live in `dbt-charts/src/dbt_charts/core/compile/schema/renderers/`
   classes in VS Code and the web editors; change one without the other and the two dbt charts
   products disagree about what a board looks like. Pinned by
   `libs/codemirror-dbt-charts/tests/tmlanguage-parity.test.ts` (value position) and
-  `test_committed_textmate_grammar_in_sync`.
+  `test_committed_textmate_grammar_in_sync` — both in the monorepo, alongside the
+  artifacts they pin.
 - **Grammars emit classes; the theme layer picks colors.** No hex in a grammar or tokenizer.
   On the web that theme layer is a CodeMirror `HighlightStyle`, so the palette is literal hex
   in `libs/codemirror-dbt-charts/src/highlight.ts` — that file *is* the theme, and it is the

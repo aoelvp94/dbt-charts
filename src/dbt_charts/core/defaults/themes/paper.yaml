@@ -29,8 +29,8 @@ style:
   border:
     color: dbt-creams.border
   text:
-    font:
-      color: dbt-creams.ink
+    # Color inherits from `font.color` (InheritSlot) — no pin here so a
+    # board-root style.font.color override reaches prose.
     code:
       background: dbt-creams.surface-subtle
       border:

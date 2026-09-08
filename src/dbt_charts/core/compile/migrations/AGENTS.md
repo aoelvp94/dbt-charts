@@ -12,9 +12,7 @@ rewrites it to the current one.
 
 Declarations live in `versions/`, one module per boundary plus `current.py`
 for the unreleased one; its docstring is the per-change record. Frozen schemas
-are package data under `dbt_charts/data/schemas/yaml/`. Read
-`docs/guides/dbt-charts-yaml-schemas-and-migrations.md` before changing
-recognition or how a declaration is applied.
+are package data under `dbt_charts/data/schemas/yaml/`.
 
 ## Implementation philosophy
 

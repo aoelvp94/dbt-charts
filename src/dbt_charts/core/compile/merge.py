@@ -601,9 +601,9 @@ def _retired_theme_redirect(entry: str, ctx: _ExtendCtx) -> str | None:
     ``_named_board_path``, shared with ``_resolve_fragment_file``) rather
     than relying on order — a real project board must win either way.
     """
-    from dbt_charts.core.compile.migrations.versions.current import THEME_RENAMES
+    from dbt_charts.core.compile.migrations.migrations import retired_theme_renames
 
-    replacement = THEME_RENAMES.get(entry)
+    replacement = retired_theme_renames().get(entry)
     if replacement is None:
         return None
     # THEME_RENAMES's declared value type (MappedScalar) is shared with

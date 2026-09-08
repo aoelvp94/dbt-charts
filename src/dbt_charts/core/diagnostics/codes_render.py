@@ -2422,3 +2422,36 @@ WARN_CATEGORY_COLOR_PIN_UNSEEN = REGISTRY.register(
         docs_topic="charts",
     )
 )
+
+WARN_AXIS_LABEL_COLLISION = REGISTRY.register(
+    WarningCode(
+        code="WARN-AXIS-LABEL-COLLISION",
+        domain="render",
+        title="X-axis tick labels overlap with no room left to fix it",
+        message_template=(
+            "Chart {chart_id!r}: x field {field!r} has {label_count} tick "
+            "labels that overlap even after skipping and tilting labels — "
+            "they will render on top of each other."
+        ),
+        fix_template=(
+            "Widen the chart, reduce the number of x categories (roll up to "
+            "a coarser time grain, filter the data), or shorten the labels."
+        ),
+        doc=(
+            "Fires on a line/area/scatter chart whose x-axis tick labels "
+            "still overlap after the render tried every enabled overlap "
+            "strategy (`style.axis_x.labels.overlap.skip`/`.tilt`, both on "
+            "by default) — the same collision a table's cramped-columns "
+            "warning reports for width, applied to axis tick text. Unlike "
+            "`WARN-TOO-MANY-X-CATEGORIES` (a fixed category-count ceiling on "
+            "a categorical band axis), this fires on any x-axis shape, "
+            "including a continuous temporal axis whose auto-picked ticks "
+            "simply don't fit the chart's width."
+        ),
+        summary=(
+            "Fired when an x-axis's tick labels overlap with no remaining "
+            "overlap-avoidance strategy to try."
+        ),
+        docs_topic="charts",
+    )
+)
