@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 from dbt_charts.core.compile.config import get_chart_rendering
@@ -36,8 +37,8 @@ from dbt_charts.core.render.chart.type_inference import (
     resolve_authored_x_type,
     resolve_cartesian_x_type,
 )
-from dbt_charts.core.render.chart.vl_conditions import resolved_channel_to_vl_condition
 from dbt_charts.core.render.chart.vl_field_maps import axis_to_vl, legend_to_vl
+from dbt_charts.core.text.case import default_axis_title
 
 
 def _numeric_extent(
@@ -597,11 +598,14 @@ def channel_to_encoding(
     format_str: str | None = None,
     scale: dict[str, Any] | None = None,
     legend_hidden: bool = False,
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:  # type-state: explicit_any — VL encoding fragment
     """Map a resolved style channel to a Vega-Lite encoding fragment.
 
-    Returns None for conditional channels with no background rules (matching
-    oracle behavior — the emitter must skip the encoding in that case).
+    Never receives a conditional-mode channel: the bar/line/area/scatter/pie/
+    heatmap/geo emitters that call this are the only families that ever reach
+    it, and only kpi/table can still produce ``mode="conditional"`` — neither
+    calls this function (kpi has its own row evaluator, table bypasses the
+    channel projector entirely).
 
     Palette is NOT embedded here; emitters set config.range.category directly.
 
@@ -665,18 +669,45 @@ def channel_to_encoding(
             )
         return enc
 
-    if ch.mode == "conditional":
-        return resolved_channel_to_vl_condition(ch)
-
-    raise ValueError(f"Unreachable: unknown channel mode {ch.mode!r}")
+    raise ValueError(
+        f"channel_to_encoding does not handle mode {ch.mode!r} — 'conditional' is a "
+        "real mode, but only table/kpi still produce it, and neither reaches this "
+        "function (kpi has its own row evaluator, table bypasses the channel projector)"
+    )
 
 
 def field_encoding(field: str, type_: str) -> dict[str, str]:
     return {"field": field, "type": type_}
 
 
+def categorical_color_encoding(
+    color_ch: ResolvedStyleChannel | None, enc_type: str | None
+) -> bool:
+    """True when a color encoding is a categorical series worth resolving
+    ``legend.values`` against -- a series-mode channel, a nominal or
+    ordinal VL type, and a bound field.
+
+    ``enc_type`` is the caller's own VL type for this encoding (typically
+    ``enc.get("type")``; the render-warnings detector, which has no
+    ``enc``, passes its own independently-inferred type instead). Every
+    family checked this same triple before calling
+    ``apply_legend_entry_order``, spelled differently per call site --
+    this is the one place that spells it.
+    """
+    return (
+        color_ch is not None
+        and color_ch.mode == "series"
+        and enc_type in ("nominal", "ordinal")
+        and bool(color_ch.data_field)
+    )
+
+
 def apply_color_legend(
-    enc: dict[str, Any], legend: ResolvedLegendStyle, *, force_hidden: bool = False
+    enc: dict[str, Any],  # type-state: explicit_any — VL fragment
+    legend: ResolvedLegendStyle,
+    *,
+    force_hidden: bool = False,
+    drop_values: bool = False,
 ) -> None:
     """Inject resolved legend config into a color encoding dict, in-place.
 
@@ -687,39 +718,197 @@ def apply_color_legend(
     ``force_hidden`` suppresses the legend regardless of ``legend.visible`` — the
     caller passes it when a chart-level concern (e.g. endpoint labels replacing
     the legend) overrides the resolved visibility.
+
+    ``drop_values`` strips an authored ``values`` key from the injected
+    config after the fact, since a caller can't suppress it by copying
+    the (construction-final) ``legend`` model itself.
     """
     if force_hidden or not legend.visible:
         enc["legend"] = None
     else:
         legend_val = legend_to_vl(legend)
         if legend_val:
+            if drop_values:
+                legend_val.pop("values", None)
             enc["legend"] = legend_val
 
 
-def pin_legend_display_order(enc: dict[str, Any], order: list[str]) -> None:
-    """Pin the color legend's rendered entry order to the DISPLAY order.
+_LEGEND_TOKEN_FOLD = re.compile(r"[-_\s]+")
 
-    For a STACKED mark, Vega's own SVG legend renderer re-derives its entry
-    order independently of an explicit ``scale.domain`` override — it falls
-    back to alphabetical even though the scale/mark stacking itself is
-    correct. ``legend.values`` is the one override Vega honours for the
-    rendered legend, so every call site that reorders ``scale.domain`` for
-    display (``spatial_color_scale``) must also pin ``legend.values`` to the
-    SAME order. No-op when the legend is suppressed (``enc["legend"]`` is
-    ``None`` or absent).
+
+def _fold_legend_token(token: str) -> str:
+    """Case/separator-fold a legend token for alias matching.
+
+    Collapses ``-``, ``_`` and runs of whitespace to a single space, then
+    casefolds, so ``net_revenue``, ``Net-Revenue`` and ``net revenue`` all
+    fold to the same key. Only ever compares spellings a caller already
+    enumerated (the domain entry itself, plus its ``aliases``) -- never used
+    to invent or guess one.
+    """
+    return _LEGEND_TOKEN_FOLD.sub(" ", token).strip().casefold()
+
+
+def resolve_legend_entries(
+    authored: list[str],
+    domain: list[str],
+    aliases: dict[str, frozenset[str]] | None = None,
+) -> tuple[list[str], list[str]]:
+    """Resolve an authored ``legend.values`` list against the real domain.
+
+    ``domain`` is the display-order list (a permutation of the legend's
+    real entries). ``aliases`` maps a domain entry to the extra spellings
+    that also resolve to it (e.g. a wide chart's raw measure name for its
+    humanized label), built forward from each entry's own provenance.
+
+    Two tiers, exact then fold. An exact spelling of a domain entry or
+    its alias always wins, even over a fold match on a different entry.
+    Fold matching (case/separator-insensitive) only runs when there is
+    no exact spelling, and only that tier can be ambiguous.
+
+    Returns ``(resolved, unmatched)``: ``resolved`` is the matched
+    entries in authored order; ``unmatched`` is every authored token
+    that matched nothing or matched more than one entry ambiguously --
+    never guessed, never raised. The caller drops an unmatched entry;
+    the render-warnings detector reports it.
+    """
+    # Pass 1 claims every domain entry's own name first, locked into
+    # own_names, so pass 2's alias fill can never overwrite it with an
+    # alias that collides with a DIFFERENT entry's own name.
+    exact_to_entry: dict[str, str | None] = {}
+    for entry in domain:
+        exact_to_entry.setdefault(entry, entry)
+    own_names = frozenset(exact_to_entry)
+    for entry in domain:
+        entry_aliases = (
+            aliases.get(
+                entry, ()
+            )  # type-state: silent_fallback — no aliases is a legal empty set, not masked bad input
+            if aliases
+            else ()
+        )
+        for spelling in entry_aliases:
+            if spelling in own_names:
+                continue
+            if spelling not in exact_to_entry:
+                exact_to_entry[spelling] = entry
+            elif exact_to_entry[spelling] != entry:
+                exact_to_entry[spelling] = (
+                    None  # two aliases collide -- fall through to fold tier
+                )
+
+    folded_to_entries: dict[str, list[str]] = {}
+    for entry in domain:
+        entry_aliases = (
+            aliases.get(
+                entry, ()
+            )  # type-state: silent_fallback — no aliases is a legal empty set, not masked bad input
+            if aliases
+            else ()
+        )
+        # Same own_names exclusion, carried into the fold tier: a
+        # case/separator variant of an entry's own name must resolve as
+        # unambiguously as the literal spelling does.
+        for spelling in {entry, *entry_aliases}:
+            if spelling in own_names and spelling != entry:
+                continue
+            folded_to_entries.setdefault(_fold_legend_token(spelling), []).append(entry)
+
+    resolved: list[str] = []
+    unmatched: list[str] = []
+    for token in authored:
+        exact_hit = exact_to_entry.get(token)
+        if exact_hit is not None:
+            resolved.append(exact_hit)
+            continue
+        candidates = list(
+            dict.fromkeys(
+                folded_to_entries.get(  # type-state: silent_fallback — zero candidates is legal, feeds the unmatched branch below, never hides an error
+                    _fold_legend_token(token), []
+                )
+            )
+        )
+        if len(candidates) != 1:
+            unmatched.append(token)
+            continue
+        resolved.append(candidates[0])
+    return resolved, unmatched
+
+
+def layer_label_and_aliases(
+    authored_label: str | None, y_field: str
+) -> tuple[str, frozenset[str]]:
+    """The legend label for a colorless overlay layer (or a colorless
+    base), and its alias set: the label itself, the raw y-column, and the
+    column's default title -- an authored ``legend.values`` entry may name
+    any of the three.
+
+    Pure config-to-config: takes no rows, so it cannot diverge in
+    behavior between callers. Shared by the overlay emitter
+    (``_overlay.py``) and the render-warnings detector
+    (``legend_values_unresolved.py``).
+    """
+    label = authored_label or default_axis_title(y_field)
+    return label, frozenset({label, y_field, default_axis_title(y_field)})
+
+
+def apply_legend_entry_order(
+    enc: VLDict,
+    order: list[str],
+    *,
+    authored: list[str] | None,
+    aliases: dict[str, frozenset[str]] | None = None,
+) -> None:
+    """Pin the color legend's rendered entry order.
+
+    Vega's own SVG legend re-derives its order independently of an
+    explicit ``scale.domain`` override for a stacked mark, falling back
+    to alphabetical -- ``legend.values`` is the one override it honors,
+    so every call site that reorders the paint scale for display also
+    pins this to the SAME order.
+
+    ``authored`` must be ``ResolvedLegendStyle.values``, not
+    ``enc["legend"]["values"]``, which may carry unrelated state from an
+    earlier call. When not ``None`` it is resolved against ``order`` and
+    wins outright, reordering and filtering the legend to exactly the
+    entries it names. An entry that fails to resolve is dropped, never a
+    hard failure; if nothing matched, the full ``order`` is used instead
+    of an empty legend.
+
+    No-op when the legend is suppressed -- a caller that also needs to
+    reorder a paint scale regardless of legend visibility must resolve
+    independently (see ``bar.py``'s grouped branches).
     """
     legend = enc.get("legend")
-    if isinstance(legend, dict):
-        legend["values"] = list(order)
+    if not isinstance(legend, dict):
+        return
+    if authored is None:
+        # dict.fromkeys, not set(): `order` can legitimately repeat one
+        # entry (an overlay base and a layer whose labels collide) --
+        # Vega's own inference dedupes that automatically, so an explicit
+        # pin must too, or the collision renders as two identical swatches.
+        legend["values"] = list(dict.fromkeys(order))
+        return
+    resolved, _unmatched = resolve_legend_entries(authored, order, aliases)
+    resolved = list(dict.fromkeys(resolved))
+    if resolved or not authored:
+        # Non-empty, or the author explicitly wrote `values: []` --
+        # respected, never silently replaced with the default order.
+        legend["values"] = resolved
+    else:
+        # Nothing matched at all -- fall back to the full default order
+        # instead of an empty legend.
+        legend["values"] = list(dict.fromkeys(order))
 
 
 __all__ = [
     "apply_color_legend",
     "apply_geo_choropleth_legend_endpoint_labels",
     "apply_gradient_legend_endpoint_labels",
+    "apply_legend_entry_order",
+    "categorical_color_encoding",
     "channel_to_encoding",
     "field_encoding",
     "gradient_scale_to_vl",
     "infer_vega_type_from_data",
-    "pin_legend_display_order",
+    "resolve_legend_entries",
 ]

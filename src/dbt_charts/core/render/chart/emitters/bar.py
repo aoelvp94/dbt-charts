@@ -20,7 +20,10 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     WIDE_LABEL_FIELD,
     WIDE_VALUE_FIELD,
+    humanize_wide_series_name,
+    raw_wide_series_names,
     unfold_wide_rows,
+    wide_measure_labels_for,
     wide_series_names,
 )
 from dbt_charts.core.compile.resolve.chart.tick_values import zero_anchor_domain_floor
@@ -49,10 +52,12 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
 )
 from dbt_charts.core.render.chart.emitters._channels import (
     apply_color_legend,
+    apply_legend_entry_order,
+    categorical_color_encoding,
     channel_to_encoding,
     gap_fill_ordinal_time_per_panel,
     infer_vega_type_from_data,
-    pin_legend_display_order,
+    resolve_legend_entries,
 )
 from dbt_charts.core.render.chart.emitters._endpoint_rail import (
     resolve_endpoint_rail_span,
@@ -196,6 +201,30 @@ def _count_series(chart: ResolvedBarChart, data: list[VLDict]) -> int:
     if color_ch is None or not color_ch.data_field:
         return 1
     return field_cardinality(color_ch.data_field, data) or 1
+
+
+def _grouped_bar_paint_order(chart: ResolvedBarChart, series: list[str]) -> list[str]:
+    """A grouped bar's paint-scale/xOffset order, from ``chart.legend.values``.
+
+    Read independently of legend visibility: whether ``scale.domain`` and
+    xOffset follow an authored reorder is a paint-order question, not a
+    legend-display one, so a hidden legend (``apply_legend_entry_order``
+    no-ops and returns ``None`` for a suppressed legend) must not suppress
+    this reorder the way relying on that return value would. Only a FULL
+    authored reorder (same set, different order) counts -- a curated
+    SUBSET is a legend-only filter, never a domain reorder, and falls back
+    to ``series``.
+    """
+    if chart.legend.values is None:
+        return series
+    resolved, _ = resolve_legend_entries(chart.legend.values, series)
+    # apply_legend_entry_order writes list(dict.fromkeys(resolved)) to
+    # legend["values"] -- dedupe here too, or a repeated (or fold-repeated,
+    # e.g. "tools" re-matching "Tools") authored entry pads `resolved`
+    # past `series`' length and a genuine full reorder falls back to
+    # alphabetical instead.
+    resolved = list(dict.fromkeys(resolved))
+    return resolved if sorted(resolved) == sorted(series) else series
 
 
 def _resolve_overlap_fraction(
@@ -432,7 +461,7 @@ def _emit_histogram(
     transforms: list[VLDict] = []
 
     if color_ch is not None:
-        color_field = getattr(color_ch, "data_field", None)
+        color_field = color_ch.data_field
         color_title = (
             format_display_text(
                 color_field, from_slug=True, font=chart.legend.title.font
@@ -441,39 +470,56 @@ def _emit_histogram(
             else None
         )
         enc = channel_to_encoding(color_ch, data, title=color_title)
-        if enc is not None:
-            apply_color_legend(enc, chart.legend)
-            if (
-                color_ch.mode == "series"
-                and enc.get("type") == "nominal"
-                and color_field
-            ):
-                series = distinct_series_values(data, color_field)
-                counts = Counter(
-                    str(row[color_field])
-                    for row in data
-                    if row.get(color_field) is not None
+        apply_color_legend(enc, chart.legend)
+        enc_type = enc.get("type")
+        if categorical_color_encoding(color_ch, enc_type) and enc_type == "nominal":
+            series = distinct_series_values(data, color_field)
+            counts = Counter(
+                str(row[color_field])
+                for row in data
+                if row.get(color_field) is not None
+            )
+            baseline_order = sorted(series, key=lambda s: (-counts[s], s))
+            display_order = list(reversed(baseline_order))
+            # See the vertical stacked branch below: `chart.palette`
+            # can legally be authored empty, so resolution runs
+            # unconditionally -- it governs `scale`'s range only.
+            apply_legend_entry_order(
+                enc,
+                display_order,
+                authored=chart.legend.values,
+            )
+            if chart.palette:
+                enc["scale"] = spatial_color_scale(
+                    baseline_order, chart.palette, display_order
                 )
-                baseline_order = sorted(series, key=lambda s: (-counts[s], s))
-                display_order = list(reversed(baseline_order))
-                if chart.palette:
-                    enc["scale"] = spatial_color_scale(
-                        baseline_order, chart.palette, display_order
-                    )
-                    pin_legend_display_order(enc, display_order)
-                transforms.append(
-                    {
-                        "calculate": series_order_expression(
-                            color_field, baseline_order
-                        ),
-                        "as": _DF_SERIES_ORDER_KEY,
-                    }
-                )
-                encoding["order"] = {
-                    "field": _DF_SERIES_ORDER_KEY,
-                    "sort": "ascending",
+            transforms.append(
+                {
+                    "calculate": series_order_expression(color_field, baseline_order),
+                    "as": _DF_SERIES_ORDER_KEY,
                 }
-            encoding["color"] = enc
+            )
+            encoding["order"] = {
+                "field": _DF_SERIES_ORDER_KEY,
+                "sort": "ascending",
+            }
+        elif (
+            categorical_color_encoding(color_ch, enc_type)
+            and enc_type == "ordinal"
+            and chart.legend.values is not None
+        ):
+            # An ordinal column carries its own inherent order --
+            # Vega sorts the domain natively, so none of the paint
+            # scale, counts-based baseline order or mark-order
+            # transform above may touch it. Resolution still has to
+            # run so an authored `legend.values` entry doesn't ship
+            # as a phantom swatch with no diagnostic.
+            apply_legend_entry_order(
+                enc,
+                distinct_series_values(data, color_field),
+                authored=chart.legend.values,
+            )
+        encoding["color"] = enc
 
     return ChartSpec(
         mark="bar",
@@ -566,7 +612,14 @@ class BarEmitter:
                 chart,
                 spec,
                 data,
-                n_series=len(wide_series_names(chart.wide_measures, chart.color, data)),
+                n_series=len(
+                    wide_series_names(
+                        chart.wide_measures,
+                        chart.color,
+                        data,
+                        wide_measure_labels_for(chart.wide_measures),
+                    )
+                ),
             )
             return spec
 
@@ -685,25 +738,41 @@ def _emit_wide_bar(
     """Emit list-valued measures through one VL fold/unit specification."""
     assert chart.wide_measures
     measures = list(chart.wide_measures)
-    series = wide_series_names(measures, chart.color, data)
+    dimension = chart.color
+    wide_labels = wide_measure_labels_for(chart.wide_measures)
+    series = wide_series_names(measures, dimension, data, wide_labels)
+    # `fold_order` (below) must always stay RAW -- it feeds
+    # `_measure_paint_order`/`_label_expression`, which build Vega
+    # expressions comparing against the fold's own RAW key values, never
+    # the humanized display text.
+    raw_series = raw_wide_series_names(measures, dimension, data)
     if chart.stack not in (None, "none"):
         # Same order computation bar's authored-color stacked path uses
         # (see the `elif color_ch.mode == "series" ...` branch below), fed a
         # long-form view of the wide data — a wide bar's series order must
         # match what an authored color: field of the same data would produce.
-        folded = unfold_wide_rows(data, measures, chart.color)
-        baseline_order = sorted_series_by_stack_order(
-            series,
+        # `folded`'s own WIDE_LABEL_FIELD is RAW (unfold_wide_rows never
+        # humanizes), so the stack-order grouping has to run against the
+        # matching raw identity, not `series` (already humanized) -- humanize
+        # the RESULT afterward, per entry.
+        folded = unfold_wide_rows(data, measures, dimension)
+        raw_baseline_order = sorted_series_by_stack_order(
+            raw_series,
             folded,
             WIDE_LABEL_FIELD,
             chart.style.stack_order,
             y_field=WIDE_VALUE_FIELD,
         )
+        baseline_order = [
+            humanize_wide_series_name(name, dimension, wide_labels)
+            for name in raw_baseline_order
+        ]
         display_order = (
             list(reversed(baseline_order))
             if chart.orientation != "horizontal"
             else baseline_order
         )
+        raw_fold_order = measures
     else:
         # Grouped (no stack): bar's authored-color path never pins an
         # explicit order for this shape either — it leaves VL's own default
@@ -714,6 +783,7 @@ def _emit_wide_bar(
         # from.
         baseline_order = None
         display_order = series
+        raw_fold_order = raw_series
     wide = fold_wide_measures(
         measures,
         chart.color,
@@ -722,11 +792,12 @@ def _emit_wide_bar(
         chart.legend,
         display_order=display_order,
         baseline_order=baseline_order,
+        wide_measure_labels=wide_labels,
         # Stacked: baseline_order already governs stack position via the
         # explicit WIDE_ORDER_FIELD channel below, so the fold's own row
         # order is visually inert -- keep it as authored. Grouped: no such
         # channel exists, so the fold order IS the paint order.
-        fold_order=measures if baseline_order is not None else display_order,
+        fold_order=raw_fold_order,
     )
     if chart.orientation == "horizontal":
         return _emit_horizontal(
@@ -1036,111 +1107,120 @@ def _emit_vertical(
             else None
         )
         enc = channel_to_encoding(color_ch, data, title=color_title)
-        if enc is not None:
-            color_enc_type = enc.get("type", "nominal")
-            apply_color_legend(enc, chart.legend)
-            encoding["color"] = enc
-            if chart.stack == "none":
-                # grouped columns use xOffset; skip when color is 1:1 with x —
-                # that would create N solo sub-bands (razor-thin bars). xOffset
-                # is emitted regardless of x's VL type (nominal/ordinal/
-                # temporal/quantitative): it correctly groups a band-eligible
-                # (nominal/ordinal, or bucketed-calendar temporal) x, and is
-                # inert on a genuinely continuous x once y.stack: null (below)
-                # is in place — omitting it there would silently un-group a
-                # >max_ordinal_buckets bucketed-time x (type_inference.py
-                # promotes that to temporal), which used to group correctly.
-                if color_field and not _is_color_1to1_with_x(
-                    cat_field, color_field, dataset
-                ):
-                    encoding["xOffset"] = {
-                        "field": color_field,
-                        "type": color_enc_type,
-                        "title": color_title,
-                    }
-                # Grouped bars have no display-order to pin (no stack, no
-                # reorder) but a bound field still owes every value its board
-                # slot's color — VL's own alphabetical default range would
-                # otherwise paint this chart from its own local position, not
-                # the board's.
-                if (
-                    color_ch.mode == "series"
-                    and color_enc_type == "nominal"
-                    and color_field
-                    and chart.palette
-                ):
-                    scale = category_scale_for(chart.category_colors, color_field)
-                    if scale is not None:
-                        series = distinct_series_values(data, color_field)
-                        if series:
-                            # No `pin_legend_display_order` here: unlike a
-                            # stacked mark, a grouped bar's legend already
-                            # follows `scale.domain` on its own, and pinning
-                            # would blindly overwrite an authored
-                            # `style.legend.values` order with this chart's
-                            # plain alphabetical one. The domain itself still
-                            # has to MATCH whatever the legend actually
-                            # renders: `apply_color_legend` already bakes
-                            # `style.legend.values` onto `legend.values`
-                            # verbatim, so an authored FULL reordering (same
-                            # set, different order — a curated SUBSET is a
-                            # legend-only filter, not usable as a domain)
-                            # must win here too, or the tooltip rank
-                            # `_series_order_role` bakes from this domain
-                            # disagrees with where the legend visually shows
-                            # each value.
-                            order = series
-                            # sorted(), not set(): a repeated entry matches
-                            # the set but is not a permutation, and taking it
-                            # verbatim duplicates a domain member.
-                            if chart.legend.values is not None and sorted(
-                                chart.legend.values
-                            ) == sorted(series):
-                                order = list(chart.legend.values)
-                            encoding["color"]["scale"] = spatial_color_scale(
-                                series, chart.palette, order, scale
-                            )
-            elif (
-                color_ch.mode == "series"
-                and color_enc_type == "nominal"
-                and color_field
-                and measure_field
-                and chart.stack not in (None, "none")
+        color_enc_type = enc.get(
+            "type", "nominal"
+        )  # type-state: silent_fallback — literal-mode enc has no "type" key
+        apply_color_legend(enc, chart.legend)
+        encoding["color"] = enc
+        if chart.stack == "none":
+            # grouped columns use xOffset; skip when color is 1:1 with x —
+            # that would create N solo sub-bands (razor-thin bars). xOffset
+            # is emitted regardless of x's VL type (nominal/ordinal/
+            # temporal/quantitative): it correctly groups a band-eligible
+            # (nominal/ordinal, or bucketed-calendar temporal) x, and is
+            # inert on a genuinely continuous x once y.stack: null (below)
+            # is in place — omitting it there would silently un-group a
+            # >max_ordinal_buckets bucketed-time x (type_inference.py
+            # promotes that to temporal), which used to group correctly.
+            if color_field and not _is_color_1to1_with_x(
+                cat_field, color_field, dataset
             ):
+                encoding["xOffset"] = {
+                    "field": color_field,
+                    "type": color_enc_type,
+                    "title": color_title,
+                }
+            # Grouped bars have no display-order to pin (no stack, no
+            # reorder) but a bound field still owes every value its board
+            # slot's color — VL's own alphabetical default range would
+            # otherwise paint this chart from its own local position, not
+            # the board's.
+            if categorical_color_encoding(color_ch, color_enc_type):
                 series = distinct_series_values(data, color_field)
-                if series:
-                    # Baseline-first order (index 0 = bottom of stack).
-                    order = sorted_series_by_stack_order(
+                # A grouped bar's legend already follows `scale.domain`
+                # with no explicit pin, so only an AUTHORED list needs
+                # resolving here.
+                if chart.legend.values is not None:
+                    apply_legend_entry_order(
+                        enc,
                         series,
-                        data,
-                        color_field,
-                        chart.style.stack_order,
-                        y_field=measure_field,
+                        authored=chart.legend.values,
                     )
-                    # resolve() always bakes a non-empty palette for any real
-                    # chart; this guard only matters for tests that construct
-                    # a ResolvedBarChart directly with palette=(). The mark
-                    # order is emitted regardless — it needs no palette.
-                    if chart.palette:
-                        display_order = list(reversed(order))
-                        palette_order = (
-                            series
-                            if _is_color_1to1_with_x(cat_field, color_field, dataset)
-                            else order
-                        )
+                # Ordinal columns carry their own inherent order (Vega
+                # sorts the domain natively) -- the paint scale below
+                # must never reorder or recolor one, so it stays
+                # nominal-only.
+                if color_enc_type == "nominal" and chart.palette:
+                    scale = category_scale_for(chart.category_colors, color_field)
+                    if scale is not None and series:
+                        # xOffset shares this field's scale, so a full
+                        # authored reorder must reorder scale.domain
+                        # too, read independently of legend visibility
+                        # (see _grouped_bar_paint_order).
+                        order = _grouped_bar_paint_order(chart, series)
                         encoding["color"]["scale"] = spatial_color_scale(
-                            palette_order,
-                            chart.palette,
-                            display_order,
-                            category_scale_for(chart.category_colors, color_field),
+                            series, chart.palette, order, scale
                         )
-                        pin_legend_display_order(encoding["color"], display_order)
-                    expr = series_order_expression(color_field, order)
-                    transforms.append({"calculate": expr, "as": _DF_SERIES_ORDER_KEY})
-                    encoding["order"] = {
-                        "field": _DF_SERIES_ORDER_KEY,
-                        "sort": "ascending",
-                    }
+        elif (
+            categorical_color_encoding(color_ch, color_enc_type)
+            and color_enc_type == "nominal"
+            and measure_field
+            and chart.stack not in (None, "none")
+        ):
+            series = distinct_series_values(data, color_field)
+            if series:
+                # Baseline-first order (index 0 = bottom of stack).
+                order = sorted_series_by_stack_order(
+                    series,
+                    data,
+                    color_field,
+                    chart.style.stack_order,
+                    y_field=measure_field,
+                )
+                # `chart.palette` can legally be authored empty; it
+                # governs the scale's range only, never the legend's
+                # entry set, so resolution runs unconditionally. The
+                # mark order below needs no palette either.
+                display_order = list(reversed(order))
+                apply_legend_entry_order(
+                    encoding["color"],
+                    display_order,
+                    authored=chart.legend.values,
+                )
+                if chart.palette:
+                    palette_order = (
+                        series
+                        if _is_color_1to1_with_x(cat_field, color_field, dataset)
+                        else order
+                    )
+                    encoding["color"]["scale"] = spatial_color_scale(
+                        palette_order,
+                        chart.palette,
+                        display_order,
+                        category_scale_for(chart.category_colors, color_field),
+                    )
+                expr = series_order_expression(color_field, order)
+                transforms.append({"calculate": expr, "as": _DF_SERIES_ORDER_KEY})
+                encoding["order"] = {
+                    "field": _DF_SERIES_ORDER_KEY,
+                    "sort": "ascending",
+                }
+        elif (
+            categorical_color_encoding(color_ch, color_enc_type)
+            and color_enc_type == "ordinal"
+            and measure_field
+            and chart.stack not in (None, "none")
+            and chart.legend.values is not None
+        ):
+            # See _emit_histogram's ordinal branch above: an ordinal
+            # column's own inherent order must never be touched by
+            # the stack-order computation, paint scale, or mark-order
+            # transform -- only resolution runs.
+            apply_legend_entry_order(
+                encoding["color"],
+                distinct_series_values(data, color_field),
+                authored=chart.legend.values,
+            )
 
     spec = emit_bar_layer(
         bar_mark,
@@ -1465,91 +1545,109 @@ def _emit_horizontal(
             else None
         )
         enc = channel_to_encoding(color_ch, data, title=color_title_h)
-        if enc is not None:
-            color_enc_type_h = enc.get("type", "nominal")
-            apply_color_legend(enc, chart.legend)
-            encoding["color"] = enc
-            # stack="none" with a color channel → grouped columns (yOffset for horizontal).
-            # Skip when color is 1:1 with x — that creates N solo sub-bands (thin bars).
-            if chart.stack == "none":
-                if color_field_h and not _is_color_1to1_with_x(
-                    cat_field, color_field_h, dataset
-                ):
-                    encoding["yOffset"] = {
-                        "field": color_field_h,
-                        "type": color_enc_type_h,
-                        "title": color_title_h,
-                    }
-                # See the vertical branch above: a bound field still owes
-                # every value its board slot's color, even with no
-                # display-order to pin.
-                if (
-                    color_ch.mode == "series"
-                    and color_enc_type_h == "nominal"
-                    and color_field_h
-                    and chart.palette
-                ):
-                    scale = category_scale_for(chart.category_colors, color_field_h)
-                    if scale is not None:
-                        series = distinct_series_values(data, color_field_h)
-                        if series:
-                            # See the vertical branch above: no
-                            # pin_legend_display_order here (a grouped bar's
-                            # legend already follows scale.domain), but the
-                            # domain itself must match whatever the legend
-                            # actually renders.
-                            order = series
-                            # sorted(), not set(): a repeated entry matches
-                            # the set but is not a permutation, and taking it
-                            # verbatim duplicates a domain member.
-                            if chart.legend.values is not None and sorted(
-                                chart.legend.values
-                            ) == sorted(series):
-                                order = list(chart.legend.values)
-                            encoding["color"]["scale"] = spatial_color_scale(
-                                series, chart.palette, order, scale
-                            )
-            elif (
-                color_ch.mode == "series"
-                and color_enc_type_h == "nominal"
-                and color_field_h
-                and measure_field
-                and chart.stack not in (None, "none")
+        color_enc_type_h = enc.get(
+            "type", "nominal"
+        )  # type-state: silent_fallback — literal-mode enc has no "type" key
+        apply_color_legend(enc, chart.legend)
+        encoding["color"] = enc
+        # stack="none" with a color channel → grouped columns (yOffset for horizontal).
+        # Skip when color is 1:1 with x — that creates N solo sub-bands (thin bars).
+        if chart.stack == "none":
+            if color_field_h and not _is_color_1to1_with_x(
+                cat_field, color_field_h, dataset
             ):
+                encoding["yOffset"] = {
+                    "field": color_field_h,
+                    "type": color_enc_type_h,
+                    "title": color_title_h,
+                }
+            # See the vertical branch above: a bound field still owes
+            # every value its board slot's color, even with no
+            # display-order to pin. Only an AUTHORED list needs
+            # resolving -- Vega's own legend already follows
+            # scale.domain for a grouped bar with no pin.
+            if categorical_color_encoding(color_ch, color_enc_type_h):
                 series = distinct_series_values(data, color_field_h)
-                if series:
-                    # Baseline-first order (index 0 = left edge for horizontal
-                    # bars) — the "left-first" convention IS baseline-first,
-                    # no reversal needed.
-                    order = sorted_series_by_stack_order(
+                if chart.legend.values is not None:
+                    apply_legend_entry_order(
+                        enc,
                         series,
-                        data,
-                        color_field_h,
-                        chart.style.stack_order,
-                        y_field=measure_field,
+                        authored=chart.legend.values,
                     )
-                    # See the vertical branch above: palette is guaranteed
-                    # non-empty by resolve(); this guard only matters for
-                    # tests that bypass it.
-                    if chart.palette:
-                        palette_order = (
-                            series
-                            if _is_color_1to1_with_x(cat_field, color_field_h, dataset)
-                            else order
-                        )
+                # See the vertical branch above: an ordinal column's
+                # paint-color scale stays nominal-only.
+                if color_enc_type_h == "nominal" and chart.palette:
+                    scale = category_scale_for(chart.category_colors, color_field_h)
+                    if scale is not None and series:
+                        # See the vertical branch above: a full
+                        # authored reorder has to reorder scale.domain
+                        # too, since the yOffset band shares this
+                        # field's scale.
+                        order = _grouped_bar_paint_order(chart, series)
                         encoding["color"]["scale"] = spatial_color_scale(
-                            palette_order,
-                            chart.palette,
-                            order,
-                            category_scale_for(chart.category_colors, color_field_h),
+                            series, chart.palette, order, scale
                         )
-                        pin_legend_display_order(encoding["color"], order)
-                    expr = series_order_expression(color_field_h, order)
-                    transforms.append({"calculate": expr, "as": _DF_SERIES_ORDER_KEY})
-                    encoding["order"] = {
-                        "field": _DF_SERIES_ORDER_KEY,
-                        "sort": "ascending",
-                    }
+        elif (
+            categorical_color_encoding(color_ch, color_enc_type_h)
+            and color_enc_type_h == "nominal"
+            and measure_field
+            and chart.stack not in (None, "none")
+        ):
+            series = distinct_series_values(data, color_field_h)
+            if series:
+                # Baseline-first order (index 0 = left edge for horizontal
+                # bars) — the "left-first" convention IS baseline-first,
+                # no reversal needed.
+                order = sorted_series_by_stack_order(
+                    series,
+                    data,
+                    color_field_h,
+                    chart.style.stack_order,
+                    y_field=measure_field,
+                )
+                # See the vertical branch above: `chart.palette` can
+                # legally be authored empty, so resolution runs
+                # unconditionally -- it governs `scale`'s range only.
+                apply_legend_entry_order(
+                    encoding["color"],
+                    order,
+                    authored=chart.legend.values,
+                )
+                if chart.palette:
+                    palette_order = (
+                        series
+                        if _is_color_1to1_with_x(cat_field, color_field_h, dataset)
+                        else order
+                    )
+                    encoding["color"]["scale"] = spatial_color_scale(
+                        palette_order,
+                        chart.palette,
+                        order,
+                        category_scale_for(chart.category_colors, color_field_h),
+                    )
+                expr = series_order_expression(color_field_h, order)
+                transforms.append({"calculate": expr, "as": _DF_SERIES_ORDER_KEY})
+                encoding["order"] = {
+                    "field": _DF_SERIES_ORDER_KEY,
+                    "sort": "ascending",
+                }
+        elif (
+            categorical_color_encoding(color_ch, color_enc_type_h)
+            and color_enc_type_h == "ordinal"
+            and measure_field
+            and chart.stack not in (None, "none")
+            and chart.legend.values is not None
+        ):
+            # See the vertical stacked branch above: an ordinal
+            # column's own inherent order must never be touched by
+            # the stack-order sort, paint scale or mark-order
+            # transform -- only resolution runs, so an authored
+            # `legend.values` entry doesn't ship as a phantom swatch.
+            apply_legend_entry_order(
+                encoding["color"],
+                distinct_series_values(data, color_field_h),
+                authored=chart.legend.values,
+            )
 
     spec = emit_bar_layer(
         bar_mark,

@@ -1,10 +1,18 @@
 """Tests for accent/muted board-to-board cascade on Style/ResolvedStyle.
 
 ADR-003/ADR-009: accent and muted are semantic color tokens defined on Style.
-They live at root level (1d), cascade to sub-fields within a board (_apply_token_cascade),
-and cascade from parent board to child board via compile_board_resolved_style() (1c).
-
-background is a box property and does NOT cascade.
+They live at root level (1d) and cascade to sub-fields within a board
+(_apply_token_cascade). Board-to-board cascade via compile_board_resolved_style()
+(1c) is per-field, driven by each Style field's own Merge marker (see
+compile/models/markers.py and style/theme/style.py): most fields a parent
+board explicitly authors — muted, accent, background, font, or anything
+else without a nested=Strategy.CHILD marker — reach a nested board, falling
+back to that nested board's own theme for anything no ancestor authored.
+A field marked nested=Strategy.CHILD (a per-board structural or root-only
+concern, not thematic identity) never crosses a board boundary; the
+published AuthoredBoard.style description enumerates the current set, and
+test_authored_board_style_description_names_every_child_marked_field below
+keeps that enumeration honest.
 """
 
 from dbt_charts.core.compile.config import (
@@ -154,6 +162,16 @@ def test_child_accent_overrides_parent():
     assert child_rs.accent == "#ff0000"
 
 
+def test_background_cascades_to_child_with_unrelated_style_patch():
+    """background is an ordinary style field: it cascades from an ancestor's
+    authored style the same way any other field does."""
+    child_rs = _compile_and_get_child_resolved(
+        parent_style={"background": "#ff0000"},
+        child_style={"frame": {"card_padding": 20}},
+    )
+    assert child_rs.background == "#ff0000"
+
+
 def test_muted_cascades_through_two_levels():
     """grandparent muted propagates all the way to grandchild."""
     from dbt_charts.core.compile.models.board.authored import AuthoredBoard
@@ -172,3 +190,222 @@ def test_muted_cascades_through_two_levels():
     grandchild_board = child_board.layout.items[0].board
     assert grandchild_board is not None
     assert grandchild_board.resolved_style.muted == "#aabbcc"
+
+
+# ---------------------------------------------------------------------------
+# Ancestor-authored fields beyond muted/accent
+# ---------------------------------------------------------------------------
+
+
+def test_font_color_cascades_to_child_with_unrelated_style_patch():
+    """An ancestor-authored style.font.color must reach a nested board even when
+    that nested board authors its own, wholly unrelated style patch — a title+text
+    combo item styled with padding is the common real-world shape of this."""
+    child_rs = _compile_and_get_child_resolved(
+        parent_style={"font": {"color": "#a1a1a1"}},
+        child_style={"frame": {"card_padding": 20}},
+    )
+    assert child_rs.font.color == "#a1a1a1"
+
+
+def test_title_font_color_cascades_to_child_with_unrelated_style_patch():
+    child_rs = _compile_and_get_child_resolved(
+        parent_style={"title": {"font": {"color": "#b2b2b2"}}},
+        child_style={"frame": {"card_padding": 20}},
+    )
+    assert child_rs.title.font.color == "#b2b2b2"
+
+
+def test_child_own_theme_keeps_unauthored_field_from_own_theme_not_parent():
+    """A nested board on its own theme: must not inherit a color the parent's
+    theme merely defaulted (never authored) — only what the parent explicitly
+    wrote should cross a theme boundary."""
+    from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+    from dbt_charts.core.compile.normalize.dispatch import normalize_board
+
+    board = AuthoredBoard.model_validate(
+        {
+            "title": "parent",
+            "style": {"font": {"color": "#a1a1a1"}},
+            "rows": [
+                {
+                    "title": "child",
+                    "theme": "neon",
+                    "style": {"frame": {"card_padding": 20}},
+                }
+            ],
+        }
+    )
+    compiled = normalize_board(board)
+    child_board = compiled.layout.items[0].board
+    assert child_board is not None
+    child_rs = child_board.resolved_style
+
+    assert child_rs.font.color == "#a1a1a1"
+
+    neon_default = resolve_style(get_theme_style("neon"))
+    clarity_default = resolve_style(get_theme_style())
+    assert neon_default.title.font.color != clarity_default.title.font.color
+    assert child_rs.title.font.color == neon_default.title.font.color
+
+
+def test_gap_margin_padding_do_not_cascade_to_styled_child():
+    """gap/margin/padding are per-board authoring, never theme-populated
+    (Style.gap/margin/padding carry Merge(nested=Strategy.CHILD)) — a nested
+    board authoring its own unrelated style patch must not inherit an
+    ancestor's spacing, even though it does inherit the ancestor's color."""
+    child_rs = _compile_and_get_child_resolved(
+        parent_style={
+            "gap": 60,
+            "margin": {"left": 40},
+            "padding": {"top": 30},
+            "font": {"color": "#a1a1a1"},
+        },
+        child_style={"frame": {"card_padding": 20}},
+    )
+    assert child_rs.gap is None
+    assert child_rs.margin is None
+    assert child_rs.padding is None
+    assert child_rs.font.color == "#a1a1a1"
+
+
+def test_root_color_does_not_cascade_to_styled_child():
+    """style.color (root ink fallback) is per-board authoring like gap/margin/
+    padding — Style.color carries the same Merge(nested=Strategy.CHILD)."""
+    child_rs = _compile_and_get_child_resolved(
+        parent_style={"color": "#ff0000"},
+        child_style={"frame": {"card_padding": 20}},
+    )
+    assert child_rs.color is None
+
+
+def test_frame_does_not_cascade_to_styled_child():
+    """FrameStyle's own docstring says it must not cascade to child boards —
+    Style.frame carries Merge(nested=Strategy.CHILD) for the same reason as
+    gap/margin/padding: each board's structural frame is its own."""
+    theme_default = resolve_style(get_theme_style()).frame.card_padding
+    child_rs = _compile_and_get_child_resolved(
+        parent_style={"frame": {"card_padding": theme_default + 100}},
+        child_style={"background": "#eeeeee"},
+    )
+    assert child_rs.frame.card_padding == theme_default
+
+
+def test_layout_rows_cols_grid_gap_do_not_cascade_to_styled_child():
+    """Row/col/grid spacing and grid column count are each board's own
+    arrangement, not thematic identity, even though every theme happens to
+    populate them via _base.yaml's structural floor."""
+    theme_default = resolve_style(get_theme_style()).layout
+    child_rs = _compile_and_get_child_resolved(
+        parent_style={
+            "layout": {
+                "rows": {"gap": theme_default.rows.gap + 100},
+                "cols": {"gap": theme_default.cols.gap + 100},
+                "grid": {
+                    "gap": theme_default.grid.gap + 100,
+                    "columns": theme_default.grid.columns + 10,
+                },
+            }
+        },
+        child_style={"background": "#eeeeee"},
+    )
+    assert child_rs.layout.rows.gap == theme_default.rows.gap
+    assert child_rs.layout.cols.gap == theme_default.cols.gap
+    assert child_rs.layout.grid.gap == theme_default.grid.gap
+    assert child_rs.layout.grid.columns == theme_default.grid.columns
+
+
+def test_layout_tabs_bar_height_does_not_cascade_to_styled_child():
+    """Style.layout carries a single container-level Merge(nested=CHILD): a
+    nested board's own tab bar and details-accordion styling resolve against
+    its own theme too, not an ancestor's, same as rows/cols/grid gap."""
+    theme_default = resolve_style(get_theme_style()).layout.tabs.bar_height
+    child_rs = _compile_and_get_child_resolved(
+        parent_style={"layout": {"tabs": {"bar_height": theme_default + 100}}},
+        child_style={"background": "#eeeeee"},
+    )
+    assert child_rs.layout.tabs.bar_height == theme_default
+
+
+def test_layout_details_summary_height_does_not_cascade_to_styled_child():
+    """Same whole-container Merge(nested=CHILD) on Style.layout, exercised
+    for details (the other layout.* widget) rather than tabs."""
+    theme_default = resolve_style(get_theme_style()).layout.details.summary_height
+    child_rs = _compile_and_get_child_resolved(
+        parent_style={"layout": {"details": {"summary_height": theme_default + 100}}},
+        child_style={"background": "#eeeeee"},
+    )
+    assert child_rs.layout.details.summary_height == theme_default
+
+
+def test_layout_field_authored_by_child_does_not_pull_in_ancestor_layout_field():
+    """A nested board authoring its own layout.cols.gap still gets CHILD's
+    all-or-nothing behavior for layout as a whole: its own cols.gap wins,
+    and an ancestor's layout.details.summary_height resolves from its own
+    theme, not the ancestor's -- merge_patches' CHILD strategy takes the
+    whole field from the nested board's own patch, it does not merge
+    sibling sub-fields from the ancestor in underneath it.
+
+    Uses details/cols rather than rows/cols: both are LAYOUT_FIELDS, and
+    merge_patches' cross-axis-layout-clear rule (unrelated to the CHILD
+    marker under test) would zero an ancestor's rows whenever a child
+    authors cols regardless of any Merge marker, confounding the result."""
+    theme_default = resolve_style(get_theme_style()).layout
+    child_rs = _compile_and_get_child_resolved(
+        parent_style={
+            "layout": {
+                "details": {
+                    "summary_height": theme_default.details.summary_height + 100
+                }
+            }
+        },
+        child_style={"layout": {"cols": {"gap": theme_default.cols.gap + 50}}},
+    )
+    assert child_rs.layout.cols.gap == theme_default.cols.gap + 50
+    assert (
+        child_rs.layout.details.summary_height == theme_default.details.summary_height
+    )
+
+
+def test_page_footer_timestamp_do_not_cascade_to_styled_child():
+    """page/footer/timestamp are root-board-only chrome: a nested board has
+    no page canvas, footer, or timestamp line of its own, so Style.page/
+    footer/timestamp carry Merge(nested=Strategy.CHILD) like layout/frame."""
+    theme_default = resolve_style(get_theme_style())
+    child_rs = _compile_and_get_child_resolved(
+        parent_style={
+            "page": {"background": "#ff00ff"},
+            "footer": {"text": "custom footer text"},
+            "timestamp": {"format": "%Y"},
+        },
+        child_style={"background": "#eeeeee"},
+    )
+    assert child_rs.page.background == theme_default.page.background
+    assert child_rs.footer.text == theme_default.footer.text
+    assert child_rs.timestamp.format == theme_default.timestamp.format
+
+
+def test_authored_board_style_description_names_every_child_marked_field():
+    """The published style: field description enumerates every Style field
+    that carries Merge(nested=Strategy.CHILD) -- catches the next marker
+    added without updating the shipped docs."""
+    import re
+
+    from dbt_charts.core.compile.merge import Strategy, merge_marker
+    from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+    from dbt_charts.core.compile.models.style.theme.style import Style
+
+    child_marked = {
+        name
+        for name, field in Style.model_fields.items()
+        if (marker := merge_marker(field)) is not None
+        and marker.nested == Strategy.CHILD
+    }
+
+    description = AuthoredBoard.model_fields["style"].description
+    assert description is not None
+    named_in_description: set[str] = set()
+    for match in re.findall(r"fields \(([^)]+)\)", description):
+        named_in_description.update(name.strip() for name in match.split(","))
+
+    assert named_in_description == child_marked

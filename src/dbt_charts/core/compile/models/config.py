@@ -421,6 +421,19 @@ class ExecutionConfig(ConfigNode):
         description="Maximum serialized byte size of a single query result "
         "(must be > 0).",
     )
+    # Safety ceiling on the cumulative Jinja-emitted output of one board
+    # render — summed across every templated field in that render (queries,
+    # titles, markdown, …), not per field. Exceeding it is a hard error
+    # (ERR-TEMPLATE-OUTPUT-TOO-LARGE), never a truncation — why, in
+    # compile/template/output_budget.py's module docstring. A Cloud
+    # deployment ceiling (DCT_MAX_TEMPLATE_OUTPUT_BYTES_CEILING) can only
+    # lower this, never raise it. Override in dbt_charts.yml under
+    # execution.max_template_output_bytes.
+    max_template_output_bytes: int = Field(
+        gt=0,
+        description="Maximum cumulative bytes of Jinja-emitted template "
+        "output for a single board render (must be > 0).",
+    )
     # sqlglot uses different dialect names than dbt charts' public-facing dialect strings.
     # This mapping normalizes dbt charts names to sqlglot equivalents before parsing.
     dialect_aliases: dict[str, str]

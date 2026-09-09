@@ -3,4 +3,4 @@ title: ""
 text: |
   # Directory {{ directory_title }}
 
-  {{ listing_markdown | indent(2, true) }}
+  {{ listing_markdown }}

@@ -439,9 +439,10 @@ class Board(BaseModel):
     def set_theme(self, theme: str | None) -> None:
         """Change this board's theme and re-cascade resolved_style in-place.
 
-        Every nested board is also re-cascaded because semantic tokens
-        (``muted``, ``accent``) propagate from this board's resolved style
-        down to its children.
+        Every nested board is also re-cascaded because any field this board
+        explicitly authored propagates down to its children (and, called on
+        the root, any field an ancestor of a nested board authored keeps
+        propagating through it too).
 
         Always go through this method to mutate ``board.theme`` — callers
         that write ``board.theme = …`` directly will leave ``resolved_style``

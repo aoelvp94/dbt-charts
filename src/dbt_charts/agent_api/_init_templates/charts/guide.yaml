@@ -1,6 +1,6 @@
-# dbt charts Guide — your first dashboard
+# dbt Charts Guide — your first dashboard
 #
-# This file is a self-contained tour of dbt charts features.
+# This file is a self-contained tour of dbt Charts features.
 # Every section works without a database: data lives inline.
 # When you're ready, swap inline data for real SQL queries.
 #
@@ -12,13 +12,13 @@
 #   rows/cols:  layout — rows stack vertically, cols split horizontally
 #   variables:  interactive dropdowns and filters
 
-title: "dbt charts Guide"
-notes: "A tour of dbt charts: queries, charts, layout, KPIs, and variables."
+title: "dbt Charts Guide"
+notes: "A tour of dbt Charts: queries, charts, layout, KPIs, and variables."
 
 # ── Text blocks ───────────────────────────────────────────────────────────────
 # Any `text:` field accepts markdown.
 text: |
-  Welcome to **dbt charts** — dashboards as YAML files.
+  Welcome to **dbt Charts** — dashboards as YAML files.
 
   This file is your starter guide. Edit it, add new `.yaml` files under
   `charts/`, and run `dct serve` to preview everything in your browser.

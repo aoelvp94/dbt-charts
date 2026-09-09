@@ -1,5 +1,7 @@
 """Tests for raw HTML foreignObject passthrough in markdown-svg."""
 
+import re
+
 import pytest
 
 from mdsvg import RawHtmlBlock, parse, render, render_content
@@ -95,7 +97,7 @@ class TestRawHtmlRenderingEnabled:
         md = "# Title\n\n<div>html</div>\n\nParagraph text."
         blocks = parse(md)
         svg = renderer.render(blocks, width=400)
-        assert "md-heading" in svg
+        assert re.search(r"md-[0-9a-f]{8}-heading", svg) is not None
         assert "<foreignObject" in svg
         assert "Paragraph text." in svg
 

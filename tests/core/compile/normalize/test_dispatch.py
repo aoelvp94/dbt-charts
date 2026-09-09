@@ -261,6 +261,31 @@ class TestSemanticBoardLevelTabs:
         assert empty_tab is not None
         assert empty_tab.level == 2
 
+    def test_content_only_tab_with_explicit_rows_null_is_not_misrouted(self):
+        """`rows: null` beside `text:` must not flip a content-only tab to nested.
+
+        `_resolve_tab_items` dumps the tab with `exclude_unset=True` (needed to
+        preserve an authored `style.formats: null`), which can leave `rows`
+        present in the dict with an explicit `None` value. The nested-board
+        detection has to check the value, not just key presence, or an author
+        who explicitly nulls a layout key on a content-only tab gets an
+        (empty) nested board instead of their text.
+        """
+        board = normalize_board(
+            AuthoredBoard.model_validate(
+                {
+                    "title": "Root",
+                    "tabs": {
+                        "items": [{"title": "Tab A", "text": "alpha", "rows": None}],
+                    },
+                }
+            )
+        )
+        tab_a = board.layout.items[0].board
+        assert tab_a is not None
+        assert tab_a.text == "alpha"
+        assert tab_a.level == 2
+
     def test_deeply_nested_content_tabs(self):
         """Titled root → titled section → titled content-only tab → level=3.
 
@@ -396,8 +421,8 @@ class TestBoardSetTheme:
         """Root.set_theme must update every nested board's resolved_style.
 
         Nested boards' own ``board.theme`` values stay at the compile-time
-        default; the cascade still has to re-run on them so semantic tokens
-        (``muted``, ``accent``) flow from the new root cascade.
+        default; the cascade still has to re-run on them since the theme
+        base underneath every one of them just changed.
         """
         board = _compile_nested()
         nested_left = board.layout.items[0].board
@@ -443,6 +468,37 @@ cols:
         nested_board.set_theme("neon")
 
         assert nested_board.resolved_style != original_nested_style
+
+    def test_set_theme_on_root_preserves_authored_color_on_styled_nested_board(self):
+        """Root.set_theme's re-cascade must thread the root's own authored style
+        into a nested board that authors its own, unrelated style patch — the
+        same contribution the initial compile gives it."""
+        result = compile(
+            """\
+title: Root
+style:
+  font:
+    color: "#a1a1a1"
+cols:
+  - title: Left
+    text: "left panel"
+    style:
+      background: "#eeeeee"
+  - title: Right
+    text: "right panel"
+"""
+        )
+        assert result.success, result.errors
+        board = result.board
+        assert board is not None
+
+        nested_board = board.layout.items[0].board
+        assert nested_board is not None
+        assert nested_board.resolved_style.font.color == "#a1a1a1"
+
+        board.set_theme("neon")
+
+        assert nested_board.resolved_style.font.color == "#a1a1a1"
 
     def test_direct_theme_write_does_not_recompute(self):
         """Pins the regression contract that direct .theme writes are unsupported.

@@ -729,7 +729,7 @@ All chart types accept the channels and style fields below — but each type rej
 | `multiples` | object | Partition into small multiples: `{rows, columns, scale}` — cartesian charts (`bar`/`line`/`area`/`scatter`/`heatmap`) only (see [Small multiples](#small-multiples-multiples)) |
 | `warnings_ignore` | list[string] | Render-warning codes to suppress for this chart only (e.g. `[WARN-AXIS-TITLE-TRUNCATED]`; unknown codes are rejected — list codes with `dct docs warnings`) |
 | `layers` | list | Overlay layers on cartesian charts (`bar`/`line`/`area`/`scatter`) — see [Combo charts](#combo-charts-barlinearea-with-layers) |
-| `conditional_formatting` | object | Discrete style rules by column (see [Conditional formatting](#conditional-formatting)) |
+| `conditional_formatting` | object | Discrete style rules by column — `table`/`kpi` only (see [Conditional formatting](#conditional-formatting)) |
 | `support_table` | list | Attached mini-table beneath bar/line/area charts (including those with `layers:`) — see [Composition](#composition) |
 | `height` | int \| float | Exact pixel height. Wins over `aspect_ratio` and theme defaults. Bypasses `min_height`/`max_height`. Not valid on `kpi`, `table`, `callout`, `spark_bar`. |
 | `aspect_ratio` | float | Chart shape: `height = width / aspect_ratio`. Theme default is `1.5`. Not valid on `kpi`, `table`, `callout`, `spark_bar`. |
@@ -804,7 +804,7 @@ and valid only in KPI value/support and table-cell `format` slots —
 
 `glyph` and `tone` at chart root are also rejected on KPI — use `style.glyph.character` for the glyph. `tone` has no style-level home: it lives only on `support.tone`, since the support row is the block it paints (the headline value stays neutral). Override the value/glyph color with `style.value.font.color`, or the whole card's ink with `style.font.color`.
 
-Top-level chart fields shared by all types: `id`, `query`, `type`, `title`, `subtitle`, `notes`, `height`, `aspect_ratio`, `style`, `link`, `conditional_formatting`, `warnings_ignore`.
+Top-level chart fields shared by all types: `id`, `query`, `type`, `title`, `subtitle`, `notes`, `height`, `aspect_ratio`, `style`, `link`, `warnings_ignore`.
 
 ### Chart-type cheatsheet
 
@@ -1020,6 +1020,8 @@ layers:
 The base chart (`type: bar`, `type: line`, or `type: area`) sets the primary mark, `x`, `y`, and `query`. Additional marks go in `layers:`. Each layer accepts: `type`, `y`, `label`, `color` (data channel, bare field name), `query` (overrides the base chart query for this layer), `x` (layer x-values extend the base x-scale), `axis_y`, and `style` (marks-only patch). Vega-Lite `encoding:` is not allowed inside a layer — use the typed channels.
 
 ### Conditional formatting
+
+Available on `type: table` and `type: kpi` only.
 
 Discrete, rule-driven style overrides applied per column. Each entry under `conditional_formatting:` is keyed by column name and contains a `when:` list of rules.
 

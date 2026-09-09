@@ -283,8 +283,8 @@ class TestSourceAwareRouting:
     ) -> None:
         """A registry that omits the file-engine adapters (as Cloud's
         build_cloud_adapter_registry does) fails closed: a duckdb/sqlite source
-        resolves but no adapter claims it, so execute returns 'No adapter found'
-        rather than falling back to the warehouse SqlAdapter."""
+        resolves but no adapter claims it, so execute returns a fail-closed
+        error rather than falling back to the warehouse SqlAdapter."""
         from unittest.mock import patch
 
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -313,7 +313,39 @@ class TestSourceAwareRouting:
             result = registry.execute(query)
 
         assert not result.is_success
-        assert "no adapter found" in (result.error or "").lower()
+        error = (result.error or "").lower()
+        # An adapter IS registered for "sql" (SqlAdapter) — it's the source
+        # (duckdb/sqlite) that has no claimant. The message must not claim
+        # the type itself is unregistered, and must name the source problem.
+        assert "no adapter registered for query type" not in error
+        assert "sql" in error
+        assert source_type in error
+
+    def test_no_adapter_registered_for_query_type_names_the_type(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        """No adapter at all claims the query's type: the message says the
+        type itself is unregistered, distinct from the type-registered/
+        source-unsupported case above."""
+        from dbt_charts.core.compile.models.query.normalized import HttpQuery
+
+        registry = AdapterRegistry(project=local_project(tmp_path))
+        registry.register(
+            SqlAdapter(
+                project=local_project(tmp_path),
+                dbt_project_path=None,
+                profile_type="postgres",
+            )
+        )
+
+        result = registry.execute(HttpQuery(url="https://example.com/"))
+
+        assert not result.is_success
+        error = (result.error or "").lower()
+        assert "http" in error
+        assert "no adapter registered" in error
 
     def test_duckdb_routes_to_duckdb_adapter_not_sql_adapter(
         self,

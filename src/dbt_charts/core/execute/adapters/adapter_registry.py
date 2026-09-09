@@ -554,9 +554,27 @@ class AdapterRegistry:
         adapter = self.get_adapter(query, source_config)
 
         if not adapter:
+            if self._type_index.get(query.query_type):
+                # Distinguished so the author does not debug a phantom missing
+                # query type when it is the source that has no claimant.
+                detail = (
+                    f"this query's {source_config.type!r} source"
+                    if source_config is not None
+                    else "this query"
+                )
+                return QueryResult(
+                    data=[],
+                    error=(
+                        f"No adapter for query type {query.query_type!r} "
+                        f"supports {detail} in this deployment."
+                    ),
+                )
             return QueryResult(
                 data=[],
-                error=f"No adapter found for query type: {query.query_type}",
+                error=(
+                    f"No adapter registered for query type {query.query_type!r} "
+                    "in this deployment."
+                ),
             )
 
         # Composition: expand {{ queries.X }} references and parameterize

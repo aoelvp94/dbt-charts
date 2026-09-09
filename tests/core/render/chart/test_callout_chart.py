@@ -565,8 +565,9 @@ def test_title_renders_in_tone_solid_color_not_message_color() -> None:
 
     Regression: when only the message style_block was emitted, both title and
     message elements shared the same .md-text CSS rule, so the title rendered in
-    the wrong color.  The fix scopes class names per-callout-uniquely (c{hash}t-
-    for title, c{hash}m- for message) so the two rules coexist without collision.
+    the wrong color. The fix (mdsvg scopes each renderer's `.md-*` classes to a
+    hash of its own style) gives title and message distinct scopes whenever
+    their colors differ, so the two rules coexist without collision.
     """
     title_color = resolve_palette_color("warning.solid")
     message_color = resolve_palette_color("warning.text")
@@ -579,8 +580,9 @@ def test_title_renders_in_tone_solid_color_not_message_color() -> None:
         callout_style=_callout_style_for_tone("warning"),
     )
 
-    # Title and message each get unique scoped class names (no bare "md-text").
-    assert 'class="md-text"' not in svg, "bare md-text class must be scoped per callout"
+    # Title and message text land on distinct scoped classes, not one shared rule.
+    text_classes = set(re.findall(r'class="(md-[0-9a-f]{8}-text)"', svg))
+    assert len(text_classes) == 2, f"expected two distinct .md-*-text scopes: {svg}"
     # Both tone colors appear in the SVG (in their respective scoped CSS rules).
     assert title_color in svg, f"title color {title_color!r} must appear in SVG"
     assert message_color in svg, f"message color {message_color!r} must appear in SVG"
@@ -636,11 +638,11 @@ def test_two_tone_callouts_use_distinct_css_class_names() -> None:
 
 
 def test_link_href_with_md_path_segment_is_not_corrupted() -> None:
-    """_scope_md_classes must not rewrite .md-* in link hrefs or text content.
+    """Class scoping must never rewrite .md-* substrings in link hrefs or text.
 
-    Regression: applying the CSS-selector regex (`.md-X`) to rendered elements
-    (not just the style block) would silently corrupt any href or text containing
-    a `.md-<letters>` substring.
+    Regression: an earlier implementation applied a CSS-selector regex (`.md-X`)
+    to rendered elements (not just the style block), which would silently
+    corrupt any href or text containing a `.md-<letters>` substring.
     """
     ctx = resolve_chart_style_context(get_theme_style())
     url = "https://docs.example.com/.md-guide/config"

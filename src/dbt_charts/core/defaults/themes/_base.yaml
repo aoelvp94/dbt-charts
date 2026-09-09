@@ -1058,7 +1058,7 @@ style:
 
   footer:
     visible: true
-    text: "made with dbt charts"
+    text: "made with dbt Charts"
     link: "https://dbtcharts.com"
     font:
       size: 11

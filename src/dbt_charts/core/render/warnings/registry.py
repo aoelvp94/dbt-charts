@@ -52,6 +52,7 @@ import dbt_charts.core.render.warnings.layer_x_domain_paint_order as layer_x_dom
 import dbt_charts.core.render.warnings.layered_chart_shared_y_axis_scale_mismatch as layered_chart_shared_y_axis_scale_mismatch
 import dbt_charts.core.render.warnings.layout_min_exceeds_height as layout_min_exceeds_height
 import dbt_charts.core.render.warnings.legend_position_width_fallback as legend_position_width_fallback
+import dbt_charts.core.render.warnings.legend_values_unresolved as legend_values_unresolved
 import dbt_charts.core.render.warnings.likely_currency_or_percent_missing_formatter as likely_currency_or_percent_missing_formatter
 import dbt_charts.core.render.warnings.local_time_label_expr_on_bucketed_axis as local_time_label_expr_on_bucketed_axis
 import dbt_charts.core.render.warnings.palette_unsupported as palette_unsupported
@@ -76,6 +77,7 @@ import dbt_charts.core.render.warnings.temporal_single_point as temporal_single_
 import dbt_charts.core.render.warnings.too_many_color_categories as too_many_color_categories
 import dbt_charts.core.render.warnings.too_many_x_categories as too_many_x_categories
 import dbt_charts.core.render.warnings.value_labels_crowd_width as value_labels_crowd_width
+import dbt_charts.core.render.warnings.wide_measure_label_collision as wide_measure_label_collision
 import dbt_charts.core.render.warnings.y_encoding_mostly_null as y_encoding_mostly_null
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.render.warnings.base import WarningContext
@@ -120,6 +122,7 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
 _DATA_DETECTORS: list[ModuleType] = [
     category_color_pin_unseen,
     layered_chart_shared_y_axis_scale_mismatch,
+    legend_values_unresolved,
     likely_currency_or_percent_missing_formatter,
     local_time_label_expr_on_bucketed_axis,
     palette_unsupported,
@@ -130,6 +133,7 @@ _DATA_DETECTORS: list[ModuleType] = [
     query_result_truncated,
     query_returned_zero_rows,
     redundant_encoding,
+    wide_measure_label_collision,
     y_encoding_mostly_null,
 ]
 

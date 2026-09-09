@@ -8,10 +8,10 @@ from pydantic import ConfigDict, Field
 
 from dbt_charts.core.compile.models.style.authored import GeoshapeChartStylePatch
 
-from ._base import _ConditionalFormattingField, _GeoChartFields
+from ._base import _GeoChartFields
 
 
-class GeoshapeChart(_GeoChartFields, _ConditionalFormattingField):
+class GeoshapeChart(_GeoChartFields):
     """Authored patch for map and geoshape charts; the two type spellings are synonyms."""
 
     model_config = ConfigDict(extra="forbid")

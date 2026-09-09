@@ -8,11 +8,11 @@ from pydantic import ConfigDict, Field
 
 from dbt_charts.core.compile.models.style.authored import LineChartStylePatch
 
-from ._base import _CartesianChartFields, _ConditionalFormattingField
+from ._base import _CartesianChartFields
 from ._layer import CartesianLayer
 
 
-class LineChart(_CartesianChartFields, _ConditionalFormattingField):
+class LineChart(_CartesianChartFields):
     """Authored patch for line charts.
 
     Intentionally excludes size, and shape — these channels are structurally

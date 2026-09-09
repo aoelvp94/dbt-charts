@@ -10,10 +10,6 @@ Tests the map rendering functionality in dbt_charts.core.render.vega_lite module
 """
 
 from dbt_charts.core.compile.config import get_config, get_theme_style
-from dbt_charts.core.compile.models.chart.authored import (
-    ConditionalRule,
-    FieldConditionalFormatting,
-)
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
@@ -1291,72 +1287,3 @@ class TestMapSpecIntegration:
         assert spec["layer"][1]["mark"]["type"] == "circle"
         assert spec["layer"][1]["encoding"]["size"]["field"] == "revenue"
         assert spec["layer"][1]["encoding"]["color"]["field"] == "type"
-
-
-class TestConditionalFormattingGeoRender:
-    """CF background rules lower to conditional VL color encoding for geo families."""
-
-    def test_point_map_cf_produces_conditional_color_encoding(self, make_chart):
-        """CF background rules on point_map → VL conditional color encoding, not plain field."""
-        cf = {
-            "sales": FieldConditionalFormatting(
-                when=[ConditionalRule(gt=100, background="#ff0000")]
-            )
-        }
-        chart = make_chart(
-            "point_map", latitude="lat", longitude="lng", conditional_formatting=cf
-        )
-        data = [{"lat": 34.05, "lng": -118.25, "sales": 150}]
-        resolve(chart, data, chart_style_context=_BOARD_STYLE)
-        spec = generate_vega_lite_spec(chart, data)
-        color_enc = spec["encoding"]["color"]
-        assert "condition" in color_enc, (
-            "CF must produce a VL conditional encoding, not a plain field"
-        )
-
-    def test_bubble_map_cf_produces_conditional_color_encoding(self, make_chart):
-        """CF background rules on bubble_map → VL conditional color encoding, not plain field."""
-        cf = {
-            "value": FieldConditionalFormatting(
-                when=[ConditionalRule(gt=50, background="#0000ff")]
-            )
-        }
-        chart = make_chart(
-            "bubble_map",
-            latitude="lat",
-            longitude="lng",
-            size="radius",
-            conditional_formatting=cf,
-        )
-        data = [{"lat": 34.05, "lng": -118.25, "value": 75, "radius": 10}]
-        resolve(chart, data, chart_style_context=_BOARD_STYLE)
-        spec = generate_vega_lite_spec(chart, data)
-        # Simple path: no background tile, check top-level encoding
-        color_enc = spec["encoding"]["color"]
-        assert "condition" in color_enc, (
-            "CF must produce a VL conditional encoding, not a plain field"
-        )
-
-    def test_geoshape_cf_produces_conditional_color_encoding(self, make_chart):
-        """CF background rules on geoshape → VL conditional color encoding, not plain field."""
-        cf = {
-            "sales": FieldConditionalFormatting(
-                when=[ConditionalRule(gt=1000, background="#ff0000")]
-            )
-        }
-        chart = make_chart(
-            "geoshape",
-            lookup="state_id",
-            geo_source="us-states",
-            conditional_formatting=cf,
-        )
-        # us-states uses numeric FIPS codes as the join key
-        data = [{"state_id": "06", "sales": 5000}, {"state_id": "48", "sales": 800}]
-        resolve(chart, data, chart_style_context=_BOARD_STYLE)
-        spec = generate_vega_lite_spec(chart, data)
-        # geoshape with data join: layered spec, color on the data overlay layer
-        overlay = _joined_choropleth_overlay(spec)
-        color_enc = overlay["encoding"]["color"]
-        assert "condition" in color_enc, (
-            "CF must produce a VL conditional encoding, not a plain field"
-        )

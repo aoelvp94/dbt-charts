@@ -154,7 +154,7 @@ def _namespace_svg_ids(svg: str, chart_id: str) -> str:
 
 
 # Vega's own role-title-text / role-title-subtitle classes are a genuine 1:1
-# signal for the chart's title:/subtitle: keys (unlike md-heading, which the
+# signal for the chart's title:/subtitle: keys (unlike mdsvg's scoped md-<hash>-heading, which the
 # renderer also emits for prose headings) — transcribed here into the
 # data-authored-kind leaf vocabulary rather than left for Cloud to read the
 # foreign class directly. Selectors.md's "data-* for JS selection, never a

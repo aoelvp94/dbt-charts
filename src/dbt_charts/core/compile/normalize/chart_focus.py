@@ -137,7 +137,7 @@ def focus_on_chart(board: Board, chart_id: str) -> Board:
     else:
         patch_data.pop("frame", None)
     authored = StylePatch.model_validate(patch_data) if patch_data else None
-    resolved_style, chart_style_context = compile_board_resolved_style(
+    resolved_style, chart_style_context, _ = compile_board_resolved_style(
         authored, None, None, theme_name=board.theme
     )
     focused_board = board.model_copy(

@@ -192,11 +192,15 @@ transform once per panel and reassembles — gap-fill's per-panel completion). P
 definition of the plot-height floor, shared so the resolver that decides a plot is
 starved and the warning that prints the floor to the author can never disagree;
 same shape as `facet_panel_width()` above). Plus `compile.resolve.chart._wide_fields`
-— the wide fold's synthetic field names and its Python mirror (`unfold_wide_rows()`,
-`wide_series_names()`, `wide_dimension_values()`): the one definition of how
-`y: [a, b]` (crossed with a `color:` dimension) becomes series, shared so the
-resolver's rail-crowding check, the emitters' VL fold, and the endpoint-label
-feature can never name a wide chart's series differently. All eight are data types
+— the wide fold's synthetic field names (`WIDE_LABEL_FIELD`, `WIDE_VALUE_FIELD`,
+`WIDE_KEY_FIELD`, `WIDE_ORDER_FIELD`, `WIDE_SERIES_SEPARATOR`) and its Python mirror
+(`unfold_wide_rows()`, `wide_series_names()` (measures, dimension, data,
+wide_measure_labels), `wide_dimension_values()`, `raw_wide_series_names()`,
+`humanize_wide_series_name()`, `wide_measure_labels_for()`, `wide_legend_aliases()`,
+`resolve_wide_measure_labels()`): the one definition of how `y: [a, b]` (crossed with
+a `color:` dimension) becomes series, shared so the resolver's rail-crowding check,
+the emitters' VL fold, and the endpoint-label feature can never name a wide chart's
+series differently. All eight are data types
 / pure formulas keyed off a `Resolved*` field or an already-baked partition, not a
 reach-back into cascade logic — see `render/chart/AGENTS.md` philosophy #3 for why
 this doesn't reopen the data-belongs-to-queries rule. Don't add further reach-backs
@@ -271,7 +275,7 @@ Cartesian overlays: `layers` on any bar/line/area/scatter chart (each typed over
 
 Data attachments: `support_table`
 
-Data attachments (family-scoped): `conditional_formatting` — only on `bar`, `line`, `area`, `scatter`, `kpi`, `table`, `pie`, `geoshape`, `point_map`, `bubble_map` (the families in `_MARK_FILL_CHART_TYPES` plus `table`). Structurally absent on every other family, same mechanism as `size`/`shape` below.
+Data attachments (family-scoped): `conditional_formatting` — only on `table` and `kpi`, the two families whose render path meaningfully honors it (full rule-output set on `table`; `background`/`font.color` on `kpi`). Structurally absent on every other family, same mechanism as `size`/`shape` below.
 
 #### Rejected on the authored chart surface
 
@@ -295,7 +299,7 @@ Two gates enforce these rejections:
 
 1. **`type:` is mandatory** — `_SharedChartFields.type` is declared `str` (required, no default). Missing or unknown `type:` raises a `union_tag_not_found` ValidationError from the `AuthoredChart` discriminated union before any family-level validation runs. There is no fallback catch-all class. The concept of an untyped chart is rejected at the authored-model level.
 
-2. **`extra="forbid"` on every per-family chart class** (`BarChart`, `KpiChart`, etc.) — inherited from `_BaseChartFields.model_config = ConfigDict(extra="forbid")`. Any field not declared on the family is unconditionally rejected by Pydantic. Structural narrowing also applies: for example, `size` and `shape` are only declared on `ScatterChart` where they are meaningful — attempting to set `size` on a `LineChart` raises `extra_forbidden` (pinned by `test_line_patch_rejects_size` in `tests/core/compile/test_chart_discriminated_union.py`). `conditional_formatting` follows the same pattern via a standalone `_ConditionalFormattingField` mixin applied individually to `BarChart`, `LineChart`, `AreaChart`, `ScatterChart`, `KpiChart`, `TableChart`, `PieChart`, `GeoshapeChart`, and `PointMapChart` — the families in `_MARK_FILL_CHART_TYPES` plus table; authoring it on any other family (e.g. `CalloutChart`, `HeatmapChart`) raises `extra_forbidden` (pinned by `test_callout_patch_rejects_conditional_formatting` in `tests/core/compile/test_chart_discriminated_union.py`). `stack` is a style-cascade field on the authored surface (`style.stack` / `style.<family>.stack`); chart-root `stack:` is rejected on every authored chart family (pinned by `test_chart_families_reject_root_stack` in `tests/core/compile/test_chart_discriminated_union.py`). The compiled `Chart.stack` field exists on the compiled-stage model and may be populated directly by tests that construct compiled Chart objects; on real authored input the cascade output lives on `ResolvedChart.stack`, resolved from `style.<family>.stack` in the per-family resolver modules under `src/dbt_charts/core/compile/resolve/`.
+2. **`extra="forbid"` on every per-family chart class** (`BarChart`, `KpiChart`, etc.) — inherited from `_BaseChartFields.model_config = ConfigDict(extra="forbid")`. Any field not declared on the family is unconditionally rejected by Pydantic. Structural narrowing also applies: for example, `size` and `shape` are only declared on `ScatterChart` where they are meaningful — attempting to set `size` on a `LineChart` raises `extra_forbidden` (pinned by `test_line_patch_rejects_size` in `tests/core/compile/test_chart_discriminated_union.py`). `conditional_formatting` follows the same pattern via a standalone `_ConditionalFormattingField` mixin applied individually to `KpiChart` and `TableChart` — the only two families whose render path meaningfully honors it; authoring it on any other family (e.g. `BarChart`, `CalloutChart`, `HeatmapChart`) raises `extra_forbidden` (pinned by `test_callout_patch_rejects_conditional_formatting` in `tests/core/compile/test_chart_discriminated_union.py`). `stack` is a style-cascade field on the authored surface (`style.stack` / `style.<family>.stack`); chart-root `stack:` is rejected on every authored chart family (pinned by `test_chart_families_reject_root_stack` in `tests/core/compile/test_chart_discriminated_union.py`). The compiled `Chart.stack` field exists on the compiled-stage model and may be populated directly by tests that construct compiled Chart objects; on real authored input the cascade output lives on `ResolvedChart.stack`, resolved from `style.<family>.stack` in the per-family resolver modules under `src/dbt_charts/core/compile/resolve/`.
 
 Test coverage: `tests/core/compile/test_removed_vl_passthrough_fields.py` parametrizes over all 11 rejected fields.
 

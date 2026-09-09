@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic_core import to_jsonable_python
 
+from dbt_charts.core.compile.errors import TemplateOutputTooLargeError
 from dbt_charts.core.compile.models.style.theme import SliceLabelsStyle
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     CategoryColorScale,
@@ -19,6 +20,10 @@ from dbt_charts.core.compile.models.style.theme.category_colors import (
 from dbt_charts.core.compile.template.labels_env import (
     label_jinja_env,
     strip_jinja_braces,
+)
+from dbt_charts.core.compile.template.output_budget import (
+    TemplateOutputBudgetExceeded,
+    render_with_budget,
 )
 
 LABEL_FIELD = "__dbt_label"
@@ -135,7 +140,12 @@ def prepare_label_data(
         if where_expr is not None and not where_expr(**context):
             new_row[LABEL_FIELD] = None
         else:
-            rendered = template.render(**context)
+            try:
+                rendered = render_with_budget(template, context)
+            except TemplateOutputBudgetExceeded as exc:
+                raise TemplateOutputTooLargeError(
+                    emitted_bytes=exc.emitted_bytes, ceiling=exc.ceiling
+                ) from exc
             new_row[LABEL_FIELD] = (
                 rendered.split("\n") if "\n" in rendered else [rendered]
             )

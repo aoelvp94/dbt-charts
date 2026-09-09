@@ -21,10 +21,6 @@ from collections import Counter
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
-from dbt_charts.core.compile.models.chart.authored import (
-    ConditionalRule,
-    FieldConditionalFormatting,
-)
 from dbt_charts.core.compile.models.chart.authored._layer import (
     AreaLayer,
     BarLayer,
@@ -514,8 +510,8 @@ def test_layered_endpoint_labels_cascade_uses_zero_anchored_domain(make_chart):
 
 class TestNonSeriesColorChannelDoesNotCrash:
     """CRITICAL: a layered chart whose base colour channel is NOT a nominal/
-    ordinal series (gradient, conditional formatting) has no shared colour
-    scale for the layered rail to read — it must decline the rail, not raise.
+    ordinal series (gradient) has no shared colour scale for the layered
+    rail to read — it must decline the rail, not raise.
     """
 
     def test_gradient_color_declines_rail(self, make_chart):
@@ -539,31 +535,6 @@ class TestNonSeriesColorChannelDoesNotCrash:
             "a gradient colour channel has no shared colour scale to paint "
             "the layered rail from — the rail must decline, not fire (and "
             "must not raise ChartDataError)."
-        )
-
-    def test_conditional_formatting_color_declines_rail(self, make_chart):
-        data = [
-            {"month": "Jan", "annual": 10.0, "cumulative": 10.0},
-            {"month": "Feb", "annual": 20.0, "cumulative": 30.0},
-        ]
-        cf = FieldConditionalFormatting(
-            when=[
-                ConditionalRule(gt=15, background="#ff0000"),
-                ConditionalRule(default=True, background="#00ff00"),
-            ]
-        )
-        chart = make_chart(
-            "bar",
-            x="month",
-            y="annual",
-            layers=[LineLayer(type="line", y="cumulative", label="Cumulative")],
-            conditional_formatting={"annual": cf},
-            style={"endpoint_labels": {"visible": True}},
-        )
-        spec = _resolve_and_render(chart, data)
-        assert "hconcat" not in spec, (
-            "conditional-formatting colour has no shared colour scale for "
-            "the layered rail — must decline, not raise."
         )
 
 

@@ -61,7 +61,7 @@ class TestTimestampFooterDefaultVisibility:
         self, local_project: Callable[..., Project]
     ) -> None:
         svg = _render_svg(_BOARD, local_project)
-        # Footer is a <text> right-anchored at the bottom; checking "made with dbt charts"
+        # Footer is a <text> right-anchored at the bottom; checking "made with dbt Charts"
         # would pin a config value. Instead confirm the footer element group exists by
         # checking the footer rule or text after the layout group.
         # The footer is always present when visible=True; simply assert it is in the SVG.

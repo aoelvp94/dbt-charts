@@ -10,13 +10,12 @@ from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 
 from ._base import (
     _CartesianChartFields,
-    _ConditionalFormattingField,
     reject_multi_series_channel_conflicts,
 )
 from ._layer import CARTESIAN_LAYER_SUPPORTED_CHART_TYPES, CartesianLayer
 
 
-class BarChart(_CartesianChartFields, _ConditionalFormattingField):
+class BarChart(_CartesianChartFields):
     """Authored patch for bar and histogram charts; histogram adds automatic x binning."""
 
     model_config = ConfigDict(extra="forbid")
@@ -65,9 +64,7 @@ class BarChart(_CartesianChartFields, _ConditionalFormattingField):
         # the multi-metric branch. None of these conflicts apply to it.
         if self.type != "bar":
             return self
-        reject_multi_series_channel_conflicts(
-            "Bar", self.y, self.layers, self.conditional_formatting
-        )
+        reject_multi_series_channel_conflicts("Bar", self.y, self.layers)
         # Folded measures are grouped side by side within each x band; without
         # an x there are no bands to group them into.
         if isinstance(self.y, list) and self.x is None:

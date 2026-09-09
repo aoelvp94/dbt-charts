@@ -29,7 +29,7 @@ AuthoredBoard definition from YAML.
 | `chart_focus` | str | Render only this named chart with its dependent variables (useful for embedding or SVG export). |
 | `details` | [BoardDetails](#boarddetails) | Collapsible section metadata. String shorthand: details: 'text' → BoardDetails(summary='text'). Block form: details: {summary: ..., expanded_title: ..., expanded: false}. |
 | `id` | str | Explicit ID for this board. Auto-generated from filename if omitted. |
-| `style` | [Style](#style) | Appearance overrides for this board (background, padding, border, and more). Background and semantic color tokens (accent, muted) cascade to nested child boards. |
+| `style` | [Style](#style) | Appearance overrides for this board (background, border, and more). Most fields this board or an ancestor board explicitly authors cascade to nested child boards. Per-board fields (frame, layout, gap, margin, padding, color): a nested board that authors any style of its own resolves these against its own theme, never an ancestor's. Root-board-only fields (page, footer, timestamp): a nested board never draws its own page canvas, footer, or timestamp line, so these never reach it either. |
 | `width` | str \| int | Width when nested (e.g., '50%', '400px', or an integer in pixels). On the root board there is no parent to place it into, so it instead sets the board's own width (equivalent to 'style.frame.width'); percentages are rejected there since there's nothing to size relative to. |
 | `height` | str \| int | Height when nested (e.g., '300px' or an integer in pixels). |
 | `visible` | bool \| str \| [SingleRowBoolProbe](#singlerowboolprobe) | Controls whether this layout item is rendered. Accepts a bool, variable name, Jinja expression, or {query, column} probe. |
@@ -204,7 +204,6 @@ Authored patch for bar and histogram charts; histogram adds automatic x binning.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `conditional_formatting` | dict[str, [FieldConditionalFormatting](#fieldconditionalformatting)] | Discrete rule-driven style overrides indexed by column name. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -239,7 +238,6 @@ Authored patch for line charts.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `conditional_formatting` | dict[str, [FieldConditionalFormatting](#fieldconditionalformatting)] | Discrete rule-driven style overrides indexed by column name. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -274,7 +272,6 @@ Authored patch for area charts.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `conditional_formatting` | dict[str, [FieldConditionalFormatting](#fieldconditionalformatting)] | Discrete rule-driven style overrides indexed by column name. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -309,7 +306,6 @@ Authored patch for scatter charts.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `conditional_formatting` | dict[str, [FieldConditionalFormatting](#fieldconditionalformatting)] | Discrete rule-driven style overrides indexed by column name. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -380,7 +376,6 @@ Authored patch for pie and donut charts; donut defaults `style.inner_radius` to 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `conditional_formatting` | dict[str, [FieldConditionalFormatting](#fieldconditionalformatting)] | Discrete rule-driven style overrides indexed by column name. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -409,7 +404,7 @@ Authored patch for KPI (key performance indicator) charts.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `conditional_formatting` | dict[str, [FieldConditionalFormatting](#fieldconditionalformatting)] | Discrete rule-driven style overrides indexed by column name. |
+| `conditional_formatting` | dict[str, [FieldConditionalFormatting](#fieldconditionalformatting)] | Discrete rule-driven style overrides indexed by column name. Available on type: table and type: kpi only. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -435,7 +430,7 @@ Authored patch for table charts.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `conditional_formatting` | dict[str, [FieldConditionalFormatting](#fieldconditionalformatting)] | Discrete rule-driven style overrides indexed by column name. |
+| `conditional_formatting` | dict[str, [FieldConditionalFormatting](#fieldconditionalformatting)] | Discrete rule-driven style overrides indexed by column name. Available on type: table and type: kpi only. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -462,7 +457,6 @@ Authored patch for point_map and bubble_map charts; the two type spellings are s
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `conditional_formatting` | dict[str, [FieldConditionalFormatting](#fieldconditionalformatting)] | Discrete rule-driven style overrides indexed by column name. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -499,7 +493,6 @@ Authored patch for map and geoshape charts; the two type spellings are synonyms.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `conditional_formatting` | dict[str, [FieldConditionalFormatting](#fieldconditionalformatting)] | Discrete rule-driven style overrides indexed by column name. |
 | `id` | str | Identifier for this chart. Generated from its `charts:` key, or, written inline, from its title (its `label:` on type: kpi), falling back to its position. |
 | `notes` | str | Human-readable notes used by AI search. Emitted into the SVG DOM as a data-chart-notes attribute; never painted as visible pixels. |
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref) | Where this chart reads its data: a named query, an inline query block, or a SQL string. |
@@ -675,16 +668,6 @@ Options configuration for variable inputs.
 | `query` | str | Query name whose result rows provide option values. |
 | `column` | str | Column in the query result to use as option values. |
 | `label_column` | str | Column in the query result to use as display labels (separate from values). |
-
-<a id="fieldconditionalformatting"></a>
-## FieldConditionalFormatting
-Conditional formatting rules scoped to a single column.
-
-**Required**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `when` | list[[ConditionalRule](#conditionalrule)] | Ordered list of conditional rules. The first matching rule applies; a 'default: true' rule must be last. |
 
 <a id="chartsort"></a>
 ## ChartSort
@@ -971,6 +954,16 @@ Authored overlay for PieChartStyle. Pie/donut chart style: geometry + total (fla
 | `inner_radius` | float | Hole-to-disk ratio 0–1 (inner radius / outer radius). None = solid pie; `type: donut` overrides this with a chart-local 0.6 patch, beating a theme value. |
 | `total` | [TotalStyle](#totalstyle) | Donut center total paint (value and label). |
 | `marks` | [PieChartMarksStyle](#piechartmarksstyle) | Pie-family mark overrides. Unset fields fall back to [`style.charts.marks`](#chartsstyle). |
+
+<a id="fieldconditionalformatting"></a>
+## FieldConditionalFormatting
+Conditional formatting rules scoped to a single column.
+
+**Required**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `when` | list[[ConditionalRule](#conditionalrule)] | Ordered list of conditional rules. The first matching rule applies; a 'default: true' rule must be last. |
 
 <a id="kpisupportconfig"></a>
 ## KpiSupportConfig
@@ -1386,28 +1379,6 @@ Pre-parsed CSS spacing (margin/padding).
 | `bottom` | float | Bottom spacing in pixels. |
 | `left` | float | Left spacing in pixels. |
 
-<a id="conditionalrule"></a>
-## ConditionalRule
-A single conditional formatting rule.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `eq` | Any | Match rows where the column value equals this value. |
-| `ne` | Any | Match rows where the column value does not equal this value. |
-| `lt` | int \| float | Match rows where the column value is less than this number. |
-| `lte` | int \| float | Match rows where the column value is less than or equal to this number. |
-| `gt` | int \| float | Match rows where the column value is greater than this number. |
-| `gte` | int \| float | Match rows where the column value is greater than or equal to this number. |
-| `between` | list[int \| float] | Match rows where the column value falls in [low, high] (inclusive). |
-| `in` | list[Any] | Match rows where the column value is in this list. |
-| `is_null` | bool | Match null rows (true) or non-null rows (false). |
-| `default` | const: true | Catch-all rule that matches any row not matched by earlier rules. Must be the last entry. |
-| `background` | str | Cell background color applied when the rule matches. |
-| `font` | [FontStyle](#fontstyle) | Font style overrides (color, weight, style, decoration) applied when the rule matches. |
-| `glyph` | str | Text shown before the cell value when the rule matches. |
-| `glyph_color` | str | Color for the glyph when the rule matches. Requires glyph to be set. |
-| `tone` | enum: "positive", "negative", "warning", "info" | Semantic tone (positive\|negative\|warning\|info) that colors the glyph via the theme's tone palette; the preferred, theme-adaptive alternative to a raw glyph_color. Requires glyph. Explicit glyph_color wins. |
-
 <a id="chartsupporttablesource"></a>
 ## ChartSupportTableSource
 A support_table row that reads a column's raw per-x value.
@@ -1499,7 +1470,7 @@ Authored overlay for LegendStyle.
 | `title` | [LegendTitleStyle](#legendtitlestyle) | Legend title style. |
 | `visible` | bool | Show the legend. None = legend visible; False = explicitly suppressed. |
 | `symbol_limit` | int | Maximum number of legend entries to display; maps to VL symbolLimit. None uses Vega-Lite's default (no cap). Set to a positive integer to prevent legend overflow on high-cardinality series. |
-| `values` | list[str] | Explicit legend entry order/filter; maps to VL legend.values. None lets the renderer infer order from the data. |
+| `values` | list[str] | Explicit legend entry order/filter; each entry resolves against the real legend domain by its rendered text or its column/measure name (case/separator-insensitive). None lets the renderer infer order from the data. |
 | `symbol_shape` | str | Override the legend glyph shape; maps to VL legend.symbolType. None uses the mark-aware glyph derived from the chart's mark type. |
 | `symbol_fill` | bool | When False, emits symbolFillColor='transparent' to produce a hollow legend glyph. None uses Vega-Lite's default (filled symbol). |
 
@@ -1719,6 +1690,28 @@ Authored overlay for PieChartMarksStyle. Pie/donut-family mark overrides.
 |-------|------|-------------|
 | `slice` | [SliceMarkStyle](#slicemarkstyle) | Slice mark overrides; inherits from global. |
 | `text` | [TextMarkStyle](#textmarkstyle) | Text mark overrides; None inherits global. |
+
+<a id="conditionalrule"></a>
+## ConditionalRule
+A single conditional formatting rule.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `eq` | Any | Match rows where the column value equals this value. |
+| `ne` | Any | Match rows where the column value does not equal this value. |
+| `lt` | int \| float | Match rows where the column value is less than this number. |
+| `lte` | int \| float | Match rows where the column value is less than or equal to this number. |
+| `gt` | int \| float | Match rows where the column value is greater than this number. |
+| `gte` | int \| float | Match rows where the column value is greater than or equal to this number. |
+| `between` | list[int \| float] | Match rows where the column value falls in [low, high] (inclusive). |
+| `in` | list[Any] | Match rows where the column value is in this list. |
+| `is_null` | bool | Match null rows (true) or non-null rows (false). |
+| `default` | const: true | Catch-all rule that matches any row not matched by earlier rules. Must be the last entry. |
+| `background` | str | Cell background color applied when the rule matches. |
+| `font` | [FontStyle](#fontstyle) | Font style overrides (color, weight, style, decoration) applied when the rule matches. |
+| `glyph` | str | Text shown before the cell value when the rule matches. |
+| `glyph_color` | str | Color for the glyph when the rule matches. Requires glyph to be set. |
+| `tone` | enum: "positive", "negative", "warning", "info" | Semantic tone (positive\|negative\|warning\|info) that colors the glyph via the theme's tone palette; the preferred, theme-adaptive alternative to a raw glyph_color. Requires glyph. Explicit glyph_color wins. |
 
 <a id="fontstyle"></a>
 ## FontStyle

@@ -27,7 +27,7 @@ from dbt_charts.core.project import (
 from dbt_charts.core.project_roots import find_dct_root, find_repo_root
 
 _HEADER = """\
-# Validates dbt charts boards on every PR that touches them.
+# Validates dbt Charts boards on every PR that touches them.
 # Structural only — checks board YAML shape, enums and references. It runs no
 # queries and needs no warehouse credentials.
 #
@@ -67,7 +67,7 @@ _STEPS = """\
         with:
           python-version: '3.13'
 
-      - name: Install dbt charts
+      - name: Install dbt Charts
         run: pip install dbt-charts
 
       - name: Validate boards
@@ -114,7 +114,7 @@ def ci_workflow(*, project_relpath: str = ".") -> str:
         )
     )
     workflow_name = (
-        "dbt charts" if project_relpath == "." else f"dbt charts ({project_relpath})"
+        "dbt Charts" if project_relpath == "." else f"dbt Charts ({project_relpath})"
     )
     body = _HEADER.format(workflow_name=workflow_name, paths=paths)
     if project_relpath != ".":

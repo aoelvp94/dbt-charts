@@ -2546,3 +2546,261 @@ def test_relative_field_paths_does_not_recompute_shared_subtrees() -> None:
         "not re-derived per branch (and not zero, which would mean the walk "
         "stopped routing through the memo at all)"
     )
+
+
+# ============================================================================
+# Deletion.chart_type — a chart_type-scoped deletion.
+# Minimal synthetic fixture, independent of the real conditional_formatting
+# sweep: `some_field` is retired from `bar`/`callout` but stays on `table`.
+# ============================================================================
+
+
+def _scoped_deletion_chart(types: list[str], *, has_field: bool) -> JsonObject:
+    properties: dict[str, object] = {"type": {"type": "string", "enum": types}}
+    if has_field:
+        properties["some_field"] = {"type": "string"}
+    return cast(
+        JsonObject,
+        {"type": "object", "properties": properties, "additionalProperties": False},
+    )
+
+
+def _scoped_deletion_board(chart_schemas: list[JsonObject]) -> JsonObject:
+    return cast(
+        JsonObject,
+        {
+            "type": "object",
+            "properties": {
+                "charts": {
+                    "type": "object",
+                    "additionalProperties": {"anyOf": chart_schemas},
+                },
+                "rows": {"type": "array", "items": {"$ref": "#"}},
+            },
+            "additionalProperties": True,
+        },
+    )
+
+
+def _scoped_deletion_catalog() -> YamlSchemaCatalog:
+    v1 = _scoped_deletion_board(
+        [
+            _scoped_deletion_chart(["bar"], has_field=True),
+            _scoped_deletion_chart(["callout"], has_field=True),
+            _scoped_deletion_chart(["table"], has_field=True),
+        ]
+    )
+    v2 = _scoped_deletion_board(
+        [
+            _scoped_deletion_chart(["bar"], has_field=False),
+            _scoped_deletion_chart(["callout"], has_field=False),
+            _scoped_deletion_chart(["table"], has_field=True),
+        ]
+    )
+    return synthetic_catalog({V1: v1, V2: v2})
+
+
+def test_chart_type_scoped_deletion_validates_against_only_its_own_branch() -> None:
+    """A global existence check would wrongly reject this: `some_field` still
+    exists on `table`'s branch in V2, but a `chart_type="bar"`-scoped
+    Deletion only needs it gone from bar's own branch, which it is."""
+    catalog = _scoped_deletion_catalog()
+    MigrationRegistry(
+        [],
+        [Deletion(V1, V2, ("some_field",), chart_type="bar")],
+        catalog=catalog,
+    )  # must not raise
+
+
+def test_chart_type_scoped_deletion_still_raises_if_not_actually_removed() -> None:
+    catalog = _scoped_deletion_catalog()
+    with pytest.raises(MigrationError, match="still exists"):
+        MigrationRegistry(
+            [],
+            [Deletion(V1, V2, ("some_field",), chart_type="table")],
+            catalog=catalog,
+        )
+
+
+def test_apply_deletions_strips_only_the_scoped_chart_type() -> None:
+    """_apply_deletions / _delete_tails_recursive consumer."""
+    catalog = _scoped_deletion_catalog()
+    registry = MigrationRegistry(
+        [],
+        [Deletion(V1, V2, ("some_field",), chart_type="bar")],
+        catalog=catalog,
+    )
+    raw = {
+        "charts": {
+            "b": {"type": "bar", "some_field": "x"},
+            "t": {"type": "table", "some_field": "y"},
+        }
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SchemaMigrationWarning)
+        result = migrate_mapping(raw, catalog=catalog, registry=registry)
+    assert "some_field" not in result["charts"]["b"]
+    assert result["charts"]["t"]["some_field"] == "y"
+
+
+def test_two_chart_type_scoped_deletions_sharing_a_path_both_fire_with_their_own_reason() -> (
+    None
+):
+    """Regression for the reasons-dict/tails-list flattening bug: two Deletions
+    sharing the identical path but different chart_type must not collide.
+    Before threading Deletion objects through, _apply_deletions built
+    ``reasons = {deletion.path: deletion.reason for deletion in deletions if
+    deletion.reason}`` and ``tails = [deletion.path for deletion in
+    deletions]`` — both keyed on the bare path, so N same-path Deletions
+    collapsed to one arbitrary reason (dict-key collision) and a flattened,
+    chart_type-blind tails list. A single-entry test would pass even with
+    that bug present; this uses two.
+    """
+    catalog = _scoped_deletion_catalog()
+    registry = MigrationRegistry(
+        [],
+        [
+            Deletion(V1, V2, ("some_field",), chart_type="bar", reason="bar reason"),
+            Deletion(
+                V1, V2, ("some_field",), chart_type="callout", reason="callout reason"
+            ),
+        ],
+        catalog=catalog,
+    )
+    raw = {
+        "charts": {
+            "b": {"type": "bar", "some_field": "x"},
+            "c": {"type": "callout", "some_field": "z"},
+            "t": {"type": "table", "some_field": "y"},
+        }
+    }
+    with pytest.warns(SchemaMigrationWarning) as caught:
+        result = migrate_mapping(raw, catalog=catalog, registry=registry)
+    assert "some_field" not in result["charts"]["b"]
+    assert "some_field" not in result["charts"]["c"]
+    assert result["charts"]["t"]["some_field"] == "y"
+    messages = [str(w.message) for w in caught.list]
+    assert any("bar reason" in m for m in messages), messages
+    assert any("callout reason" in m for m in messages), messages
+
+
+def test_deletion_would_fire_respects_chart_type_scope() -> None:
+    """_deletion_would_fire consumer (the read-only recognition mirror)."""
+    from dbt_charts.core.compile.migrations.migrations import _deletion_would_fire
+
+    catalog = _scoped_deletion_catalog()
+    v1_schema = catalog.schema_for(V1)
+    live = catalog.current_schema
+    bar_deletion = Deletion(V1, V2, ("some_field",), chart_type="bar")
+
+    table_only: JsonObject = cast(
+        JsonObject, {"charts": {"t": {"type": "table", "some_field": "y"}}}
+    )
+    assert not _deletion_would_fire(
+        table_only, [bar_deletion], v1_schema, [v1_schema], live, [live]
+    ), "a bar-scoped Deletion must not fire on table's own (still-valid) field"
+
+    with_bar: JsonObject = cast(
+        JsonObject, {"charts": {"b": {"type": "bar", "some_field": "x"}}}
+    )
+    assert _deletion_would_fire(
+        with_bar, [bar_deletion], v1_schema, [v1_schema], live, [live]
+    )
+
+
+def test_delete_tail_in_yaml_text_respects_chart_type_scope_both_authoring_shapes() -> (
+    None
+):
+    """_delete_tail_in_yaml_text consumer (the dct migrate text rewriter).
+
+    Covers both shapes a chart block can take in real boards: an inline
+    list item under rows: (dash-prefixed) and a charts: mapping entry keyed
+    by chart id (momentum.yml's own shape) — the sibling `type:` search has
+    to recognize both block-start forms.
+    """
+    from dbt_charts.core.compile.migrations.migrations import _delete_tail_in_yaml_text
+
+    deletion = Deletion(V1, V2, ("some_field",), chart_type="bar")
+
+    list_item_text = (
+        "rows:\n  - type: bar\n    some_field: x\n  - type: table\n    some_field: y\n"
+    )
+    result = _delete_tail_in_yaml_text(list_item_text, deletion)
+    assert "some_field: x" not in result
+    assert "some_field: y" in result
+
+    mapping_entry_text = (
+        "charts:\n"
+        "  b:\n"
+        "    type: bar\n"
+        "    some_field: x\n"
+        "  t:\n"
+        "    type: table\n"
+        "    some_field: y\n"
+    )
+    result = _delete_tail_in_yaml_text(mapping_entry_text, deletion)
+    assert "some_field: x" not in result
+    assert "some_field: y" in result
+
+    quoted_text = 'rows:\n  - type: "bar"\n    some_field: x\n  - type: table\n    some_field: y\n'
+    result = _delete_tail_in_yaml_text(quoted_text, deletion)
+    assert "some_field: x" not in result
+    assert "some_field: y" in result
+
+    commented_text = (
+        "rows:\n  - type: bar  # my chart\n    some_field: x\n"
+        "  - type: table\n    some_field: y\n"
+    )
+    result = _delete_tail_in_yaml_text(commented_text, deletion)
+    assert "some_field: x" not in result
+    assert "some_field: y" in result
+
+    # Mapping-entry shape (momentum.yml's own), quoted type, backward scan
+    # (`type:` sits above the leaf at the same indent) — the call site the
+    # bare-token `mapping_entry_text` fixture above never actually exercises,
+    # since a bare `type: bar` normalizes to itself either way.
+    quoted_mapping_entry_text = (
+        "charts:\n"
+        '  b:\n    type: "bar"\n    some_field: x\n'
+        "  t:\n    type: table\n    some_field: y\n"
+    )
+    result = _delete_tail_in_yaml_text(quoted_mapping_entry_text, deletion)
+    assert "some_field: x" not in result
+    assert "some_field: y" in result
+
+    # `type:` below the leaf (forward scan) with a quoted token — the
+    # backward scan finds nothing before the chart-id line (no dash, so
+    # `_YAML_LIST_ITEM_KEY_RE` doesn't match it) and falls through to the
+    # forward scan, which is the third, previously-untested call site.
+    forward_scan_quoted_text = (
+        "charts:\n"
+        '  b:\n    some_field: x\n    type: "bar"\n'
+        "  t:\n    some_field: y\n    type: table\n"
+    )
+    result = _delete_tail_in_yaml_text(forward_scan_quoted_text, deletion)
+    assert "some_field: x" not in result
+    assert "some_field: y" in result
+
+    # A block sequence authored at the leaf's own indentation (legal, common
+    # YAML, and what many linters prefer) sits between `type:` and the leaf.
+    # `_YAML_KEY_RE` cannot match a `- item` line, so the scan must skip past
+    # it rather than treat it as the chart block's boundary. Backward scan:
+    # `type:` sits above both the sequence and the leaf.
+    backward_scan_sequence_sibling_text = (
+        "charts:\n"
+        "  b:\n    type: bar\n    warnings_ignore:\n    - some_warning\n    some_field: x\n"
+        "  t:\n    type: table\n    some_field: y\n"
+    )
+    result = _delete_tail_in_yaml_text(backward_scan_sequence_sibling_text, deletion)
+    assert "some_field: x" not in result
+    assert "some_field: y" in result
+
+    # Same shape, forward scan: the sequence sits between the leaf and `type:`.
+    forward_scan_sequence_sibling_text = (
+        "charts:\n"
+        "  b:\n    some_field: x\n    warnings_ignore:\n    - some_warning\n    type: bar\n"
+        "  t:\n    some_field: y\n    type: table\n"
+    )
+    result = _delete_tail_in_yaml_text(forward_scan_sequence_sibling_text, deletion)
+    assert "some_field: x" not in result
+    assert "some_field: y" in result

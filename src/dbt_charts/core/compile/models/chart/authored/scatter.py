@@ -9,11 +9,11 @@ from pydantic import ConfigDict, Field
 from dbt_charts.core.compile.models.markers import Channel
 from dbt_charts.core.compile.models.style.authored import ScatterChartStylePatch
 
-from ._base import _CartesianChartFields, _ConditionalFormattingField
+from ._base import _CartesianChartFields
 from ._layer import CartesianLayer
 
 
-class ScatterChart(_CartesianChartFields, _ConditionalFormattingField):
+class ScatterChart(_CartesianChartFields):
     """Authored patch for scatter charts."""
 
     model_config = ConfigDict(extra="forbid")

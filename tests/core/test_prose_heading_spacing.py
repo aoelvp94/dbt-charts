@@ -49,7 +49,7 @@ _ROUNDING = 0.01
 
 _HEADING_RE = re.compile(
     r'(?:<g transform="translate\(0, ([\-\d.]+)\)">)?\s*'
-    r'<text[^>]*y="([\-\d.]+)"[^>]*font-size="(\d+)"[^>]*class="md-heading"'
+    r'<text[^>]*y="([\-\d.]+)"[^>]*font-size="(\d+)"[^>]*class="md-[0-9a-f]{8}-heading"'
 )
 
 
@@ -81,8 +81,8 @@ def _prose_column_svg(svg: str) -> str:
     """Slice a full board render down to just its prose column's own content.
 
     A board's own ``title:`` is *also* an ``md-heading`` and renders before any
-    row content, so searching the whole board SVG for ``class="md-heading"``
-    finds the board title, not the prose column's heading. Bound the search to
+    row content, so searching the whole board SVG for the heading class finds
+    the board title, not the prose column's heading. Bound the search to
     between the prose block's own marker and the next chart's.
     """
     start = svg.index('data-authored-kind="text"')

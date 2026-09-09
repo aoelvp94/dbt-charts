@@ -24,7 +24,10 @@ from dbt_charts.core.compile.models.chart.resolved._base import _BaseResolvedCha
 from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
-from dbt_charts.core.compile.resolve.chart._wide_fields import wide_series_names
+from dbt_charts.core.compile.resolve.chart._wide_fields import (
+    wide_measure_labels_for,
+    wide_series_names,
+)
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.text.case import default_axis_title
 from dbt_charts.core.utils import (
@@ -121,7 +124,12 @@ def _estimated_series_names(
         isinstance(chart, (ResolvedBarChart, ResolvedAreaChart, ResolvedLineChart))
         and chart.wide_measures
     ):
-        return wide_series_names(chart.wide_measures, chart.color, data)
+        return wide_series_names(
+            chart.wide_measures,
+            chart.color,
+            data,
+            wide_measure_labels_for(chart.wide_measures),
+        )
     if has_series_color:
         assert color_ch is not None and color_ch.data_field
         series_field = color_ch.data_field

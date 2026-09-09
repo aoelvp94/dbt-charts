@@ -125,8 +125,10 @@ def _reject_color_dict(v: Any) -> Any:
             )
         if "when" in v:
             raise ValueError(
-                "Inline conditional no longer accepted at chart.color. "
-                "Use conditional_formatting: for per-cell rules."
+                "Inline conditional no longer accepted at chart.color. This "
+                "family no longer supports rule-driven conditional_formatting; "
+                "for a data-driven fill use a gradient scale instead:\n"
+                + GRADIENT_COLOR_FIX
             )
         raise ValueError(
             "chart.color only accepts a bare field name (string). "
@@ -271,10 +273,10 @@ class _BaseChartFields(BaseModel):
 class _ConditionalFormattingField(BaseModel):
     """Mixin adding conditional_formatting to the chart families that lower it.
 
-    Attached individually to bar/line/area/scatter/kpi/layered/table — the
-    only families `project_conditional_formatting` knows how to project.
-    Every other family's `extra="forbid"` config makes authoring
-    conditional_formatting on it a parse-time ValidationError.
+    Attached individually to table/kpi — the only families that honor the
+    full (table) or partial (kpi) rule-output set. Every other family's
+    `extra="forbid"` config makes authoring conditional_formatting on it a
+    parse-time ValidationError.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -283,7 +285,10 @@ class _ConditionalFormattingField(BaseModel):
         dict[str, FieldConditionalFormatting] | None,
         Field(
             default=None,
-            description="Discrete rule-driven style overrides indexed by column name.",
+            description=(
+                "Discrete rule-driven style overrides indexed by column name. "
+                "Available on type: table and type: kpi only."
+            ),
         ),
     ]
 
@@ -315,7 +320,6 @@ def reject_multi_series_channel_conflicts(
     family: str,
     y: str | list[str] | None,
     layers: list[CartesianLayer] | None,
-    conditional_formatting: dict[str, FieldConditionalFormatting] | None,
 ) -> None:
     """Reject encodings that carry their own series alongside a list-valued `y:`.
 
@@ -323,14 +327,12 @@ def reject_multi_series_channel_conflicts(
     layer stack on the measures themselves — a second series source has nowhere
     left to go. Bar and area enforce that here, at parse. Line does not call
     this: it raises on `layers:` from `resolve_wide_measure_channels`
-    (`resolve/chart/_wide_fields.py`) at resolve, and on `conditional_formatting`
-    not at all. Scatter refuses a list `y:` outright, from its own resolver.
+    (`resolve/chart/_wide_fields.py`) at resolve. Scatter refuses a list `y:`
+    outright, from its own resolver.
 
     An authored `color:` column is not a conflict: it is the dimension the
     measures are grouped by, and the fold crosses it with them (one series per
-    value per measure — `resolve_wide_measure_channels`). `conditional_formatting`
-    still counts as a color source: its rules project into the mark-fill channel
-    (`resolve/chart/channel.py`), which the folded measures already use.
+    value per measure — `resolve_wide_measure_channels`).
 
     A one-element `y:` list still counts: the emitters branch on `isinstance`,
     not on length, so `y: [revenue]` takes the same folded path as `y: [a, b]`.
@@ -342,12 +344,6 @@ def reject_multi_series_channel_conflicts(
         raise ValueError(
             f"{family} chart: layers are not supported with multi-metric "
             f"(y: [...]) charts. {remedy}"
-        )
-    if conditional_formatting:
-        raise ValueError(
-            f"{family} chart: conditional_formatting is not supported with "
-            f"multi-metric (y: [...]) charts — its rules paint the mark fill, "
-            f"which the folded measures already use. {remedy}"
         )
 
 

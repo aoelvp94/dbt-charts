@@ -337,7 +337,9 @@ class TestItalicOutsideMarkdownEmphasis:
         """stark sets text.blockquote.font.style: italic, so every built-in theme
         paints a blockquote italic — through a CSS class rule, not a measured run."""
         html = self._export(_BLOCKQUOTE_YAML, tmp_path, local_project)
-        assert "md-blockquote" in html, "fixture did not render a blockquote"
+        assert re.search(r"md-[0-9a-f]{8}-blockquote", html), (
+            "fixture did not render a blockquote"
+        )
         assert _ITALIC_BOARD.search(html) is not None
 
     def test_blockquote_rule_alone_does_not_pull_it_in(
@@ -346,7 +348,9 @@ class TestItalicOutsideMarkdownEmphasis:
         """The other direction: mdsvg emits that rule for prose with no blockquote
         in it, and a rule nothing wears must not cost 240 KiB."""
         html = self._export(_NO_EMPHASIS_YAML, tmp_path, local_project)
-        assert "md-blockquote" in html, "rule is expected to be present but unworn"
+        assert re.search(r"md-[0-9a-f]{8}-blockquote", html), (
+            "rule is expected to be present but unworn"
+        )
         assert _ITALIC_BOARD.search(html) is None
 
     def test_emphasis_in_the_title_only(self, tmp_path, local_project) -> None:

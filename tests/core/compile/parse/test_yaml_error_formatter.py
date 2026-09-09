@@ -295,6 +295,78 @@ rows:
         assert "`height:` is not supported on `type: table`" in height_error.hint
         assert "Supported chart types for `height:`" in height_error.hint
 
+    def test_conditional_formatting_on_bar_gets_the_generic_unsupported_field_hint(
+        self,
+    ):
+        """Pins _unsupported_known_chart_field_hint's exact text for
+        conditional_formatting on a removed family.
+
+        Exercised at the formatter level against a raw AuthoredBoard
+        ValidationError, not through compile()/prepare_board_mapping: that
+        path recognizes `type: bar` + `conditional_formatting:` as a
+        historical grammar shape and migrates the field away (with a
+        SchemaMigrationWarning) before Pydantic -- and therefore this hint
+        code -- ever sees it, so a board-level round-trip cannot exercise
+        this surface at all. Constructing AuthoredBoard directly bypasses
+        migration/recognition entirely, producing the same extra_forbidden
+        ValidationError a genuinely new (not-yet-existing) document mixing
+        current-only syntax with a stale conditional_formatting: would hit.
+
+        The hint text is generic and field-name-agnostic --
+        _authored_chart_fields_by_type() derives "supported chart types"
+        from whichever models currently declare the field, so it updates
+        automatically; this test would also catch a regression that
+        re-added conditional_formatting to a removed family.
+        """
+        from pydantic import ValidationError as PydanticValidationError
+
+        from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+        from dbt_charts.core.compile.parse.yaml_error_formatter import (
+            format_validation_errors_structured,
+        )
+
+        yaml_content = """title: Test
+queries:
+  q1:
+    sql: SELECT 1 AS month, 2 AS revenue
+    source: test
+charts:
+  bar_chart:
+    type: bar
+    query: q1
+    x: month
+    y: revenue
+    conditional_formatting:
+      revenue:
+        when:
+          - gt: 1000000
+            background: "#007FFF"
+rows:
+  - bar_chart
+"""
+        import yaml
+
+        data = yaml.safe_load(yaml_content)
+        try:
+            AuthoredBoard(**data)
+        except PydanticValidationError as e:
+            errors = format_validation_errors_structured(e, yaml_content)
+        else:
+            pytest.fail("Expected ValidationError not raised")
+
+        cf_error = next(
+            error for error in errors if error.path.endswith("conditional_formatting")
+        )
+        assert cf_error.hint is not None
+        assert (
+            "`conditional_formatting:` is not supported on `type: bar`."
+            in cf_error.hint
+        )
+        assert (
+            "Supported chart types for `conditional_formatting:`: kpi, table."
+            in cf_error.hint
+        )
+
     @pytest.mark.parametrize(
         "chart_type",
         [

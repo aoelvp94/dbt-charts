@@ -41,7 +41,9 @@ categorical branch's fixed floor constant.
 from __future__ import annotations
 
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
-from dbt_charts.core.compile.resolve.chart._wide_fields import wide_series_names
+from dbt_charts.core.compile.resolve.chart._wide_fields import (
+    raw_wide_series_names,
+)
 from dbt_charts.core.diagnostics import WARN_BAR_BAND_WIDTH_TOO_NARROW, Diagnostic
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.emitters._cartesian import widest_panel_distinct_count
@@ -116,7 +118,7 @@ def _grouped_series_count(
     # transform (client-side, never in query rows): cardinality = measures ×
     # the authored dimension's values.
     if chart.wide_measures:
-        measures = len(wide_series_names(chart.wide_measures, chart.color, rows))
+        measures = len(raw_wide_series_names(chart.wide_measures, chart.color, rows))
     else:
         measures = len({row[offset_field] for row in rows if offset_field in row})
     # A zero count means no series reached this detector at all — an empty

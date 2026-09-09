@@ -16,7 +16,10 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset, rest
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     WIDE_LABEL_FIELD,
     WIDE_VALUE_FIELD,
+    humanize_wide_series_name,
+    raw_wide_series_names,
     unfold_wide_rows,
+    wide_measure_labels_for,
     wide_series_names,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
@@ -36,9 +39,10 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
 )
 from dbt_charts.core.render.chart.emitters._channels import (
     apply_color_legend,
+    apply_legend_entry_order,
+    categorical_color_encoding,
     channel_to_encoding,
     gap_fill_ordinal_time_per_panel,
-    pin_legend_display_order,
 )
 from dbt_charts.core.render.chart.emitters._endpoint_rail import (
     resolve_endpoint_rail_span,
@@ -153,37 +157,66 @@ def _apply_line_color_encoding(
             else None
         )
         enc = channel_to_encoding(color_ch, data, title=color_title)
-        if enc is not None:
-            apply_color_legend(enc, chart.legend)
-            is_bindable_series = (
-                color_ch.mode == "series"
-                and enc.get("type") == "nominal"
-                and color_field
-                and chart.palette
-            )
-            if is_bindable_series:
-                scale = category_scale_for(chart.category_colors, color_field)
-            # Stable last-value order — skipped when style.dashes is set,
-            # since that path pins color's domain to a DIFFERENT explicit
-            # order (data-insertion) to merge the color+strokeDash legends;
-            # the two domain-locking mechanisms aren't meant to compose.
-            if (
-                is_bindable_series
-                and not style.dashes
-                and chart.x
-                and isinstance(chart.y, str)
-            ):
-                series = distinct_series_values(data, color_field)
-                if series:
-                    order = sorted_series_by_last_value(
+        apply_color_legend(enc, chart.legend)
+        enc_type = enc.get("type")
+        is_bindable_series = (
+            categorical_color_encoding(color_ch, enc_type) and enc_type == "nominal"
+        )
+        if is_bindable_series:
+            scale = category_scale_for(chart.category_colors, color_field)
+        # Stable last-value order when possible -- skipped when
+        # style.dashes is set, since that path pins color's domain to a
+        # DIFFERENT explicit order (data-insertion) to merge the
+        # color+strokeDash legends; the two domain-locking mechanisms
+        # aren't meant to compose (resolution still runs there, against
+        # `dash_domain`, further down). Without `chart.x`/a scalar
+        # `chart.y` the last-value order can't be computed either, so
+        # `series` itself (plain alphabetical) is the fallback order --
+        # still the correct domain to resolve an AUTHORED
+        # `legend.values` against, just not the display-order
+        # refinement.
+        if is_bindable_series and not style.dashes:
+            series = distinct_series_values(data, color_field)
+            if series:
+                order = (
+                    sorted_series_by_last_value(
                         series, data, chart.x, chart.y, color_field
                     )
+                    if chart.x and isinstance(chart.y, str)
+                    else series
+                )
+                # `chart.palette` can legally be authored empty; it
+                # governs the scale's range only, so resolution still
+                # runs. But with nothing authored and no palette to
+                # paint a scale from, there is nothing worth pinning.
+                if chart.palette:
                     enc["scale"] = spatial_color_scale(
                         series, chart.palette, order, scale
                     )
-                    pin_legend_display_order(enc, order)
-            top_encoding["color"] = enc
-            has_color_encoding = True
+                if chart.legend.values is not None or chart.palette:
+                    apply_legend_entry_order(
+                        enc,
+                        order,
+                        authored=chart.legend.values,
+                    )
+        elif (
+            categorical_color_encoding(color_ch, enc_type)
+            and enc_type == "ordinal"
+            and not style.dashes
+            and chart.legend.values is not None
+        ):
+            # An ordinal column carries its own inherent order --
+            # Vega sorts it natively, so the last-value order, paint
+            # scale and board-slot lookup above must never touch it.
+            # Resolution still has to run so an authored
+            # `legend.values` entry doesn't ship as a phantom swatch.
+            apply_legend_entry_order(
+                enc,
+                distinct_series_values(data, color_field),
+                authored=chart.legend.values,
+            )
+        top_encoding["color"] = enc
+        has_color_encoding = True
     if (
         style.dashes
         and color_ch is not None
@@ -217,6 +250,44 @@ def _apply_line_color_encoding(
         # dash legend. Identical domains collapse them to a single legend whose
         # symbols carry the per-series dash pattern.
         dash_domain = _distinct_in_order(data, dash_field) if dash_field else []
+        # Only fires when authored AND the color field is genuinely
+        # categorical (matching pie/heatmap/scatter/geo/bar's own gates):
+        # an unconditional pin here would emit a str()-cast `values` list
+        # while `color_scale["domain"]`/`strokeDash.scale.domain` below
+        # keep the RAW (bool/int/date) values -- a type-mismatched legend
+        # that renders every entry as NaN through vl_convert, on a board
+        # that authored nothing.
+        if (
+            dash_domain
+            and chart.legend.values is not None
+            and top_encoding["color"].get("type") in ("nominal", "ordinal")
+        ):
+            # resolve_legend_entries folds tokens as strings; dash_field's
+            # raw values (int/date/etc.) never reach it -- str() them for
+            # resolution only. infer_vega_type_from_data samples only 10
+            # rows while _distinct_in_order (dash_domain) scans all of
+            # them, so the nominal/ordinal gate above does not guarantee
+            # every dash_domain entry is already a str -- map the
+            # resolved (string) entries back to their raw dash_domain
+            # element afterward, so `legend["values"]` and
+            # `color_scale["domain"]` below agree on type, not just text.
+            str_to_raw = {str(value): value for value in dash_domain}
+            apply_legend_entry_order(
+                top_encoding["color"],
+                [str(value) for value in dash_domain],
+                authored=chart.legend.values,
+            )
+            color_legend = top_encoding["color"].get("legend")
+            if isinstance(color_legend, dict) and isinstance(
+                color_legend.get("values"), list
+            ):
+                # Every entry in color_legend["values"] here is either
+                # a matched (resolved) domain entry or a member of the
+                # str-cast dash_domain fallback order -- both are, by
+                # construction, keys of str_to_raw. A direct lookup
+                # raises loudly if that invariant is ever wrong, rather
+                # than silently keeping a str the domain never carries.
+                color_legend["values"] = [str_to_raw[v] for v in color_legend["values"]]
         color_scale = top_encoding["color"].setdefault("scale", {})
         if isinstance(color_scale, dict) and dash_domain:
             color_scale["domain"] = dash_domain
@@ -225,8 +296,9 @@ def _apply_line_color_encoding(
             # values their slot's color — without an explicit `range` here,
             # VL painted `dash_domain` positionally over the config-level
             # palette, which desynced from a plain (non-dashed) sibling
-            # chart bound to the same field.
-            if scale is not None:
+            # chart bound to the same field. `chart.palette` can legally
+            # be authored empty; color_at raises on an empty palette.
+            if scale is not None and chart.palette:
                 color_scale["range"] = [
                     color_at(scale, v, chart.palette) for v in dash_domain
                 ]
@@ -371,17 +443,30 @@ def _emit_folded_line(
             "choose a different curve style."
         )
     measures = list(chart.wide_measures)
-    series = wide_series_names(measures, chart.color, data)
+    dimension = chart.color
+    wide_labels = wide_measure_labels_for(chart.wide_measures)
+    series = wide_series_names(measures, dimension, data, wide_labels)
     # Same order computation line's authored-color path uses
     # (sorted_series_by_last_value in _apply_line_color_encoding, above), fed
     # a long-form view of the wide data — a wide line's series order must
     # match what an authored color: field of the same data would produce.
+    # `folded`'s own WIDE_LABEL_FIELD is RAW (unfold_wide_rows never
+    # humanizes), so last-value ordering has to run against the matching
+    # raw identity, not `series` (already humanized) -- humanize the
+    # RESULT afterward, per entry.
+    raw_series = raw_wide_series_names(measures, dimension, data)
     display_order = series
+    raw_fold_order = raw_series
     if chart.x:
-        folded = unfold_wide_rows(data, measures, chart.color)
-        display_order = sorted_series_by_last_value(
-            series, folded, chart.x, WIDE_VALUE_FIELD, WIDE_LABEL_FIELD
+        folded = unfold_wide_rows(data, measures, dimension)
+        raw_display_order = sorted_series_by_last_value(
+            raw_series, folded, chart.x, WIDE_VALUE_FIELD, WIDE_LABEL_FIELD
         )
+        display_order = [
+            humanize_wide_series_name(name, dimension, wide_labels)
+            for name in raw_display_order
+        ]
+        raw_fold_order = raw_display_order
     wide = fold_wide_measures(
         measures,
         chart.color,
@@ -389,9 +474,12 @@ def _emit_folded_line(
         chart.palette,
         chart.legend,
         display_order=display_order,
+        wide_measure_labels=wide_labels,
         # Line has no stack/order-channel mechanism, so the fold order is
-        # always the paint order -- same as display_order.
-        fold_order=display_order,
+        # always the paint order -- same as display_order, but stays RAW:
+        # feeds _measure_paint_order/_label_expression, which build Vega
+        # expressions comparing against the fold's own RAW key values.
+        fold_order=raw_fold_order,
     )
     ay_vl = measure_axis_to_vl(ay, data, chart.wide_measures)
     ay_vl = compose_axis_label_expr(ay_vl, ay.ruler, ay)

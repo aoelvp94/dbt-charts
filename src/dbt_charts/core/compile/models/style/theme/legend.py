@@ -99,8 +99,10 @@ class LegendStyle(BaseModel):
     values: Annotated[list[str] | None, Merge(Strategy.OVERRIDE)] = Field(
         default=None,
         description=(
-            "Explicit legend entry order/filter; maps to VL legend.values. "
-            "None lets the renderer infer order from the data."
+            "Explicit legend entry order/filter; each entry resolves against "
+            "the real legend domain by its rendered text or its column/measure "
+            "name (case/separator-insensitive). None lets the renderer infer "
+            "order from the data."
         ),
     )
     # Author override for the legend glyph shape (VL symbolType). None means

@@ -155,8 +155,9 @@ class TestMergedStyleOnBoard:
         assert isinstance(nested.resolved_style, ResolvedStyle)
         assert nested.resolved_style.font.family.startswith("Arial")
 
-    def test_nested_background_style_keeps_semantic_parent_colors_only(self):
-        """A background-only nested style follows the normal semantic cascade."""
+    def test_nested_background_style_inherits_every_authored_parent_field(self):
+        """A background-only nested style still inherits every field the parent
+        explicitly authored."""
         yaml_nested = textwrap.dedent(
             """\
             title: Parent Board
@@ -179,10 +180,7 @@ class TestMergedStyleOnBoard:
         assert nested.resolved_style.background == "#ff0000"
         assert nested.resolved_style.muted == "#aabbcc"
         assert nested.resolved_style.accent == "#334455"
-        assert (
-            nested.resolved_style.font.family
-            == resolve_style(get_theme_style()).font.family
-        )
+        assert nested.resolved_style.font.family.startswith("Arial")
 
     def test_nested_background_fast_path_matches_slow_parent_cascade(self):
         """Background-only and background-plus-token child styles inherit alike."""

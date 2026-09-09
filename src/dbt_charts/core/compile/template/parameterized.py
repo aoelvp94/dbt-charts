@@ -54,9 +54,13 @@ from jinja2 import (
     UndefinedError,
 )
 
-from dbt_charts.core.compile.errors import JinjaError
+from dbt_charts.core.compile.errors import JinjaError, TemplateOutputTooLargeError
 from dbt_charts.core.compile.template._helpers import _LenientUndefined, _QueryNamespace
 from dbt_charts.core.compile.template.environment import BoardTemplateEnvironment
+from dbt_charts.core.compile.template.output_budget import (
+    TemplateOutputBudgetExceeded,
+    render_with_budget,
+)
 from dbt_charts.core.dialects import VALID_OPERATORS, SQLDialect, get_dialect
 
 # Bare identifiers joined by dots, to any depth: `col`, `table.col`, and
@@ -504,7 +508,7 @@ def render_parameterized(
         undefined_cls = StrictUndefined if strict else _LenientUndefined
         env = BoardTemplateEnvironment(undefined=undefined_cls)
         jinja_template = env.from_string(template)
-        rendered_sql = jinja_template.render(context)
+        rendered_sql = render_with_budget(jinja_template, context)
 
         # Clean up any surrounding quotes around parameter placeholders
         # e.g., "'$1'" -> "$1" for proper parameterization
@@ -520,6 +524,10 @@ def render_parameterized(
             template_hash=_compute_template_hash(template),
         )
 
+    except TemplateOutputBudgetExceeded as e:
+        raise TemplateOutputTooLargeError(
+            emitted_bytes=e.emitted_bytes, ceiling=e.ceiling
+        ) from e
     except UndefinedError as e:
         raise JinjaError(f"Undefined variable: {e}", template) from e
     except TemplateSyntaxError as e:

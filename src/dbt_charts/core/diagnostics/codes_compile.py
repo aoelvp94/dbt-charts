@@ -312,6 +312,40 @@ ERR_JINJA_ERROR = REGISTRY.register(
     )
 )
 
+ERR_TEMPLATE_OUTPUT_TOO_LARGE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TEMPLATE-OUTPUT-TOO-LARGE",
+        domain="compile",
+        title="Board render's cumulative template output exceeded the cap",
+        message_template=(
+            "This board render's templated fields (queries, titles, markdown, "
+            "…) emitted more than {ceiling} bytes combined, stopping after "
+            "{emitted_bytes} bytes. This is a render-wide cumulative cap, not "
+            "a per-field one — a nested loop, a runaway variable expansion, "
+            "or genuinely oversized content anywhere in the board can trip "
+            "it. Reduce the amount of text a templated field (or their "
+            "combination) produces."
+        ),
+        summary=(
+            "Fired when one board render's Jinja-emitted output, summed "
+            "across every templated field, exceeds the effective cap."
+        ),
+        doc=(
+            "Fired when the cumulative bytes emitted by every templated "
+            "field (queries, titles, markdown, chart labels) in one board "
+            "render exceed the effective `execution.max_template_output_bytes` "
+            "limit — a hard error, not a truncation-with-warning like "
+            "`WARN-QUERY-RESULT-TRUNCATED`: a truncated SVG or SQL string is "
+            "a corrupt document, never a usable-with-a-caveat result. The "
+            "message names no config key deliberately: the effective limit "
+            "is the lower of the project's own config value and any "
+            "deployment ceiling (`DCT_MAX_TEMPLATE_OUTPUT_BYTES_CEILING`), "
+            "so it cannot be raised past the ceiling."
+        ),
+        docs_topic="queries",
+    )
+)
+
 ERR_VALIDATION_FIELD = REGISTRY.register(
     ErrorCode(
         code="ERR-VALIDATION-FIELD",
@@ -1164,7 +1198,7 @@ ERR_MULTI_Y_COLOR_CONFLICT = REGISTRY.register(
             "Fired when a bar, area, or line chart authors y: [a, b] together "
             "with a color: that is not a plain series column -- a gradient or "
             "a conditional scale. A column composes with the "
-            "fold: the series become `<value> — <measure>` composites, one "
+            "fold: the series become `<value> - <measure>` composites, one "
             "per dimension value per measure."
         ),
         docs_topic="charts",
@@ -1185,6 +1219,35 @@ ERR_MULTI_Y_LAYERS_CONFLICT = REGISTRY.register(
         doc=(
             "Fired when a bar, area, or line chart authors both y: [a, b] and "
             "layers: at the same time."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_WIDE_MEASURE_NAME_CONTAINS_SEPARATOR = REGISTRY.register(
+    ErrorCode(
+        code="ERR-WIDE-MEASURE-NAME-CONTAINS-SEPARATOR",
+        domain="compile",
+        title="Wide measure name contains the dimension composite separator",
+        summary=(
+            "Fired when a wide-measure chart's own measure column name "
+            "contains the dimension composite separator."
+        ),
+        message_template=(
+            "Chart authors y: [...] with color: as a dimension, and measure "
+            "column {measure!r} contains the {separator!r} composite "
+            "separator, so the composite series name cannot be split back "
+            "into a dimension value and a measure. Rename the measure "
+            "column, or alias it in the query."
+        ),
+        doc=(
+            "A wide chart authoring a list of y: measures can also author "
+            "color: as a dimension the measures cross with. Fires when one "
+            "of the measure column names itself contains the separator the "
+            "`<dimension value> - <measure>` composite string uses. The "
+            "composite cannot be split back apart unambiguously in that "
+            "case, so the measure column must be renamed, or aliased in "
+            "the query, to avoid the separator."
         ),
         docs_topic="charts",
     )

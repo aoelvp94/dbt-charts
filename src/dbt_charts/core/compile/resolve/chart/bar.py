@@ -96,9 +96,11 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
     WIDE_LABEL_FIELD,
     WIDE_VALUE_FIELD,
     bake_wide_measures_kwargs,
+    humanize_wide_series_name,
+    raw_wide_series_names,
     resolve_wide_measure_channels,
     unfold_wide_rows,
-    wide_series_names,
+    wide_measure_labels_for,
 )
 from dbt_charts.core.compile.resolve.chart.plot_height_floor import (
     estimate_plot_height,
@@ -268,8 +270,11 @@ def _every_series_reaches_the_anchor_row(
     anchor_row = domain[0]
     if isinstance(normalized.y, list):
         # Wide + dimension: the series are the composites, and a measure
-        # null at the anchor row is exactly the missing segment this guards.
-        every_series = set(wide_series_names(y_fields, color, data))
+        # null at the anchor row is exactly the missing segment this
+        # guards. RAW composites, matching unfold_wide_rows's own
+        # (unhumanized) WIDE_LABEL_FIELD stamp -- a humanized name would
+        # never match `drawn_at_anchor` here.
+        every_series = set(raw_wide_series_names(y_fields, color, data))
         drawn_at_anchor = {
             str(row[WIDE_LABEL_FIELD])
             for row in unfold_wide_rows(data, y_fields, color)
@@ -419,15 +424,24 @@ def _horizontal_rail_labels_would_collide(
     if not isinstance(x, str) or not y_fields:
         return False
     color = normalized.color
+    # `series_names` stays RAW -- the identity `cumulative_stack_midpoints`
+    # groups real rows by. `label_of_series` is the separate, display-only
+    # text this function measures with (the rail's actual painted text).
     if isinstance(color, str) and not isinstance(normalized.y, list):
         series_field, y_field, measure_data = color, y_fields[0], data
         series_names = sorted(
             {str(row[color]) for row in data if row.get(color) is not None}
         )
+        label_of_series = {s: s for s in series_names}
     elif isinstance(normalized.y, list):
         series_field, y_field = WIDE_LABEL_FIELD, WIDE_VALUE_FIELD
         measure_data = unfold_wide_rows(data, y_fields, color)
-        series_names = wide_series_names(y_fields, color, data)
+        wide_labels = wide_measure_labels_for(y_fields)
+        series_names = raw_wide_series_names(y_fields, color, data)
+        label_of_series = {
+            raw: humanize_wide_series_name(raw, color, wide_labels)
+            for raw in series_names
+        }
     else:
         return False
     if stack_mode == "normalize":
@@ -471,7 +485,7 @@ def _horizontal_rail_labels_would_collide(
     pixel = sorted(
         (
             (mid - domain_lo) / domain_span_width * usable_width,
-            measurer.measure(series, font_size),
+            measurer.measure(label_of_series[series], font_size),
         )
         for series, mid in positions
     )

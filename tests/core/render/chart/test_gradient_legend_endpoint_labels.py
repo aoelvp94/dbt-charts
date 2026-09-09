@@ -388,7 +388,7 @@ def test_bar_categorical_legend_has_no_endpoint_values() -> None:
     the gradient seam — the min/max endpoint-label logic (a 2-element numeric
     pair) must live in the gradient-only seam, not leak into
     legend_to_vl/apply_color_legend. A pinned display-order values list (the
-    plain category strings, via pin_legend_display_order) is unrelated and
+    plain category strings, via apply_legend_entry_order) is unrelated and
     expected."""
     chart = BarChart(
         id="test_bar",

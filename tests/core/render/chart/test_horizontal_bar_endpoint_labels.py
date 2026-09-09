@@ -1224,6 +1224,87 @@ def test_top_rail_does_not_warn_about_labels_it_never_truncates(
     assert truncations == {}
 
 
+def test_wide_measure_rail_collision_check_measures_humanized_text(
+    make_chart, monkeypatch
+):
+    """The rail-vs-legend collision check must font-measure the same
+    ``wide_measure_labels_for`` humanized text the rail itself paints,
+    not the raw measure name -- a humanized name can be narrow enough to
+    avoid a collision the raw name's width would predict (or vice versa),
+    so the check and the render must agree on which text they measure.
+
+    Monkeypatches the check's own humanizer to the identity function
+    (measuring the raw name instead) and asserts the collision verdict
+    genuinely differs at a width chosen empirically to sit inside the two
+    verdicts' gap (380px raw-collides, humanized-fits)."""
+    import dbt_charts.core.compile.resolve.chart.bar as bar_module
+    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
+
+    measures = [
+        "revenue_usd",
+        "net_revenue",
+        "gross_margin_pct",
+        "yoy_growth_pct",
+    ]
+    data = [{"row": "alpha", **dict.fromkeys(measures, 10)}]
+    style = BarChartStylePatch.model_validate(
+        {"orientation": "horizontal", "stack": "zero"}
+    )
+    chart = make_chart("bar", x="row", y=measures, style=style)
+
+    rc_humanized = resolve(chart, data, chart_style_context=_BOARD_CTX, width=380.0)
+
+    monkeypatch.setattr(
+        bar_module,
+        "wide_measure_labels_for",
+        lambda measures: {m: m for m in measures},
+    )
+    rc_raw = resolve(chart, data, chart_style_context=_BOARD_CTX, width=380.0)
+
+    assert rc_humanized.style.endpoint_labels.visible is True
+    assert rc_raw.style.endpoint_labels.visible is False
+
+
+def test_wide_measure_rail_collision_check_measures_humanized_composite_text(
+    make_chart, monkeypatch
+):
+    """Same invariant as the sibling test above, on the dimensioned shape:
+    the rail-vs-legend collision check must measure the HUMANIZED
+    composite (``<dimension value> - <humanized measure>``,
+    ``label_of_series`` in ``_horizontal_rail_labels_would_collide``), not
+    the raw composite."""
+    import dbt_charts.core.compile.resolve.chart.bar as bar_module
+    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
+
+    measures = [
+        "revenue_usd",
+        "net_revenue",
+        "gross_margin_pct",
+        "yoy_growth_pct",
+    ]
+    data = [{"row": "alpha", "d": "A", **dict.fromkeys(measures, 10)}]
+    style = BarChartStylePatch.model_validate(
+        {"orientation": "horizontal", "stack": "zero"}
+    )
+    chart = make_chart("bar", x="row", y=measures, color="d", style=style)
+
+    # 460px sits between the two: the humanized composites fit the rail and
+    # the raw ones do not. The two spellings differ only in glyph width
+    # (spaces and parens against underscores), so the window is narrow.
+    width = 460.0
+    rc_humanized = resolve(chart, data, chart_style_context=_BOARD_CTX, width=width)
+
+    monkeypatch.setattr(
+        bar_module,
+        "wide_measure_labels_for",
+        lambda measures: {m: m for m in measures},
+    )
+    rc_raw = resolve(chart, data, chart_style_context=_BOARD_CTX, width=width)
+
+    assert rc_humanized.style.endpoint_labels.visible is True
+    assert rc_raw.style.endpoint_labels.visible is False
+
+
 def test_center_stack_with_an_opted_in_rail_raises_a_registered_code(
     resolve_horizontal_bar_chart,
 ):

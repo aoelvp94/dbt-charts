@@ -101,9 +101,11 @@ def _value_tooltip_field(
 
 
 # Calculate-transform field carrying each row's precomputed display-rank --
-# read from the SAME color scale domain `pin_legend_display_order` already
-# pinned to legend.values (emitters/_channels.py), never a second, parallel
-# order derivation.
+# read from `scale.domain`, the paint order each emitter already computed,
+# never re-derived. An authored `legend.values` reorders the rendered
+# legend only, not `scale.domain`, so it does not affect this rank --
+# except on a grouped bar, the one documented case where a full authored
+# reorder also reorders `scale.domain`.
 _TOOLTIP_ORDER_FIELD = "__dct_tooltip_order"
 
 

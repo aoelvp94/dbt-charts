@@ -59,7 +59,7 @@ ROLE_SERIES = "⁢"  # INVISIBLE TIMES
 ROLE_TOTAL = "⁣"  # INVISIBLE SEPARATOR
 # A precomputed display-order rank for this mark's series -- the SAME order
 # that already drives the color scale's reordered domain (and, via
-# pin_legend_display_order, legend.values). chart_interactivity.js prefers
+# apply_legend_entry_order, legend.values). chart_interactivity.js prefers
 # this over reading the rendered legend's DOM order, which is unavailable
 # whenever no legend renders (e.g. a line using endpoint labels instead of a
 # legend, the common default) -- see features/structured_tooltip.py.

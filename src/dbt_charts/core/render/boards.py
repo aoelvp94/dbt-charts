@@ -350,17 +350,18 @@ def _paint_title_svg_fill(title_svg: str, color: str) -> str:
     r"""Apply a solid fill to every ``<text>`` element in the title SVG.
 
     Uses inline ``style="fill: ..."`` rather than the ``fill="..."`` presentation
-    attribute. The title text carries ``class="md-heading"`` (mdsvg), and SVG/CSS
-    specificity rules let class-rule properties beat presentation attributes —
-    so a bare ``fill="…"`` override is silently swallowed by the class's fill.
-    An inline style attribute trumps the class rule and the override sticks.
+    attribute. The title text carries a scoped ``class="md-<hash>-heading"``
+    (mdsvg), and SVG/CSS specificity rules let class-rule properties beat
+    presentation attributes — so a bare ``fill="…"`` override is silently
+    swallowed by the class's fill. An inline style attribute trumps the class
+    rule and the override sticks.
 
     Two independent passes (both run unconditionally):
 
     1. **Inject** ``style="fill: …"`` on every ``<text>`` element that does
        not already carry a style attribute. mdsvg emits plain-heading text
-       as ``<text class="md-heading">…</text>``; that text gets the new
-       inline style here.
+       as ``<text class="md-<hash>-heading">…</text>``; that text gets the
+       new inline style here.
     2. **Rewrite** any existing ``fill:`` declaration inside any ``style="…"``
        attribute. mdsvg wraps code-styled or link-styled runs inside a
        title in ``<tspan style="…; fill: …">…</tspan>``; those tspans get
@@ -368,7 +369,7 @@ def _paint_title_svg_fill(title_svg: str, color: str) -> str:
        like ``Sales \`Q3\``` paints uniformly in the override color.
 
     The rewrite is scoped to the attribute value (not the whole document)
-    so CSS rules inside any ``<style>`` block — ``.md-text { fill: ... }``
+    so CSS rules inside any ``<style>`` block — ``.md-<hash>-text { fill: ... }``
     etc. — are untouched. Other declarations in the same ``style="..."``
     attribute (e.g. ``font-weight: 500``) are preserved.
     """
@@ -960,7 +961,7 @@ def render_board_svg(
     page_title = (
         resolve_jinja_template(board.title, variables, strict=False)
         if board.title
-        else "dbt charts"
+        else "dbt Charts"
     )
     font_family = resolved_style.font.family
     page_background = resolved_style.page.background

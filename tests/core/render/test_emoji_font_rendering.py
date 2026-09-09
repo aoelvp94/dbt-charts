@@ -125,7 +125,7 @@ class TestRenderedSVGContainsNotoEmoji:
             text_style=resolved_without_emoji_family.text,
         )
 
-        body_rule = re.search(r"\.md-text \{ font-family: ([^;]+);", svg)
+        body_rule = re.search(r"\.md-[0-9a-f]{8}-text \{ font-family: ([^;]+);", svg)
         assert body_rule is not None
         assert _QUOTED in body_rule.group(1)
 

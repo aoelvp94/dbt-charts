@@ -259,7 +259,9 @@ def test_multi_metric_line_wraps_its_x_label(line_style: Any) -> None:
     pinned here rather than left to the single-series tests above.
     """
     from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
-    from dbt_charts.core.compile.resolve.chart._wide_fields import WIDE_VALUE_FIELD
+    from dbt_charts.core.compile.resolve.chart._wide_fields import (
+        WIDE_VALUE_FIELD,
+    )
     from dbt_charts.core.render.chart.emitters.line import LineEmitter
 
     ax, ay = _make_resolved_axes("line", "ordinal", "quantitative")
@@ -284,7 +286,9 @@ def test_multi_metric_line_wraps_its_x_label(line_style: Any) -> None:
 
 def test_multi_metric_area_wraps_its_y_label(area_style: Any) -> None:
     from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
-    from dbt_charts.core.compile.resolve.chart._wide_fields import WIDE_VALUE_FIELD
+    from dbt_charts.core.compile.resolve.chart._wide_fields import (
+        WIDE_VALUE_FIELD,
+    )
     from dbt_charts.core.render.chart.emitters.area import AreaEmitter
 
     ax, ay = _make_resolved_axes("area", "ordinal", "quantitative")

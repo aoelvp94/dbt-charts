@@ -242,6 +242,30 @@ class JinjaError(CompilationError):
         self.fields = {"message": message}
 
 
+class TemplateOutputTooLargeError(CompilationError):
+    """A board render's cumulative Jinja-emitted output crossed the
+    render-scoped `execution.max_template_output_bytes` ceiling.
+
+    Raised by every render call site that streams through
+    `compile.template.output_budget.render_with_budget()` when the open
+    `template_output_budget()` scope's `TemplateOutputBudgetExceeded` fires.
+    A hard error, not a truncation — see `output_budget.py`'s module
+    docstring for why.
+    """
+
+    def __init__(self, *, emitted_bytes: int, ceiling: int) -> None:
+        from dbt_charts.core.diagnostics.codes_compile import (
+            ERR_TEMPLATE_OUTPUT_TOO_LARGE,
+        )
+
+        message = ERR_TEMPLATE_OUTPUT_TOO_LARGE.message_template.format(
+            ceiling=ceiling, emitted_bytes=emitted_bytes
+        )
+        super().__init__(message)
+        self.code = ERR_TEMPLATE_OUTPUT_TOO_LARGE
+        self.fields = {"emitted_bytes": emitted_bytes, "ceiling": ceiling}
+
+
 class MergeValidationError(CompilationError):
     """Pydantic validation error from an extends fragment or meta.yaml file.
 

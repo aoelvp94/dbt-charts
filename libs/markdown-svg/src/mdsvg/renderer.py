@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import html as _html
 import re
 from collections.abc import Sequence
@@ -535,6 +536,7 @@ class SVGRenderer:
             )
 
         self.style = style or Style()
+        self._class_prefix = self._compute_class_prefix()
         self._allow_raw_html = allow_raw_html
         self._measurer: FontMeasurer
         self._mono_char_width: Optional[float] = None
@@ -954,7 +956,7 @@ class SVGRenderer:
                 block.spans,
                 ctx,
                 font_size=self.style.base_font_size,
-                css_class="md-text",
+                css_class=self._scoped_class("text"),
                 line_window=(start, count),
             )
         else:
@@ -1055,18 +1057,30 @@ class SVGRenderer:
         _, height = self._render_blocks_to_elements(blocks, width, padding)
         return Size(width=width, height=height)
 
-    def _get_style_block(self) -> str:
-        """Generate the CSS style block for SVG rendering.
+    # Fixed order: also the order the rules are hashed and rendered in, so
+    # changing it would churn every class prefix for no visual reason.
+    _STYLE_RULE_NAMES: Tuple[str, ...] = (
+        "text",
+        "mono",
+        "heading",
+        "code",
+        "link",
+        "blockquote",
+    )
 
-        Returns:
-            A <style> block string with CSS classes for text, headings, code, etc.
+    def _style_rule_bodies(self) -> Dict[str, str]:
+        """CSS declarations for each `.md-*` rule, keyed by its bare name.
+
+        Shared by `_get_style_block` (which renders them) and
+        `_compute_class_prefix` (which hashes them), so the two can never
+        drift out of sync.
         """
         text_weight = (
             f" font-weight: {self.style.font_weight};"
             if self.style.font_weight is not None
             else ""
         )
-        # .md-code font family: prefer code_font_family, fall back to mono_font_family
+        # code font family: prefer code_font_family, fall back to mono_font_family
         code_family = self.style.code_font_family or self.style.mono_font_family
         code_extra = ""
         if self.style.code_font_weight:
@@ -1078,7 +1092,7 @@ class SVGRenderer:
         if self.style.code_font_decoration:
             code_extra += f" text-decoration: {self.style.code_font_decoration};"
 
-        # .md-blockquote font overrides
+        # blockquote font overrides
         bq_family = self.style.blockquote_font_family or self.style.font_family
         bq_extra = f" font-family: {bq_family};"
         if self.style.blockquote_font_weight:
@@ -1092,13 +1106,52 @@ class SVGRenderer:
         if self.style.blockquote_font_decoration:
             bq_extra += f" text-decoration: {self.style.blockquote_font_decoration};"
 
+        return {
+            "text": (
+                f"font-family: {self.style.font_family}; "
+                f"fill: {self.style.text_color};{text_weight}"
+            ),
+            "mono": f"font-family: {self.style.mono_font_family};",
+            "heading": (
+                f"font-family: {self.style.font_family}; "
+                f"fill: {self.style.get_heading_color()}; "
+                f"font-weight: {self.style.heading_font_weight};"
+            ),
+            "code": f"font-family: {code_family}; fill: {self.style.code_color};{code_extra}",
+            "link": f"fill: {self.style.link_color};",
+            "blockquote": f"fill: {self.style.blockquote_color};{bq_extra}",
+        }
+
+    def _compute_class_prefix(self) -> str:
+        """Deterministic scope for this renderer's `.md-*` classes.
+
+        Inline SVG has no style scope in an HTML page: two boards sharing a
+        page would have the *last* `.md-heading` rule win for both. Hashing
+        the rule bodies means identical styles correctly share a scope
+        (their rules are identical anyway) while distinct styles never
+        collide — with no uuid or counter to churn goldens between runs.
+        """
+        bodies = self._style_rule_bodies()
+        css = "\x00".join(bodies[name] for name in self._STYLE_RULE_NAMES)
+        return hashlib.sha256(css.encode(), usedforsecurity=False).hexdigest()[:8]
+
+    def _scoped_class(self, name: str) -> str:
+        """The scoped class name for bare rule `name` (e.g. "heading")."""
+        return f"md-{self._class_prefix}-{name}"
+
+    def _get_style_block(self) -> str:
+        """Generate the CSS style block for SVG rendering.
+
+        Returns:
+            A <style> block string with CSS classes for text, headings, code, etc.
+        """
+        bodies = self._style_rule_bodies()
+        rules = "\n".join(
+            f"    .{self._scoped_class(name)} {{ {bodies[name]} }}"
+            for name in self._STYLE_RULE_NAMES
+        )
         return f"""  <style>
-    .md-text {{ font-family: {self.style.font_family}; fill: {self.style.text_color};{text_weight} }}
-    .md-mono {{ font-family: {self.style.mono_font_family}; }}
-    .md-heading {{ font-family: {self.style.font_family}; fill: {self.style.get_heading_color()}; font-weight: {self.style.heading_font_weight}; }}
-    .md-code {{ font-family: {code_family}; fill: {self.style.code_color};{code_extra} }}
-    .md-link {{ fill: {self.style.link_color}; }}
-    .md-blockquote {{ fill: {self.style.blockquote_color};{bq_extra} }}
+{rules}
   </style>"""
 
     def _inline_code_size(self, host_font_size: float) -> float:
@@ -1326,7 +1379,7 @@ class SVGRenderer:
             para.spans,
             ctx,
             font_size=self.style.base_font_size,
-            css_class="md-text",
+            css_class=self._scoped_class("text"),
         )
 
     def _render_raw_html_block(
@@ -1379,7 +1432,7 @@ class SVGRenderer:
             heading.spans,
             ctx.with_offset(dy=margin_top),
             font_size=font_size,
-            css_class="md-heading",
+            css_class=self._scoped_class("heading"),
             font_weight=self.style.heading_font_weight,
             line_height_multiplier=self.style.heading_line_height,
         )
@@ -1468,7 +1521,24 @@ class SVGRenderer:
         # For hide mode, add a clipPath
         clip_id = None
         if overflow == "hide":
-            clip_id = f"code-clip-{id(code)}"
+            # Content + geometry, not id() — a memory address is nondeterministic
+            # between runs and can collide when two renders share one document
+            # (address reuse). Geometry disambiguates two identical code blocks
+            # rendered at different positions in the same document.
+            clip_hash = hashlib.sha256(
+                "\x00".join(
+                    [
+                        code.code,
+                        code.language or "",
+                        format_number(ctx.x),
+                        format_number(ctx.y),
+                        format_number(block_width),
+                        format_number(total_height),
+                    ]
+                ).encode(),
+                usedforsecurity=False,
+            ).hexdigest()[:8]
+            clip_id = f"code-clip-{clip_hash}"
             elements.append(
                 f'  <defs><clipPath id="{clip_id}">'
                 f'<rect x="{format_number(ctx.x)}" y="{format_number(ctx.y)}" '
@@ -1579,7 +1649,7 @@ class SVGRenderer:
             transformed,
             ctx,
             font_size=bq_font_size,
-            css_class="md-blockquote",
+            css_class=self._scoped_class("blockquote"),
         )
 
     def _render_blockquote(
@@ -1707,7 +1777,7 @@ class SVGRenderer:
                 item.spans,
                 item_ctx,
                 font_size=self.style.base_font_size,
-                css_class="md-text",
+                css_class=self._scoped_class("text"),
             )
             elements.extend(item_elements)
 
@@ -1753,7 +1823,8 @@ class SVGRenderer:
             elements.append(
                 f'  <text x="{format_number(number_x)}" '
                 f'y="{format_number(number_y)}" '
-                f'class="md-text" font-size="{format_number(self.style.base_font_size)}" '
+                f'class="{self._scoped_class("text")}" '
+                f'font-size="{format_number(self.style.base_font_size)}" '
                 f'text-anchor="end">{number_text}</text>'
             )
 
@@ -1762,7 +1833,7 @@ class SVGRenderer:
                 item.spans,
                 item_ctx,
                 font_size=self.style.base_font_size,
-                css_class="md-text",
+                css_class=self._scoped_class("text"),
             )
             elements.extend(item_elements)
 
@@ -2046,7 +2117,7 @@ class SVGRenderer:
                 text_x = x + padding
                 anchor = "start"
 
-            css_class = "md-text"
+            css_class = self._scoped_class("text")
             weight = self.style.bold_font_weight if is_header else "normal"
 
             text_y = y + padding + font_size

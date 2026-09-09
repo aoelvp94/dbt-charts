@@ -14,7 +14,9 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedLineChart,
     effective_color_field,
 )
-from dbt_charts.core.compile.resolve.chart._wide_fields import wide_series_names
+from dbt_charts.core.compile.resolve.chart._wide_fields import (
+    raw_wide_series_names,
+)
 from dbt_charts.core.diagnostics import WARN_TOO_MANY_COLOR_CATEGORIES, Diagnostic
 from dbt_charts.core.render.warnings.base import WarningContext, encoding_channel_type
 
@@ -49,7 +51,9 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             # The fold's series field exists only post-fold: count the pinned
             # domain (measures × dimension values — an all-null measure still
             # holds its palette slot), not the cells that carry a value.
-            distinct = len(wide_series_names(chart.wide_measures, chart.color, rows))
+            distinct = len(
+                raw_wide_series_names(chart.wide_measures, chart.color, rows)
+            )
             if chart.color is None:
                 authored_key = authored_field = "y"
             else:

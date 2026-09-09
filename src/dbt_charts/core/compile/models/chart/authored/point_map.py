@@ -9,10 +9,10 @@ from pydantic import ConfigDict, Field, model_validator
 from dbt_charts.core.compile.models.markers import Channel
 from dbt_charts.core.compile.models.style.authored import PointMapChartStylePatch
 
-from ._base import BasemapConfig, _ConditionalFormattingField, _GeoChartFields
+from ._base import BasemapConfig, _GeoChartFields
 
 
-class PointMapChart(_GeoChartFields, _ConditionalFormattingField):
+class PointMapChart(_GeoChartFields):
     """Authored patch for point_map and bubble_map charts; the two type spellings are synonyms."""
 
     model_config = ConfigDict(extra="forbid")
@@ -83,15 +83,12 @@ class PointMapChart(_GeoChartFields, _ConditionalFormattingField):
 
     @model_validator(mode="after")
     def _reject_collapse_with_color(self) -> PointMapChart:
-        """Refuse `collapse` alongside either color mode.
+        """Refuse `collapse` alongside a field-mode `color`.
 
         `collapse` emits VL's native `size: {aggregate: "count"}`, which VL
         groups by every other non-aggregated encoded field. Field-mode
         `color` widens that groupby to (lat, lon, category) — re-creating
-        the exact pile `collapse` exists to remove. Conditional-mode color
-        compiles to `datum["<col>"] > x`, but the aggregated mark carries
-        only the groupby fields plus the count, so the field is undefined
-        and every rule silently evaluates false.
+        the exact pile `collapse` exists to remove.
         """
         if not self.collapse:
             return self
@@ -109,20 +106,4 @@ class PointMapChart(_GeoChartFields, _ConditionalFormattingField):
                 f"Drop `color` to keep collapsed counts, or drop `collapse` "
                 f"and {sql_resolution}"
             )
-        if self.conditional_formatting is not None:
-            drives_color = any(
-                rule.background is not None
-                for entry in self.conditional_formatting.values()
-                for rule in entry.when
-            )
-            if drives_color:
-                raise ValueError(
-                    f"{self.type}: `collapse: true` with `conditional_formatting` "
-                    "driving color cannot be combined — the aggregated mark "
-                    "datum carries only the groupby fields plus the count, so "
-                    "every rule test evaluates false and the color channel "
-                    "goes inert. Drop the color-driving `conditional_formatting` "
-                    f"rules to keep collapsed counts, or drop `collapse` and "
-                    f"{sql_resolution}"
-                )
         return self

@@ -652,7 +652,7 @@ Fired when a chart carries a list-valued `y:` while `style.axis_y.mirror` is on.
 Chart {chart_id!r} ({chart_type}): y: [...] folds measures into a color series, and color: {color_field!r} is bound to a gradient or conditional scale, which names no series to cross them with. Bind color: to a plain column (each of its values x each measure becomes a series) or drop it.
 ```
 
-Fired when a bar, area, or line chart authors y: [a, b] together with a color: that is not a plain series column -- a gradient or a conditional scale. A column composes with the fold: the series become `<value> — <measure>` composites, one per dimension value per measure.
+Fired when a bar, area, or line chart authors y: [a, b] together with a color: that is not a plain series column -- a gradient or a conditional scale. A column composes with the fold: the series become `<value> - <measure>` composites, one per dimension value per measure.
 
 ### ERR-MULTI-Y-LAYERS-CONFLICT: Multi-y chart cannot also have layers:
 
@@ -1045,6 +1045,20 @@ Chart type {chart_type!r} does not render to a Vega-Lite spec.
 ```
 
 Fired when a chart type is asked to render a Vega-Lite spec but does not support that output format. Use a Vega-Lite-compatible chart type or choose a different output format.
+
+### ERR-WIDE-MEASURE-NAME-CONTAINS-SEPARATOR: Wide measure name contains the dimension composite separator
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart authors y: [...] with color: as a dimension, and measure column {measure!r} contains the {separator!r} composite separator, so the composite series name cannot be split back into a dimension value and a measure. Rename the measure column, or alias it in the query.
+```
+
+A wide chart authoring a list of y: measures can also author color: as a dimension the measures cross with. Fires when one of the measure column names itself contains the separator the `<dimension value> - <measure>` composite string uses. The composite cannot be split back apart unambiguously in that case, so the measure column must be renamed, or aliased in the query, to avoid the separator.
 
 ## errors
 
@@ -1709,6 +1723,20 @@ Query {query_name!r} {field_label} contains literal \n (backslash + n). Use YAML
 ```
 
 Fired when a query's SQL or pre-query string contains a literal backslash followed by 'n', which typically means YAML single-quote escaping swallowed an intended newline. Use a YAML block scalar (`field: |`) for multiline SQL to avoid this.
+
+### ERR-TEMPLATE-OUTPUT-TOO-LARGE: Board render's cumulative template output exceeded the cap
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+This board render's templated fields (queries, titles, markdown, …) emitted more than {ceiling} bytes combined, stopping after {emitted_bytes} bytes. This is a render-wide cumulative cap, not a per-field one — a nested loop, a runaway variable expansion, or genuinely oversized content anywhere in the board can trip it. Reduce the amount of text a templated field (or their combination) produces.
+```
+
+Fired when the cumulative bytes emitted by every templated field (queries, titles, markdown, chart labels) in one board render exceed the effective `execution.max_template_output_bytes` limit — a hard error, not a truncation-with-warning like `WARN-QUERY-RESULT-TRUNCATED`: a truncated SVG or SQL string is a corrupt document, never a usable-with-a-caveat result. The message names no config key deliberately: the effective limit is the lower of the project's own config value and any deployment ceiling (`DCT_MAX_TEMPLATE_OUTPUT_BYTES_CEILING`), so it cannot be raised past the ceiling.
 
 ### ERR-UNKNOWN-QUERY: Chart references an unknown query
 

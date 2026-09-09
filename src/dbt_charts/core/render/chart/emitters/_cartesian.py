@@ -45,6 +45,7 @@ from dbt_charts.core.compile.models.style.theme.category_colors import (
     color_at,
 )
 from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
+from dbt_charts.core.compile.resolve.chart._wide_fields import wide_measure_labels_for
 from dbt_charts.core.compile.resolve.chart.tick_values import (
     numeric_domain_bounds,
     zero_anchor_domain_floor,
@@ -487,14 +488,18 @@ def wrap_axis_title(
 def wide_measures_title(measures: tuple[str, ...]) -> str:
     """Y-axis title for a folded multi-measure (wide ``y: [...]``) chart.
 
-    Joins each measure's own humanized name — the same ``default_axis_title``
-    derivation a single ``y:`` field's title already uses, generalized to the
-    list case, since the measure names ARE real authored fields (unlike the
-    synthetic fold-key/color field, which has no name to derive a legend
-    title from). An authored ``y_label`` always overrides this — callers pass
-    it through ``resolve_xy_titles``'s ``y_label`` param, not this function.
+    Joins each measure's humanized label
+    (``_wide_fields.wide_measure_labels_for``) -- the same
+    derivation a single ``y:`` field's title already uses via
+    ``default_axis_title``, generalized to the list case, since the
+    measure names ARE real authored fields (unlike the synthetic
+    fold-key/color field, which has no name to derive a legend title
+    from). An authored ``y_label`` always overrides this -- callers pass
+    it through ``resolve_xy_titles``'s ``y_label`` param, not this
+    function.
     """
-    return ", ".join(default_axis_title(m) for m in measures)
+    wide_measure_labels = wide_measure_labels_for(measures)
+    return ", ".join(wide_measure_labels[m] for m in measures)
 
 
 def resolve_xy_titles(

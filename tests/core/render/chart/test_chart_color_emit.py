@@ -151,35 +151,6 @@ def test_color_gradient_dbt_charts_named_palette_resolves_to_stops():
 
 
 # ============================================================================
-# §8e: conditional color on bar chart
-# ============================================================================
-
-
-def test_color_conditional_bar_chart():
-    """conditional_formatting.<col>.when → VL color-channel condition array."""
-
-    chart = _bar_chart(
-        conditional_formatting={
-            "arr": {
-                "when": [
-                    {"gt": 1_000_000, "background": "#1aff3c"},
-                    {"lte": 0, "background": "#ff0000"},
-                ]
-            }
-        }
-    )
-    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
-    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
-    color_enc = _color_enc(spec)
-    assert color_enc is not None
-    conditions = color_enc.get("condition", [])
-    assert len(conditions) == 2
-    assert "arr" in conditions[0]["test"]
-    assert conditions[0]["value"] == "#1aff3c"
-    assert color_enc.get("value") is None  # fallback is null
-
-
-# ============================================================================
 # §8h: literal chart.style.color (already works, regression guard)
 # ============================================================================
 
@@ -354,51 +325,9 @@ def test_table_conditional_formatting_preserved_on_source_chart():
 # ============================================================================
 
 
-def test_bar_chart_conditional_formatting_no_crash_in_render():
-    """conditional_formatting on bar chart must not crash in the full render path."""
-
-    chart = _bar_chart(
-        conditional_formatting={
-            "arr": {
-                "when": [
-                    {"gt": 1_000_000, "background": "#1aff3c"},
-                    {"lte": 0, "background": "#ff0000"},
-                ]
-            }
-        }
-    )
-    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
-    # render_standard_vega_spec returns a VL spec dict — must not raise
-    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
-    assert spec is not None
-    assert "mark" in spec or "layer" in spec
-
-
 # ============================================================================
 # Series grouping: detail encoding for line/area/scatter
 # ============================================================================
-
-
-# ============================================================================
-# VL conditional expression: json.dumps escaping
-# ============================================================================
-
-
-def test_conditional_expr_safe_field_quoting():
-    """Conditional color test expression uses json.dumps for safe field quoting."""
-
-    chart = _bar_chart(
-        conditional_formatting={
-            "arr": {"when": [{"gt": 0, "background": "#00ff00"}]},
-        }
-    )
-    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
-    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
-    color_enc = _color_enc(spec)
-    assert color_enc is not None, "Expected color encoding in spec or layers"
-    conditions = color_enc["condition"]
-    # Field must be quoted with json.dumps: datum["arr"] not datum['arr']
-    assert 'datum["arr"]' in conditions[0]["test"]
 
 
 # ============================================================================
@@ -520,49 +449,6 @@ def test_table_link_does_not_override_conditional_font_color():
     )
 
     assert "#ff0000" in svg
-
-
-# ============================================================================
-# Boolean predicates emit valid JS (true/false not True/False)
-# ============================================================================
-
-
-def test_boolean_predicate_vl_emission():
-    """eq: true/false must emit 'true'/'false' in VL test expression (not Python 'True'/'False')."""
-
-    _data = [
-        {"category": "A", "is_active": True, "arr": 100},
-        {"category": "B", "is_active": False, "arr": 50},
-    ]
-    chart = TypeAdapter(Chart).validate_python(
-        {
-            "id": "bool_chart",
-            "query": _DUMMY_QUERY,
-            "query_name": "q",
-            "type": "bar",
-            "x": "category",
-            "y": "arr",
-            "conditional_formatting": {
-                "is_active": {
-                    "when": [
-                        {"eq": True, "background": "#00ff00"},
-                        {"eq": False, "background": "#ff0000"},
-                    ]
-                }
-            },
-        }
-    )
-    resolved = resolve(chart, _data, chart_style_context=_BOARD_CONTEXT)
-    spec = render_resolved_chart(resolved, _data, _BOARD_STYLE).payload
-    color_enc = _color_enc(spec)
-    assert color_enc is not None, "Expected color encoding in spec or layers"
-    conditions = color_enc["condition"]
-    assert len(conditions) == 2
-    # Must use JS lowercase true/false, not Python True/False
-    assert "true" in conditions[0]["test"]
-    assert "True" not in conditions[0]["test"]
-    assert "false" in conditions[1]["test"]
-    assert "False" not in conditions[1]["test"]
 
 
 # ============================================================================

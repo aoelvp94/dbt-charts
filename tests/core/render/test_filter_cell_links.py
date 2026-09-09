@@ -21,6 +21,7 @@ links, which win the click over the row band.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from dbt_charts.core.compile.config import get_theme_style
@@ -28,6 +29,11 @@ from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
 _BOARD_CTX = resolve_chart_style_context(get_theme_style())
+
+# The row-link class carries a hash of its theme link color (see
+# `_row_link_class` in table.py) so two linked tables on different themes
+# sharing one HTML page don't collide on `.dbt-table-row-link:hover`.
+_ROW_LINK_CLASS = r"dbt-table-row-link-[0-9a-f]{8}"
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
@@ -258,10 +264,9 @@ class TestTableFilterCellLinksInSVG:
 
         # The detail URL is the row band, not a per-cell link on the id column.
         assert '<a href="/data/db/hubspot/company/detail/?id=1" aria-label' in svg
-        assert 'class="dbt-table-row-link"' in svg
+        row_link_match = re.search(rf'class="{_ROW_LINK_CLASS}"', svg)
+        assert row_link_match is not None
         # The filter link fires for property_industry (is a filter var) and
         # paints AFTER the band, so a click on it wins over the row link.
         assert "?property_industry=Retail" in svg
-        assert svg.index('class="dbt-table-row-link"') < svg.index(
-            "?property_industry=Retail"
-        )
+        assert row_link_match.start() < svg.index("?property_industry=Retail")

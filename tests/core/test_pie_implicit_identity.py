@@ -157,124 +157,18 @@ class TestNoExtraColumnUnaffected:
         assert texts, "expected direct slice labels"
 
 
-class TestConditionalFormattingOnThetaIsNotAnIdentity:
-    """conditional_formatting can project a `color` channel that paints by
-    the *theta* column's own value (threshold fill), with no `color:`
-    authored. That channel paints, it doesn't name -- regression for a bug
-    caught while building the implicit-identity inference: the theta-painted
-    channel was briefly treated as the wedge's identity, repeating the raw
-    number (e.g. "197199") in the tooltip instead of a real category."""
+def test_infer_implicit_color_field_unit_excludes_nothing_itself() -> None:
+    """The inference helper only ever sees the raw row shape -- it keeps
+    ignoring the theta column itself when it's the only other key (an empty
+    candidate set, not a false match). Previously grouped under a
+    conditional_formatting-on-pie test class; pie can no longer author
+    conditional_formatting at all, but this property of the helper itself
+    is unrelated to that and still holds."""
+    from dbt_charts.core.compile.resolve.chart.pie_attachment import (
+        infer_implicit_color_field,
+    )
 
-    def test_cf_on_theta_falls_back_to_the_real_category_column(
-        self, tmp_path: Path
-    ) -> None:
-        project = FilesystemProject(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
-        yaml_content = """
-title: pie cf on theta
-queries:
-  data:
-    columns: [category, revenue]
-    values:
-      - ["Electronics", 197199]
-      - ["Books", 50000]
-charts:
-  c:
-    type: pie
-    query: data
-    theta: revenue
-    conditional_formatting:
-      revenue:
-        when:
-          - gte: 150000
-            background: "#f59e0b"
-          - lt: 150000
-            background: "#e5e7eb"
-rows:
-  - c
-"""
-        result = render_dashboard(
-            board=InMemoryBoard(yaml_content, path=project.path("charts/_t.yml")),
-            project=project,
-            adapter_registry=registry,
-            result_cache=None,
-            format="svg",
-        )
-        assert result.status == "ok", result.chart_errors
-        assert isinstance(result.data, str)
-        aria_labels = re.findall(r'aria-label="([^"]*)"', result.data)
-        wedge_labels = [a for a in aria_labels if "Share:" in a]
-        assert wedge_labels, result.data
-        assert any("Electronics" in a for a in wedge_labels), wedge_labels
-        assert not any(
-            re.search(r"197199|197,199.*197,199", a) for a in wedge_labels
-        ), wedge_labels
-
-    def test_infer_implicit_color_field_unit_excludes_nothing_itself(self) -> None:
-        """The inference helper only ever sees the raw row shape -- the
-        theta-exclusion guard for conditional_formatting-projected color
-        channels lives in `_resolve_pie`, not here. This just pins that the
-        helper keeps ignoring the theta column itself when it's the only
-        other key (an empty candidate set, not a false match)."""
-        from dbt_charts.core.compile.resolve.chart.pie_attachment import (
-            infer_implicit_color_field,
-        )
-
-        assert infer_implicit_color_field("revenue", [{"revenue": 100}]) is None
-
-
-class TestConditionalFormattingOnNonThetaColumnIsNotAnIdentity:
-    """`conditional_formatting` is a paint surface for *any* column, not just
-    `theta` -- CF on an ordinary measure column (e.g. `growth`, unrelated to
-    the wedge's angle) must not hijack the identity source either. With two
-    non-theta columns left (`segment`, the real category, and `growth`, the
-    CF target) the choice is genuinely ambiguous, so nothing is inferred --
-    same as any other two-non-theta-column pie."""
-
-    def test_cf_on_a_measure_column_does_not_hijack_the_wedge_name(
-        self, tmp_path: Path
-    ) -> None:
-        project = FilesystemProject(tmp_path)
-        registry = build_adapter_registry(project, read_only=False)
-        yaml_content = """
-title: pie cf on non-theta measure
-queries:
-  data:
-    columns: [segment, growth, value]
-    values:
-      - ["Enterprise", 0.15, 10000]
-      - ["Mid-Market", 0.05, 6000]
-rows:
-  - c
-charts:
-  c:
-    type: pie
-    query: data
-    theta: value
-    conditional_formatting:
-      growth:
-        when:
-          - gte: 0.1
-            background: "#f59e0b"
-          - lt: 0.1
-            background: "#e5e7eb"
-"""
-        result = render_dashboard(
-            board=InMemoryBoard(yaml_content, path=project.path("charts/_t.yml")),
-            project=project,
-            adapter_registry=registry,
-            result_cache=None,
-            format="svg",
-        )
-        assert result.status == "ok", result.chart_errors
-        assert isinstance(result.data, str)
-        aria_labels = re.findall(r'aria-label="([^"]*)"', result.data)
-        wedge_labels = [a for a in aria_labels if "Share:" in a]
-        assert wedge_labels, result.data
-        # Neither the real category nor the CF-targeted growth value is
-        # guessed as the identity -- two non-theta columns remain ambiguous.
-        assert not any("Enterprise" in a for a in wedge_labels), wedge_labels
-        assert not any("0.15" in a for a in wedge_labels), wedge_labels
+    assert infer_implicit_color_field("revenue", [{"revenue": 100}]) is None
 
 
 class TestNullCategoryDoesNotRenderLiteralNone:

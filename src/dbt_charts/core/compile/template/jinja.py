@@ -46,9 +46,17 @@ from jinja2 import (
     nodes as jinja_nodes,
 )
 
-from dbt_charts.core.compile.errors import CompilationError, JinjaError
+from dbt_charts.core.compile.errors import (
+    CompilationError,
+    JinjaError,
+    TemplateOutputTooLargeError,
+)
 from dbt_charts.core.compile.template._helpers import _LenientUndefined, _QueryNamespace
 from dbt_charts.core.compile.template.environment import BoardTemplateEnvironment
+from dbt_charts.core.compile.template.output_budget import (
+    TemplateOutputBudgetExceeded,
+    render_with_budget,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +177,13 @@ RESERVED_VARIABLE_NAMES: frozenset[str] = frozenset(
         "filter_date_range",
         "queries",
     }
+)
+
+# The only names resolve_jinja_template's filter_helpers= may bind. It exists
+# to swap the raising stub below for a real closure over a known warehouse —
+# not a general mechanism for adding a new callable to the render context.
+RESERVED_FILTER_HELPER_NAMES: frozenset[str] = frozenset(
+    {"filter", "filter_date_range"}
 )
 
 # dbt SQL Jinja builtins that appear as CALLS in embedded dbt model SQL.
@@ -294,6 +309,8 @@ def resolve_jinja_template(
 
     Raises:
         JinjaError: If template syntax is invalid or (if strict) variable not found
+        CompilationError: If filter_helpers binds a name other than
+                RESERVED_FILTER_HELPER_NAMES
 
     Example:
         >>> resolve_jinja_template(
@@ -324,6 +341,12 @@ def resolve_jinja_template(
     context["filter"] = _filter_helper
     context["filter_date_range"] = _filter_date_range_helper
     if filter_helpers:
+        unreserved = set(filter_helpers) - RESERVED_FILTER_HELPER_NAMES
+        if unreserved:
+            raise CompilationError(
+                f"filter_helpers may only bind {sorted(RESERVED_FILTER_HELPER_NAMES)}, "
+                f"got unexpected name(s): {sorted(unreserved)}"
+            )
         context.update(filter_helpers)
 
     # Use strict or lenient environment
@@ -331,7 +354,11 @@ def resolve_jinja_template(
 
     try:
         jinja_template = jinja_env.from_string(template)
-        result = jinja_template.render(context)
+        result = render_with_budget(jinja_template, context)
+    except TemplateOutputBudgetExceeded as e:
+        raise TemplateOutputTooLargeError(
+            emitted_bytes=e.emitted_bytes, ceiling=e.ceiling
+        ) from e
     except UndefinedError as e:
         raise JinjaError(f"Undefined variable: {e}", template) from e
     except TemplateSyntaxError as e:

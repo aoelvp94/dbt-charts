@@ -96,44 +96,6 @@ rows:
     assert _slots(board) == [0, 0, 1]
 
 
-def test_conditional_formatting_does_not_consume_slot():
-    # conditional_formatting projects synthetic per-row color channels at
-    # render time — render does not paint with single_series_palette.
-    # The allocator must skip these charts so their position doesn't
-    # advance the rhythm counter (and shift downstream charts).
-    # Construct Chart instances directly to side-step the YAML flow-style
-    # corner case for nested conditional_formatting blocks.
-    from dbt_charts.core.compile.models.chart.authored import (
-        ConditionalRule,
-        FieldConditionalFormatting,
-    )
-    from dbt_charts.core.compile.models.chart.normalized import BarChart
-    from dbt_charts.core.compile.models.query.normalized import SqlQuery
-    from dbt_charts.core.compile.normalize.single_series_allocation import (
-        _is_single_series_eligible,
-    )
-
-    q = SqlQuery(sql="SELECT 1", source="test")
-    plain = BarChart(
-        id="plain", type="bar", query=q, query_name="q", x="month", y="revenue"
-    )
-    with_cf = BarChart(
-        id="cf",
-        type="bar",
-        query=q,
-        query_name="q",
-        x="month",
-        y="revenue",
-        conditional_formatting={
-            "revenue": FieldConditionalFormatting(
-                when=[ConditionalRule(gt=100, background="#ff0000")]
-            )
-        },
-    )
-    assert _is_single_series_eligible(plain) is True
-    assert _is_single_series_eligible(with_cf) is False
-
-
 def test_scatter_and_circle_eligible_for_rhythm():
     # `scatter` and `circle` paint via the single-ink path at render —
     # both must participate in the rhythm. (`circle` is a valid authored

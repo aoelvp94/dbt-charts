@@ -503,6 +503,8 @@ class TestLayoutDimensionStability:
 
     def test_render_title_does_not_add_safety_scale_to_precise_board_titles(self):
         """Board titles should wrap on exact measured width, not a 10% inflated width."""
+        import re
+
         from dbt_charts.core.render.svg_utils import render_title
         from mdsvg.fonts import FontMeasurer
 
@@ -519,5 +521,5 @@ class TestLayoutDimensionStability:
             resolved_style=resolve_style(get_theme_style()),
         )
 
-        assert svg.count('class="md-heading"') == 1
+        assert len(re.findall(r'class="md-[0-9a-f]{8}-heading"', svg)) == 1
         assert title in svg

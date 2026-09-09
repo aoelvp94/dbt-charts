@@ -212,6 +212,29 @@ class TestEnvelope:
         with pytest.raises(DanglingStyleRefError):
             load_resolved_board_artifact(artifact)
 
+    def test_round_trip_reconstructs_a_wide_measure_board(self) -> None:
+        """A wide y: [a, b] chart's resolved model must dump and load
+        back to an equal board."""
+        original = _resolved_board("""
+title: Wide Measure Board
+queries:
+  q:
+    columns: [month, revenue, cost]
+    values:
+      - ["Jan", 10, 5]
+      - ["Feb", 20, 8]
+charts:
+  wide:
+    query: q
+    type: bar
+    x: month
+    y: [revenue, cost]
+""")
+
+        artifact = dump_resolved_board_artifact(original)
+        restored = load_resolved_board_artifact(artifact)
+        assert restored == original
+
 
 class TestResolveFailureRoundTrip:
     """A board carrying a failed chart must survive dump → load.

@@ -270,9 +270,9 @@ text: Hello
         assert (narrow_w, wide_w) == (120.0, 160.0), "total_width is frame.width"
 
     def test_nested_board_border_dash_array_emits_svg_dasharray(self):
-        """A nested board's own style.border.dash_array reaches its stroked border
-        rect (render_nested_board — border does not cascade, ADR-003, so this must
-        be set on the nested board itself, not the root)."""
+        """A nested board's own style.border.dash_array reaches its stroked
+        border rect (render_nested_board) when authored directly on that
+        nested board, not on the root."""
         from dbt_charts.core.render.renderer import render
 
         board = _compile_board(

@@ -280,14 +280,14 @@ def test_grouped_bar_rank_follows_authored_legend_order_not_alphabetical():
     """A board-bound grouped bar's tooltip rank must agree with its rendered
     legend, not `distinct_series_values`'s alphabetical order.
 
-    `bar.py`'s grouped-bar branch deliberately skips
-    `pin_legend_display_order` (a stacked mark's legend needs it; a grouped
-    mark's legend already follows `scale.domain` on its own) -- but it still
-    built that `scale.domain` from plain alphabetical `distinct_series_values`
-    even when `style.legend.values` authored a different full order, so the
-    two disagreed: `apply_color_legend` bakes `style.legend.values` onto
-    `enc["legend"]["values"]` verbatim (the legend read "C, A, B"), while
-    `_series_order_role` bakes its rank from `scale.domain` (still "A, B, C"
+    `bar.py`'s grouped-bar branch resolves `style.legend.values` via
+    `apply_legend_entry_order`/`resolve_legend_entries` for the legend
+    itself, and separately reorders `scale.domain` to match a FULL authored
+    permutation (never a filtered subset) so `_series_order_role`'s rank
+    can't disagree with what the legend actually shows: regression coverage
+    for the two staying in sync ("C, A, B" order) rather than the legend
+    reading the authored order while the tooltip rank still bakes from
+    plain alphabetical `distinct_series_values` ("A, B, C"
     alphabetical) -- a shared value ranks differently than where it visually
     sits in the legend.
     """

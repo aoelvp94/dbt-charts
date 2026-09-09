@@ -108,9 +108,9 @@ class TestMergedStyleOverlayFields:
             compile_board_resolved_style,
         )
 
-        base, _ = compile_board_resolved_style(None, None, None)
+        base, _, _ = compile_board_resolved_style(None, None, None)
         patch = StylePatch.model_validate({"background": "#aabbcc"})
-        resolved, _ = compile_board_resolved_style(patch, None, None)
+        resolved, _, _ = compile_board_resolved_style(patch, None, None)
         assert resolved.background == "#aabbcc"
         assert resolved.background != base.background
 
@@ -121,7 +121,7 @@ class TestMergedStyleOverlayFields:
         )
 
         patch = StylePatch.model_validate({"border": "2px solid #333"})
-        resolved, _ = compile_board_resolved_style(patch, None, None)
+        resolved, _, _ = compile_board_resolved_style(patch, None, None)
         assert resolved.border.width == 2.0
         assert resolved.border.color == "#333"
 
@@ -131,7 +131,7 @@ class TestMergedStyleOverlayFields:
             compile_board_resolved_style,
         )
 
-        resolved, _ = compile_board_resolved_style(None, None, None)
+        resolved, _, _ = compile_board_resolved_style(None, None, None)
         ep = effective_padding(resolved)
         assert ep.top == 0.0
         assert ep.left == 0.0
@@ -149,7 +149,7 @@ class TestMergedStyleOverlayFields:
                 "border": "4px solid #333",
             }
         )
-        resolved, _ = compile_board_resolved_style(patch, None, None)
+        resolved, _, _ = compile_board_resolved_style(patch, None, None)
         ep = effective_padding(resolved)
         assert ep.top == 14.0  # 10 padding + 4 border
         assert ep.left == 14.0

@@ -20,6 +20,21 @@ from mdsvg import (
 from mdsvg.fonts import FontFace, FontFaces, FontMeasurer, _cached_measurer
 from mdsvg.renderer import SVGRenderer
 
+# Class names carry a hash-derived scope (see TestClassPrefixScoping) so two
+# boards' SVGs sharing one HTML page can't collide on `.md-heading`. Tests
+# that only care "did the heading rule render" match on the bare name.
+_MD_CLASS = r"md-[0-9a-f]{8}"
+
+
+def _has_md_class(haystack: str, name: str) -> bool:
+    return re.search(rf"{_MD_CLASS}-{name}\b", haystack) is not None
+
+
+def _md_rule_body(haystack: str, name: str) -> str:
+    match = re.search(rf"\.{_MD_CLASS}-{name} \{{([^}}]*)\}}", haystack)
+    assert match is not None, f"no .md-*-{name} rule found"
+    return match.group(1)
+
 
 class TestBasicRendering:
     """Test basic rendering functionality."""
@@ -36,7 +51,7 @@ class TestBasicRendering:
         svg = render("# Hello")
         assert "<svg" in svg
         assert "Hello" in svg
-        assert "md-heading" in svg
+        assert _has_md_class(svg, "heading")
 
     def test_render_bold(self) -> None:
         """Test rendering bold text."""
@@ -54,7 +69,7 @@ class TestBasicRendering:
         """Test rendering inline code."""
         svg = render("`code`")
         assert "code" in svg
-        assert "md-code" in svg
+        assert _has_md_class(svg, "code")
 
     def test_render_inline_code_renders_as_chip(self) -> None:
         """Inline code renders as a background chip in normal text flow (no brackets)."""
@@ -109,7 +124,7 @@ class TestBasicRendering:
 
         assert "[status]" not in svg
         assert "status" in svg
-        assert "md-code" in svg
+        assert _has_md_class(svg, "code")
         assert "<rect" in svg
 
     def test_render_link(self) -> None:
@@ -197,6 +212,25 @@ class TestCodeBlocks:
         assert "    return 42" in svg
         # xml:space="preserve" is required for visual correctness
         assert 'xml:space="preserve"' in svg
+
+    def test_hide_overflow_clip_id_is_deterministic(self) -> None:
+        """`code-clip-*` ids must derive from content, not `id()` — a CPython
+        memory address is nondeterministic between runs and can collide when
+        two renders are composited into one document (address reuse)."""
+        style = Style(code_block_overflow="hide")
+        md = "```python\nprint('hello')\n```"
+
+        svg1 = render(md, style=style, width=400)
+        svg2 = render(md, style=style, width=400)
+
+        clip1 = re.search(r'clipPath id="(code-clip-[^"]+)"', svg1)
+        clip2 = re.search(r'clipPath id="(code-clip-[^"]+)"', svg2)
+        assert clip1 is not None and clip2 is not None
+        assert clip1.group(1) == clip2.group(1)
+        # Equality alone would also hold under `id()` whenever CPython happens
+        # to reuse the freed block's address, so pin the derived shape too — a
+        # memory address is neither 8 chars nor hex-only.
+        assert re.fullmatch(r"code-clip-[0-9a-f]{8}", clip1.group(1))
 
 
 class TestLists:
@@ -294,7 +328,7 @@ class TestTables:
 
         assert "[account_id]" not in svg
         assert "account_id" in svg
-        assert "md-code" in svg
+        assert _has_md_class(svg, "code")
 
 
 class TestStyling:
@@ -315,8 +349,8 @@ class TestStyling:
     def test_default_font_weight_not_emitted(self) -> None:
         """Default body weight should not churn SVG snapshots."""
         svg = render("Hello")
-        assert ".md-text" in svg
-        assert "font-weight:" not in svg.split(".md-mono", 1)[0]
+        assert _has_md_class(svg, "text")
+        assert "font-weight:" not in _md_rule_body(svg, "text")
 
     def test_custom_font_weight(self) -> None:
         """Test custom body font weight."""
@@ -333,6 +367,53 @@ class TestStyling:
         """Test GitHub theme."""
         svg = render("Hello", style=GITHUB_THEME)
         assert GITHUB_THEME.text_color in svg
+
+
+class TestClassPrefixScoping:
+    """`.md-*` class names are scoped to a hash of their own style, so two
+    boards' inline SVGs sharing one HTML page (no CSS scope between them)
+    can't have the last `.md-heading` rule win for both."""
+
+    def test_different_styles_produce_non_colliding_selectors(self) -> None:
+        """A serif-styled render and a sans-styled render must not share a
+        `.md-*-heading` selector."""
+        serif = render("# Title", style=Style(font_family="'Source Serif 4', serif"))
+        sans = render("# Title", style=Style(font_family="Inter, sans-serif"))
+
+        serif_heading = re.search(r"\.(md-[0-9a-f]{8}-heading) \{", serif)
+        sans_heading = re.search(r"\.(md-[0-9a-f]{8}-heading) \{", sans)
+        assert serif_heading is not None
+        assert sans_heading is not None
+        assert serif_heading.group(1) != sans_heading.group(1)
+
+    def test_class_attrs_match_selectors_in_own_style_block(self) -> None:
+        """Every `class="md-*"` an element emits resolves to a selector
+        present in that same render's style block."""
+        svg = render("# Heading\n\nBody text.")
+        selectors = set(re.findall(r"\.(md-[0-9a-f]{8}-\w+)\s*\{", svg))
+        classes = set(re.findall(r'class="(md-[0-9a-f]{8}-\w+)"', svg))
+        assert classes
+        assert classes <= selectors
+
+    def test_prefix_deterministic_across_renders(self) -> None:
+        """The same style content, in two unrelated Style instances, must
+        produce the same prefix — the hash is over content, not `id()`."""
+        first = render("# Heading", style=Style(font_family="'My Font', serif"))
+        second = render("# Heading", style=Style(font_family="'My Font', serif"))
+
+        first_class = re.search(r'class="(md-[0-9a-f]{8}-heading)"', first)
+        second_class = re.search(r'class="(md-[0-9a-f]{8}-heading)"', second)
+        assert first_class is not None
+        assert second_class is not None
+        assert first_class.group(1) == second_class.group(1)
+
+    def test_no_unprefixed_md_selector_escapes(self) -> None:
+        """Standing guard: every `.md-` selector must carry a hash-prefixed
+        scope. Add a seventh rule to `_get_style_block` without routing it
+        through the prefix and this trips."""
+        svg = render("# Heading\n\n> Quote\n\n`code`")
+        bad = re.findall(r"\.md-(?![0-9a-f]{8}-)[\w-]+", svg)
+        assert bad == []
 
 
 class TestDimensions:
@@ -728,7 +809,7 @@ class TestRenderContent:
         """Test that content includes the CSS style block."""
         result = render_content("Hello")
         assert "<style>" in result.content
-        assert ".md-text" in result.content
+        assert _has_md_class(result.content, "text")
 
     def test_render_content_with_custom_style(self) -> None:
         """Test render_content with custom style."""
@@ -793,8 +874,8 @@ class TestRenderContent:
         assert result.style_block is not None
         # Style block should have the CSS
         assert "<style>" in result.style_block
-        assert ".md-text" in result.style_block
-        assert ".md-heading" in result.style_block
+        assert _has_md_class(result.style_block, "text")
+        assert _has_md_class(result.style_block, "heading")
         # Style block should NOT have content
         assert "Hello World" not in result.style_block
 
@@ -871,7 +952,7 @@ class TestBlockquoteBackground:
 
         assert "[status]" not in svg
         assert "status" in svg
-        assert "md-code" in svg
+        assert _has_md_class(svg, "code")
 
     def test_blockquote_no_background_rect_when_empty(self) -> None:
         """When blockquote_background is '' (empty/none), only the left-rule rect is
@@ -1148,7 +1229,7 @@ class TestBlockquoteFontOverrides:
         """Blockquotes declare body font-family when no quote override is set."""
         style = Style(font_family="'Body Serif', serif")
         svg = render("> A quote", style=style)
-        assert ".md-blockquote" in svg
+        assert _has_md_class(svg, "blockquote")
         assert "font-family: 'Body Serif', serif" in svg
 
     def test_blockquote_font_size_applies(self) -> None:
@@ -1235,14 +1316,11 @@ class TestBoldFontWeight:
         """A real markdown heading's weight (the .md-heading CSS rule) is
         governed by heading_font_weight and must not move when bold_font_weight
         changes — proves headings and bold runs stayed on separate knobs."""
-        import re
-
         style = Style(bold_font_weight=999)
         svg = render("# Heading", style=style)
-        heading_rule = re.search(r"\.md-heading \{[^}]*\}", svg)
-        assert heading_rule is not None
-        assert "font-weight: bold" in heading_rule.group(0)  # unchanged default
-        assert "999" not in heading_rule.group(0)
+        heading_rule_body = _md_rule_body(svg, "heading")
+        assert "font-weight: bold" in heading_rule_body  # unchanged default
+        assert "999" not in heading_rule_body
 
 
 class TestHeadingMarginPxOverrides:

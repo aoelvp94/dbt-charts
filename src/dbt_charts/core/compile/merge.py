@@ -6,6 +6,7 @@ resolution layer that the compilation pipeline builds on. Public functions:
     merge_marker(field)              -> Merge | None
     strategy(field, nested)          -> str
     merge_patches(lower, upper, nested) -> P
+    scope_patch(inherited, own)      -> P | None
     merge_extends(node, board_path, boards_root) -> BoardPatch
     merge_metas(board_dir, boards_root) -> BoardPatch
     merged_patch(board_node, board_path, boards_root) -> BoardPatch
@@ -39,7 +40,7 @@ from collections.abc import Callable, Mapping
 from copy import deepcopy
 from functools import cache
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Annotated, Any, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, TypeVar, overload
 
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
@@ -296,6 +297,30 @@ def merge_patches(lower: P, upper: P, nested: bool) -> P:
             result_fields_set.add(name)
 
     return type(upper).model_construct(_fields_set=result_fields_set, **out)
+
+
+@overload
+def scope_patch(inherited: P | None, own: P) -> P: ...
+@overload
+def scope_patch(inherited: P | None, own: P | None) -> P | None: ...
+def scope_patch(inherited: P | None, own: P | None) -> P | None:
+    """The patch in force inside a nested scope, given its parent's.
+
+    A scope that authors nothing (``own is None``) inherits the parent's
+    patch unchanged. A scope with nothing to inherit from (``inherited is
+    None``, the root or an unstyled lineage) takes its own patch as-is.
+    Otherwise ``own`` merges onto ``inherited`` via ``merge_patches(...,
+    nested=True)`` — the same nested-board relation used everywhere else.
+
+    Shared by the compile cascade (``compile_board_resolved_style``) and any
+    read-only walk that needs to mirror it (design-verb scope offering) —
+    both must derive the same in-force patch from the same lineage.
+    """
+    if own is None:
+        return inherited
+    if inherited is None:
+        return own
+    return merge_patches(inherited, own, nested=True)
 
 
 # ---------------------------------------------------------------------------

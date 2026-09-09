@@ -449,6 +449,30 @@ def resolve_max_result_bytes() -> int:
     return config_value if ceiling is None else min(config_value, ceiling)
 
 
+def resolve_max_template_output_bytes_ceiling() -> int | None:
+    """Resolve the DCT_MAX_TEMPLATE_OUTPUT_BYTES_CEILING deployment ceiling,
+    if set.
+
+    Raises:
+        ValueError: If DCT_MAX_TEMPLATE_OUTPUT_BYTES_CEILING is set to a
+            non-positive or non-integer value.
+    """
+    return _resolve_positive_int_env_ceiling("DCT_MAX_TEMPLATE_OUTPUT_BYTES_CEILING")
+
+
+def resolve_max_template_output_bytes() -> int:
+    """Resolve the effective max_template_output_bytes: project config,
+    clamped to the deployment ceiling (DCT_MAX_TEMPLATE_OUTPUT_BYTES_CEILING)
+    if one is set.
+
+    A project's own dbt_charts.yml can never raise the value above the
+    deployment ceiling — only the ceiling or a tighter config value wins.
+    """
+    ceiling = resolve_max_template_output_bytes_ceiling()
+    config_value = get_execution_config().max_template_output_bytes
+    return config_value if ceiling is None else min(config_value, ceiling)
+
+
 def resolve_file_source_max_bytes_ceiling() -> int | None:
     """Resolve the DCT_FILE_SOURCE_MAX_BYTES_CEILING deployment ceiling, if set.
 

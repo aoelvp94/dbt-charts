@@ -274,11 +274,17 @@ _WIDE_STACK_DATA = [
     {"month": "Jan", "named": 10, "non_named": 30},
     {"month": "Feb", "named": 20, "non_named": 40},
 ]
+# The long-form "series" values are spelled with a space, not an underscore,
+# on purpose: a wide chart's legend/scale domain is now the HUMANIZED measure
+# name (default_axis_title("non_named") == "non named"), so this is what a
+# long-form color: chart's raw data would have to say to render byte-identical
+# legend text -- the geometry-parity tests below compare rendered SVG paths,
+# which shift a hair when the legend text (and thus its pixel width) differs.
 _LONG_STACK_DATA = [
     {"month": "Jan", "series": "named", "amount": 10},
-    {"month": "Jan", "series": "non_named", "amount": 30},
+    {"month": "Jan", "series": "non named", "amount": 30},
     {"month": "Feb", "series": "named", "amount": 20},
-    {"month": "Feb", "series": "non_named", "amount": 40},
+    {"month": "Feb", "series": "non named", "amount": 40},
 ]
 
 
@@ -353,12 +359,16 @@ class TestLayersStackNormalize:
         assert measure_enc["field"] == WIDE_VALUE_FIELD
         assert chart_pane["encoding"]["color"]["field"] == WIDE_LABEL_FIELD
 
-    def test_wide_measure_series_labels_match_long_form_values(self) -> None:
+    def test_wide_measure_series_labels_are_humanized(self) -> None:
+        """A wide chart's color domain is default_axis_title(measure), not
+        the raw column name -- matching the humanized text a long-form
+        color: chart of equivalent data would need for byte-identical
+        rendering (see _LONG_STACK_DATA's own comment)."""
         wide = _stack_chart(BarChart, "bar", ["named", "non_named"], None, "zero")
         spec = generate_vega_lite_spec(wide, _WIDE_STACK_DATA, width=400, height=300)
 
         assert spec["encoding"]["color"]["scale"]["domain"] == [
-            "non_named",
+            "non named",
             "named",
         ]
 

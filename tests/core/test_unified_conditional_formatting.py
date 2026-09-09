@@ -41,9 +41,7 @@ class TestConditionalFormattingBlockShape:
     def test_block_parses_with_single_column(self):
         patch = _chart_patch_adapter.validate_python(
             {
-                "type": "bar",
-                "x": "quarter",
-                "y": "arr",
+                "type": "table",
                 "conditional_formatting": {
                     "arr": {
                         "when": [
@@ -98,7 +96,7 @@ class TestConditionalFormattingBlockShape:
         with pytest.raises(ValidationError):
             _chart_patch_adapter.validate_python(
                 {
-                    "type": "bar",
+                    "type": "table",
                     "conditional_formatting": {
                         "arr": {
                             "when": [{"gt": 0, "background": "#166534"}],
@@ -113,7 +111,7 @@ class TestConditionalFormattingBlockShape:
         with pytest.raises(ValidationError):
             _chart_patch_adapter.validate_python(
                 {
-                    "type": "bar",
+                    "type": "table",
                     "conditional_formatting": {
                         "arr": {"when": [{"gt": 0}]},  # no background/font output
                     },
@@ -241,94 +239,12 @@ class TestKpiRenderingWithConditionalFormatting:
         assert "#991b1b" in svg
 
 
-class TestBarRenderingWithConditionalFormatting:
-    """Bar chart conditional_formatting lowers into mark-fill encoding."""
-
-    def test_bar_background_emits_vl_condition_on_color_encoding(self):
-        """A bar chart rule with ``background`` turns into a VL color-channel
-        condition (so matching marks get the background color)."""
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
-
-        chart = BarChart(
-            id="bar1",
-            query=SqlQuery(sql="SELECT 1", source="test"),
-            query_name="q",
-            type="bar",
-            x="quarter",
-            y="arr",
-            conditional_formatting={
-                "arr": {
-                    "when": [{"gt": 1_000_000, "background": "#166534"}],
-                }
-            },
-        )
-        data = [{"quarter": "Q1", "arr": 1_500_000}]
-        resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-        # Conditional color channel is projected from the block
-        assert "color" in resolved.resolved_channels
-        color_ch = resolved.resolved_channels["color"]
-        assert color_ch.mode == "conditional"
-        assert color_ch.data_field == "arr"
-        # Rule outputs the background color
-        assert any(getattr(r, "background", None) == "#166534" for r in color_ch.rules)
-
-
 # ============================================================================
-# conditional_formatting + per-channel scale coexist
+# conditional_formatting + per-channel scale coexist (kpi's background channel
+# is the only remaining family where a real channel and a CF projection can
+# collide — bar/pie/etc. never produce a CF projection anymore, per
+# _project_conditional_formatting_inputs collapsing to kpi/table only)
 # ============================================================================
-
-
-def test_conditional_formatting_coexists_with_channel_scale():
-    """``style.color.gradient`` (continuous encoding) and ``conditional_formatting``
-    (discrete rules) coexist — different jobs, different keys."""
-    patch = _chart_patch_adapter.validate_python(
-        {
-            "type": "bar",
-            "x": "quarter",
-            "y": "arr",
-            "color": "arr",
-            "style": {
-                "color": {"gradient": {"palette": ["#ffffff", "#1aff3c"]}},
-            },
-            "conditional_formatting": {
-                "arr": {"when": [{"gt": 1_000_000, "background": "#166534"}]}
-            },
-        }
-    )
-    assert patch.color == "arr"
-    assert patch.style is not None
-    assert patch.style.color is not None
-    assert patch.conditional_formatting is not None
-
-
-def test_channel_normalization_decides_gradient_and_rules_before_output() -> None:
-    from dbt_charts.core.compile.models.primitives import ColorStyle, ScaleTargetConfig
-    from dbt_charts.core.compile.resolve.chart.channel import normalize_chart_channels
-
-    chart = BarChart(
-        id="bar1",
-        type="bar",
-        x="quarter",
-        y="arr",
-        color="arr",
-        conditional_formatting={
-            "arr": {"when": [{"gt": 1_000_000, "background": "#166534"}]}
-        },
-    )
-    fallback = ScaleTargetConfig(palette=["#ffffff", "#1aff3c"])
-
-    channels = normalize_chart_channels(
-        chart,
-        {"quarter", "arr"},
-        style_color=ColorStyle(gradient=fallback),
-    )
-
-    assert set(channels) == {"color"}
-    assert channels["color"].mode == "conditional"
-    # fallback_scale is a resolved subtype after normalize_chart_channels — not
-    # the authored ScaleTargetConfig; assert on the palette field value.
-    assert channels["color"].fallback_scale is not None
-    assert channels["color"].fallback_scale.palette == ["#ffffff", "#1aff3c"]
 
 
 def test_gradient_fallback_rejects_unknown_authored_channel_field() -> None:
@@ -372,21 +288,60 @@ def test_kpi_conditional_fallback_rejects_scale_without_column() -> None:
         normalize_chart_channels(chart, {"arr"})
 
 
-def test_series_channel_conflicts_with_conditional_formatting():
-    chart = BarChart(
-        id="bar1",
-        type="bar",
-        x="quarter",
-        y="arr",
-        color="segment",
+def test_kpi_background_channel_conflicts_with_conditional_formatting():
+    """kpi is the only family left where a real channel and a CF projection
+    can land on the same output — an authored field-mode `background:` and
+    conditional_formatting rules that also target `background` both want the
+    same channel."""
+    from dbt_charts.core.compile.models.query.normalized import SqlQuery
+
+    chart = KpiChart(
+        id="kpi1",
+        query=SqlQuery(sql="SELECT 1", source="test"),
+        query_name="q",
+        type="kpi",
+        value="revenue",
+        background="segment",
         conditional_formatting={
-            "arr": {"when": [{"gt": 1_000_000, "background": "#166534"}]}
+            "revenue": {"when": [{"gt": 1_000_000, "background": "#166534"}]}
         },
     )
 
     with pytest.raises(ValueError, match="Use one surface"):
         resolve(
             chart,
-            [{"quarter": "Q1", "arr": 1_500_000, "segment": "Enterprise"}],
+            [{"revenue": 1_500_000, "segment": "Enterprise"}],
             chart_style_context=_BOARD_STYLE,
         )
+
+
+def test_kpi_gradient_background_channel_merges_with_conditional_formatting():
+    """kpi is the only family left that can still land a gradient channel
+    and a CF projection on the SAME column: unlike a plain field-mode
+    channel (which conflicts, see the sibling test above), a gradient
+    channel absorbs the CF rules instead of raising -- the resolved channel
+    keeps mode="conditional" but carries the gradient as its fallback_scale
+    (`channel.py`'s `_GradientChannelInput` branch)."""
+    from dbt_charts.core.compile.models.query.normalized import SqlQuery
+    from dbt_charts.core.compile.resolve.chart.channel import normalize_chart_channels
+
+    chart = KpiChart(
+        id="kpi1",
+        query=SqlQuery(sql="SELECT 1", source="test"),
+        query_name="q",
+        type="kpi",
+        value="revenue",
+        background={"column": "revenue", "scale": {"palette": ["#ffffff", "#1aff3c"]}},
+        conditional_formatting={
+            "revenue": {"when": [{"gt": 1_000_000, "background": "#166534"}]}
+        },
+    )
+
+    channels = normalize_chart_channels(chart, {"revenue"})
+
+    assert set(channels) == {"background"}
+    assert channels["background"].mode == "conditional"
+    # fallback_scale is a resolved subtype after normalize_chart_channels -- not
+    # the authored ScaleTargetConfig; assert on the palette field value.
+    assert channels["background"].fallback_scale is not None
+    assert channels["background"].fallback_scale.palette == ["#ffffff", "#1aff3c"]

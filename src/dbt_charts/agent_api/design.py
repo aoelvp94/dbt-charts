@@ -26,6 +26,7 @@ import sqlglot.errors
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.merge import scope_patch
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard, TabItem
 from dbt_charts.core.compile.models.chart.authored import (
     CHART_SUPPORT_TABLE_SUPPORTED_TYPES,
@@ -39,6 +40,7 @@ from dbt_charts.core.compile.models.query.authored import (
     AuthoredValuesQuery,
 )
 from dbt_charts.core.compile.models.refs import CrossFileRef
+from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.normalize.variables import (
     detect_variable_input_type,
@@ -236,25 +238,23 @@ _SCALAR_TYPES = _NUMERIC_TYPES | {"str", "bool"}
 # stops rendering — which is why line has to be in this table even though the
 # parse-gate test cannot see it. `_RENDER_FIXTURES` in the tests reaches it.
 #
-# The two halves do not cover the same siblings. The parse gate counts
-# `conditional_formatting` as a colour source — its rules project into the mark
-# fill — while `resolve_wide_measure_channels` reads `layers:` (and refuses a
-# `color:` that is not a plain column) and nothing else, so a line chart
-# carrying both rules and a list `y` renders with no diagnostic. Line's row is
-# short by that one entry, because a table that claims more than the compiler
-# enforces hides a control on a board that works. `color` is in neither row: a
-# column there composes with a list `y` (one series per value per measure).
+# The two halves do not cover the same siblings. `resolve_wide_measure_channels`
+# reads `layers:` (and refuses a `color:` that is not a plain column) and
+# nothing else, so a line chart carrying a list `y` and `layers:` renders with
+# no diagnostic caught at parse — line's row exists for the render sweep only,
+# because a table that claims more than the compiler enforces hides a control
+# on a board that works. `color` is in neither row: a column there composes
+# with a list `y` (one series per value per measure).
 #
 # Forward: once `y` holds a list, the conflicting sibling is not a control, or
 # the panel shows one half of a mutually exclusive pair and hides the other.
 # Mirror: once a sibling is authored, `y` is not a *multi-value* control, since
-# the list is the edit that creates the collision. Neither `layers` nor
-# `conditional_formatting` has a control (`_NOT_DESIGN`), so only the mirror
-# direction is live today.
+# the list is the edit that creates the collision. `layers` has no control
+# (`_NOT_DESIGN`), so only the mirror direction is live today.
 # GATED — the parse sweep (bar, area) and the render sweep (line).
 _LIST_CONFLICTS = {
-    "bar": ("y", ("layers", "conditional_formatting")),
-    "AreaChart": ("y", ("layers", "conditional_formatting")),
+    "bar": ("y", ("layers",)),
+    "AreaChart": ("y", ("layers",)),
     "LineChart": ("y", ("layers",)),
 }
 
@@ -500,8 +500,9 @@ class DesignProperty(BaseModel):
         default=None,
         description=(
             "Values on offer: what the schema declares, plus — on a field the "
-            "schema facets as a `format` — the aliases the target's own scope "
-            "authors. Every value on a `select`; on a `combo`, the shortcuts."
+            "schema facets as a `format` — the aliases in force in the "
+            "target's scope. Every value on a `select`; on a `combo`, the "
+            "shortcuts."
         ),
     )
     default_repr: str | None = Field(
@@ -1279,13 +1280,14 @@ def _resolve(
     board is always a target, so the walk always terminates on something.
 
     The format aliases come back with it because they are a property of the
-    walk, not of the node: they are whatever the innermost enclosing scope
-    authors, which only the descent knows.
+    walk, not of the node: they are whatever is in force at the innermost
+    enclosing scope — the parent's table merged with anything that scope
+    authors of its own — which only the descent knows.
     """
     node, walked, writes_at = board, "", ""
-    aliases = _scope_aliases(board, ())
+    style_patch = _scope_style_patch(board, None)
     queries = _scope_queries(board, {})
-    found = (board, "", "", aliases, queries)
+    found = (board, "", "", _scope_aliases(style_patch), queries)
     segments = path.split(".") if path else []
     while segments:
         hop = _hop(node, segments)
@@ -1294,11 +1296,11 @@ def _resolve(
         child, taken, suffix = hop
         walked = _absolute(walked, ".".join(segments[:taken]))
         node, writes_at = _unwrap(child, _absolute(writes_at, suffix))
-        aliases = _scope_aliases(node, aliases)
+        style_patch = _scope_style_patch(node, style_patch)
         queries = _scope_queries(node, queries)
         segments = segments[taken:]
         if _is_target(schema, node, walked):
-            found = (node, walked, writes_at, aliases, queries)
+            found = (node, walked, writes_at, _scope_aliases(style_patch), queries)
     return found
 
 
@@ -1537,25 +1539,32 @@ def _scope_queries(node: Any, inherited: Mapping[str, Any]) -> Mapping[str, Any]
     return {**inherited, **node.queries}
 
 
-def _scope_aliases(node: Any, inherited: tuple[str, ...]) -> tuple[str, ...]:
-    """The format aliases in force inside `node`, given its parent's.
+def _scope_style_patch(node: Any, inherited: StylePatch | None) -> StylePatch | None:
+    """The style patch in force inside `node`, given its parent's.
 
-    `formats` is declared once, on the root `Style`, so it is not a per-chart
-    field — but it is per *scope*: a tab or nested board that authors `style:`
-    resolves that style from the theme, so its table replaces the one above it
-    rather than adding to it. Even a scope authoring only a background replaces
-    it, with an empty one: `arr` defined on the board raises
-    `ERR_FORMAT_INVALID` inside such a tab, so offering it there would hand the
-    author a value that stops the board compiling.
+    A tab or nested board that authors its own `style:` scopes it onto the
+    parent's via `scope_patch` — the same helper `compile_board_resolved_style`
+    calls for the real cascade — so `formats` (a plain, unmarked dict field)
+    resolves key-wise here exactly as it does at compile. A scope that authors
+    `style:` without touching `formats` inherits the parent's table unchanged
+    (an unset field falls through in `merge_patches`); an explicit
+    `style.formats: null` clears it for that scope and everything under it,
+    same as it does at compile.
+    """
+    if not isinstance(node, (AuthoredBoard, TabItem)):
+        return inherited
+    return scope_patch(inherited, node.style)
+
+
+def _scope_aliases(patch: StylePatch | None) -> tuple[str, ...]:
+    """The format alias names offered inside a scope, from its merged style patch.
 
     Aliases an `extends:` template defines are in no scope's table here —
     resolving one is a read, and this half of the verb performs no I/O.
     """
-    if not isinstance(node, (AuthoredBoard, TabItem)):
-        return inherited
-    if node.style is None:
-        return inherited
-    return tuple(node.style.formats or ())
+    if patch is None or patch.formats is None:
+        return ()
+    return tuple(patch.formats)
 
 
 def design_target(board: Path, path: str, *, project: Project) -> DesignTarget:

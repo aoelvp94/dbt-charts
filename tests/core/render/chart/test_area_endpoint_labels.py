@@ -536,4 +536,10 @@ def test_wide_area_truncation_names_the_y_key_not_the_fold_column(make_chart):
 
     records = truncations[resolved.id]
     assert [r.authored_field for r in records] == ["y"]
-    assert records[0].series_name == long_measure
+    # Humanized (default_axis_title), matching the rail's own rendered text
+    # and the wide chart's y-axis title for the same measure -- not the raw
+    # column name.
+    assert (
+        records[0].series_name
+        == "enterprise cloud data integration platform north america west"
+    )

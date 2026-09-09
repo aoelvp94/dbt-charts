@@ -8,6 +8,7 @@ The old `href:` field is rejected at compile time with a message directing
 authors to use `link:` instead.
 """
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -24,6 +25,23 @@ from dbt_charts.core.compile.resolve.style.board import (
 from dbt_charts.core.execute.adapters import build_adapter_registry
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
+
+# The row-link class carries a hash of its theme link color (see
+# `_row_link_class` in table.py) so two linked tables on different themes
+# sharing one HTML page don't collide on `.dbt-table-row-link:hover`. Tests
+# that only care "did the row band render" match on the bare prefix.
+_ROW_LINK_CLASS = r"dbt-table-row-link-[0-9a-f]{8}"
+
+
+def _row_link_count(svg: str) -> int:
+    return len(re.findall(rf'class="{_ROW_LINK_CLASS}"', svg))
+
+
+def _row_link_index(svg: str) -> int:
+    match = re.search(rf'class="{_ROW_LINK_CLASS}"', svg)
+    assert match is not None, "no row-link rect found"
+    return match.start()
+
 
 _BASE_YAML = """\
 title: Test Dashboard
@@ -591,7 +609,7 @@ rows:
     )
 
     # One row-band anchor per value row — not one anchor per non-linked cell.
-    assert svg.count('class="dbt-table-row-link"') == 2
+    assert _row_link_count(svg) == 2
     assert 'href="/zendesk/ticket/T1"' in svg
     assert 'href="/zendesk/ticket/T2"' in svg
     # The nameless-rect anchor carries an aria-label (the row's first value) so
@@ -602,17 +620,13 @@ rows:
     assert 'href="/zendesk/backlog/?status=Closed"' in svg
     # The row-link rect paints BEFORE the status cell anchor so the cell link
     # wins the click (SVG document order = z-order, later = on top).
-    assert svg.index('class="dbt-table-row-link"') < svg.index(
-        'href="/zendesk/backlog/?status=Open"'
-    )
+    assert _row_link_index(svg) < svg.index('href="/zendesk/backlog/?status=Open"')
     # The plain ticket_id cell carries the inert-cell class; its stylesheet
     # rule is specificity-qualified (``.dbt-chart text.dbt-table-cell-inert``)
     # so it beats the board's ``.dbt-chart text { pointer-events: auto }`` and
     # the click/hover falls through to the row band. A bare presentation
     # attribute would lose that cascade, so assert the class + the rule, not an
     # attribute. The wired "Open" cell keeps events and is inked as a link.
-    import re
-
     assert re.search(r'<text class="dbt-table-cell-inert"[^>]*>T1</text>', svg)
     assert ".dbt-chart text.dbt-table-cell-inert" in svg
     assert re.search(
@@ -666,14 +680,14 @@ rows:
     )
 
     # Row band exists, one per value row.
-    assert svg.count('class="dbt-table-row-link"') == 2
+    assert _row_link_count(svg) == 2
     # No per-cell link inking: no cell anchor, no inked link-text element.
     # (The static hover CSS references `.dbt-table-link-text`, so match the
     # class attribute a wired cell would carry, not the stylesheet rule.)
     assert '<g class="dbt-table-link"' not in svg
     assert 'class="dbt-table-link-text"' not in svg
     # Row-hover selection background CSS is present and distinct from link text.
-    assert ".dbt-table-row-link:hover" in svg
+    assert re.search(rf"\.{_ROW_LINK_CLASS}:hover", svg) is not None
     # Plain cell text carries the inert-cell class, and the stylesheet drops its
     # pointer events via a rule qualified to outrank the board's
     # ``.dbt-chart text { pointer-events: auto }`` — this is what lets a
@@ -681,8 +695,6 @@ rows:
     # browser lane exists in this package; the real composed-page interaction
     # was verified manually against `dct serve`.)
     assert '<text class="dbt-table-cell-inert"' in svg
-    import re
-
     assert re.search(
         r"\.dbt-chart text\.dbt-table-cell-inert\s*\{[^}]*pointer-events:\s*none",
         svg,
@@ -729,7 +741,7 @@ rows:
     )
 
     # Two value rows get a row band; the total row does not.
-    assert svg.count('class="dbt-table-row-link"') == 2
+    assert _row_link_count(svg) == 2
     assert 'href="/accounts/1"' in svg
     assert 'href="/accounts/2"' in svg
     assert 'href="/accounts/0"' not in svg
@@ -741,8 +753,6 @@ def test_table_row_link_skips_row_number_column() -> None:
     With the index gutter visible the band must start to the RIGHT of where it
     starts without the gutter — the row link never covers the row-number column.
     """
-    import re
-
     from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
 
     data = [{"company": "Apex", "id": 1}, {"company": "Bright", "id": 2}]
@@ -777,7 +787,7 @@ rows:
         )
 
     def _band_x(svg: str) -> float:
-        xs = re.findall(r'<rect class="dbt-table-row-link" x="([0-9.]+)"', svg)
+        xs = re.findall(rf'<rect class="{_ROW_LINK_CLASS}" x="([0-9.]+)"', svg)
         assert len(xs) == 2, svg
         return float(xs[0])
 
@@ -939,3 +949,13 @@ charts:
         assert any(
             t.get("as") == "__df_href__" for t in (pane.get("transform") or [])
         ), "href encoding without its calculate transform in the same pane"
+
+
+def test_row_link_class_is_keyed_to_the_link_color():
+    """Two link colors must not land on one class, or the `:hover` rules
+    collide when both tables share a page; one color must be stable, or the
+    rule and its wearer drift apart within a single render."""
+    from dbt_charts.core.render.chart.table import _row_link_class
+
+    assert _row_link_class("#222222") != _row_link_class("#EDEFF2")
+    assert _row_link_class("#222222") == _row_link_class("#222222")

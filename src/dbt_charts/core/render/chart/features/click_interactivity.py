@@ -15,6 +15,7 @@ from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
 from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
+from dbt_charts.core.compile.resolve.chart._wide_fields import WIDE_KEY_FIELD
 from dbt_charts.core.render.chart.feature import chart_rows
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 
@@ -48,6 +49,15 @@ def _channel_field(chart: ResolvedChart, channel: str) -> str | None:
     if channel == "color":
         if not isinstance(chart, _BaseResolvedChartFields):
             return None
+        # A wide chart folds color into WIDE_LABEL_FIELD's humanized text --
+        # a link needs the raw column via WIDE_KEY_FIELD, or downstream SQL
+        # matches nothing. An authored dimension `color:` is an untouched
+        # column on every row, so read it directly instead.
+        if (
+            isinstance(chart, (ResolvedBarChart, ResolvedLineChart, ResolvedAreaChart))
+            and chart.wide_measures
+        ):
+            return chart.color if chart.color is not None else WIDE_KEY_FIELD
         color_ch = chart.resolved_channels.get("color")
         return color_ch.data_field if color_ch is not None else None
     if channel == "theta":

@@ -18,12 +18,14 @@ Python 3.10 (a real CI failure we hit when this module lived at
 
 from __future__ import annotations
 
+import functools
 import importlib.util as _importlib_util
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Any, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, ParamSpec, get_args
 
 _logger = logging.getLogger(__name__)
 
@@ -35,9 +37,11 @@ from dbt_charts.core.compile import (
     compile_file,
     focus_on_chart,
 )
+from dbt_charts.core.compile.config import resolve_max_template_output_bytes
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.cache import CachePolicy
 from dbt_charts.core.compile.parse.source_map import stamp_diagnostics
+from dbt_charts.core.compile.template.output_budget import template_output_budget
 from dbt_charts.core.diagnostics import (
     ERR_FORMAT_UNSUPPORTED,
     ERR_INPUT_INVALID,
@@ -225,6 +229,29 @@ def _preserved_walk_data(
     return output
 
 
+_RenderDashboardP = ParamSpec("_RenderDashboardP")
+
+
+def _with_template_output_budget(
+    fn: Callable[_RenderDashboardP, BoardRenderResult],
+) -> Callable[_RenderDashboardP, BoardRenderResult]:
+    """Open template_output_budget() around one call to `fn`.
+
+    A decorator so the ~300-line function body below stays flat: nesting it
+    inside an inlined `with` would reindent every line in its span.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(
+        *args: _RenderDashboardP.args, **kwargs: _RenderDashboardP.kwargs
+    ) -> BoardRenderResult:
+        with template_output_budget(resolve_max_template_output_bytes()):
+            return fn(*args, **kwargs)
+
+    return wrapper
+
+
+@_with_template_output_budget
 def render_dashboard(
     board: BoardFile | None = None,
     variables: dict[str, Any] | None = None,

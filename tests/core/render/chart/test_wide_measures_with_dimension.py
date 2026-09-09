@@ -1,5 +1,5 @@
 """``y: [a, b]`` + ``color: dim`` on bar/area/line — the wide fold's synthetic
-series key widens to a ``<dimension> — <measure>`` composite, so a pivoted
+series key widens to a ``<dimension> - <measure>`` composite, so a pivoted
 result (N measures as columns, grouped by a dimension) draws N × k series.
 """
 
@@ -19,6 +19,7 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
     WIDE_LABEL_FIELD,
     WIDE_VALUE_FIELD,
     unfold_wide_rows,
+    wide_measure_labels_for,
     wide_series_names,
 )
 from dbt_charts.core.compile.resolve.style.board import (
@@ -28,6 +29,7 @@ from dbt_charts.core.compile.resolve.style.board import (
 from dbt_charts.core.diagnostics import (
     ERR_BAR_DUPLICATE_ROWS,
     ERR_MULTI_Y_COLOR_CONFLICT,
+    ERR_WIDE_MEASURE_NAME_CONTAINS_SEPARATOR,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_COLOR_NULL_SERIES
@@ -43,7 +45,7 @@ _DATA: list[dict[str, Any]] = [
     {"date": "2024-02-01", "list": "bugs", "messages": 300, "fixes": 100},
     {"date": "2024-02-01", "list": "hackers", "messages": 2400, "fixes": 950},
 ]
-_SERIES = ["bugs — fixes", "bugs — messages", "hackers — fixes", "hackers — messages"]
+_SERIES = ["bugs - fixes", "bugs - messages", "hackers - fixes", "hackers - messages"]
 
 
 def _color_domains(node: Any) -> list[list[str]]:
@@ -201,7 +203,14 @@ class TestCompositeSeries:
         data = [dict(row, list=values[i % 2]) for i, row in enumerate(_DATA)]
         chart = make_chart("line", x="date", y=["messages", "fixes"], color="list")
         rc, spec = _render(chart, data)
-        expected = set(wide_series_names(rc.wide_measures, rc.color, data))
+        expected = set(
+            wide_series_names(
+                rc.wide_measures,
+                rc.color,
+                data,
+                wide_measure_labels_for(rc.wide_measures),
+            )
+        )
         assert len(expected) == 4
         scene = vlc.vegalite_to_scenegraph(json.dumps(spec))
         painted = _painted_series(scene)
@@ -241,7 +250,7 @@ class TestCompositeSeries:
         chart = make_chart("line", x="date", y=["messages"], color="list")
         _, spec = _render(chart, _DATA)
         for domain in _color_domains(spec):
-            assert sorted(domain) == ["bugs — messages", "hackers — messages"]
+            assert sorted(domain) == ["bugs - messages", "hackers - messages"]
 
     def test_null_dimension_is_rejected_whatever_its_dtype(self, make_chart):
         """A null dimension names no series in Python but VL's fold still
@@ -267,15 +276,30 @@ class TestCompositeSeries:
             resolve(chart, _DATA, chart_style_context=_CTX)
         assert exc.value.code == ERR_MULTI_Y_COLOR_CONFLICT
 
+    def test_measure_name_containing_separator_rejected_with_no_data(self, make_chart):
+        """A measure column whose own name contains the ``<value> - <measure>``
+        composite separator can't be split back apart -- this must be caught
+        at resolve() from the authored y: list alone, with EMPTY rows. Before
+        this check moved here, it only fired from `humanize_wide_series_name`
+        once real rows produced a dimension value, so a board with no
+        distinct dimension values yet in its query result compiled clean and
+        only crashed the first time data supplied one."""
+        chart = make_chart(
+            "line", x="date", y=["messages", "gross - net"], color="list"
+        )
+        with pytest.raises(CompilationError) as exc:
+            resolve(chart, [], chart_style_context=_CTX)
+        assert exc.value.code == ERR_WIDE_MEASURE_NAME_CONTAINS_SEPARATOR
+
 
 class TestUnfoldHelpers:
     def test_unfold_labels_are_dimension_dash_measure(self):
         rows = unfold_wide_rows(_DATA[:2], ("messages", "fixes"), "list")
         assert [(r[WIDE_LABEL_FIELD], r[WIDE_VALUE_FIELD]) for r in rows] == [
-            ("bugs — messages", 312),
-            ("bugs — fixes", 128),
-            ("hackers — messages", 2306),
-            ("hackers — fixes", 903),
+            ("bugs - messages", 312),
+            ("bugs - fixes", 128),
+            ("hackers - messages", 2306),
+            ("hackers - fixes", 903),
         ]
 
     def test_unfold_without_dimension_keeps_measure_labels(self):
@@ -289,11 +313,12 @@ class TestUnfoldHelpers:
             {"date": "d", "list": "bugs", "messages": 1, "fixes": None},
             {"date": "d", "list": None, "messages": 2, "fixes": None},
         ]
-        assert wide_series_names(("messages", "fixes"), "list", data) == [
-            "bugs — fixes",
-            "bugs — messages",
+        labels = {"messages": "messages", "fixes": "fixes"}
+        assert wide_series_names(("messages", "fixes"), "list", data, labels) == [
+            "bugs - fixes",
+            "bugs - messages",
         ]
-        assert wide_series_names(("messages", "fixes"), None, data) == [
+        assert wide_series_names(("messages", "fixes"), None, data, labels) == [
             "fixes",
             "messages",
         ]

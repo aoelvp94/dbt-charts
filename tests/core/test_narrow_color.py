@@ -115,7 +115,8 @@ class TestBannedColorShapes:
         from pydantic import ValidationError
 
         with pytest.raises(
-            ValidationError, match=r"Inline conditional.*no longer accepted"
+            ValidationError,
+            match=r"Inline conditional.*no longer accepted.*no longer supports rule-driven conditional_formatting.*gradient scale",
         ):
             _patch(
                 color={
@@ -123,6 +124,27 @@ class TestBannedColorShapes:
                     "when": [{"eq": "danger", "font": {"color": "#900"}}],
                 }
             )
+
+    def test_inline_conditional_points_at_gradient_fix_not_conditional_formatting(
+        self,
+    ):
+        """The remediation must not send the author to a field this family no
+        longer accepts — it points at the same GRADIENT_COLOR_FIX block the
+        sibling `scale` branch already uses."""
+        from dbt_charts.core.compile.models.chart.authored._base import (
+            GRADIENT_COLOR_FIX,
+        )
+
+        with pytest.raises(ValidationError) as excinfo:
+            _patch(
+                color={
+                    "column": "status",
+                    "when": [{"eq": "danger", "font": {"color": "#900"}}],
+                }
+            )
+        message = str(excinfo.value)
+        assert "conditional_formatting:" not in message.split("[type=")[0]
+        assert GRADIENT_COLOR_FIX in message
 
 
 # ---------------------------------------------------------------------------
@@ -428,6 +450,9 @@ class TestColorErrorRemediationsParse:
             pytest.param("#ff0000", id="literal-hex-string"),
             pytest.param({"value": "#ff0000"}, id="value-dict"),
             pytest.param({"scale": {"palette": ["#eee", "#333"]}}, id="scale-dict"),
+            pytest.param(
+                {"column": "status", "when": [{"eq": "danger"}]}, id="when-dict"
+            ),
         ],
     )
     def test_the_remediation_is_valid_yaml_that_parses(self, bad_color: object) -> None:
@@ -452,6 +477,9 @@ class TestColorErrorRemediationsParse:
             pytest.param("#ff0000", id="literal-hex-string"),
             pytest.param({"value": "#ff0000"}, id="value-dict"),
             pytest.param({"scale": {"palette": ["#eee", "#333"]}}, id="scale-dict"),
+            pytest.param(
+                {"column": "status", "when": [{"eq": "danger"}]}, id="when-dict"
+            ),
         ],
     )
     def test_the_remediation_shows_a_token_not_a_hex(self, bad_color: object) -> None:

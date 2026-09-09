@@ -118,49 +118,72 @@ def test_line_patch_rejects_size():
         LineChart(type="line", x="m", y="v", size="col")  # type: ignore[call-arg]
 
 
-def test_pie_patch_accepts_conditional_formatting():
-    """pie has a CF lowering path — conditional_formatting must parse."""
-    p = PieChart(
-        type="pie",
-        theta="revenue",
-        conditional_formatting={
-            "revenue": {"when": [{"gt": 100, "background": "#ff0000"}]}
-        },
-    )
-    assert p.conditional_formatting is not None
+def test_pie_patch_rejects_conditional_formatting():
+    """conditional_formatting is retired on pie — extra_forbidden."""
+    with pytest.raises(ValidationError, match="conditional_formatting"):
+        PieChart(
+            type="pie",
+            theta="revenue",
+            conditional_formatting={
+                "revenue": {"when": [{"gt": 100, "background": "#ff0000"}]}
+            },
+        )  # type: ignore[call-arg]
 
 
-def test_geoshape_patch_accepts_conditional_formatting():
-    """geoshape has a CF lowering path — conditional_formatting must parse."""
-    g = GeoshapeChart(
-        type="geoshape",
-        conditional_formatting={
-            "sales": {"when": [{"gt": 1000, "background": "#ff0000"}]}
-        },
-    )
-    assert g.conditional_formatting is not None
+def test_donut_patch_rejects_conditional_formatting():
+    """donut dispatches to PieChart — same retirement as pie."""
+    with pytest.raises(ValidationError, match="conditional_formatting"):
+        PieChart(
+            type="donut",
+            theta="revenue",
+            conditional_formatting={
+                "revenue": {"when": [{"gt": 100, "background": "#ff0000"}]}
+            },
+        )  # type: ignore[call-arg]
 
 
-def test_point_map_patch_accepts_conditional_formatting():
-    """point_map has a CF lowering path — conditional_formatting must parse."""
-    p = PointMapChart(
-        type="point_map",
-        conditional_formatting={
-            "value": {"when": [{"gt": 50, "background": "#00ff00"}]}
-        },
-    )
-    assert p.conditional_formatting is not None
+def test_geoshape_patch_rejects_conditional_formatting():
+    """conditional_formatting is retired on geoshape — extra_forbidden."""
+    with pytest.raises(ValidationError, match="conditional_formatting"):
+        GeoshapeChart(
+            type="geoshape",
+            conditional_formatting={
+                "sales": {"when": [{"gt": 1000, "background": "#ff0000"}]}
+            },
+        )  # type: ignore[call-arg]
 
 
-def test_bubble_map_patch_accepts_conditional_formatting():
-    """bubble_map has a CF lowering path — conditional_formatting must parse."""
-    p = PointMapChart(
-        type="bubble_map",
-        conditional_formatting={
-            "value": {"when": [{"gt": 50, "background": "#0000ff"}]}
-        },
-    )
-    assert p.conditional_formatting is not None
+def test_map_patch_rejects_conditional_formatting():
+    """map dispatches to GeoshapeChart — same retirement as geoshape."""
+    with pytest.raises(ValidationError, match="conditional_formatting"):
+        GeoshapeChart(
+            type="map",
+            conditional_formatting={
+                "sales": {"when": [{"gt": 1000, "background": "#ff0000"}]}
+            },
+        )  # type: ignore[call-arg]
+
+
+def test_point_map_patch_rejects_conditional_formatting():
+    """conditional_formatting is retired on point_map — extra_forbidden."""
+    with pytest.raises(ValidationError, match="conditional_formatting"):
+        PointMapChart(
+            type="point_map",
+            conditional_formatting={
+                "value": {"when": [{"gt": 50, "background": "#00ff00"}]}
+            },
+        )  # type: ignore[call-arg]
+
+
+def test_bubble_map_patch_rejects_conditional_formatting():
+    """bubble_map dispatches to PointMapChart — same retirement as point_map."""
+    with pytest.raises(ValidationError, match="conditional_formatting"):
+        PointMapChart(
+            type="bubble_map",
+            conditional_formatting={
+                "value": {"when": [{"gt": 50, "background": "#0000ff"}]}
+            },
+        )  # type: ignore[call-arg]
 
 
 def test_callout_patch_rejects_conditional_formatting():
@@ -173,17 +196,65 @@ def test_heatmap_patch_rejects_conditional_formatting():
         HeatmapChart(type="heatmap", x="m", y="v", conditional_formatting={})  # type: ignore[call-arg]
 
 
-def test_bar_patch_accepts_conditional_formatting():
-    """bar is in the honored set — conditional_formatting still parses."""
-    p = BarChart(
-        type="bar",
-        x="month",
-        y="revenue",
-        conditional_formatting={
-            "revenue": {"when": [{"gt": 100, "background": "#00ff00"}]}
-        },
-    )
-    assert p.conditional_formatting is not None
+def test_bar_patch_rejects_conditional_formatting():
+    """bar no longer honors conditional_formatting — extra_forbidden."""
+    with pytest.raises(ValidationError, match="conditional_formatting"):
+        BarChart(
+            type="bar",
+            x="month",
+            y="revenue",
+            conditional_formatting={
+                "revenue": {"when": [{"gt": 100, "background": "#00ff00"}]}
+            },
+        )  # type: ignore[call-arg]
+
+
+def test_histogram_patch_rejects_conditional_formatting():
+    """histogram dispatches to BarChart — same retirement as bar."""
+    with pytest.raises(ValidationError, match="conditional_formatting"):
+        BarChart(
+            type="histogram",
+            x="month",
+            conditional_formatting={
+                "revenue": {"when": [{"gt": 100, "background": "#00ff00"}]}
+            },
+        )  # type: ignore[call-arg]
+
+
+def test_line_patch_rejects_conditional_formatting():
+    with pytest.raises(ValidationError, match="conditional_formatting"):
+        LineChart(
+            type="line",
+            x="month",
+            y="revenue",
+            conditional_formatting={
+                "revenue": {"when": [{"gt": 100, "background": "#00ff00"}]}
+            },
+        )  # type: ignore[call-arg]
+
+
+def test_area_patch_rejects_conditional_formatting():
+    with pytest.raises(ValidationError, match="conditional_formatting"):
+        AreaChart(
+            type="area",
+            x="month",
+            y="revenue",
+            conditional_formatting={
+                "revenue": {"when": [{"gt": 100, "background": "#00ff00"}]}
+            },
+        )  # type: ignore[call-arg]
+
+
+def test_scatter_patch_rejects_conditional_formatting():
+    with pytest.raises(ValidationError, match="conditional_formatting"):
+        ScatterChart(
+            type="scatter",
+            x="month",
+            y="revenue",
+            conditional_formatting={
+                "revenue": {"when": [{"gt": 100, "background": "#00ff00"}]}
+            },
+        )  # type: ignore[call-arg]
 
 
 def test_bar_patch_accepts_stack():

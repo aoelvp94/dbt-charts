@@ -624,7 +624,7 @@ class AuthoredBoard(_BoardDesugarMixin):
     )
     style: Annotated[StylePatch | None, Merge(Strategy.DEEP)] = Field(
         default=None,
-        description="Appearance overrides for this board (background, padding, border, and more). Background and semantic color tokens (accent, muted) cascade to nested child boards.",
+        description="Appearance overrides for this board (background, border, and more). Most fields this board or an ancestor board explicitly authors cascade to nested child boards. Per-board fields (frame, layout, gap, margin, padding, color): a nested board that authors any style of its own resolves these against its own theme, never an ancestor's. Root-board-only fields (page, footer, timestamp): a nested board never draws its own page canvas, footer, or timestamp line, so these never reach it either.",
     )
     width: Annotated[str | int | None, Merge(Strategy.OVERRIDE)] = Field(
         default=None,

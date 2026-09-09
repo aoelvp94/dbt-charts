@@ -984,3 +984,73 @@ def test_center_uses_the_anchor_columns_own_total(resolve_bar_chart) -> None:
     # B and A anchor at Feb (own total 100); offset = (120 - 100) / 2 = 10.
     assert by_series["B"] == pytest.approx(40.0)
     assert by_series["A"] == pytest.approx(90.0)
+
+
+# ---------------------------------------------------------------------------
+# Wide-measure stack order must match the emitter's own baseline_order
+# ---------------------------------------------------------------------------
+
+
+def test_wide_vertical_stack_rail_order_matches_the_emitted_bar_baseline_order(
+    model_copy_at, make_chart
+) -> None:
+    """The rail's stack order must match `bar.py`'s own `baseline_order`
+    for a wide chart: RAW measure names sorted first, humanized after.
+    `default_axis_title` is not order-preserving (a `_usd` suffix injects
+    "(" before the sort sees the letters: "revenue_total" < "revenue_usd"
+    raw, but "revenue ($)" < "revenue total" humanized), so sorting
+    already-humanized names can land a label on the wrong band for
+    `stack_order: alphabetical`.
+
+    Cross-checks the rail against `sorted_series_by_stack_order` called
+    the same way `bar.py` calls it (raw-labeled folded rows) -- the actual
+    production ordering function, not a hand re-derivation.
+    """
+    from dbt_charts.core.compile.config import get_theme_style
+    from dbt_charts.core.compile.models.style.authored import EndpointLabelsConfig
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.chart._wide_fields import (
+        unfold_wide_rows,
+        wide_measure_labels_for,
+    )
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+    )
+    from dbt_charts.core.utils import sorted_series_by_stack_order
+
+    measures = ["revenue_total", "revenue_usd"]
+    data = [
+        {"date": "2024-01-01", "revenue_total": 30, "revenue_usd": 50},
+        {"date": "2024-02-01", "revenue_total": 40, "revenue_usd": 60},
+    ]
+
+    seed = model_copy_at(
+        get_theme_style("stark"),
+        "charts.bar.endpoint_labels",
+        EndpointLabelsConfig(visible=True, label_offset=5.0, height=20.0),
+    )
+    seed = model_copy_at(seed, "charts.bar.stack_order", "alphabetical")
+    board_style = resolve_chart_style_context(seed)
+
+    chart = make_chart("bar", x="date", y=measures, style={"stack": "zero"})
+    rc = resolve(chart, data, chart_style_context=board_style)
+    spec = _render(rc, data)
+
+    rail_order = [
+        row[[k for k in row if k != "__y"][0]]
+        for row in sorted(_label_rows(spec), key=lambda r: r["__y"])
+    ]
+
+    # The production computation bar.py's own _emit_wide_bar uses.
+    folded = unfold_wide_rows(data, measures, None)
+    baseline_order = sorted_series_by_stack_order(
+        sorted(measures),
+        folded,
+        "__dbt_charts_wide_label__",
+        "alphabetical",
+        y_field="__dbt_charts_wide_value__",
+    )
+    wide_labels = wide_measure_labels_for(rc.wide_measures)
+    expected_rail_order = [wide_labels[m] for m in baseline_order]
+
+    assert rail_order == expected_rail_order

@@ -24,6 +24,8 @@ from dbt_charts.core.diagnostics import (
 )
 from dbt_charts.core.render.chart.emitters._channels import (
     apply_color_legend,
+    apply_legend_entry_order,
+    categorical_color_encoding,
     channel_to_encoding,
 )
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
@@ -232,17 +234,34 @@ class PieEmitter:
                     color_field, from_slug=True, font=legend_font
                 ),
             )
-            if enc is not None:
-                apply_color_legend(enc, chart.legend)
-                enc["sort"] = False
-                if color_scale is not None:
-                    enc["scale"] = {
-                        "domain": seen,
-                        "range": [
-                            color_at(color_scale, v, chart.palette) for v in seen
-                        ],
-                    }
-                arc_encoding["color"] = enc
+            apply_color_legend(enc, chart.legend)
+            # A gradient/conditional pie color still reaches this call
+            # without the type gate, and legend.values there is a tick
+            # ladder, not a categorical entry list. Only fires when
+            # authored: pie has no explicit color scale domain
+            # (`enc["sort"] = False` + Vega's own row-order inference
+            # already matches `seen`, and `color_scale` below is a
+            # separate, board-wide feature) -- an unconditional pin
+            # here would emit a str()-cast `values` list with no
+            # `scale.domain` to match it against, risking a
+            # type-mismatched swatch (same class of bug as
+            # heatmap/scatter).
+            if (
+                categorical_color_encoding(color_ch, enc.get("type"))
+                and chart.legend.values is not None
+            ):
+                apply_legend_entry_order(
+                    enc,
+                    seen,
+                    authored=chart.legend.values,
+                )
+            enc["sort"] = False
+            if color_scale is not None:
+                enc["scale"] = {
+                    "domain": seen,
+                    "range": [color_at(color_scale, v, chart.palette) for v in seen],
+                }
+            arc_encoding["color"] = enc
 
         arc_encoding["order"] = {"field": "__dbt_row_idx", "type": "quantitative"}
 

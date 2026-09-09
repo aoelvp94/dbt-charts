@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- CSS class names in the emitted `<style>` block and on the elements that wear
+  them are now scoped to a hash of the renderer's own style: `.md-heading`
+  becomes `.md-<hash>-heading`, and likewise for `text`, `mono`, `code`, `link`
+  and `blockquote`. Inline SVG in an HTML page shares one global CSS scope, so
+  two renders with different styles on one page previously collided — the last
+  rule for a selector won for every SVG on the page. The hash is derived from
+  the rule bodies, so it is stable across processes, and two renders of the
+  same style still share a scope (their rules are identical anyway). Anything
+  selecting the old bare class names must select the scoped form.
+
 ### Fixed
+
+- `code-clip-*` clipPath ids (code blocks under `code_block_overflow="hide"`)
+  derive from the block's content and geometry instead of `id()`. A CPython
+  memory address made the rendered output differ between runs and could collide
+  between two renders composited into one document.
 
 - A heading opening a document no longer draws its own leading margin. Its
   `margin_top` separates it from the text above it; at the top of the box there

@@ -811,43 +811,6 @@ def test_donut_resolve_returns_resolved_pie_chart() -> None:
     assert isinstance(resolved, ResolvedPieChart)
 
 
-def test_pie_resolve_projects_conditional_formatting_into_color_channel() -> None:
-    """Pie background rules resolve into the color channel without an explicit binding."""
-    from dbt_charts.core.compile.models.chart.authored import (
-        ConditionalRule,
-        FieldConditionalFormatting,
-    )
-    from dbt_charts.core.compile.resolve import resolve
-
-    cf = FieldConditionalFormatting(
-        when=[
-            ConditionalRule(gt=100, background="#ff0000"),
-            ConditionalRule(default=True, background="#00ff00"),
-        ]
-    )
-    compiled = PieChart(
-        id="pie_cf",
-        type="pie",
-        theta="revenue",
-        query=_sql(),
-        query_name="q",
-        conditional_formatting={"revenue": cf},
-    )
-    data = [{"revenue": 150}, {"revenue": 80}, {"revenue": 200}]
-    resolved = resolve(compiled, data, _default_board_style())
-
-    assert isinstance(resolved, ResolvedPieChart)
-    color_ch = resolved.resolved_channels.get("color")
-    assert color_ch is not None, (
-        "conditional_formatting background rules must project into resolved_channels['color'] "
-        "on pie charts — got no color channel"
-    )
-    assert color_ch.mode == "conditional", (
-        f"projected channel must have mode='conditional', got {color_ch.mode!r}"
-    )
-    assert color_ch.data_field == "revenue"
-
-
 def test_kpi_resolve_returns_resolved_kpi_chart() -> None:
     from dbt_charts.core.compile.resolve import resolve
 
@@ -1639,8 +1602,13 @@ def test_cartesian_resolved_accepts_format_config(bar_style: ResolvedBarStyle) -
 
 
 def test_cartesian_resolved_wide_measures_accepted(bar_style: ResolvedBarStyle) -> None:
-    """wide_measures carries the multi-y field list; y holds the fold value field."""
-    from dbt_charts.core.compile.resolve.chart._wide_fields import WIDE_VALUE_FIELD
+    """wide_measures carries the multi-y field list; y holds the fold value
+    field. wide_measure_labels_for derives display labels from
+    wide_measures on demand."""
+    from dbt_charts.core.compile.resolve.chart._wide_fields import (
+        WIDE_VALUE_FIELD,
+        wide_measure_labels_for,
+    )
 
     resolved = ResolvedBarChart(
         panel_axes=(),
@@ -1654,6 +1622,10 @@ def test_cartesian_resolved_wide_measures_accepted(bar_style: ResolvedBarStyle) 
     )
     assert resolved.wide_measures == ("rev", "cost")
     assert resolved.y == WIDE_VALUE_FIELD
+    assert wide_measure_labels_for(resolved.wide_measures) == {
+        "rev": "rev",
+        "cost": "cost",
+    }
 
 
 # ---------------------------------------------------------------------------

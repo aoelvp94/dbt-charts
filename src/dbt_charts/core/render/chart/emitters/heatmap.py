@@ -23,6 +23,8 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
 from dbt_charts.core.render.chart.emitters._channels import (
     apply_color_legend,
     apply_gradient_legend_endpoint_labels,
+    apply_legend_entry_order,
+    categorical_color_encoding,
     channel_to_encoding,
     gradient_scale_to_vl,
 )
@@ -233,75 +235,83 @@ class HeatmapEmitter:
 
         if color_ch is not None:
             enc = channel_to_encoding(color_ch, data)
-            if enc is not None:
-                # Add title for aria-label quality.
-                if enc.get("field"):
-                    enc["title"] = format_display_text(
-                        enc["field"],
-                        from_slug=True,
-                        font=chart.legend.title.font,
+            # Add title for aria-label quality.
+            if enc.get("field"):
+                enc["title"] = format_display_text(
+                    enc["field"],
+                    from_slug=True,
+                    font=chart.legend.title.font,
+                )
+            # Heatmap's color channel is the whole measure, so it needs a key
+            # like every other family — wire the resolved legend style through
+            # like bar/line/scatter/pie do. VL renders its native continuous
+            # gradient legend for a quantitative field with no extra code.
+            apply_color_legend(enc, chart.legend)
+            # A genuinely categorical color field (string values, e.g. a
+            # heatmap using `color:` to name which category occupies each
+            # cell rather than a quantitative measure) is board-bound like
+            # any other chart's color channel — repro: a heatmap ordered
+            # `category DESC` plus a bar, both `color: category`, used to
+            # come out with SWAPPED colors between the two charts because
+            # this branch never called `category_scale_for`. Gated on
+            # `enc["type"] in ("nominal", "ordinal")`, mutually
+            # exclusive with the quantitative gradient branch below.
+            if categorical_color_encoding(color_ch, enc.get("type")):
+                series = distinct_series_values(data, enc["field"])
+                # Only fires when authored: with no `chart.palette` /
+                # `category_scale_for` scale below, `enc["scale"]` is
+                # never set, so Vega infers the domain itself from the
+                # RAW row values -- an unconditional pin here would emit
+                # a str()-cast `values` list that misses that inferred
+                # domain whenever the color column isn't already a
+                # string (e.g. numeric categories), labeling a swatch
+                # with ink that isn't its own.
+                if chart.legend.values is not None:
+                    apply_legend_entry_order(
+                        enc,
+                        series,
+                        authored=chart.legend.values,
                     )
-                # Heatmap's color channel is the whole measure, so it needs a key
-                # like every other family — wire the resolved legend style through
-                # like bar/line/scatter/pie do. VL renders its native continuous
-                # gradient legend for a quantitative field with no extra code.
-                apply_color_legend(enc, chart.legend)
-                # A genuinely categorical color field (string values, e.g. a
-                # heatmap using `color:` to name which category occupies each
-                # cell rather than a quantitative measure) is board-bound like
-                # any other chart's color channel — repro: a heatmap ordered
-                # `category DESC` plus a bar, both `color: category`, used to
-                # come out with SWAPPED colors between the two charts because
-                # this branch never called `category_scale_for`. Gated on
-                # `enc["type"] == "nominal"`, mutually exclusive with the
-                # quantitative gradient branch below.
-                if (
-                    color_ch.mode == "series"
-                    and enc.get("type") == "nominal"
-                    and enc.get("field")
-                    and chart.palette
-                ):
+                # Ordinal columns carry their own inherent order --
+                # the paint scale below must never touch it.
+                if enc.get("type") == "nominal" and chart.palette:
                     scale = category_scale_for(chart.category_colors, enc["field"])
-                    if scale is not None:
-                        series = distinct_series_values(data, enc["field"])
-                        if series:
-                            enc["scale"] = spatial_color_scale(
-                                series, chart.palette, series, scale
-                            )
-                # color_gradient is the cascade-complete gradient (theme/board
-                # defaults merged with any chart-local style.color.gradient
-                # override) — strictly more complete than a "gradient" mode
-                # channel's own ch.scale, which is built from the chart-local
-                # gradient dict alone and can be missing a domain the cascade
-                # supplies (e.g. board-level min/max). Always prefer it over
-                # whatever channel_to_encoding already set.
-                # Gated on `enc["type"] == "quantitative"`, not just
-                # `_cg is not None`: a color column VL is rendering
-                # ordinal/nominal (a "series"-mode channel over non-numeric
-                # data, e.g.) must get neither a data-derived domain nor
-                # endpoint labels — a numeric domain baked onto a scale VL
-                # treats as nominal leaves every rect with no matching fill
-                # (Vega can't match string categories against a numeric
-                # domain). `_numeric_extent` and `infer_vega_type_from_data`
-                # now share one numeric-value rule (`is_vega_numeric_value`),
-                # so they can't disagree on whether a *value* is numeric —
-                # but `infer_vega_type_from_data` only samples the first 10
-                # rows while the domain scan below covers every row, so this
-                # explicit type check is real defense-in-depth against that
-                # residual sampling gap, not just belt-and-suspenders.
-                _cg = chart.style.color_gradient
-                if _cg is not None and enc.get("type") == "quantitative":
-                    enc["scale"] = gradient_scale_to_vl(_cg, data, enc.get("field"))
-                    if enc.get("field"):
-                        apply_gradient_legend_endpoint_labels(
-                            enc, _cg, data, enc["field"]
+                    if scale is not None and series:
+                        enc["scale"] = spatial_color_scale(
+                            series, chart.palette, series, scale
                         )
-                # Tooltip format on color encoding for quantitative heatmap values.
-                if enc.get("type") == "quantitative":
-                    fmt = chart.style.tooltip_format
-                    if fmt:
-                        enc.setdefault("format", fmt)
-                encoding["color"] = enc
+            # color_gradient is the cascade-complete gradient (theme/board
+            # defaults merged with any chart-local style.color.gradient
+            # override) — strictly more complete than a "gradient" mode
+            # channel's own ch.scale, which is built from the chart-local
+            # gradient dict alone and can be missing a domain the cascade
+            # supplies (e.g. board-level min/max). Always prefer it over
+            # whatever channel_to_encoding already set.
+            # Gated on `enc["type"] == "quantitative"`, not just
+            # `_cg is not None`: a color column VL is rendering
+            # ordinal/nominal (a "series"-mode channel over non-numeric
+            # data, e.g.) must get neither a data-derived domain nor
+            # endpoint labels — a numeric domain baked onto a scale VL
+            # treats as nominal leaves every rect with no matching fill
+            # (Vega can't match string categories against a numeric
+            # domain). `_numeric_extent` and `infer_vega_type_from_data`
+            # now share one numeric-value rule (`is_vega_numeric_value`),
+            # so they can't disagree on whether a *value* is numeric —
+            # but `infer_vega_type_from_data` only samples the first 10
+            # rows while the domain scan below covers every row, so this
+            # explicit type check is real defense-in-depth against that
+            # residual sampling gap, not just belt-and-suspenders.
+            _cg = chart.style.color_gradient
+            if _cg is not None and enc.get("type") == "quantitative":
+                enc["scale"] = gradient_scale_to_vl(_cg, data, enc.get("field"))
+                if enc.get("field"):
+                    apply_gradient_legend_endpoint_labels(enc, _cg, data, enc["field"])
+            # Tooltip format on color encoding for quantitative heatmap values.
+            if enc.get("type") == "quantitative":
+                fmt = chart.style.tooltip_format
+                if fmt:
+                    enc.setdefault("format", fmt)
+            encoding["color"] = enc
         # mark_props: rect mark props + tooltip (no fill — color encoding owns it).
         mark_props: dict[str, Any] = {"tooltip": True}
         mark_props.update(rect_mark_to_vl(chart.style.rect_mark))

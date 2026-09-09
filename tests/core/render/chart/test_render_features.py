@@ -1480,46 +1480,6 @@ def test_channel_to_encoding_series_returns_field_encoding() -> None:
     )
 
 
-def test_channel_to_encoding_conditional_no_background_returns_none() -> None:
-    """Conditional with no background rules returns None — matching oracle _cf_rules_to_vl_condition."""
-    from dbt_charts.core.compile.models.chart.authored import ConditionalRule
-    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
-    from dbt_charts.core.render.chart.emitters._channels import channel_to_encoding
-
-    # font-only rule (no background) → oracle returns None, emitter must too
-    ch = ResolvedStyleChannel(
-        channel="color",
-        mode="conditional",
-        data_field="value",
-        rules=(ConditionalRule(eq=1, glyph="▲"),),
-    )
-    result = channel_to_encoding(ch, [])
-    assert result is None, (
-        f"conditional with no background rules must return None, got {result!r}"
-    )
-
-
-def test_channel_to_encoding_conditional_with_background_returns_encoding() -> None:
-    """Conditional with background rule returns a VL conditional encoding dict."""
-    from dbt_charts.core.compile.models.chart.authored import ConditionalRule
-    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
-    from dbt_charts.core.render.chart.emitters._channels import channel_to_encoding
-
-    ch = ResolvedStyleChannel(
-        channel="color",
-        mode="conditional",
-        data_field="value",
-        rules=(ConditionalRule(eq=1, background="#ff0000"),),
-    )
-    enc = channel_to_encoding(ch, [])
-    assert enc is not None
-    assert "condition" in enc, f"expected condition key, got {enc!r}"
-    assert enc["value"] is None  # fallback when no rule matches
-    cond = enc["condition"]
-    assert isinstance(cond, list) and len(cond) == 1
-    assert cond[0]["value"] == "#ff0000"
-
-
 # ---------------------------------------------------------------------------
 # FIX-3: ClickInteractivityFeature
 # ---------------------------------------------------------------------------
@@ -1565,6 +1525,63 @@ def test_click_interactivity_sets_href_link_on_spec(
     assert "datum" in result.href_link, (
         f"href_link must be a VL datum expression, got {result.href_link!r}"
     )
+
+
+def test_click_interactivity_color_field_uses_raw_key_for_wide_measures(
+    make_chart,
+) -> None:
+    """Regression: {{ color }} on a wide chart (y: [...]) resolved to
+    color_ch.data_field, which is WIDE_LABEL_FIELD -- the fold's HUMANIZED
+    measure name (default_axis_title), not the raw column name. Every
+    wide-chart drill-down silently started writing display text
+    ("revenue ($)") into a link variable whose downstream SQL compares
+    against a real column name ("revenue_usd"), matching nothing. Mirrors
+    the `y` branch's own wide-chart special case one line above."""
+    from dbt_charts.core.compile.config import get_theme_style
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.chart._wide_fields import WIDE_KEY_FIELD
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+    )
+    from dbt_charts.core.render.chart.features.click_interactivity import (
+        _channel_field,
+    )
+
+    chart = make_chart("bar", x="month", y=["revenue_usd", "units_sold"])
+    rows = [{"month": "Jan", "revenue_usd": 10, "units_sold": 2}]
+    context = resolve_chart_style_context(get_theme_style())
+    resolved = resolve(chart, rows, chart_style_context=context)
+
+    assert _channel_field(resolved, "color") == WIDE_KEY_FIELD
+
+
+def test_click_interactivity_color_field_uses_the_dimension_for_wide_plus_color(
+    make_chart,
+) -> None:
+    """Regression: a wide chart (y: [...]) that ALSO authors color: as a
+    dimension (measures cross with it into composites) returned
+    WIDE_KEY_FIELD unconditionally -- the fold's raw MEASURE key only, a
+    plain column on every row that never carries the dimension. The
+    dimension itself stays an ordinary, untouched column (the fold never
+    renames or drops it), so {{ color }} there must read the dimension
+    column, not the measure key, or the dimension -- the one part of the
+    composite a filter could actually act on -- is gone from the URL
+    entirely."""
+    from dbt_charts.core.compile.config import get_theme_style
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+    )
+    from dbt_charts.core.render.chart.features.click_interactivity import (
+        _channel_field,
+    )
+
+    chart = make_chart("bar", x="month", y=["revenue_usd", "cost"], color="region")
+    rows = [{"month": "Jan", "revenue_usd": 10, "cost": 5, "region": "west"}]
+    context = resolve_chart_style_context(get_theme_style())
+    resolved = resolve(chart, rows, chart_style_context=context)
+
+    assert _channel_field(resolved, "color") == "region"
 
 
 def test_baseline_normalize_stacked_percent_area_fires_unity_rule_only(
@@ -2053,3 +2070,53 @@ def test_value_label_feature_dispatch_table_covers_all_supported_families() -> N
         "area",
         "scatter",
     }
+
+
+def test_dashes_with_empty_chart_local_palette_and_board_category_colors_does_not_raise(
+    line_style: ResolvedLineStyle,
+) -> None:
+    """Regression: `is_bindable_series` has no `and chart.palette` gate,
+    so resolution runs on an empty palette too, which lets `scale` be set
+    from a board-wide `category_colors` binding regardless of the chart's
+    own palette. The `style.dashes` branch's `color_at(scale, v,
+    chart.palette)` call then indexes an EMPTY palette and raises
+    "palette has only 0 swatches" -- a board that rendered before now
+    shows an error card. Guarded the same way the other empty-palette
+    sites are."""
+    from dbt_charts.core.render.chart.emitters.line import LineEmitter
+
+    chart = ResolvedLineChart(
+        panel_axes=(),
+        id="line1",
+        chart_type="line",
+        x="month",
+        y="revenue",
+        resolved_channels={
+            "color": ResolvedStyleChannel(
+                channel="color", mode="series", data_field="region"
+            )
+        },
+        variable_dependencies=frozenset(),
+        palette=(),
+        category_colors=(
+            CategoryColorScale(
+                field="region", slots={"north": 0, "south": 1}, overrides={}
+            ),
+        ),
+        style=line_style.model_copy(update={"dashes": [[4, 4], [8, 8]]}),
+        legend=_default_legend(),
+        background=_DEFAULT_CHARTS.background,
+        title_style=_DEFAULT_CHARTS.title,
+        layout_padding=_ZERO_PADDING,
+    )
+    data = [
+        {"month": "Jan", "revenue": 100, "region": "north"},
+        {"month": "Jan", "revenue": 80, "region": "south"},
+        {"month": "Feb", "revenue": 120, "region": "north"},
+        {"month": "Feb", "revenue": 90, "region": "south"},
+    ]
+
+    spec = LineEmitter().emit(chart, _DEFAULT_BOX, regroup((), data))
+
+    color_scale = spec.encoding["color"].get("scale", {})
+    assert "range" not in color_scale

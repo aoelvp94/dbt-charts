@@ -19,8 +19,10 @@ from dbt_charts.core.compile.models.style.theme.category_colors import (
     ink_at,
 )
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
+    humanize_wide_series_name,
+    raw_wide_series_names,
     unfold_wide_rows,
-    wide_series_names,
+    wide_measure_labels_for,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
@@ -792,6 +794,24 @@ def _series_label_font_props(sl: ResolvedSeriesLabelStyle) -> dict[str, str | fl
     }
 
 
+def _humanize_positions(
+    positions: list[tuple[str, float]],
+    is_wide: bool,
+    wide_dimension: str | None,
+    wide_measure_labels: dict[str, str],
+) -> list[tuple[str, float]]:
+    """Map each ``(raw series name, value)`` pair's name through
+    ``humanize_wide_series_name`` -- a no-op when this isn't a wide chart,
+    since ``positions`` already carries the right (non-wide) identity
+    then."""
+    if not is_wide:
+        return positions
+    return [
+        (humanize_wide_series_name(name, wide_dimension, wide_measure_labels), value)
+        for name, value in positions
+    ]
+
+
 @dataclass
 class EndpointLabelFeature:
     """Sets ``endpoint_label_layout`` and pre-computes label positions.
@@ -846,12 +866,35 @@ class EndpointLabelFeature:
         # The rows VL orders the axis from — the fold below is ours, not its,
         # and the two disagree on a null measure cell (see _anchor_rows).
         domain_rows = data
-        if (
-            isinstance(chart, (ResolvedBarChart, ResolvedAreaChart, ResolvedLineChart))
-            and chart.wide_measures
-        ):
-            all_series = wide_series_names(chart.wide_measures, chart.color, data)
-            data = unfold_wide_rows(data, chart.wide_measures, chart.color)
+        is_wide = isinstance(
+            chart, (ResolvedBarChart, ResolvedAreaChart, ResolvedLineChart)
+        ) and bool(chart.wide_measures)
+        wide_measure_labels: dict[str, str] = {}
+        wide_dimension: str | None = None
+        if is_wide:
+            assert isinstance(
+                chart, (ResolvedBarChart, ResolvedAreaChart, ResolvedLineChart)
+            )
+            assert chart.wide_measures
+            # order_series_names (below) must compute stack position from
+            # the RAW identity -- humanizing is not order-preserving (a
+            # `_usd` suffix injects "(" before a sort sees the letters), so
+            # sorting already-humanized text can land a series on the wrong
+            # band. Humanized text is mapped back in only once, on the
+            # finished `positions`, below.
+            wide_dimension = chart.color
+            data = unfold_wide_rows(data, chart.wide_measures, wide_dimension)
+            order_series_names = raw_wide_series_names(
+                chart.wide_measures, wide_dimension, domain_rows
+            )
+            wide_measure_labels = wide_measure_labels_for(chart.wide_measures)
+            # Color domain comes from wide_measures, not observed data: a
+            # measure absent from every row would otherwise be missing and
+            # desync the palette slot from the chart's own scale domain.
+            all_series = [
+                humanize_wide_series_name(name, wide_dimension, wide_measure_labels)
+                for name in order_series_names
+            ]
         else:
             # Build color domain from observed data.
             all_series = sorted(
@@ -861,6 +904,7 @@ class EndpointLabelFeature:
                     if row.get(series_field) is not None
                 }
             )
+            order_series_names = all_series
         palette = list(chart.palette)
         color_domain = all_series
         # Board-slot lookup for THIS series field, when it is board-bound — a
@@ -932,11 +976,14 @@ class EndpointLabelFeature:
                 x_field,
                 y_field,
                 series_field,
-                all_series,
+                order_series_names,
                 chart.sort.by if chart.sort else "",
                 bool(chart.sort and chart.sort.order == "desc"),
                 stack_mode=chart.stack or "zero",
                 stack_order=chart.style.stack_order,
+            )
+            positions = _humanize_positions(
+                positions, is_wide, wide_dimension, wide_measure_labels
             )
             # For normalize stacks the chart pane's x encoding must explicitly
             # pin [0, 1] so the shared vconcat x-scale propagates to the rail
@@ -1009,12 +1056,15 @@ class EndpointLabelFeature:
                     x_field,
                     y_field,
                     series_field,
-                    all_series,
+                    order_series_names,
                     stack_mode,
                     y_domain_max,
                     _sort.by if _sort else "",
                     bool(_sort and _sort.order == "desc"),
                     stack_order=stack_order,
+                )
+                positions = _humanize_positions(
+                    positions, is_wide, wide_dimension, wide_measure_labels
                 )
                 # Pin the main pane's y domain so VL's shared hconcat y-scale
                 # matches the label positions' basis: [0, 1] for normalize,
@@ -1045,6 +1095,9 @@ class EndpointLabelFeature:
                         y_field,
                         series_field,
                     ).items()
+                )
+                positions = _humanize_positions(
+                    positions, is_wide, wide_dimension, wide_measure_labels
                 )
 
             spec.endpoint_label_layout = "right_pane"

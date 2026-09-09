@@ -10,13 +10,12 @@ from dbt_charts.core.compile.models.style.authored import AreaChartStylePatch
 
 from ._base import (
     _CartesianChartFields,
-    _ConditionalFormattingField,
     reject_multi_series_channel_conflicts,
 )
 from ._layer import CartesianLayer
 
 
-class AreaChart(_CartesianChartFields, _ConditionalFormattingField):
+class AreaChart(_CartesianChartFields):
     """Authored patch for area charts."""
 
     model_config = ConfigDict(extra="forbid")
@@ -36,7 +35,5 @@ class AreaChart(_CartesianChartFields, _ConditionalFormattingField):
 
     @model_validator(mode="after")
     def _validate_multi_series(self) -> AreaChart:
-        reject_multi_series_channel_conflicts(
-            "Area", self.y, self.layers, self.conditional_formatting
-        )
+        reject_multi_series_channel_conflicts("Area", self.y, self.layers)
         return self

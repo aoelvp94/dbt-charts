@@ -789,7 +789,6 @@ def _render_directory_listing(
 ) -> HTMLResponse:
     """Render a directory listing through a built-in board."""
     from dbt_charts.core.compile import compile
-    from dbt_charts.core.compile.template.jinja import resolve_jinja_template
     from dbt_charts.core.render.dir_context import list_dir_entries
 
     # The root directory has an empty name; "/" is how the nav trigger labels it.
@@ -814,20 +813,22 @@ def _render_directory_listing(
             # extensions, so non-board files never reach here.
             listing_lines.append(f"- [{entry.name}]({entry.url})")
 
+    # ``directory_title``/``listing_markdown`` carry untrusted filenames, so they
+    # reach the board only as render-time Jinja variable values below -- never
+    # spliced into template text ahead of a render (same rule as
+    # ``expand_query_refs``'s docstring: a value substituted before the final
+    # pass is live template source by the time that pass reads it).
+    listing_variables = {
+        "directory_title": f"/{url_path}" if url_path else "/",
+        "listing_markdown": "\n".join(listing_lines)
+        or "No boards or directories found.",  # type-state: silent_fallback — empty-directory placeholder text, not error-hiding
+    }
+
     try:
         template_path = files("dbt_charts.core.serve.templates").joinpath(
             "directory.yml"
         )
-        rendered_yaml = resolve_jinja_template(
-            template_path.read_text(encoding="utf-8"),
-            variables={
-                "directory_title": f"/{url_path}" if url_path else "/",
-                "listing_markdown": "\n".join(listing_lines)
-                or "No boards or directories found.",
-            },
-            strict=False,
-        )
-        compile_result = compile(rendered_yaml)
+        compile_result = compile(template_path.read_text(encoding="utf-8"))
         if compile_result.errors or compile_result.board is None:
             raise RuntimeError(
                 f"Directory board failed: {[e.message for e in compile_result.errors]}"
@@ -857,6 +858,7 @@ def _render_directory_listing(
             compile_result=compile_result,
             chrome=nav_fragment,
             controls=True,
+            builtin_variables=listing_variables,
         )
         if result.status == "ok":
             data = result.data

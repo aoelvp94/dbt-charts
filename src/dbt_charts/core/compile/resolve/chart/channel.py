@@ -73,23 +73,6 @@ class ConditionalFormattingChart(Protocol):
         ...
 
 
-# Chart types whose color channel is a paintable mark fill — conditional_
-# formatting rules targeting `background` lower into their `color` channel.
-_MARK_FILL_CHART_TYPES: frozenset[str] = frozenset(
-    {
-        "bar",
-        "histogram",
-        "line",
-        "area",
-        "scatter",
-        "pie",
-        "geoshape",
-        "point_map",
-        "bubble_map",
-    }
-)
-
-
 def parse_style_channel(
     raw: _RawStyleChannel,
     channel_name: str,
@@ -254,14 +237,6 @@ def validate_label_field_columns(
 _COLOR_CHANNELS = frozenset({"color", "background"})
 _NUMERIC_CHANNELS: frozenset[str] = frozenset()
 
-# These families historically reject an authored channel that collides with
-# conditional formatting, except that an authored gradient becomes the
-# conditional channel's fallback. Pie and geo families retain their existing
-# authored-channel-wins policy.
-_CONDITIONAL_COLLISION_TYPES = frozenset(
-    {"bar", "histogram", "line", "area", "scatter", "kpi"}
-)
-
 
 def _validate_palette_type(channel_name: str, scale: ScaleTargetConfig) -> None:
     palette = scale.palette
@@ -385,7 +360,7 @@ def normalize_chart_channels(
                 rules=rules,
             )
             continue
-        if conditional is None or chart_type not in _CONDITIONAL_COLLISION_TYPES:
+        if conditional is None:
             channels[channel_name] = _resolve_style_channel_input(parsed)
             continue
         if not isinstance(parsed, _GradientChannelInput):
@@ -460,18 +435,16 @@ def _project_conditional_formatting_inputs(
     )
 
     outputs: dict[str, Callable[[ConditionalRule], str | None]]
-    if chart_type in _MARK_FILL_CHART_TYPES:
-        outputs = {"color": lambda r: r.background}
-    elif chart_type == "kpi":
+    if chart_type == "kpi":
         outputs = {
             "background": lambda r: r.background,
             "color": lambda r: r.font.color if r.font is not None else None,
         }
     else:
-        # table: lowered per-cell in render/chart/table.py, not here. Table is the
-        # only family that reaches this branch with a non-empty `cf` — every other
-        # conditional_formatting family is in _MARK_FILL_CHART_TYPES or is kpi, and
-        # the rest have no conditional_formatting field on the authored model.
+        # table: lowered per-cell in render/chart/table.py, not here. Table is
+        # the only other family whose authored model still declares
+        # conditional_formatting, so it's the only one that can reach this
+        # branch with a non-empty `cf`.
         return {}
 
     projected: dict[str, tuple[str, tuple[ConditionalRule, ...]]] = {}

@@ -38,11 +38,8 @@ def test_spark_bar_accepts_single_element_y_list():
 
 
 # =============================================================================
-# bar / area — layers: and conditional_formatting: are single-series-only with a y list; color: composes
+# bar / area — layers: is single-series-only with a y list; color: composes
 # =============================================================================
-
-
-_CONDITIONAL_FORMATTING = {"revenue": {"when": [{"gt": 100, "background": "#ff0000"}]}}
 
 
 @pytest.mark.parametrize("chart_type", ["bar", "area"])
@@ -56,33 +53,6 @@ def test_rejects_layers_with_multi_field_y(chart_type: str):
             y=["revenue", "cost"],
             layers=[{"type": "line", "y": "target"}],
         )
-
-
-@pytest.mark.parametrize("chart_type", ["bar", "area"])
-def test_rejects_conditional_formatting_with_multi_field_y(chart_type: str):
-    # conditional_formatting projects into the mark-fill channel, so it collides
-    # with the folded measures exactly as an authored color: does — but the
-    # author never wrote a color:, so the message must name the field they did.
-    with pytest.raises(
-        ValidationError, match="conditional_formatting is not supported"
-    ):
-        _validate(
-            type=chart_type,
-            x="month",
-            y=["revenue", "cost"],
-            conditional_formatting=_CONDITIONAL_FORMATTING,
-        )
-
-
-@pytest.mark.parametrize("chart_type", ["bar", "area"])
-def test_accepts_conditional_formatting_with_single_y(chart_type: str):
-    chart = _validate(
-        type=chart_type,
-        x="month",
-        y="revenue",
-        conditional_formatting=_CONDITIONAL_FORMATTING,
-    )
-    assert chart.conditional_formatting is not None
 
 
 @pytest.mark.parametrize("fields", [{}, {"color": "region"}, {"y": []}, {"y": ""}])
@@ -113,7 +83,6 @@ def test_bar_rejects_multi_field_y_without_x():
     "fields",
     [
         {"color": "segment"},
-        {"conditional_formatting": _CONDITIONAL_FORMATTING},
         {},
     ],
 )

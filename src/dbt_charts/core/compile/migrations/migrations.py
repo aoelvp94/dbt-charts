@@ -124,6 +124,17 @@ class Deletion:
     # land the value, a bare deletion is routine enough that a required field
     # would invite filler.
     reason: str | None = None
+    # None = the deletion applies wherever the grammar declares the path, same
+    # as before this field existed. Set to a chart `type:` literal to scope a
+    # deletion to one family of a discriminated chart union while the same
+    # path stays valid on other families (e.g. `conditional_formatting`
+    # retired from `bar` but kept on `table`/`kpi`) -- mirrors
+    # `ConditionalMove.chart_type`'s scoping (`_declares_chart_type`), but for
+    # a deletion instead of a relocation. Threaded through all three apply/
+    # recognize consumers (`_delete_tails_recursive`, `_deletion_would_fire`,
+    # `_delete_tail_in_yaml_text`) and `MigrationRegistry._validate`'s
+    # existence checks -- see each for how the scoping is enforced there.
+    chart_type: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -305,12 +316,24 @@ class MigrationRegistry:
                     f"Deletion source path {_format_path(deletion.path)!r} is absent from "
                     f"{deletion.source_schema}"
                 )
-            if _schema_has_tail(target_schema_obj, deletion.path):
+            target_still_has_it = (
+                _schema_has_tail_for_chart_type(
+                    target_schema_obj, deletion.path, deletion.chart_type
+                )
+                if deletion.chart_type is not None
+                else _schema_has_tail(target_schema_obj, deletion.path)
+            )
+            if target_still_has_it:
+                scope = (
+                    f" on chart_type={deletion.chart_type!r}"
+                    if deletion.chart_type is not None
+                    else ""
+                )
                 raise MigrationError(
                     f"Deletion path {_format_path(deletion.path)!r} still exists in "
-                    f"{deletion.target_schema!r}; the field was not removed in this "
-                    "transition — use a Move if the field was renamed, or remove the "
-                    "Deletion if the field is still valid"
+                    f"{deletion.target_schema!r}{scope}; the field was not removed in "
+                    "this transition — use a Move if the field was renamed, or remove "
+                    "the Deletion if the field is still valid"
                 )
         for cond_move in self.conditional_moves:
             source_index = positions.get(cond_move.source_schema)
@@ -1060,7 +1083,7 @@ def migrate_yaml_text(
             _apply_move(staged, move, catalog)
         deletion_reasons.extend(_apply_deletions(staged, deletions, catalog))
         for deletion in deletions:
-            yaml_text = _delete_tail_in_yaml_text(yaml_text, deletion.path)
+            yaml_text = _delete_tail_in_yaml_text(yaml_text, deletion)
         identifier = (moves or deletions)[0].target_schema
 
     # Uncapped, staged already reached _CURRENT: check it directly against
@@ -1213,9 +1236,8 @@ def _transition_applies(
     if deletions:
         source_schema = catalog.schema_for(deletions[0].source_schema)
         live = catalog.current_schema
-        tails = [deletion.path for deletion in deletions]
         if _deletion_would_fire(
-            document, tails, source_schema, [source_schema], live, [live]
+            document, deletions, source_schema, [source_schema], live, [live]
         ):
             return True
     for cond_move in registry.conditional_moves_from(identifier):
@@ -1227,29 +1249,37 @@ def _transition_applies(
 
 def _deletion_would_fire(
     node: JsonValue,
-    tails: Sequence[YamlKeyPath],
+    deletions: Sequence[Deletion],
     schema: JsonObject,
     positions: Sequence[JsonObject],
     live: JsonObject,
     live_positions: Sequence[JsonObject],
 ) -> bool:
-    """Read-only mirror of ``_delete_tails_recursive``: would any tail actually fire?
+    """Read-only mirror of ``_delete_tails_recursive``: would any deletion actually fire?
 
     Same schema-position walk (``_matching_positions``, ``_declares_tail``),
     checked with ``_tail_present`` in place of the pop — nothing here mutates
-    *node*, so the same walk serves as both appliers' dry run.
+    *node*, so the same walk serves as both appliers' dry run. Takes
+    ``Deletion`` objects, not bare paths, for the same ``chart_type`` gate
+    ``_delete_tails_recursive`` applies — see that function's docstring for
+    why a plain path-membership check over-fires across chart families.
     """
     if isinstance(node, dict):
         matching = _matching_positions(schema, positions, live, live_positions, node)
-        if any(
-            _declares_tail(schema, matching, tail) and _tail_present(node, tail)
-            for tail in tails
-        ):
-            return True
+        for deletion in deletions:
+            if deletion.chart_type is not None and (
+                node.get("type") != deletion.chart_type
+                or not _declares_chart_type(schema, matching, deletion.chart_type)
+            ):
+                continue
+            if _declares_tail(schema, matching, deletion.path) and _tail_present(
+                node, deletion.path
+            ):
+                return True
         return any(
             _deletion_would_fire(
                 child,
-                tails,
+                deletions,
                 schema,
                 _child_positions(schema, positions, key),
                 live,
@@ -1261,7 +1291,9 @@ def _deletion_would_fire(
         item_positions = _item_positions(schema, positions)
         live_items = _item_positions(live, live_positions)
         return any(
-            _deletion_would_fire(item, tails, schema, item_positions, live, live_items)
+            _deletion_would_fire(
+                item, deletions, schema, item_positions, live, live_items
+            )
             for item in node
         )
     return False
@@ -1524,26 +1556,28 @@ def _apply_deletions(
     them: the schema descent is what costs, and re-walking per tail re-expands
     the same ``$ref``/``anyOf``/``allOf`` nodes once per tail.
 
-    Returns one message per tail that both fired (was actually present in the
-    document, not merely declared by the grammar) and carries a ``reason`` —
-    most deletions are mechanical and carry none.
+    Returns one message per deletion that both fired (was actually present in
+    the document, not merely declared by the grammar) and carries a
+    ``reason`` — most deletions are mechanical and carry none.
+
+    Takes the ``Deletion`` objects themselves, not bare paths: several
+    deletions can share one path with different ``chart_type`` scopes (one
+    entry per retired family), and a flattened ``path -> reason`` dict would
+    collide on the shared key, silently keeping only one arbitrary family's
+    message and losing the chart_type each deletion needs to gate on.
     """
     if not deletions:
         return []
     source_schema = catalog.schema_for(deletions[0].source_schema)
     live = catalog.current_schema
-    reasons = {
-        deletion.path: deletion.reason for deletion in deletions if deletion.reason
-    }
     messages: list[str] = []
     _delete_tails_recursive(
         document,
-        [deletion.path for deletion in deletions],
+        deletions,
         source_schema,
         [source_schema],
         live,
         [live],
-        reasons,
         messages,
     )
     return messages
@@ -1551,60 +1585,77 @@ def _apply_deletions(
 
 def _delete_tails_recursive(
     node: JsonValue,
-    tails: Sequence[YamlKeyPath],
+    deletions: Sequence[Deletion],
     schema: JsonObject,
     positions: Sequence[JsonObject],
     live: JsonObject,
     live_positions: Sequence[JsonObject],
-    reasons: Mapping[YamlKeyPath, str],
     messages: list[str],
 ) -> None:
-    """Delete every tail wherever the source grammar declares it, throughout *node*.
+    """Delete every declared deletion wherever the source grammar declares it, throughout *node*.
 
     ``positions`` are the schema nodes *node* can correspond to, descended in
     step with the document so the walk keeps its depth-cap-free reach into
     nested faces while knowing where it is.
 
-    A tail must be a **declared** property chain at the position, never one
-    reached through an open map. ``charts:`` is keyed by the author, so a chart
-    someone named ``bar`` presents exactly the key chain that
-    ``("bar", "tooltip")`` — the ``bar`` block under ``style.charts`` — means.
+    A deletion's path must be a **declared** property chain at the position,
+    never one reached through an open map. ``charts:`` is keyed by the
+    author, so a chart someone named ``bar`` presents exactly the key chain
+    that ``("bar", "tooltip")`` — the ``bar`` block under ``style.charts`` —
+    means.
+
+    When ``deletion.chart_type`` is set, the deletion additionally only fires
+    on a node the *source* grammar declares as a chart of that family
+    (``_declares_chart_type``) whose own ``type:`` key matches — the same
+    double check ``_apply_conditional_move`` uses for ``ConditionalMove``.
+    Without it, a document position that merely validates against *some*
+    branch of a discriminated union (``_matching_positions`` narrows by
+    whole-node validity, not by which specific arm) would let a
+    ``chart_type="bar"``-scoped deletion strip the field from every chart
+    family that still declares it, table/kpi included.
 
     ``live_positions`` is the same descent through the *current* grammar, kept
     in step so ``_matching_positions`` can tell a field that is new **here**
     from one that merely shares a name with something old somewhere else.
 
-    All of a boundary's tails travel in one walk because the schema descent, not
-    the document traversal, is what costs: re-walking per tail re-expanded the
-    same ``$ref``/``anyOf``/``allOf`` nodes once per tail.
+    All of a boundary's deletions travel in one walk because the schema
+    descent, not the document traversal, is what costs: re-walking per
+    deletion re-expands the same ``$ref``/``anyOf``/``allOf`` nodes once per
+    deletion.
 
     When deleting a tail causes a parent dict to become empty, that parent is
     also removed — the deletion propagates up through the document structure.
 
-    ``reasons`` maps a tail to its ``Deletion.reason``, when set; ``messages``
-    collects one formatted string per occurrence actually removed (checked via
-    ``_tail_present`` before the pop, since a declared tail may simply be
-    absent from this particular document).
+    ``messages`` collects one formatted string per occurrence actually
+    removed that carries a ``reason`` (checked via ``_tail_present`` before
+    the pop, since a declared tail may simply be absent from this particular
+    document).
     """
     if isinstance(node, dict):
         matching = _matching_positions(schema, positions, live, live_positions, node)
-        for tail in tails:
-            if _declares_tail(schema, matching, tail):
-                reason = reasons.get(tail)
-                if reason is not None and _tail_present(node, tail):
-                    messages.append(f"`{_format_path(tail)}` was removed: {reason}")
-                _try_delete_tail(node, tail)
+        for deletion in deletions:
+            if deletion.chart_type is not None and (
+                node.get("type") != deletion.chart_type
+                or not _declares_chart_type(schema, matching, deletion.chart_type)
+            ):
+                continue
+            if not _declares_tail(schema, matching, deletion.path):
+                continue
+            if deletion.reason is not None and _tail_present(node, deletion.path):
+                messages.append(
+                    f"`{_format_path(deletion.path)}` was removed: {deletion.reason}"
+                )
+            _try_delete_tail(node, deletion.path)
         for key in list(node.keys()):
             child = node[key]
             was_empty_before = isinstance(child, dict) and not child
             _delete_tails_recursive(
                 child,
-                tails,
+                deletions,
                 schema,
                 _child_positions(schema, positions, key),
                 live,
                 _child_positions(live, live_positions, key),
-                reasons,
                 messages,
             )
             if isinstance(child, dict) and not child and not was_empty_before:
@@ -1614,7 +1665,7 @@ def _delete_tails_recursive(
         live_items = _item_positions(live, live_positions)
         for item in node:
             _delete_tails_recursive(
-                item, tails, schema, item_positions, live, live_items, reasons, messages
+                item, deletions, schema, item_positions, live, live_items, messages
             )
 
 
@@ -2545,14 +2596,89 @@ def _schema_has_tail(schema: JsonObject, tail: YamlKeyPath) -> bool:
     return walk(schema)
 
 
+def _schema_has_tail_for_chart_type(
+    schema: JsonObject, tail: YamlKeyPath, chart_type: str
+) -> bool:
+    """True iff *tail* is declared on the branch discriminated as *chart_type*.
+
+    ``_schema_has_tail`` asks "does this tail exist anywhere in the schema" —
+    too coarse for a ``chart_type``-scoped ``Deletion``: once a family loses a
+    field but a sibling family (e.g. ``table``/``kpi``) keeps it, the plain
+    global check still finds it via the sibling and wrongly reports the
+    deletion as not-yet-applied.
+
+    The gate and the tail search must run on the *same single branch* — a
+    naive version that gates on "does any branch in this anyOf group declare
+    chart_type" and then searches "does any branch in this SAME group have
+    the tail" independently is wrong: with bar/table siblings in one anyOf,
+    that reports true whenever *either* sibling matches its own half, so a
+    bar-scoped deletion reads as unsatisfied forever because table (a
+    different branch) still has the field. ``tail_exists_from`` therefore
+    starts from one already-chart_type-confirmed branch and only expands
+    *that branch's own* sub-structure for the remaining segments, never
+    merging back into its unrelated siblings.
+    """
+    seen: set[int] = set()
+
+    def branch_declares_chart_type(branch: JsonObject) -> bool:
+        properties = branch.get("properties")
+        if not isinstance(properties, dict):
+            return False
+        type_schema = properties.get("type")
+        if not isinstance(type_schema, dict):
+            return False
+        enum = type_schema.get("enum")
+        return isinstance(enum, list) and chart_type in enum
+
+    def tail_exists_from(start: JsonObject) -> bool:
+        nodes: list[JsonObject] = [start]
+        for part in tail:
+            next_nodes: list[JsonObject] = []
+            for node in nodes:
+                properties = node.get("properties")
+                child = properties.get(part) if isinstance(properties, dict) else None
+                if isinstance(child, dict):
+                    next_nodes.extend(_schema_branches(schema, child))
+            nodes = next_nodes
+            if not nodes:
+                return False
+        return True
+
+    def walk(node: JsonObject) -> bool:
+        resolved = _resolve_ref(schema, node)
+        rid = id(resolved)
+        if rid in seen:
+            return False
+        seen.add(rid)
+        for branch in _schema_branches(schema, resolved):
+            if branch_declares_chart_type(branch) and tail_exists_from(branch):
+                return True
+        branches = resolved.get("anyOf")
+        if isinstance(branches, list):
+            if any(isinstance(b, dict) and walk(b) for b in branches):
+                return True
+        props = resolved.get("properties")
+        if isinstance(props, dict):
+            for child in props.values():
+                if isinstance(child, dict) and walk(child):
+                    return True
+        add_props = resolved.get("additionalProperties")
+        if isinstance(add_props, dict) and walk(add_props):
+            return True
+        items_node = resolved.get("items")
+        return isinstance(items_node, dict) and walk(items_node)
+
+    return walk(schema)
+
+
 # Regex for a YAML block-mapping key line: captures (indent, key, optional-inline-value).
 _YAML_KEY_RE = re.compile(r"^( *)([A-Za-z0-9_.\-]+):(?:[ \t]+(\S.*?))?[ \t]*$")
 # Matches blank lines and comment-only lines (both are transparent to parent-chain search).
 _YAML_BLANK_OR_COMMENT_RE = re.compile(r"^\s*(#.*)?$")
 
 
-def _delete_tail_in_yaml_text(yaml_text: str, tail: YamlKeyPath) -> str:
-    """Remove every line whose key matches tail's leaf and whose ancestor chain matches.
+def _delete_tail_in_yaml_text(yaml_text: str, deletion: Deletion) -> str:
+    """Remove every line whose key matches the deletion's leaf and whose ancestor chain matches.
 
     Scans every line for the leaf key and verifies the correct ancestor chain
     by walking backward over lines with strictly lower indentation. This removes
@@ -2569,34 +2695,47 @@ def _delete_tail_in_yaml_text(yaml_text: str, tail: YamlKeyPath) -> str:
     ``staged`` at the end of ``migrate_yaml_text`` catches the divergence and
     refuses the file — but the two are no longer the same rule, and the guard is
     what keeps that safe rather than an accident.
+
+    When ``deletion.chart_type`` is set, an occurrence only strikes if a
+    ``type: <chart_type>`` line sits in the *same* mapping as the leaf
+    (``_yaml_sibling_declares_type``) — without it, a board authoring the
+    same field on both a retired family and one that keeps it (e.g. `bar`
+    and `table` both carrying `conditional_formatting` in one file) would
+    have every occurrence stripped, table's included, since this scanner
+    matches on the key chain alone with no schema position to disambiguate.
     """
-    leaf_key = tail[-1]
-    parent_keys = tail[:-1]
+    leaf_key = deletion.path[-1]
+    parent_keys = deletion.path[:-1]
     lines = yaml_text.split("\n")
     to_delete: set[int] = set()
     for i, line in enumerate(lines):
         m = _YAML_KEY_RE.match(line)
         if m is not None and m.group(2) == leaf_key:
             leaf_indent = len(m.group(1))
-            if _yaml_parent_chain_matches(lines, i, leaf_indent, parent_keys):
-                to_delete.add(i)
-                # Delete the entire nested block below this key.  Find
-                # block_end = the last non-blank line whose indentation is
-                # strictly greater than leaf_indent; every line up to and
-                # including that boundary (blank or not) belongs to this block.
-                # For a scalar leaf block_end stays at i, so the range is empty
-                # and the scalar-deletion behaviour is unchanged.
-                block_end = i
-                k = i + 1
-                while k < len(lines):
-                    child = lines[k]
-                    if not _YAML_BLANK_OR_COMMENT_RE.match(child):
-                        if len(child) - len(child.lstrip(" ")) <= leaf_indent:
-                            break
-                        block_end = k
-                    k += 1
-                for k in range(i + 1, block_end + 1):
-                    to_delete.add(k)
+            if not _yaml_parent_chain_matches(lines, i, leaf_indent, parent_keys):
+                continue
+            if deletion.chart_type is not None and not _yaml_sibling_declares_type(
+                lines, i, leaf_indent, deletion.chart_type
+            ):
+                continue
+            to_delete.add(i)
+            # Delete the entire nested block below this key.  Find
+            # block_end = the last non-blank line whose indentation is
+            # strictly greater than leaf_indent; every line up to and
+            # including that boundary (blank or not) belongs to this block.
+            # For a scalar leaf block_end stays at i, so the range is empty
+            # and the scalar-deletion behaviour is unchanged.
+            block_end = i
+            k = i + 1
+            while k < len(lines):
+                child = lines[k]
+                if not _YAML_BLANK_OR_COMMENT_RE.match(child):
+                    if len(child) - len(child.lstrip(" ")) <= leaf_indent:
+                        break
+                    block_end = k
+                k += 1
+            for k in range(i + 1, block_end + 1):
+                to_delete.add(k)
     if parent_keys:
         _prune_childless_ancestors(lines, to_delete)
     return "\n".join(line for j, line in enumerate(lines) if j not in to_delete)
@@ -2720,6 +2859,106 @@ def _yaml_parent_chain_matches(
         if not remaining:
             return True
     return False
+
+
+# Matches a list-item line whose first key is inline with the dash, e.g.
+# ``  - type: bar`` — captures (dash indent, key, optional inline value).
+# `_YAML_KEY_RE` deliberately does not match this shape (its key char class
+# never starts with `- `), so a chart-type sibling authored as the dash
+# line's own first key needs this separate pattern.
+_YAML_LIST_ITEM_KEY_RE = re.compile(
+    r"^( *)-[ \t]+([A-Za-z0-9_.\-]+):(?:[ \t]+(\S.*?))?[ \t]*$"
+)
+
+
+def _yaml_sibling_declares_type(
+    lines: list[str], leaf_idx: int, leaf_indent: int, chart_type: str
+) -> bool:
+    """True iff a ``type: <chart_type>`` sibling sits in the same chart mapping as the leaf.
+
+    For a single-segment tail (e.g. ``("conditional_formatting",)``) there is
+    no ancestor chain to walk — ``_yaml_parent_chain_matches`` only fires on
+    tails with 2+ segments, since ``parent_keys`` is empty here. The
+    chart-type gate instead looks *sideways*: scans lines at the same
+    indentation as the leaf, in both directions, stopping at the first line
+    whose indentation drops below it — that boundary is the start of the
+    enclosing chart block, in either shape a real board uses:
+
+    * an inline list item under ``rows:``/``cols:``/``grid:``/``tabs:``,
+      whose block starts at a ``- `` dash (possibly carrying the first key
+      inline, e.g. ``- type: bar``) — ``_YAML_LIST_ITEM_KEY_RE`` reads that
+      dash line's own key/value; or
+    * a ``charts:`` mapping entry keyed by chart id (``momentum.yml``'s own
+      shape), whose block starts at a plain key line one indentation level
+      shallower, carrying no dash at all.
+
+    Only the backward scan needs the dash-line check: a chart block can only
+    ever *start* via a dash marker, never end via one belonging to the same
+    chart, so a dash encountered scanning forward always belongs to the next
+    list item and is a plain stop, not a candidate.
+    """
+    for j in range(leaf_idx - 1, -1, -1):
+        line = lines[j]
+        if _YAML_BLANK_OR_COMMENT_RE.match(line):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent < leaf_indent:
+            m_item = _YAML_LIST_ITEM_KEY_RE.match(line)
+            if m_item is not None and m_item.group(2) == "type":
+                return _normalize_yaml_scalar_token(m_item.group(3)) == chart_type
+            break
+        if indent == leaf_indent:
+            m = _YAML_KEY_RE.match(line)
+            if m is None:
+                if line[indent : indent + 1] == "-":
+                    continue
+                break
+            if m.group(2) == "type":
+                return _normalize_yaml_scalar_token(m.group(3)) == chart_type
+    for j in range(leaf_idx + 1, len(lines)):
+        line = lines[j]
+        if _YAML_BLANK_OR_COMMENT_RE.match(line):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent < leaf_indent:
+            break
+        if indent == leaf_indent:
+            m = _YAML_KEY_RE.match(line)
+            if m is None:
+                if line[indent : indent + 1] == "-":
+                    continue
+                break
+            if m.group(2) == "type":
+                return _normalize_yaml_scalar_token(m.group(3)) == chart_type
+    return False
+
+
+def _normalize_yaml_scalar_token(raw: str | None) -> str:
+    """Strip a matched surrounding quote pair and a trailing comment from a
+    scalar value capture, e.g. ``'"bar"  # note'`` -> ``bar``.
+
+    ``_YAML_KEY_RE``/``_YAML_LIST_ITEM_KEY_RE``'s value group is the raw,
+    unparsed remainder of the line — comparing it directly against a bare
+    Python string (a ``chart_type`` literal) diverges on an author's
+    ``type: "bar"`` or ``type: bar  # note``, which parse to the same value
+    the in-memory walk compares against but do not string-equal it.
+    """
+    if raw is None:
+        return ""
+    text = raw.strip()
+    if text[:1] in ("'", '"'):
+        quote = text[0]
+        end = text.find(quote, 1)
+        if end != -1:
+            return text[1:end]
+    # YAML only starts a comment at a `#` preceded by whitespace (or at the
+    # scalar's start) — a bare chart-type literal never legitimately
+    # contains one, so the first whitespace-led `#` always ends the value.
+    for marker in (" #", "\t#"):
+        comment_at = text.find(marker)
+        if comment_at != -1:
+            text = text[:comment_at]
+    return text.strip()
 
 
 def _format_path(path: YamlKeyPath) -> str:

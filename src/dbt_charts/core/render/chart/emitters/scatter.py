@@ -23,6 +23,8 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
 )
 from dbt_charts.core.render.chart.emitters._channels import (
     apply_color_legend,
+    apply_legend_entry_order,
+    categorical_color_encoding,
     channel_to_encoding,
     field_encoding,
     infer_vega_type_from_data,
@@ -250,35 +252,48 @@ class ScatterEmitter:
                 else None
             )
             enc = channel_to_encoding(color_ch, data, title=color_title)
-            if enc is not None:
-                apply_color_legend(enc, chart.legend)
-                # A bound field still owes every value its board slot's
-                # color — VL's own alphabetical default range would
-                # otherwise paint this chart from its own local position,
-                # not the board's (mirrors bar/line's grouped-series path).
-                if (
-                    color_ch.mode == "series"
-                    and enc.get("type") == "nominal"
-                    and color_ch.data_field
-                    and chart.palette
-                ):
+            apply_color_legend(enc, chart.legend)
+            # A bound field still owes every value its board slot's
+            # color — VL's own alphabetical default range would
+            # otherwise paint this chart from its own local position,
+            # not the board's (mirrors bar/line's grouped-series path).
+            if categorical_color_encoding(color_ch, enc.get("type")):
+                series = distinct_series_values(data, color_ch.data_field)
+                # Only fires when authored -- see the identical
+                # reasoning on the heatmap site: an unconditional pin
+                # here would emit a str()-cast `values` list with no
+                # explicit `scale.domain` to back it (only the
+                # board-wide `category_colors` branch below sets one),
+                # risking a type-mismatched swatch for a non-string
+                # color column.
+                if chart.legend.values is not None:
+                    apply_legend_entry_order(
+                        enc,
+                        series,
+                        authored=chart.legend.values,
+                    )
+                # Ordinal columns carry their own inherent order --
+                # the paint scale below must never touch it.
+                if enc.get("type") == "nominal" and chart.palette:
                     scale = category_scale_for(
                         chart.category_colors, color_ch.data_field
                     )
-                    if scale is not None:
-                        series = distinct_series_values(data, color_ch.data_field)
-                        if series:
-                            enc["scale"] = spatial_color_scale(
-                                series, chart.palette, series, scale
-                            )
-                encoding["color"] = enc
+                    if scale is not None and series:
+                        enc["scale"] = spatial_color_scale(
+                            series, chart.palette, series, scale
+                        )
+            encoding["color"] = enc
 
         if chart.size:
             size_enc = field_encoding(chart.size, "quantitative")
             size_enc["title"] = format_display_text(
                 chart.size, from_slug=True, font=chart.legend.title.font
             )
-            apply_color_legend(size_enc, chart.legend)
+            # drop_values: chart.legend.values, when authored, is a
+            # categorical reorder for the COLOR legend -- this is a
+            # quantitative gradient tick ladder, which never resolves
+            # against nominal/ordinal entries.
+            apply_color_legend(size_enc, chart.legend, drop_values=True)
             encoding["size"] = size_enc
 
         if chart.shape:

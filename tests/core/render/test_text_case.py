@@ -129,14 +129,14 @@ def test_sentence_single_char() -> None:
         # acronym) must survive the post-process. The callback preserves
         # it; the post-process explicitly skips all-caps tokens.
         ("scale UP now", "Scale UP Now"),
-        # "dbt" is stylized lowercase always (dbt Labs' own convention,
-        # e.g. "dbt charts"), never an acronym. Without an explicit guard,
-        # the titlecase library's built-in all-consonant heuristic (the
-        # same rule that promotes "mrr"/"sql") misreads "dbt" as an
-        # acronym-to-uppercase and renders "DBT Charts ..." — visibly
-        # wrong for the product name.
-        ("dbt charts quick start", "dbt charts Quick Start"),
-        ("quick start guide to dbt charts", "Quick Start Guide to dbt charts"),
+        # "dbt" is stylized lowercase always (dbt Labs' own convention),
+        # never an acronym. Without an explicit guard, the titlecase
+        # library's built-in all-consonant heuristic (the same rule that
+        # promotes "mrr"/"sql") misreads "dbt" as an acronym-to-uppercase
+        # and renders "DBT Charts ..." — visibly wrong for the product
+        # name.
+        ("dbt charts quick start", "dbt Charts Quick Start"),
+        ("quick start guide to dbt charts", "Quick Start Guide to dbt Charts"),
     ],
 )
 def test_title_case_edge_cases(text: str, expected: str) -> None:

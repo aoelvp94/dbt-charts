@@ -129,14 +129,15 @@ def _theme_from_extends(extends: str | list[str] | None) -> str | None:
     return None
 
 
-# (theme name, each patch's fields) — everything the cascade varies on within
-# one compile. Project config (`get_config().vega.config`) is the other input
-# and is fixed for a compile's duration, so it is deliberately not in the key.
+# (theme name, this board's own merged patch's fields) — everything the
+# cascade varies on within one compile. Project config
+# (`get_config().vega.config`) is the other input and is fixed for a
+# compile's duration, so it is deliberately not in the key.
 #
 # `repr` of the dumped fields, not `model_dump_json`: JSON writes inf and nan as
 # null, so `gap: .inf` would key the same as `gap: null` and silently take the
 # wrong style off the memo. A repr the other way round can only miss.
-_BoardCascadeKey = tuple[str, tuple[str, ...]]
+_BoardCascadeKey = tuple[str, str]
 _CascadeProducts = tuple[ResolvedStyle, ChartStyleContext]
 
 # Board style cascades already resolved, innermost compile last. Every cascade
@@ -181,22 +182,40 @@ def compile_board_resolved_style(
     board_style: StylePatch | None,
     parent_resolved: ResolvedStyle | None,
     parent_context: ChartStyleContext | None,
+    parent_patch: StylePatch | None = None,
     theme_name: str | None = None,
-) -> tuple[ResolvedStyle, ChartStyleContext]:
+) -> tuple[ResolvedStyle, ChartStyleContext, StylePatch | None]:
     """Build the authoritative ResolvedStyle + ChartStyleContext for this board scope.
 
-    Merge order:
-    1. Theme defaults (theme_name → compiled theme → resolve_style)
-    2. Parent semantic tokens (muted, accent) — propagate tonal identity
-    3. Board's style block as StylePatch (root ``width:`` sugar is already
-       folded into this patch by ``normalize_board`` — see
-       ``_root_width_style_patch``)
+    When this board authors its own ``style:`` (``board_style is not None``),
+    merge order is:
+    1. ``board_style`` merged over ``parent_patch`` via the nested-board
+       relation (``scope_patch(parent_patch, board_style)``, which merges via
+       ``merge_patches(..., nested=True)``). Each style field's own
+       ``Merge`` marker settles it: most default to the ancestor's authored
+       value crossing in when this board leaves them unset; a field marked
+       ``Merge(nested=Strategy.CHILD)`` — a per-board structural or
+       root-only concern (spacing, frame, page chrome), not thematic
+       identity — always takes this board's own value instead, even when
+       that value is unset.
+    2. Theme defaults (theme_name → compiled theme → resolve_style) fill
+       whatever the merged patch left unset.
 
-    Both return values come from the same cascade pass — ``parent_resolved``/
-    ``parent_context`` must be supplied together (both None at the root, both
-    set for every nested board) or omitted together.
+    When this board authors no ``style:`` of its own, it reuses
+    ``parent_resolved``/``parent_context`` verbatim (or a bare theme resolve
+    at the root) — see the fast path below.
+
+    Returns the resolved style, its chart context, and this board's own
+    merged patch — ``None`` when nothing was authored anywhere in this
+    board's lineage, otherwise what a caller threads to this board's own
+    nested children as their ``parent_patch``.
+
+    The resolved style and chart context come from the same cascade pass —
+    ``parent_resolved``/``parent_context`` must be supplied together (both
+    None at the root, both set for every nested board) or omitted together.
     """
     from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+    from dbt_charts.core.compile.merge import scope_patch
 
     if (parent_resolved is None) != (parent_context is None):
         raise ValueError(
@@ -209,21 +228,13 @@ def compile_board_resolved_style(
 
     if board_style is None:
         if parent_resolved is not None and parent_context is not None:
-            return parent_resolved, parent_context
-        return resolve_style_and_context(base)
+            return parent_resolved, parent_context, parent_patch
+        return (*resolve_style_and_context(base), parent_patch)
 
-    parent_cascade = None
-    if parent_resolved is not None:
-        parent_cascade = StylePatch.model_validate(
-            {"muted": parent_resolved.muted, "accent": parent_resolved.accent}
-        )
+    own_patch = scope_patch(parent_patch, board_style)
 
-    patches = [p for p in (parent_cascade, board_style) if p is not None]
     cache = _current_board_style_cache()
-    key = (
-        effective_theme,
-        tuple(repr(patch.model_dump(exclude_unset=True)) for patch in patches),
-    )
+    key = (effective_theme, repr(own_patch.model_dump(exclude_unset=True)))
     cached = cache.get(key)
     if cached is not None:
         # A shallow copy, not the cached object: the sizing pass keys its
@@ -232,11 +243,11 @@ def compile_board_resolved_style(
         # that merge to the same style must still hold two objects. The copy
         # shares the whole resolved tree — what the memo skips is the cascade,
         # not the allocation.
-        return copy.copy(cached[0]), cached[1]
+        return copy.copy(cached[0]), cached[1], own_patch
 
-    resolved = resolve_style_and_context(base, *patches)
+    resolved = resolve_style_and_context(base, own_patch)
     cache[key] = resolved
-    return resolved
+    return (*resolved, own_patch)
 
 
 def _root_width_style_patch(board: AuthoredBoard) -> StylePatch | None:
@@ -292,21 +303,32 @@ def sync_board_resolved_style(
     board: Any,
     parent_resolved: ResolvedStyle | None = None,
     parent_context: ChartStyleContext | None = None,
+    parent_patch: StylePatch | None = None,
 ) -> None:
     """Re-cascade ``board.resolved_style``/``board.chart_style_context`` from ``board.theme``.
 
     Called by ``Board.set_theme`` whenever a theme is changed after compile;
     the render layer never calls it directly. Nested boards are re-cascaded
-    too because semantic tokens (``muted``, ``accent``) flow from this
-    board's resolved style down to its children.
+    too, since every field an ancestor board explicitly authored flows down
+    via ``parent_patch`` (through the same nested-board ``Merge`` relation
+    ``compile_board_resolved_style`` uses at compile time).
     """
-    board.resolved_style, board.chart_style_context = compile_board_resolved_style(
-        board.authored_style, parent_resolved, parent_context, theme_name=board.theme
+    board.resolved_style, board.chart_style_context, own_patch = (
+        compile_board_resolved_style(
+            board.authored_style,
+            parent_resolved,
+            parent_context,
+            parent_patch,
+            theme_name=board.theme,
+        )
     )
     for item in board.layout.items or []:
         if item.board is not None:
             sync_board_resolved_style(
-                item.board, board.resolved_style, board.chart_style_context
+                item.board,
+                board.resolved_style,
+                board.chart_style_context,
+                own_patch,
             )
 
 
@@ -314,6 +336,7 @@ def _propagate_resolved_style(
     layout: Any,
     parent_resolved: ResolvedStyle,
     parent_context: ChartStyleContext,
+    parent_patch: StylePatch | None = None,
 ) -> None:
     """Walk the layout tree and set resolved_style/chart_style_context on nested Boards."""
     from dbt_charts.core.compile.models.board.normalized import Layout
@@ -323,18 +346,22 @@ def _propagate_resolved_style(
 
     for item in layout.items:
         if item.board is not None:
-            item.board.resolved_style, item.board.chart_style_context = (
-                compile_board_resolved_style(
-                    item.board.authored_style,
-                    parent_resolved,
-                    parent_context,
-                    theme_name=item.board.theme,
-                )
+            (
+                item.board.resolved_style,
+                item.board.chart_style_context,
+                own_patch,
+            ) = compile_board_resolved_style(
+                item.board.authored_style,
+                parent_resolved,
+                parent_context,
+                parent_patch,
+                theme_name=item.board.theme,
             )
             _propagate_resolved_style(
                 item.board.layout,
                 item.board.resolved_style,
                 item.board.chart_style_context,
+                own_patch,
             )
 
 
@@ -720,7 +747,7 @@ def normalize_board(
                 else root_width_patch
             )
 
-    resolved_style, chart_style_context = compile_board_resolved_style(
+    resolved_style, chart_style_context, own_style_patch = compile_board_resolved_style(
         board_style,
         parent_context.get("resolved_style"),
         parent_context.get("chart_style_context"),
@@ -770,7 +797,12 @@ def normalize_board(
         path_prefix=path_prefix,
     )
 
-    _propagate_resolved_style(layout, resolved_style, chart_style_context)
+    _propagate_resolved_style(
+        layout,
+        resolved_style,
+        chart_style_context,
+        own_style_patch,
+    )
 
     # Auto-generate hidden variables for tabs/details widgets
     auto_variables = generate_layout_variables(layout)

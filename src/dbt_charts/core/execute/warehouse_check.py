@@ -292,7 +292,9 @@ def check_ad_hoc_query(
     )
     from dbt_charts.core.compile.normalize.dispatch import compile_board_resolved_style
 
-    resolved_style, chart_style_context = compile_board_resolved_style(None, None, None)
+    resolved_style, chart_style_context, _ = compile_board_resolved_style(
+        None, None, None
+    )
     board = Board(
         id=AD_HOC_QUERY_NAME,
         layout=Layout(type=LayoutType.ROWS, items=[]),

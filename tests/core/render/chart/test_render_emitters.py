@@ -1184,7 +1184,9 @@ def test_bar_emit_multi_measure_horizontal_categorical_on_y(
     bar_style: ResolvedBarStyle,
 ) -> None:
     """Horizontal multi-measure bars place categories on y and folded values on x."""
-    from dbt_charts.core.compile.resolve.chart._wide_fields import WIDE_VALUE_FIELD
+    from dbt_charts.core.compile.resolve.chart._wide_fields import (
+        WIDE_VALUE_FIELD,
+    )
     from dbt_charts.core.render.chart.emitters.bar import BarEmitter
 
     bar = ResolvedBarChart(
@@ -1720,22 +1722,6 @@ def test_resolve_geo_projection_structured_projection_extracts_type() -> None:
     proj_type, proj_params = _resolve_geo_projection(Projection(type="mercator"), None)
     assert proj_type == "mercator", f"expected 'mercator', got {proj_type!r}"
     assert proj_params is None
-
-
-def test_channel_to_encoding_conditional_no_rules_returns_none() -> None:
-    """Conditional with no rules returns None — no background conditions → omit encoding."""
-    from dbt_charts.core.compile.models.chart.authored import ConditionalRule
-    from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
-    from dbt_charts.core.render.chart.emitters._channels import channel_to_encoding
-
-    # Conditional with a font-only rule (no background) → no VL color output
-    ch = ResolvedStyleChannel(
-        channel="color",
-        mode="conditional",
-        data_field="revenue",
-        rules=(ConditionalRule(eq=100, glyph="▲"),),
-    )
-    assert channel_to_encoding(ch, []) is None
 
 
 # ---------------------------------------------------------------------------

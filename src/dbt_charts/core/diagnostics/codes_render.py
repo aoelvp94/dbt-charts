@@ -2129,7 +2129,7 @@ WARN_SERIES_LABEL_TRUNCATED = REGISTRY.register(
             "ellipsis (…). The labels are the values of the column bound to "
             "`color:`; for a wide-form chart authored `y: [a, b, …]`, the "
             "measure names themselves, prefixed by the `color:` column's value "
-            "(`<value> — <measure>`) when one is authored; the warning names "
+            "(`<value> - <measure>`) when one is authored; the warning names "
             "whichever key holds the long part. The label text in the message is the "
             "full value before "
             "truncation, so you can see exactly what was cut. Only the drawn "
@@ -2418,6 +2418,74 @@ WARN_CATEGORY_COLOR_PIN_UNSEEN = REGISTRY.register(
         summary=(
             "Fired when a category_colors pin names a value none of the "
             "charts on this render actually draw."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_LEGEND_VALUES_UNRESOLVED = REGISTRY.register(
+    WarningCode(
+        code="WARN-LEGEND-VALUES-UNRESOLVED",
+        domain="render",
+        title="style.legend.values entry does not resolve against the legend domain",
+        summary=(
+            "Fired when an authored legend entry doesn't resolve against a "
+            "chart's legend domain."
+        ),
+        message_template=(
+            "Chart {chart_id!r} authored `legend.values` entries {values} "
+            "that did not resolve to exactly one legend entry. Legend "
+            "domain: {domain}."
+        ),
+        fix_template=(
+            "Check the spelling against the legend domain, or remove the "
+            "entry if it's expected to be legitimately absent sometimes."
+        ),
+        doc=(
+            "Fires when `style.legend.values` names an entry that matches "
+            "none of the chart's legend entries, or matches more than one. "
+            "The entry is dropped rather than shown or causing a render "
+            "failure. If every authored entry misses, the legend falls "
+            "back to its default order. Covers every nominal/ordinal "
+            "`color:` field on bar, area, line, scatter, heatmap, and pie, "
+            "a wide `y: [...]` chart, an overlay's `layers:` labels, and a "
+            "geoshape choropleth. Not checked: `point_map`/`bubble_map` "
+            "(no legend resolution there), a quantitative, temporal, or "
+            "boolean `color:` column (`legend.values` is used exactly as "
+            "authored, with no diagnostic on a miss), and an overlay whose "
+            "base `y` is non-quantitative (its shared color scale is never "
+            "built, so `legend.values` passes through verbatim)."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_WIDE_MEASURE_LABEL_COLLISION = REGISTRY.register(
+    WarningCode(
+        code="WARN-WIDE-MEASURE-LABEL-COLLISION",
+        domain="render",
+        title="Two wide y: measures humanize to the same legend label",
+        summary=(
+            "Fired when two or more wide `y:` measures produce the same "
+            "legend and axis label; each renders under its own column "
+            "name instead."
+        ),
+        message_template=(
+            "Chart {chart_id!r} authors y: measures {measures}, which "
+            "all show the label {label!r}. Each is now shown under its "
+            "own column name instead."
+        ),
+        fix_template=(
+            "Author distinct `y:` column names, or rename one of them in "
+            "the query so they no longer produce the same label."
+        ),
+        doc=(
+            "Fires when two or more measures in a wide chart's y: list "
+            "produce the same legend and axis label. For example, "
+            "`churn_pct` and `churn_percent` both read `churn (%)`. Each "
+            "colliding measure is shown under its own column name "
+            "instead, keeping them as separate series. Other measures in "
+            "the list are unaffected."
         ),
         docs_topic="charts",
     )

@@ -112,7 +112,7 @@ style:
 
     def test_footer_brand_phrase_is_drawn_as_the_wordmark_not_set_in_type(self):
         svg = render_board_to_svg()
-        assert re.search(r"<text[^>]*>[^<]*dbt charts", svg) is None
+        assert re.search(r"<text[^>]*>[^<]*dbt charts", svg, re.IGNORECASE) is None
         assert re.search(
             r'<g class="dbt-footer-wordmark"[^>]*>(<path d="[^"]+"/>){3}</g>', svg
         )
@@ -213,7 +213,7 @@ charts:
 rows: [t]
 style:
   footer:
-    text: "made with dbt charts for Acme"
+    text: "made with dbt Charts for Acme"
 """
         svg = render_board_to_svg(yaml)
         suffix = re.search(r'<text x="([\d.]+)"[^>]*>for Acme</text>', svg)

@@ -93,14 +93,6 @@ class _PredicateBase(BaseModel):
             raise ValueError("in must be a non-empty list")
         return v
 
-    def active_predicate(self) -> tuple[str, Any]:
-        """Return the (op, value) pair for the single active predicate."""
-        for op in _PREDICATE_OPS:
-            val = getattr(self, op)
-            if val is not None:
-                return op, val
-        raise AssertionError("No active predicate — should be caught by validator")
-
 
 # Derived from _PredicateBase.model_fields — no manual maintenance needed.
 # Pydantic preserves field declaration order, so iteration order is stable.

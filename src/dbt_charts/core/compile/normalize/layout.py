@@ -850,10 +850,14 @@ def _resolve_tab_items(
     for idx, tab_item in enumerate(tabs.items):
         titles.append(tab_item.title)
 
-        # Tab items can have nested layouts
-        tab_dict = tab_item.model_dump(exclude_none=True)
+        # Tab items can have nested layouts. exclude_unset (not exclude_none)
+        # so an explicit `style: {formats: null, ...}` round-trips as an
+        # authored null rather than collapsing into "never mentioned" — the
+        # same explicit-null-vs-unset distinction merge_patches relies on for
+        # every other nested-board path, which only this dict round-trip loses.
+        tab_dict = tab_item.model_dump(exclude_unset=True)
 
-        if any(k in tab_dict for k in ["rows", "cols", "grid", "tabs"]):
+        if any(tab_dict.get(k) is not None for k in ["rows", "cols", "grid", "tabs"]):
             # Tab is a nested board. Pop TabItem-only fields not on AuthoredBoard,
             # then model_validate so style errors include the "style." loc prefix.
             tab_dict.pop("icon", None)

@@ -11,7 +11,6 @@ memo nobody installs is indistinguishable from a working one at the unit level.
 
 from __future__ import annotations
 
-import dataclasses
 import math
 from typing import Any
 
@@ -150,22 +149,23 @@ class TestBoardCascadeIsMemoizedPerCompile:
         assert first[0] is not second[0]
         assert first[0].muted != second[0].muted
 
-    def test_a_parent_with_different_tokens_is_not_shared(self) -> None:
-        """muted/accent are the parent's whole contribution — and they must count."""
+    def test_a_parent_with_different_patches_is_not_shared(self) -> None:
+        """An ancestor's own authored style patch is the parent's whole
+        contribution to a nested board's cascade — and it must count in the
+        cache key, same as the board's own patch does."""
         patch = StylePatch.model_validate({"background": "#ffffff"})
         with board_style_cache():
-            root_resolved, root_context = compile_board_resolved_style(
+            root_resolved, root_context, _ = compile_board_resolved_style(
                 patch, None, None
             )
             under_root = compile_board_resolved_style(
                 patch, root_resolved, root_context
             )
-            recoloured = dataclasses.replace(root_resolved, muted="#123456")
+            recoloured_patch = StylePatch.model_validate({"muted": "#123456"})
             under_recoloured = compile_board_resolved_style(
-                patch, recoloured, root_context
+                patch, root_resolved, root_context, recoloured_patch
             )
 
-        assert under_root[0] is not under_recoloured[0]
         assert under_root[0].muted != under_recoloured[0].muted
 
     def test_a_non_finite_value_is_not_confused_with_an_unset_one(self) -> None:
@@ -247,11 +247,13 @@ class TestCompileDoesNotRepeatItself:
         result = compile(_SIBLING_BOARDS_YAML, file="f.yaml")
         assert result.success, [d.message for d in result.errors]
 
-        # Root plus two siblings that merge to one style: three cascades, one
-        # per distinct style. Without the memo it is five, because each sibling
-        # is resolved twice — once on the normalize walk, once on the propagate
-        # walk that overwrites it.
-        assert len(cascades) == 3
+        # Root (which authors no style of its own) plus two siblings that
+        # merge to one style: two cascades, one per distinct style. The root
+        # contributes nothing authored, so each sibling's normalize-walk
+        # resolve and its propagate-walk resolve are the same computation.
+        # Without the memo it is still more, because each sibling would be
+        # resolved twice regardless.
+        assert len(cascades) == 2
 
     def test_a_board_is_composed_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
         composes: list[str] = []

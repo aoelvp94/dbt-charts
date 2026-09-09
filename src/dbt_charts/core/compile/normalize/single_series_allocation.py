@@ -13,15 +13,12 @@ falls through to ``theme.charts.single_series_palette``:
   a single fill/stroke when not color-encoded.
 * No ``color:`` encoding field (color encoding means multi-series via the
   categorical palette).
-* No ``conditional_formatting`` (render projects synthetic per-row color
-  channels and bypasses ``single_series_palette``).
 * ``y`` is not a multi-element list (multi-metric overlay uses the
   categorical palette).
 
-Ineligible charts (multi-series, KPI, table, pie, charts with
-``conditional_formatting``, etc.) do NOT get a slot and do NOT advance
-the counter — adding or removing such a chart leaves the rhythm of
-other authored-single-series charts unchanged.
+Ineligible charts (multi-series, KPI, table, pie, etc.) do NOT get a slot
+and do NOT advance the counter — adding or removing such a chart leaves the
+rhythm of other authored-single-series charts unchanged.
 
 Author overrides (``style.color`` or ``style.<family>.palette``) still
 consume a slot: the slot is assigned by position regardless. Precedence
@@ -58,8 +55,6 @@ def _is_single_series_eligible(chart: Chart) -> bool:
     if not isinstance(chart, _CartesianChartFields):
         return False
     if chart.color is not None:
-        return False
-    if chart.conditional_formatting:
         return False
     return not (isinstance(chart.y, list) and len(chart.y) > 1)
 

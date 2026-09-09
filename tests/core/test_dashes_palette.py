@@ -557,3 +557,96 @@ class TestRenderVegaSpecLinecapOnHconcatWrappedDashedChart:
             "_spec_has_stroke_dash returned False on this shape, skipping the "
             "post-processor and rendering butt-cap dashes in the legend."
         )
+
+
+class TestDashesLegendValuesResolution:
+    """The `style.dashes` branch (emitters/line.py) is a separate legend-
+    pinning site from the plain (non-dashed) color path above -- it needs
+    its own coverage of `apply_legend_entry_order`, gated (like every
+    other family's own dedicated resolution call) on `chart.legend.values
+    is not None` AND a nominal/ordinal color type: an unconditional pin
+    would str()-cast a bool/int/date color field's `legend.values` while
+    `color_scale.domain`/`strokeDash.scale.domain` kept the raw values --
+    a type-mismatched legend that vl_convert renders as all-NaN, on a
+    board that authored nothing."""
+
+    def test_dashes_writes_no_legend_values_when_nothing_is_authored(
+        self, make_chart
+    ) -> None:
+        board_rs, board_ctx = _board_with_dashes(SAMPLE_DASHES)
+        chart = make_chart("line", x="month", y="revenue", color="region")
+
+        spec = generate_vega_lite_spec(
+            chart, data=SERIES_DATA, board_style=board_rs, chart_style_context=board_ctx
+        )
+
+        color_legend = spec["encoding"]["color"]["legend"]
+        assert "values" not in color_legend
+
+    def test_dashes_resolves_an_authored_entry_against_the_real_domain(
+        self, make_chart
+    ) -> None:
+        board_rs, board_ctx = _board_with_dashes(SAMPLE_DASHES)
+        chart = make_chart(
+            "line",
+            x="month",
+            y="revenue",
+            color="region",
+            style={"legend": {"values": ["SOUTH", "NORTH"]}},
+        )
+
+        spec = generate_vega_lite_spec(
+            chart, data=SERIES_DATA, board_style=board_rs, chart_style_context=board_ctx
+        )
+
+        color_legend = spec["encoding"]["color"]["legend"]
+        assert color_legend["values"] == ["south", "north"]
+
+    def test_dashes_does_not_pin_legend_values_on_a_boolean_color_field(
+        self, make_chart
+    ) -> None:
+        """Regression: a boolean/int/date `color:` field infers to
+        "quantitative"/"temporal", never "nominal"/"ordinal" -- the type
+        gate must exclude it the same way pie/heatmap/scatter/geo/bar's
+        own dedicated calls do, or `legend.values` gets a str()-cast
+        `["True", "False"]` list while `color_scale.domain` and
+        `strokeDash.scale.domain` keep the raw booleans, a type mismatch
+        vl_convert renders as an all-NaN legend.
+
+        Authors a `legend.values` entry -- the authored-gate alone already
+        short-circuits an unauthored board before the type check ever
+        runs, so this must author something to actually exercise the type
+        clause; deleting it would otherwise leave this test green. A
+        quantitative color's `legend.values` is a gradient
+        tick ladder, not a categorical entry list (same convention as
+        pie.py's own quantitative-color comment) -- resolution must skip
+        it, leaving `apply_color_legend`'s verbatim copy untouched, not
+        fold-match/drop it against the boolean domain as if it were
+        categorical."""
+        board_rs, board_ctx = _board_with_dashes(SAMPLE_DASHES)
+        chart = make_chart(
+            "line",
+            x="month",
+            y="revenue",
+            color="is_target",
+            # A lowercase fold-match of "True" plus a bogus entry: if the
+            # type gate were removed, resolution would fold-match "true"
+            # to "True" and drop "bogus" (WARN), producing a DIFFERENT
+            # list than the verbatim authored one -- a genuinely
+            # discriminating case, not one that coincidentally resolves
+            # to the same output either way.
+            style={"legend": {"values": ["true", "bogus"]}},
+        )
+        data = [
+            {"month": "Jan", "revenue": 100, "is_target": True},
+            {"month": "Jan", "revenue": 80, "is_target": False},
+            {"month": "Feb", "revenue": 120, "is_target": True},
+            {"month": "Feb", "revenue": 90, "is_target": False},
+        ]
+
+        spec = generate_vega_lite_spec(
+            chart, data=data, board_style=board_rs, chart_style_context=board_ctx
+        )
+
+        color_legend = spec["encoding"]["color"]["legend"]
+        assert color_legend["values"] == ["true", "bogus"]

@@ -43,7 +43,11 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
     values_straddle_zero,
     x_encoding_is_banded,
 )
-from dbt_charts.core.render.chart.emitters._channels import apply_color_legend
+from dbt_charts.core.render.chart.emitters._channels import (
+    apply_color_legend,
+    apply_legend_entry_order,
+    layer_label_and_aliases,
+)
 from dbt_charts.core.render.chart.emitters._layers import (
     CLIP_TO_PLOT,
     emit_area_layer,
@@ -86,7 +90,6 @@ from dbt_charts.core.render.utils import (
     normalize_data_types,
     ordered_distinct_values,
 )
-from dbt_charts.core.text.case import default_axis_title
 
 # VL scale types where the domain is an ordered list of discrete categories
 # (as opposed to a continuous [min, max] range). Union-domain reconciliation
@@ -1279,6 +1282,14 @@ def render_cartesian_overlay(
     # authored layer `label:`s, never a real field) -- collected for a single
     # aria-label patch decision below, once scale_domain is fully known.
     label_scale_legend_encs: list[VLDict] = []
+    # label -> {label, y_field, default_axis_title(y_field)}, one entry for
+    # the base (added just below, when it contributes a LABEL) and one per
+    # layer that does the same -- the alias map an authored `legend.values`
+    # needs to resolve a y-column name against its rendered label, same as
+    # an overlay layer's endpoint-rail name derivation. Consumed once,
+    # after the loop, by whichever of the base_label/field_color_base
+    # legend-order writes fires.
+    label_domain_aliases: dict[str, frozenset[str]] = {}
     if field_color_base:
         assert isinstance(base_color_enc, dict)
         color_field = base_color_enc["field"]
@@ -1311,6 +1322,12 @@ def render_cartesian_overlay(
     elif base_label is not None:
         scale_domain.append(base_label)
         scale_range.append(single_series_fill)
+        base_y_field = y_enc_base.get("field")
+        label_domain_aliases[base_label] = (
+            layer_label_and_aliases(base_label, base_y_field)[1]
+            if isinstance(base_y_field, str)
+            else frozenset({base_label})
+        )
 
     stroke_datums: set[str] = set()  # line overlays
     circle_datums: set[str] = set()  # area overlays
@@ -1384,8 +1401,11 @@ def render_cartesian_overlay(
         # Engine-derived layer name: same rule as the base's, which comes
         # from titles.y_plain. Both land in one color.scale.domain and one
         # endpoint rail, so they must share a convention — an authored
-        # `label:` is the only thing that opts out.
-        label: str = layer.label or default_axis_title(y_field)
+        # `label:` is the only thing that opts out. layer_legend_aliases
+        # is the pure config-to-config alias set (label, raw y-column,
+        # default title) an authored `legend.values` may name -- shared
+        # with the render-warnings detector via layer_label_and_aliases.
+        label, layer_legend_aliases = layer_label_and_aliases(layer.label, y_field)
 
         own_data = resolved_layer_rows[layer_idx][1]
         rows_for_layer = own_data if own_data is not None else data
@@ -1536,7 +1556,17 @@ def render_cartesian_overlay(
             and use_shared_scale
         ):
             independent_color_scale = True
-        apply_color_legend(color_enc, legend)
+        # Only the base's merged legend (apply_legend_entry_order, below)
+        # ever writes a resolved `values` -- this per-layer legend hasn't
+        # seen the SHARED domain yet (every layer's contribution isn't
+        # known until after this loop), so drop `values` here rather than
+        # carry an unresolved list. Gated on use_shared_scale: when the
+        # base's y isn't quantitative, no shared scale gets built at all,
+        # so neither post-loop restore site below ever fires -- dropping
+        # unconditionally would discard a correct authored entry with no
+        # fallback. Leave legend_to_vl's own verbatim passthrough in place
+        # for that shape instead.
+        apply_color_legend(color_enc, legend, drop_values=use_shared_scale)
         if layer_color_field is None:
             label_scale_legend_encs.append(color_enc)
         # The series' color: authored constant if present, else the next palette
@@ -1594,6 +1624,7 @@ def render_cartesian_overlay(
             scale_domain.append(label)
             scale_range.append(layer_series_fill)
             color_enc["scale"] = shared_scale
+            label_domain_aliases[label] = layer_legend_aliases
         else:
             layer_series_fill = single_series_fill
         layer_encoding: VLDict = {val_ch: y_enc, "color": color_enc}
@@ -1880,15 +1911,37 @@ def render_cartesian_overlay(
     if base_label is not None:
         base_color: VLDict = {"datum": base_label, "scale": shared_scale}
         apply_color_legend(base_color, legend)
+        # scale_domain is complete now (base entry + every layer's
+        # contribution); an authored `legend.values` resolves against the
+        # FULL domain here. Only fires when authored -- this shared scale
+        # is `datum:`-bound, not a stacked field scale, so there is no
+        # Vega alphabetical-fallback bug to close for the unauthored case.
+        if legend.values is not None:
+            apply_legend_entry_order(
+                base_color,
+                scale_domain,
+                authored=legend.values,
+                aliases=label_domain_aliases,
+            )
         label_scale_legend_encs.append(base_color)
         base_spec.encoding["color"] = base_color
     elif field_color_base:
         assert isinstance(base_color_enc, dict)
         base_legend = base_color_enc.get("legend")
-        if isinstance(base_legend, dict) and isinstance(
-            base_legend.get("values"), list
+        # `base_legend["values"]` may already carry the base emitter's own
+        # (narrower, layer-unaware) engine order -- pass `legend.values`,
+        # the resolved style, as `authored`, never this dict's render-time
+        # state, so resolution runs against the now-complete overlay
+        # domain instead.
+        if isinstance(base_legend, dict) and (
+            legend.values is not None or isinstance(base_legend.get("values"), list)
         ):
-            base_legend["values"] = scale_domain
+            apply_legend_entry_order(
+                base_color_enc,
+                scale_domain,
+                authored=legend.values,
+                aliases=label_domain_aliases,
+            )
 
     # scale_domain is complete now and is what Vega will actually enumerate --
     # deduped, since two series can legitimately share one label (see the

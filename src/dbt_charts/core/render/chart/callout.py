@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import html
-import re
 from dataclasses import dataclass
 
 from dbt_charts.core.compile.models.chart.resolved.callout import ResolvedCalloutChart
@@ -23,11 +22,6 @@ _LINE_HEIGHT_RATIO = 1.35
 # Keep cards readable without letting a long stack trace consume the full board.
 _MAX_MESSAGE_LINES = 12
 _MAX_TITLE_LINES = 3
-
-# Targets only class="..." element attributes — not arbitrary text or href content.
-_MD_CLASS_ATTR_RE = re.compile(r'class="([^"]*)"')
-# Targets CSS selectors like .md-text, .md-code, etc.
-_MD_CLASS_CSS_RE = re.compile(r"\.(md-[a-z-]+)")
 
 
 @dataclass
@@ -79,29 +73,6 @@ def _plain_block(
         style="",
         height=len(lines) * line_height,
     )
-
-
-def _scope_md_classes(elements: str, style_block: str, prefix: str) -> tuple[str, str]:
-    """Prefix md-* class names in SVG elements and a CSS style block.
-
-    The two passes are intentionally split across their inputs:
-    - ``class="..."`` attribute rewriting runs on *elements* only — style blocks
-      contain no ``class=`` attributes.
-    - ``.md-X`` CSS-selector rewriting runs on *style_block* only — elements
-      contain no CSS selectors, only text content and href URLs that must not
-      be touched.
-    Running either regex on the wrong string corrupts content.
-    """
-
-    def prefix_class_attr(m: re.Match[str]) -> str:
-        classes = " ".join(
-            f"{prefix}{c}" if c.startswith("md-") else c for c in m.group(1).split()
-        )
-        return f'class="{classes}"'
-
-    scoped_elements = _MD_CLASS_ATTR_RE.sub(prefix_class_attr, elements)
-    scoped_style = _MD_CLASS_CSS_RE.sub(lambda m: f".{prefix}{m.group(1)}", style_block)
-    return scoped_elements, scoped_style
 
 
 def _callout_md_renderer(
@@ -196,10 +167,15 @@ def render_callout_svg(
     title_color = title_rf.color
     message_color = message_rf.color
 
-    # Per-callout unique hash: ensures CSS class names and clip-path ids don't
-    # collide when multiple callouts are composited into one SVG root.
-    # Includes all resolved style inputs that affect CSS rules or clip geometry
-    # so callouts with the same content but different themes don't collide.
+    # Per-callout unique hash: ensures clip-path ids don't collide when
+    # multiple callouts are composited into one SVG root (mdsvg scopes each
+    # renderer's own CSS classes to a hash of its style, so class collisions
+    # are handled there instead). Includes all resolved style inputs that
+    # affect clip geometry so callouts with the same content but different
+    # themes don't collide. Over-keyed rather than minimal: tone and
+    # the resolved colors do not move the clip rects (padding does — it sets
+    # content_width above), and keying on more than necessary only costs a
+    # different id for a same-shaped clip.
     callout_hash = hashlib.md5(  # noqa: S324 — non-cryptographic hash for stable SVG ids
         "\x00".join(
             [
@@ -224,8 +200,6 @@ def render_callout_svg(
         ).encode(),
         usedforsecurity=False,
     ).hexdigest()[:8]
-    title_prefix = f"c{callout_hash}t-"
-    message_prefix = f"c{callout_hash}m-"
 
     # Markdown renderers — title uses solid color (accent); message uses text color.
     # Link color uses solid for both so links stand out against the tone background.
@@ -352,18 +326,12 @@ def render_callout_svg(
         )
         current_y += code_badge_height + section_gap
 
-    # Each callout gets unique CSS class names (c{hash}t- for title, c{hash}m- for
-    # message) so sibling callouts of different tones on the same board don't share
-    # global CSS rules and override each other's colors.
-    title_elements = ""
-    title_style_block = ""
-    if title_block:
-        title_elements, title_style_block = _scope_md_classes(
-            title_block.elements, title_block.style, title_prefix
-        )
-    message_elements, message_style_block = _scope_md_classes(
-        message_block.elements, message_block.style, message_prefix
-    )
+    # title_renderer and message_renderer each scope their own `.md-*` classes
+    # to a hash of their style (mdsvg), so title and message never collide
+    # even when composited into the same SVG root.
+    title_elements = title_block.elements if title_block else ""
+    title_style_block = title_block.style if title_block else ""
+    message_elements, message_style_block = message_block.elements, message_block.style
     style_block = f"{title_style_block}{message_style_block}"
 
     # Title markdown block — clipped if content exceeds _MAX_TITLE_LINES.

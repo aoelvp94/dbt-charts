@@ -447,8 +447,8 @@ def _build_bar_text_layer(
     # A label's color is only a static mark prop, and Vega-Lite lets any
     # inherited encoding.color beat one: a text sublayer picks up the outer
     # color channel and paints each label in its own bar's fill — invisible
-    # inside the bar, and a silent override of the authored ink when a chart's
-    # `conditional_formatting` supplies that channel. Pin it as this layer's
+    # inside the bar, and a silent override of the authored ink when an
+    # authored color channel supplies that fill. Pin it as this layer's
     # own encoding value so nothing upstream can claim it. A stacked label
     # always sits in a segment and so always needs one; elsewhere no color
     # means no claim, and the label goes on inheriting the series color.

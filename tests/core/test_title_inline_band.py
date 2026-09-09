@@ -629,7 +629,8 @@ rows:
             render_cache={},
         )
         m = re.search(
-            r'<text[^>]*\bfont-size="(\d+(?:\.\d+)?)"[^>]*class="md-heading"', svg
+            r'<text[^>]*\bfont-size="(\d+(?:\.\d+)?)"[^>]*class="md-[0-9a-f]{8}-heading"',
+            svg,
         )
         assert m is not None, f"no md-heading <text> in {position} render"
         return m.group(1)

@@ -204,20 +204,6 @@ _PARSE_FIXTURES = {
         "      - type: line\n"
         "        y: target\n"
     ),
-    "bar-with-conditional-formatting": (
-        "rows:\n"
-        "  - title: Bar\n"
-        "    type: bar\n"
-        "    query: q\n"
-        "    x: month\n"
-        "    y: revenue\n"
-        "    conditional_formatting:\n"
-        "      revenue:\n"
-        "        when:\n"
-        "          - lte: 30\n"
-        "            glyph: ▼\n"
-        "            tone: info\n"
-    ),
     # The schema says `str | list[str]` and the model refuses any list but a
     # one-element one — the only family whose validator is stricter than its
     # own type.
@@ -1509,42 +1495,6 @@ def test_a_heatmap_spends_its_colour_channel_on_the_measure_and_takes_no_list() 
     assert single["y"].widget == "text"
 
 
-def _ruled(family: str) -> dict[str, DesignProperty]:
-    board = (
-        "charts:\n"
-        "  c:\n"
-        "    query:\n"
-        "      sql: SELECT 1 AS m, 2 AS a, 3 AS b\n"
-        f"    type: {family}\n"
-        "    x: m\n"
-        "    y: a\n"
-        "    conditional_formatting:\n"
-        "      a:\n"
-        "        when:\n"
-        "          - gt: 1\n"
-        "            glyph: '!'\n"
-    )
-    return _flat(_targets(board)["charts.c"])
-
-
-def test_rules_block_a_wide_y_only_on_the_families_that_check_them() -> None:
-    """Bar and area refuse rules beside a list `y:`; line never checks.
-
-    `reject_multi_series_channel_conflicts` counts `conditional_formatting:` as
-    a colour source, and bar and area call it. Line does not — its rule comes
-    from `resolve_wide_measure_channels`, which reads `layers:` (and refuses a
-    `color:` bound to a gradient or conditional scale) and nothing else — so a
-    line chart carrying both a list `y:` and rules compiles
-    and renders with no diagnostic. Withholding the multi-value `y` there would
-    hide a control on a board that works.
-    """
-    # `combo`, not `text`: the demoted single-value control still carries the
-    # query's column suggestions — the demotion is about arity, not offers.
-    assert _ruled("bar")["y"].widget == "combo"
-    assert _ruled("area")["y"].widget == "combo"
-    assert _ruled("line")["y"].widget == "list"
-
-
 def test_a_histogram_does_not_inherit_bar_s_rules() -> None:
     """One model, two types, and the validator branches on the type.
 
@@ -2070,13 +2020,12 @@ def test_a_board_s_own_format_aliases_are_offered_beside_the_built_in_ones() -> 
     )
 
 
-def test_a_nested_scope_s_aliases_replace_the_ones_above_it() -> None:
-    """A tab or nested board that authors `style:` resolves its own alias table.
+def test_a_nested_scope_s_own_aliases_merge_onto_its_parent_s() -> None:
+    """A tab that authors its own `style.formats` merges it onto the parent's.
 
-    `arr` does not resolve inside that tab — the compiler raises
-    `ERR_FORMAT_INVALID` on it — so offering it there hands the author a value
-    that stops the board compiling, and `bps`, the one alias that *does*
-    resolve, would be the one missing.
+    Both `arr` (the board's) and `bps` (the tab's own) resolve inside the tab
+    — the compiler merges `formats` key-wise, not replaces it — so the panel
+    must offer both.
     """
     board = (
         "style:\n"
@@ -2097,8 +2046,8 @@ def test_a_nested_scope_s_aliases_replace_the_ones_above_it() -> None:
     )
     props = _flat(build_design_target(board, "tabs.items.0.rows.0"))
     offered = props["style.number_format"].enum_values or ()
-    assert "bps" in offered, "the alias that resolves in this tab is not offered"
-    assert "arr" not in offered, "an alias that fails to compile here is offered"
+    assert "bps" in offered, "the tab's own alias is not offered"
+    assert "arr" in offered, "the parent's alias, merged in, is not offered"
     assert set(offered) >= _NUMBER_ALIASES, "the engine's names resolve in every scope"
 
 
@@ -2106,9 +2055,10 @@ def test_a_rows_nested_board_scopes_its_aliases_the_same_way() -> None:
     """The shape a reader assumes is covered: a nested board inside `rows:`.
 
     `tabs:` and `rows:` reach the same scope rule by different hops, and the
-    compiler pins its half of this (`tests/core/compile/validate/test_formats.py`
-    — `arr` raises inside the nested board, `bps` compiles). This is the panel
-    agreeing.
+    compiler pins its half of this
+    (`tests/core/compile/validate/test_formats.py::
+    test_a_nested_board_s_own_alias_merges_onto_the_root_s` — both `arr` and
+    `bps` compile inside the nested board). This is the panel agreeing.
     """
     board = (
         "style:\n"
@@ -2133,15 +2083,15 @@ def test_a_rows_nested_board_scopes_its_aliases_the_same_way() -> None:
         or ()
     )
     assert "bps" in offered
-    assert "arr" not in offered
+    assert "arr" in offered
 
 
-def test_a_scope_that_styles_without_aliases_offers_none_of_its_parent_s() -> None:
-    """Authoring `style:` at all is what replaces the table, not authoring `formats:`.
+def test_a_scope_that_styles_without_touching_formats_inherits_the_parent_s() -> None:
+    """Authoring `style:` without `formats:` leaves the parent's table intact.
 
-    A tab with a background and no `formats:` resolves its style from the theme,
-    where the alias map is empty — so the board's `arr` stops resolving inside
-    it, and the panel has to stop offering it there too.
+    A tab with only a background resolves `formats` from the parent, unchanged
+    — the compiler merges (an unset field falls through to the base), so the
+    panel offers the board's `arr` inside it same as anywhere else.
     """
     board = (
         "style:\n"
@@ -2151,6 +2101,40 @@ def test_a_scope_that_styles_without_aliases_offers_none_of_its_parent_s() -> No
         "  items:\n"
         "    - title: Detail\n"
         "      style:\n"
+        '        background: "#fff"\n'
+        "      rows:\n"
+        "        - title: R\n"
+        "          type: bar\n"
+        "          query: q\n"
+        "          x: m\n"
+        "          y: v\n"
+    )
+    offered = (
+        _flat(build_design_target(board, "tabs.items.0.rows.0"))[
+            "style.number_format"
+        ].enum_values
+        or ()
+    )
+    assert set(offered) == _NUMBER_ALIASES | {"arr"}
+
+
+def test_an_explicit_formats_null_clears_the_table_for_that_scope() -> None:
+    """`style.formats: null` still clears — merging is only the unmentioned case.
+
+    Distinct from the scope above: this tab explicitly nulls `formats`, so the
+    parent's `arr` must not be offered inside it, matching the compiler
+    (`tests/core/compile/validate/test_formats.py::
+    test_tabs_nested_scope_explicit_formats_null_clears_the_table`).
+    """
+    board = (
+        "style:\n"
+        "  formats:\n"
+        '    arr: "$,.0f"\n'
+        "tabs:\n"
+        "  items:\n"
+        "    - title: Detail\n"
+        "      style:\n"
+        "        formats: null\n"
         '        background: "#fff"\n'
         "      rows:\n"
         "        - title: R\n"

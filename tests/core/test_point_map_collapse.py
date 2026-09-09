@@ -17,8 +17,6 @@ import pytest
 from pydantic import ValidationError
 
 from dbt_charts.core.compile.models.chart.authored import (
-    ConditionalRule,
-    FieldConditionalFormatting,
     PointMapChart as AuthoredPointMapChart,
 )
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
@@ -55,34 +53,6 @@ def test_collapse_with_field_color_rejected() -> None:
     """
     with pytest.raises(ValidationError, match="collapse"):
         AuthoredPointMapChart(type="point_map", color="store_type", collapse=True)
-
-
-def test_collapse_with_conditional_color_rejected() -> None:
-    """`collapse: true` + conditional_formatting driving color goes inert —
-    the aggregated mark datum carries only the groupby fields plus the count.
-    """
-    cf = {
-        "revenue": FieldConditionalFormatting(
-            when=[ConditionalRule(gt=50, background="#ff0000")]
-        )
-    }
-    with pytest.raises(ValidationError, match="collapse"):
-        AuthoredPointMapChart(
-            type="point_map", collapse=True, conditional_formatting=cf
-        )
-
-
-def test_collapse_with_conditional_formatting_not_driving_color_is_valid() -> None:
-    """conditional_formatting whose rules only set font/glyph (no `background`)
-    never projects to the color channel — collapse can coexist with it.
-    """
-    cf = {
-        "revenue": FieldConditionalFormatting(when=[ConditionalRule(gt=50, glyph="!")])
-    }
-    chart = AuthoredPointMapChart(
-        type="point_map", collapse=True, conditional_formatting=cf
-    )
-    assert chart.collapse is True
 
 
 def test_collapse_error_names_both_resolutions() -> None:

@@ -6,7 +6,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from dbt_charts.core.compile.models.markers import Color
+from dbt_charts.core.compile.models.markers import Color, Merge, Strategy
 from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
     SpacingValues,
@@ -47,7 +47,12 @@ class Style(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    frame: FrameStyle = Field(description="Board-level structural frame dimensions.")
+    # nested=CHILD: FrameStyle's own docstring says it must not cascade to
+    # child boards — each board's structural frame is its own, the same as
+    # gap/margin/padding below.
+    frame: Annotated[FrameStyle, Merge(Strategy.DEEP, nested=Strategy.CHILD)] = Field(
+        description="Board-level structural frame dimensions."
+    )
     background: Annotated[str, Color()] = Field(
         description="Working-surface background color (board and card fills)."
     )
@@ -88,13 +93,29 @@ class Style(BaseModel):
     charts: ChartsStyle = Field(
         description="Root of all chart-type styles and shared chart configuration."
     )
-    layout: LayoutStyle = Field(
+    # nested=CHILD: rows/cols/grid spacing and grid column count are each
+    # board's own, not thematic identity. The marker has to sit on this
+    # whole container, not on LayoutStyle's own rows/cols/grid fields:
+    # merge_patches only checks a Merge marker on the field it walks, so an
+    # inner marker would never fire unless a nested board separately
+    # authored something else under layout: too. That also stops
+    # tabs/details styling from crossing a board boundary.
+    layout: Annotated[LayoutStyle, Merge(Strategy.DEEP, nested=Strategy.CHILD)] = Field(
         description="Spacing and arrangement inside the containers (rows, cols, grid, tabs, details)."
     )
     variables: VariablesStyle = Field(description="Variable controls chrome style.")
-    page: PageStyle = Field(description="Page-level canvas style (behind the board).")
-    footer: FooterStyle = Field(description="Page footer chrome visibility.")
-    timestamp: TimestampStyle = Field(
+    # nested=CHILD: page/footer/timestamp are root-board-only chrome — a
+    # nested board has no page canvas, footer, or timestamp line of its own
+    # to draw, so an ancestor's authored values here have nothing to reach.
+    page: Annotated[PageStyle, Merge(Strategy.DEEP, nested=Strategy.CHILD)] = Field(
+        description="Page-level canvas style (behind the board)."
+    )
+    footer: Annotated[FooterStyle, Merge(Strategy.DEEP, nested=Strategy.CHILD)] = Field(
+        description="Page footer chrome visibility."
+    )
+    timestamp: Annotated[
+        TimestampStyle, Merge(Strategy.DEEP, nested=Strategy.CHILD)
+    ] = Field(
         description="Data-freshness chrome: visibility, placement, format, and font."
     )
     # Cascade-managed sentinel — None means "no aliases at this cascade level" (not empty).
@@ -144,21 +165,30 @@ class Style(BaseModel):
             "e.g. ink: chrome.heading"
         ),
     )
-    # Not theme-populated; per-board authored CSS-chrome. None = no padding override.
-    padding: SpacingValues | None = Field(
+    # padding/margin/gap/color below: none of them are theme-populated (no
+    # shipped theme sets any of the four), matching their own "per-board"
+    # descriptions. Each carries nested=CHILD so a nested board that authors
+    # any style of its own never inherits an ancestor's value for these —
+    # the same rows/cols/grid pattern. A nested board authoring no style at
+    # all still inherits everything, these four included, via the
+    # compile_board_resolved_style fast path (verbatim reuse of the parent).
+    padding: Annotated[
+        SpacingValues | None, Merge(Strategy.DEEP, nested=Strategy.CHILD)
+    ] = Field(
         default=None,
         description="Per-board padding override (CSS shorthand or structured).",
     )
-    # Not theme-populated; per-board authored CSS-chrome. None = no margin override.
-    margin: SpacingValues | None = Field(
+    margin: Annotated[
+        SpacingValues | None, Merge(Strategy.DEEP, nested=Strategy.CHILD)
+    ] = Field(
         default=None,
         description="Per-board margin override (CSS shorthand or structured).",
     )
-    # Not theme-populated; per-board gap override in pixels. None = use layout gap token.
-    gap: float | None = Field(
-        default=None, description="Per-board gap between layout items in pixels."
+    gap: Annotated[float | None, Merge(Strategy.OVERRIDE, nested=Strategy.CHILD)] = (
+        Field(default=None, description="Per-board gap between layout items in pixels.")
     )
-    # Not theme-populated; per-board text color override. None = inherit from theme.
-    color: Annotated[str | None, Color()] = Field(
+    color: Annotated[
+        str | None, Color(), Merge(Strategy.OVERRIDE, nested=Strategy.CHILD)
+    ] = Field(
         default=None, description="Per-board text color override as a CSS color string."
     )

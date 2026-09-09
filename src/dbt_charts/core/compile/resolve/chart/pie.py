@@ -109,13 +109,9 @@ def _resolve_pie(
 
     # The field labels and the attached table use to identify each wedge.
     # Prefers the resolved color channel (matches the emitter's paint
-    # decision) when it's a real series binding -- but conditional_formatting
-    # projects a color channel of its own (threshold-painting whichever
-    # column it targets, theta or otherwise, with no `color:` authored);
-    # that channel paints, it doesn't name, so any conditional-mode channel
-    # is excluded here regardless of which column it targets. Falls back to
-    # the raw authored color, then -- when the author bound neither -- the
-    # query's sole non-theta column, if it's unambiguous (see
+    # decision) when it's a real series binding. Falls back to the raw
+    # authored color, then -- when the author bound neither -- the query's
+    # sole non-theta column, if it's unambiguous (see
     # infer_implicit_color_field). This never touches `channels`/
     # `color_channel` itself, so it never turns into a paint encoding: a
     # no-color pie's wedges stay palette[0] and its dark-companion ink stays
@@ -123,7 +119,7 @@ def _resolve_pie(
     # column gain an identity.
     resolved_color_field: str | None = (
         color_channel.data_field
-        if color_channel is not None and color_channel.mode != "conditional"
+        if color_channel is not None
         else normalized.color or infer_implicit_color_field(normalized.theta, data)
     )
 

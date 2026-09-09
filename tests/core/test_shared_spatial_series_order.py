@@ -1063,7 +1063,7 @@ def test_combo_base_series_legend_order_unaffected_by_overlay():
 
 
 def test_combo_legend_values_includes_overlay_label():
-    """Regression: pin_legend_display_order's explicit legend.values (base
+    """Regression: apply_legend_entry_order's explicit legend.values (base
     tiers only) made Vega drop the merged overlay entry entirely -- before
     that fix the combo legend showed the tiers AND the overlay ("target").
     The pinned values must include the overlay's own label too, appended

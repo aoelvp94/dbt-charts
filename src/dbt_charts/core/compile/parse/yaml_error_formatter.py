@@ -454,6 +454,27 @@ def _parent_is_grid_layout(parent_path: list[str]) -> bool:
     )
 
 
+# `title:` names four unrelated blocks (board, chart, legend, axis); only the
+# axis one has its text authored elsewhere, so the redirect is anchored to the
+# model rather than to the key name.
+_AXIS_TITLE_TEXT_HINT = (
+    "Axis title text is authored on the chart, as `x_label:` / `y_label:` — "
+    "`title:` here styles the title's typography only."
+)
+
+
+def _path_is_axis_title(path: list[str]) -> bool:
+    """True when *path* lands on the ``title:`` block of any axis slot
+    (``axis``, ``axis_x``, ``axis_y``, ``axis_quantitative``, ``axis_band``)."""
+    from dbt_charts.core.compile.models.style.authored import AxisTitleStylePatch
+
+    return any(
+        model is AxisTitleStylePatch
+        for annotation in _annotations_at_path(path)
+        for model in _model_types_from_annotation(annotation)
+    )
+
+
 def _model_types_from_annotation(annotation: Any) -> list[type[BaseModel]]:
     _, annotation = _tagged_annotated_inner(annotation, "")
 
@@ -615,6 +636,13 @@ def _extra_field_diagnostic(
                 "heatmap's axes are both nominal, so it has no quantitative "
                 "axis to style. Use `style.charts.heatmap.axis_band` instead."
             ),
+            fields=fields,
+        )
+
+    if field_name == "text" and _path_is_axis_title(parent_path):
+        return _ExtraFieldDiagnostic(
+            message=message,
+            hint=_AXIS_TITLE_TEXT_HINT,
             fields=fields,
         )
 
@@ -948,8 +976,13 @@ def format_validation_errors_structured(
         elif wrong_shape_keys:
             field_name = field_path_parts[-1] if field_path_parts else "field"
             docs_topic = _docs_topic_for_field_path(field_path_parts)
+            redirect = (
+                f" {_AXIS_TITLE_TEXT_HINT}"
+                if _path_is_axis_title(field_path_parts)
+                else ""
+            )
             hint = (
-                f"'{field_name}' expects a mapping. "
+                f"'{field_name}' expects a mapping.{redirect} "
                 f"Available keys: {_format_allowed_keys(wrong_shape_keys)}. "
                 f"See: dct docs {docs_topic}"
             )

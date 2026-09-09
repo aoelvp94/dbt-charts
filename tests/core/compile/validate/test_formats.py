@@ -770,6 +770,52 @@ rows:
     assert result.errors[0].code == "ERR-FORMAT-INVALID"
 
 
+def test_a_nested_board_s_own_alias_merges_onto_the_root_s() -> None:
+    """A nested board's own `formats` merges onto the root's — both resolve.
+
+    The nested-scope cascade merges `formats` key-wise (`merge_patches` with
+    the field's inferred `BY_KEY` strategy), not replace: a chart inside the
+    nested board can use the root's alias (`arr`) and the nested board's own
+    (`bps`) side by side.
+    """
+    result = compile_board(
+        """
+title: Root
+style:
+  formats:
+    arr: "$,.0f"
+queries:
+  q:
+    source: db
+    sql: SELECT 'Jan' AS month, 100 AS revenue
+rows:
+  - title: Nested
+    style:
+      formats:
+        bps: ".2%"
+    charts:
+      root_alias:
+        query: q
+        type: bar
+        x: month
+        y: revenue
+        style:
+          number_format: arr
+      own_alias:
+        query: q
+        type: bar
+        x: month
+        y: revenue
+        style:
+          number_format: bps
+    rows:
+      - root_alias
+      - own_alias
+"""
+    )
+    assert result.success, f"Compile failed: {result.errors}"
+
+
 def test_style_formats_null_does_not_break_number() -> None:
     """Setting ``style.formats: null`` must NOT break number.
 
@@ -798,6 +844,46 @@ rows:
     assert result.success, (
         f"style.formats: null must not break number (now predefined): {result.errors}"
     )
+
+
+def test_tabs_nested_scope_explicit_formats_null_clears_the_table() -> None:
+    """A tab that explicitly nulls ``style.formats`` must not inherit the root's.
+
+    A `rows:`/`cols:` nested board honors an explicit ``formats: null`` already
+    (it clears the inherited table). `tabs:` items go through a different
+    normalization path (``_resolve_tab_items`` round-trips the tab through a
+    dict) that must preserve the same explicit-null-vs-unset distinction.
+    """
+    result = compile_board(
+        """
+title: Root
+style:
+  formats:
+    arr: "$,.0f"
+queries:
+  q:
+    source: db
+    sql: SELECT 'Jan' AS month, 100 AS revenue
+tabs:
+  items:
+    - title: Detail
+      style:
+        formats: null
+        background: "#ffffff"
+      rows:
+        - title: Inner
+          type: bar
+          query: q
+          x: month
+          y: revenue
+          style:
+            number_format: arr
+"""
+    )
+    assert not result.success, (
+        "a tab that explicitly nulls formats must not see the root's arr alias"
+    )
+    assert result.errors[0].code == "ERR-FORMAT-INVALID"
 
 
 def test_style_formats_key_shadowing_predefined_member_raises() -> None:

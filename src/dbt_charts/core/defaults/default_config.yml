@@ -99,6 +99,12 @@ execution:
   # Exceeding it truncates the result (with a warning), it never fails the
   # query. Override in dbt_charts.yml under execution.max_result_bytes.
   max_result_bytes: 52428800
+  # Safety ceiling on one board render's cumulative Jinja-emitted template
+  # output (50MB), summed across every templated field (queries, titles,
+  # markdown) in that render, not per field. Exceeding it is a hard error,
+  # never a truncation. Override in dbt_charts.yml under
+  # execution.max_template_output_bytes.
+  max_template_output_bytes: 52428800
   dialect_aliases:
     sqlserver: tsql
     mssql: tsql

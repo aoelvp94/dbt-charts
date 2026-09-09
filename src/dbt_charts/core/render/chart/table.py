@@ -7,6 +7,7 @@ mark channels (``color``/``background``/``opacity``/``stroke_*`` are
 
 from __future__ import annotations
 
+import hashlib
 import html as html_module
 import re
 from collections.abc import Mapping
@@ -185,6 +186,22 @@ _TITLE_ASCENT_RATIO = 0.8
 def _format_svg_numeric(value: float) -> str:
     numeric = float(value)
     return str(int(numeric)) if numeric.is_integer() else str(numeric)
+
+
+def _row_link_class(link_color: str) -> str:
+    """Scoped class for the row-link band, keyed to its theme color.
+
+    Inline SVG has no style scope in an HTML page: two linked tables with
+    different theme link colors sharing a page would have the last
+    ``.dbt-table-row-link:hover`` rule win for both (mdsvg's ``.md-*``
+    classes hit the same collision; ``_class_prefix`` there is the same
+    pattern). Same color -> same class (rules are identical anyway);
+    different color -> different class -> no collision.
+    """
+    color_hash = hashlib.sha256(link_color.encode(), usedforsecurity=False).hexdigest()[
+        :8
+    ]
+    return f"dbt-table-row-link-{color_hash}"
 
 
 def _svg_font_family(family: str) -> str:
@@ -2166,7 +2183,8 @@ def _render_data_rows(
                 # still reaches the band across the boundary.
                 svg_parts.append(
                     f'<a href="{escaped_row_href}" aria-label="{escaped_row_label}">'
-                    f'<rect class="dbt-table-row-link" x="{row_link_x1}" '
+                    f'<rect class="{_row_link_class(colors["link"])}" '
+                    f'x="{row_link_x1}" '
                     f'y="{row_y}" width="{row_link_x2 - row_link_x1}" '
                     f'height="{per_row_height}"/></a>',
                 )
@@ -4461,13 +4479,14 @@ def _render_table_svg_core(
     # definition). Distinct from the ink+underline cell-link treatment so the
     # two affordances read differently. Only emitted when the table has a
     # chart-root link, to keep link-free table goldens clean.
+    row_link_class = _row_link_class(colors["link"])
     row_link_css = (
         f"""
-  .dbt-table-row-link {{
+  .{row_link_class} {{
     fill: transparent;
     cursor: pointer;
   }}
-  .dbt-table-row-link:hover {{
+  .{row_link_class}:hover {{
     fill: color-mix(in srgb, {colors["link"]} 8%, transparent);
   }}
   .dbt-chart text.dbt-table-cell-inert {{

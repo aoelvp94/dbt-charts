@@ -16,7 +16,10 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset, rest
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     WIDE_LABEL_FIELD,
     WIDE_VALUE_FIELD,
+    humanize_wide_series_name,
+    raw_wide_series_names,
     unfold_wide_rows,
+    wide_measure_labels_for,
     wide_series_names,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
@@ -38,9 +41,10 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
 )
 from dbt_charts.core.render.chart.emitters._channels import (
     apply_color_legend,
+    apply_legend_entry_order,
+    categorical_color_encoding,
     channel_to_encoding,
     gap_fill_ordinal_time_per_panel,
-    pin_legend_display_order,
 )
 from dbt_charts.core.render.chart.emitters._endpoint_rail import (
     resolve_endpoint_rail_span,
@@ -173,32 +177,63 @@ def _apply_area_color_encoding(
     color_ch = chart.resolved_channels.get("color")
     if color_ch is not None:
         enc = channel_to_encoding(color_ch, data)
-        if enc is not None:
-            apply_color_legend(enc, chart.legend)
-            if (
-                color_ch.mode == "series"
-                and enc.get("type") == "nominal"
-                and color_ch.data_field
-                and chart.palette
-            ):
-                series, order = _area_spatial_order(chart, data, color_ch.data_field)
-                if order:
+        apply_color_legend(enc, chart.legend)
+        enc_type = enc.get("type")
+        if categorical_color_encoding(color_ch, enc_type) and enc_type == "nominal":
+            series, order = _area_spatial_order(chart, data, color_ch.data_field)
+            # `order` is empty only when there's no x/y anchor to
+            # reorder by (see _area_spatial_order's own docstring) --
+            # `series` (plain alphabetical) is still the correct domain
+            # to resolve `legend.values` against even then, just not
+            # the display-order refinement. `chart.palette` can
+            # legally be authored empty; it governs the scale's range
+            # only.
+            resolve_order = order or series
+            if resolve_order:
+                if order and chart.palette:
                     palette_order = (
                         list(reversed(order))
                         if chart.stack not in (None, "none")
                         else series
                     )
-                    # A bound scale colors by value, so the palette order it
-                    # is handed no longer decides anything — the stacked
-                    # reversal above still governs the unbound case.
+                    # A bound scale colors by value, so the palette
+                    # order it is handed no longer decides anything --
+                    # the stacked reversal above still governs the
+                    # unbound case.
                     enc["scale"] = spatial_color_scale(
                         palette_order,
                         chart.palette,
                         order,
                         category_scale_for(chart.category_colors, color_ch.data_field),
                     )
-                    pin_legend_display_order(enc, order)
-            top_encoding["color"] = enc
+                # `chart.palette` can legally be authored empty; it
+                # governs the scale's range only, so resolution still
+                # runs. But with nothing authored and no palette to
+                # paint a scale from, there is nothing worth pinning
+                # (matches line.py's identical guard).
+                if chart.legend.values is not None or chart.palette:
+                    apply_legend_entry_order(
+                        enc,
+                        resolve_order,
+                        authored=chart.legend.values,
+                    )
+        elif (
+            categorical_color_encoding(color_ch, enc_type)
+            and enc_type == "ordinal"
+            and chart.legend.values is not None
+        ):
+            # An ordinal column carries its own inherent order --
+            # Vega's native stack/paint order, not the descending-total
+            # or last-value spatial order above -- so the paint scale
+            # must never touch it. Resolution still has to run so an
+            # authored `legend.values` entry doesn't ship as a phantom
+            # swatch with no diagnostic.
+            apply_legend_entry_order(
+                enc,
+                distinct_series_values(data, color_ch.data_field),
+                authored=chart.legend.values,
+            )
+        top_encoding["color"] = enc
     return color_ch
 
 
@@ -312,24 +347,62 @@ def _emit_multi_metric_area(
             "choose a different curve style."
         )
     measures = list(chart.wide_measures)
-    series = wide_series_names(measures, chart.color, data)
+    dimension = chart.color
+    wide_labels = wide_measure_labels_for(chart.wide_measures)
+    series = wide_series_names(measures, dimension, data, wide_labels)
     # Same order computation area's authored-color path uses (_area_spatial_order,
-    # above), fed a long-form view of the wide data.
-    folded = unfold_wide_rows(data, measures, chart.color)
+    # above), fed a long-form view of the wide data. `folded`'s own
+    # WIDE_LABEL_FIELD is RAW (unfold_wide_rows never humanizes), so any
+    # order computed by grouping/matching against it -- `sorted_series_by_
+    # stack_order`, `_area_spatial_order` -- is RAW too; humanize the
+    # RESULT afterward, per entry, rather than feeding it the already-
+    # humanized `series` (which would never match `folded`'s rows and
+    # silently degrade to an alphabetical fallback).
+    folded = unfold_wide_rows(data, measures, dimension)
+    raw_series = raw_wide_series_names(measures, dimension, data)
     is_stacked = chart.stack not in (None, "none")
     if is_stacked:
-        baseline_order = sorted_series_by_stack_order(
-            series,
+        raw_baseline_order = sorted_series_by_stack_order(
+            raw_series,
             folded,
             WIDE_LABEL_FIELD,
             None,
             y_field=WIDE_VALUE_FIELD,
         )
+        baseline_order = [
+            humanize_wide_series_name(name, dimension, wide_labels)
+            for name in raw_baseline_order
+        ]
         display_order = list(reversed(baseline_order))
+        raw_fold_order = measures
     else:
-        _series, order = _area_spatial_order(chart, folded, WIDE_LABEL_FIELD)
-        display_order = order if order else series
+        _series, raw_order = _area_spatial_order(chart, folded, WIDE_LABEL_FIELD)
+        display_order = (
+            [
+                humanize_wide_series_name(name, dimension, wide_labels)
+                for name in raw_order
+            ]
+            if raw_order
+            else series
+        )
+        # `raw_order` (like `_series`) only ever names measures with at
+        # least one non-null row in THIS render -- `folded` already
+        # dropped an all-null measure entirely (unfold_wide_rows). `series`
+        # (wide_series_names, the authored measures x observed dimension
+        # values) is the real, complete domain `fold_wide_measures`
+        # resolves `legend.values` against, so an entry missing from
+        # `display_order` (a measure -- or measure x dimension composite --
+        # a live board's data happens to go empty for) must still be
+        # appended, or an unrelated data change turns a correct `values:`
+        # entry into a spurious WARN, and `spatial_color_scale`'s
+        # `color_of[s] for s in order` raises a KeyError for any entry
+        # `series` (which feeds the palette) has but `display_order`
+        # doesn't.
+        missing = [s for s in series if s not in display_order]
+        if missing:
+            display_order = display_order + missing
         baseline_order = None
+        raw_fold_order = raw_order if raw_order else raw_series
     wide = fold_wide_measures(
         measures,
         chart.color,
@@ -338,9 +411,12 @@ def _emit_multi_metric_area(
         chart.legend,
         display_order=display_order,
         baseline_order=baseline_order,
+        wide_measure_labels=wide_labels,
         # Explicit order governs stacked accumulation; unstacked/overlap uses
-        # fold sequence as front-to-back paint order.
-        fold_order=measures if is_stacked else display_order,
+        # fold sequence as front-to-back paint order. Stays RAW -- feeds
+        # _measure_paint_order/_label_expression, which build Vega
+        # expressions comparing against the fold's own RAW key values.
+        fold_order=raw_fold_order,
     )
     ay_vl = measure_axis_to_vl(ay, data, chart.wide_measures)
     ay_vl = compose_axis_label_expr(ay_vl, ay.ruler, ay)

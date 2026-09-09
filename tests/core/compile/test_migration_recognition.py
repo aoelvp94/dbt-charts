@@ -30,6 +30,7 @@ from dbt_charts.core.compile.migrations.migrations import (
     _board_migration_context,
     _recognize,
     _schema_has_tail,
+    _schema_has_tail_for_chart_type,
     _schema_path_exists,
     move_source_locations,
 )
@@ -521,7 +522,11 @@ def test_no_retired_path_survives_into_the_current_grammar() -> None:
     current grammar. That inference is only sound while no retired path is
     also a live one -- checked structurally here for an ordinary rename
     (``MigrationRegistry._validate``'s precondition: old_path must be absent
-    from the target grammar).
+    from the target grammar). A ``chart_type``-scoped ``Deletion`` narrows
+    that precondition to its own family's branch (``_schema_has_tail_for_chart_type``,
+    mirroring ``_validate``'s own scoped check) -- a path can legitimately
+    still exist globally (e.g. ``conditional_formatting`` on ``table``/``kpi``)
+    as long as it is gone from the scoped family's own branch.
 
     An identity-path Move (``old_path == new_path``, e.g. dbt charts'
     `theme:` sugar) cannot satisfy that precondition at all -- its whole
@@ -548,7 +553,13 @@ def test_no_retired_path_survives_into_the_current_grammar() -> None:
     ] + [
         deletion.path
         for deletion in registry.deletions
-        if _schema_has_tail(catalog.current_schema, deletion.path)
+        if (
+            _schema_has_tail_for_chart_type(
+                catalog.current_schema, deletion.path, deletion.chart_type
+            )
+            if deletion.chart_type is not None
+            else _schema_has_tail(catalog.current_schema, deletion.path)
+        )
     ]
 
     assert survivors == []

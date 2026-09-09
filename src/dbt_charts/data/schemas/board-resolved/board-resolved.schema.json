@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.5.1.dev888",
+  "version": "0.6.1.dev64",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -7186,7 +7186,7 @@
             }
           ],
           "default": null,
-          "description": "Explicit legend entry order/filter; maps to VL legend.values. None lets the renderer infer order from the data.",
+          "description": "Explicit legend entry order/filter; each entry resolves against the real legend domain by its rendered text or its column/measure name (case/separator-insensitive). None lets the renderer infer order from the data.",
           "title": "Values"
         },
         "symbol_shape": {

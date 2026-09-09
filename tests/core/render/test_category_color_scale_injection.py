@@ -484,7 +484,7 @@ class TestNeverInventsAColorChannel:
     """The binding re-scales an existing channel. It never adds one.
 
     Adding one is what leaked into label layers, overwrote authored
-    conditional formatting and static colors, and split line marks.
+    static colors, and split line marks.
     """
 
     _POSITIONAL_ONLY = _board(
@@ -515,36 +515,6 @@ rows:
     def test_such_a_chart_keeps_its_single_series_ink(self) -> None:
         paints = _mark_paints(_specs(self._POSITIONAL_ONLY)["a"])
         assert all(isinstance(p, str) for p in paints), paints
-
-    def test_conditional_formatting_is_untouched(self) -> None:
-        specs = _specs(
-            _board(
-                """
-  cf:
-    query: all
-    type: bar
-    x: category
-    y: revenue
-    conditional_formatting:
-      revenue:
-        when:
-          - gt: 20
-            background: "#ff0000"
-          - default: true
-            background: "#00ff00"
-  other:
-    query: subset
-    type: bar
-    x: category
-    y: revenue
-rows:
-  - cf
-  - other
-"""
-            )
-        )
-        colors = [p for p in _mark_paints(specs["cf"]) if isinstance(p, dict)]
-        assert colors and all("condition" in c for c in colors), colors
 
 
 _TWO_DONUTS = _board(
@@ -1284,6 +1254,89 @@ rows:
             )
         )
         assert _color_enc(specs["a"])["legend"]["values"] == ["Tools", "Accessories"]
+
+
+class TestGroupedBarPaintOrderIgnoresLegendVisibility:
+    """Regression: apply_legend_entry_order no-ops (and returns None) once
+    the legend is hidden (visible: false), so a grouped bar's paint-scale
+    reorder that relied on THAT return value silently stopped following a
+    FULL authored `legend.values` reorder the moment the legend itself was
+    hidden. Paint order (scale.domain/xOffset) and legend visibility are
+    independent concerns -- a hidden legend must not desync a bar's own
+    color/x-position from an authored order still visible everywhere else
+    (tooltip, aria)."""
+
+    def test_hidden_legend_still_reorders_scale_domain(self) -> None:
+        spec = _specs(
+            _board(
+                """
+  full:
+    query: all
+    type: bar
+    x: status
+    y: revenue
+    color: category
+    style:
+      legend:
+        visible: false
+        values: [Tools, Accessories, Electronics]
+""",
+                style="""
+style:
+  charts:
+    category_colors:
+      category:
+        values:
+          Tools: "#abcdef"
+          Electronics: "#123456"
+""",
+            )
+        )["full"]
+        enc = _color_enc(spec)
+        assert enc.get("legend") is None
+        assert enc["scale"]["domain"] == ["Tools", "Accessories", "Electronics"]
+
+    def test_duplicate_authored_entry_still_counts_as_a_full_reorder(self) -> None:
+        """Regression: `apply_legend_entry_order` dedupes the resolved list
+        before writing `legend["values"]` (`list(dict.fromkeys(resolved))`),
+        but `_grouped_bar_paint_order` compared the un-deduped list against
+        `series` -- an authored entry repeated (or repeated via a fold
+        match, e.g. `tools` re-matching `Tools`) padded `resolved` past
+        `series`' length, so `sorted(resolved) == sorted(series)` failed
+        and the paint order silently fell back to alphabetical even though
+        the legend itself reordered."""
+        spec = _specs(
+            _board(
+                """
+  full:
+    query: two_cats
+    type: bar
+    x: status
+    y: revenue
+    color: category
+    style:
+      legend:
+        values: [Tools, tools, Accessories]
+""",
+                extra_queries="""
+  two_cats:
+    type: values
+    rows:
+      - {category: Accessories, status: Open, revenue: 10}
+      - {category: Tools, status: Won, revenue: 20}
+""",
+                style="""
+style:
+  charts:
+    category_colors:
+      category:
+        values:
+          Tools: "#abcdef"
+          Accessories: "#123456"
+""",
+            )
+        )["full"]
+        assert _color_scale(spec)["domain"] == ["Tools", "Accessories"]
 
 
 class TestNestedTheme:

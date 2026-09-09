@@ -30,7 +30,6 @@ Supported values (matching FontStyle.case):
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING, Literal
 
 from titlecase import titlecase as _titlecase  # pyright: ignore[reportMissingTypeStubs]
@@ -53,8 +52,8 @@ _EXTRA_SMALL_WORDS: frozenset[str] = frozenset(
 
 # Tokens that must never be uppercased by the library's all-consonant
 # acronym heuristic. "dbt" is stylized lowercase always (dbt Labs' own
-# convention, e.g. "dbt charts") — never an acronym, but its three
-# consonants otherwise trip the same rule that promotes "mrr"/"sql".
+# convention) — never an acronym, but its three consonants otherwise
+# trip the same rule that promotes "mrr"/"sql".
 _FORCE_LOWERCASE: frozenset[str] = frozenset({"dbt"})
 
 
@@ -82,19 +81,6 @@ def _acronym_callback(word: str, **_kwargs: object) -> str | None:
     if word.isupper() and len(word) > 1 and word.isalpha():
         return word
     return None
-
-
-# "dbt charts" is a fixed-casing product name (both words lowercase —
-# like "dbt" itself, "charts" never capitalizes just because it follows
-# "dbt" in a title-cased string).
-# The callback above forces "dbt" lowercase in isolation; this regex
-# catches the immediately-following "charts" the per-word callback can't
-# see, without touching unrelated title-cased "Charts" elsewhere.
-_DBT_CHARTS_RE = re.compile(r"(?<=\bdbt )[Cc]harts\b")
-
-
-def _preserve_dbt_charts_brand(text: str) -> str:
-    return _DBT_CHARTS_RE.sub("charts", text)
 
 
 def _lowercase_extra_small_words(text: str) -> str:
@@ -154,10 +140,9 @@ def apply_case(text: str, case: CaseValue) -> str:
         # Library handles built-in small words + first/last capitalisation.
         # Callback covers embedded-acronym preservation (#172). Post-process
         # extends the small-words list with the editorial set the NYT
-        # default list misses (#7d), then re-flattens "dbt Charts" back to
-        # the fixed-casing brand name.
-        return _preserve_dbt_charts_brand(
-            _lowercase_extra_small_words(_titlecase(text, callback=_acronym_callback))
+        # default list misses (#7d).
+        return _lowercase_extra_small_words(
+            _titlecase(text, callback=_acronym_callback)
         )
     if case == "slug":
         # Machine form: spaces/hyphens → underscore, all lowercase.
