@@ -1,0 +1,451 @@
+# Product usage — a chart-heavy showcase board. Signups, sessions,
+# documents, templates, and signatures for Dundersign, authored data-honestly:
+# volume trends read from the mirrored serving rollup, and the sampled core
+# tables (sessions, documents, signatures, document_recipients) are only ever
+# charted as shares or distributions, never as absolute totals.
+
+title: Product usage
+notes: |
+  Signups, sessions, documents, templates, and signatures across Dundersign
+  — a dense chart wall covering the product's day-to-day usage, not its
+  commercial numbers.
+theme: neon
+
+source: db
+
+style:
+  frame:
+    width: 1440
+
+queries:
+  signups_by_month_plan:
+    sql: |
+      -- Trims the dataset's partial opening and closing calendar months
+      -- (see examples/AGENTS.md) so no monthly column ends on a part-month
+      -- stub.
+      SELECT date_trunc('month', created_at)::DATE AS month, plan, COUNT(*) AS signups
+      FROM dundersign.users
+      WHERE NOT is_junk
+        AND created_at >= (SELECT date_trunc('month', MIN(created_at)) + INTERVAL 1 MONTH FROM dundersign.users)
+        AND created_at <  (SELECT date_trunc('month', MAX(created_at)) FROM dundersign.users)
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+
+  # Mirrored whole from the warehouse (never sampled), so this is the one
+  # place on this board that carries real population totals for sessions
+  # and documents. The sampled core tables below are charted as shares and
+  # distributions instead, which sampling preserves; see examples/AGENTS.md.
+  usage_trend:
+    sql: |
+      SELECT month, new_users, active_users, sessions, documents_created, documents_completed
+      FROM dundersign_serving.monthly_metrics
+      WHERE month > (SELECT MIN(month) FROM dundersign_serving.monthly_metrics)
+        AND month < (SELECT MAX(month) FROM dundersign_serving.monthly_metrics)
+      ORDER BY 1
+
+  sessions_by_device:
+    sql: |
+      SELECT device_type, COUNT(*)::FLOAT / SUM(COUNT(*)) OVER () AS pct
+      FROM dundersign.sessions
+      GROUP BY 1
+      ORDER BY pct DESC
+
+  sessions_by_browser:
+    sql: |
+      SELECT browser, COUNT(*)::FLOAT / SUM(COUNT(*)) OVER () AS pct
+      FROM dundersign.sessions
+      GROUP BY 1
+      ORDER BY pct DESC
+
+  sessions_by_country:
+    sql: |
+      SELECT country, COUNT(*)::FLOAT / SUM(COUNT(*)) OVER () AS pct
+      FROM dundersign.sessions
+      GROUP BY 1
+      ORDER BY pct DESC
+      LIMIT 8
+
+  days_to_complete_dist:
+    sql: |
+      SELECT
+        CASE
+          WHEN days_to_complete <= 2 THEN days_to_complete::VARCHAR
+          WHEN days_to_complete BETWEEN 3 AND 5 THEN '3-5'
+          WHEN days_to_complete BETWEEN 6 AND 10 THEN '6-10'
+          ELSE '11+'
+        END                                                  AS days_label,
+        MIN(days_to_complete)                                AS sort_key,
+        COUNT(*)::FLOAT / SUM(COUNT(*)) OVER ()               AS pct
+      FROM dundersign.documents
+      WHERE days_to_complete IS NOT NULL
+      GROUP BY 1
+      ORDER BY 2
+
+  template_usage:
+    sql: |
+      SELECT name, SUM(usage_count) AS usage_count
+      FROM dundersign.templates
+      GROUP BY 1
+      ORDER BY usage_count DESC, name ASC
+      LIMIT 10
+
+  # color is a share of all sampled signature fields, not a raw count — the
+  # signatures table is reservoir-sampled (see examples/AGENTS.md), so only
+  # the relative pattern across pages/field types is meaningful.
+  signature_heatmap:
+    sql: |
+      SELECT
+        CASE WHEN page_number >= 6 THEN '6+' ELSE page_number::VARCHAR END AS page_bucket,
+        MIN(page_number)                                                  AS sort_key,
+        field_type,
+        ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1)                AS pct_of_fields
+      FROM dundersign.signatures
+      GROUP BY 1, 3
+      ORDER BY sort_key, field_type
+
+  # Normalized to a share of recipients sent, not a raw count — recipients
+  # is reservoir-sampled (see examples/AGENTS.md).
+  recipient_funnel:
+    sql: |
+      WITH counted AS (
+        SELECT 'Sent' AS stage, 1 AS ord, COUNT(*) AS n FROM dundersign.document_recipients WHERE sent_at IS NOT NULL
+        UNION ALL
+        SELECT 'Viewed', 2, COUNT(*) FROM dundersign.document_recipients WHERE viewed_at IS NOT NULL
+        UNION ALL
+        SELECT 'Signed', 3, COUNT(*) FROM dundersign.document_recipients WHERE signed_at IS NOT NULL
+      )
+      SELECT stage, ord, n::FLOAT / MAX(n) OVER () AS pct_of_sent
+      FROM counted
+      ORDER BY ord
+
+  recipient_status:
+    sql: |
+      SELECT status, COUNT(*)::FLOAT / SUM(COUNT(*)) OVER () AS pct
+      FROM dundersign.document_recipients
+      GROUP BY 1
+      ORDER BY pct DESC
+
+  signup_source:
+    sql: |
+      SELECT signup_source, COUNT(*) AS accounts
+      FROM dundersign.users
+      WHERE NOT is_junk
+      GROUP BY 1
+      ORDER BY accounts DESC
+
+  login_engagement:
+    sql: |
+      SELECT
+        CASE
+          WHEN login_count = 1 THEN '1'
+          WHEN login_count BETWEEN 2 AND 5 THEN '2-5'
+          WHEN login_count BETWEEN 6 AND 10 THEN '6-10'
+          WHEN login_count BETWEEN 11 AND 20 THEN '11-20'
+          WHEN login_count BETWEEN 21 AND 50 THEN '21-50'
+          ELSE '51+'
+        END                AS login_bucket,
+        MIN(login_count)   AS sort_key,
+        COUNT(*)           AS accounts
+      FROM dundersign.users
+      WHERE NOT is_junk
+      GROUP BY 1
+      ORDER BY sort_key
+
+  kpi_data:
+    sql: |
+      WITH last_complete AS (
+        SELECT MAX(month) AS month
+        FROM dundersign_serving.monthly_metrics
+        WHERE month < (SELECT MAX(month) FROM dundersign_serving.monthly_metrics)
+      )
+      SELECT
+        (SELECT COUNT(*) FROM dundersign.users WHERE NOT is_junk) AS total_accounts,
+        (SELECT m.active_users FROM dundersign_serving.monthly_metrics m, last_complete
+         WHERE m.month = last_complete.month)                     AS active_users,
+        (SELECT m.documents_completed FROM dundersign_serving.monthly_metrics m, last_complete
+         WHERE m.month = last_complete.month)                     AS documents_completed,
+        (SELECT ROUND(MEDIAN(days_to_complete), 1) FROM dundersign.documents
+         WHERE days_to_complete IS NOT NULL)                      AS median_days_to_complete
+
+charts:
+  kpi_accounts:
+    type: kpi
+    query: kpi_data
+    label: Accounts created
+    value: total_accounts
+    style:
+      value:
+        format: ",.0f"
+
+  kpi_active_users:
+    type: kpi
+    query: kpi_data
+    label: Active users
+    value: active_users
+    style:
+      value:
+        format: ",.0f"
+    support:
+      label: last complete month
+
+  kpi_documents_completed:
+    type: kpi
+    query: kpi_data
+    label: Documents completed
+    value: documents_completed
+    style:
+      value:
+        format: ",.0f"
+    support:
+      label: last complete month
+
+  kpi_days_to_complete:
+    type: kpi
+    query: kpi_data
+    label: Median time to sign
+    value: median_days_to_complete
+    style:
+      value:
+        format: ",.1f"
+    support:
+      label: days, across completed documents
+
+  signups_by_month_plan_chart:
+    query: signups_by_month_plan
+    type: bar
+    title: Signups by month and plan
+    subtitle: Current plan per cohort — recent months are still mid-trial
+    x: month
+    y: signups
+    color: plan
+    style:
+      stack: zero
+      axis_y:
+        labels:
+          format: ",.0f"
+      axis_x:
+        labels:
+          time_unit: yearmonth
+
+  active_users_chart:
+    query: usage_trend
+    type: line
+    title: Active users
+    subtitle: Monthly count
+    x: month
+    y: active_users
+    style:
+      axis_y:
+        labels:
+          format: ",.0f"
+      axis_x:
+        labels:
+          time_unit: yearmonth
+
+  sessions_trend_chart:
+    query: usage_trend
+    type: area
+    title: Sessions
+    subtitle: Monthly count
+    x: month
+    y: sessions
+    style:
+      axis_y:
+        labels:
+          format: ",.0f"
+      axis_x:
+        labels:
+          time_unit: yearmonth
+
+  documents_trend_chart:
+    query: usage_trend
+    type: bar
+    title: Documents created vs. completed
+    subtitle: Monthly count
+    x: month
+    y: documents_created
+    layers:
+      - type: line
+        y: documents_completed
+    style:
+      axis_y:
+        labels:
+          format: ",.0f"
+      axis_x:
+        labels:
+          time_unit: yearmonth
+
+  sessions_by_device_chart:
+    query: sessions_by_device
+    type: bar
+    title: Sessions by device
+    subtitle: Share of all sessions
+    x: device_type
+    y: pct
+    style:
+      axis_y:
+        labels:
+          format: ".0%"
+
+  sessions_by_browser_chart:
+    query: sessions_by_browser
+    type: bar
+    title: Sessions by browser
+    subtitle: Share of all sessions
+    x: browser
+    y: pct
+    style:
+      axis_y:
+        labels:
+          format: ".0%"
+
+  sessions_by_country_chart:
+    query: sessions_by_country
+    type: bar
+    title: Sessions by country
+    subtitle: Top 8 countries, share of all sessions
+    x: country
+    y: pct
+    style:
+      orientation: horizontal
+      axis_y:
+        labels:
+          format: ".0%"
+
+  days_to_complete_chart:
+    query: days_to_complete_dist
+    type: bar
+    title: Days to complete a document
+    subtitle: Share of completed documents, by day count
+    x: days_label
+    y: pct
+    sort:
+      by: sort_key
+      order: asc
+    style:
+      axis_y:
+        labels:
+          format: ".0%"
+
+  template_usage_chart:
+    query: template_usage
+    type: bar
+    title: Most-used templates
+    subtitle: Top 10 by times used
+    x: name
+    y: usage_count
+    sort:
+      by: usage_count
+      order: desc
+    style:
+      orientation: horizontal
+      axis_y:
+        labels:
+          format: ",.0f"
+
+  signature_heatmap_chart:
+    query: signature_heatmap
+    type: heatmap
+    title: Where signature fields sit
+    subtitle: "% of all fields, by page and field type"
+    x: page_bucket
+    y: field_type
+    color: pct_of_fields
+    sort:
+      by: sort_key
+      order: asc
+
+  recipient_funnel_chart:
+    query: recipient_funnel
+    type: bar
+    title: Signing funnel
+    subtitle: Recipients sent, viewed, and signed — indexed to sent
+    x: stage
+    y: pct_of_sent
+    sort:
+      by: ord
+      order: asc
+    style:
+      orientation: horizontal
+      axis_y:
+        labels:
+          format: ".0%"
+
+  recipient_status_chart:
+    query: recipient_status
+    type: donut
+    title: Recipient status
+    subtitle: Share of all recipients sampled
+    theta: pct
+    color: status
+    total:
+      visible: false
+    style:
+      legend:
+        visible: false
+      marks:
+        slice:
+          labels:
+            template: "{{ '{:.0%}'.format(pct) }} {{ status }}"
+
+  signup_source_chart:
+    query: signup_source
+    type: bar
+    title: Where signups come from
+    subtitle: Every account ever created
+    x: signup_source
+    y: accounts
+    style:
+      orientation: horizontal
+      axis_y:
+        labels:
+          format: ",.0f"
+
+  login_engagement_chart:
+    query: login_engagement
+    type: bar
+    title: Login activity
+    subtitle: Accounts grouped by lifetime login count
+    x: login_bucket
+    y: accounts
+    sort:
+      by: sort_key
+      order: asc
+    style:
+      axis_y:
+        labels:
+          format: ",.0f"
+
+rows:
+  - text: |
+      Fourteen charts on Dundersign's product usage — how people sign up,
+      how they use the app once they are in, and how documents move from
+      draft to signed.
+
+  - cols:
+      - kpi_accounts
+      - kpi_active_users
+      - kpi_documents_completed
+      - kpi_days_to_complete
+
+  - cols:
+      - signups_by_month_plan_chart
+      - active_users_chart
+      - sessions_trend_chart
+      - documents_trend_chart
+
+  - cols:
+      - sessions_by_device_chart
+      - sessions_by_browser_chart
+      - sessions_by_country_chart
+      - days_to_complete_chart
+
+  - cols:
+      - template_usage_chart
+      - signature_heatmap_chart
+      - recipient_funnel_chart
+
+  - cols:
+      - recipient_status_chart
+      - signup_source_chart
+      - login_engagement_chart

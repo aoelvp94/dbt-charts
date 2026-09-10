@@ -1,0 +1,518 @@
+# Quarterly business review — a prose-heavy report. Reads like a written memo
+# with charts embedded where the argument needs them, authored data-honestly
+# against the Dundersign silver layer (no invented dimensions).
+
+title: Quarterly business review
+notes: |
+  A written report on Dundersign's trailing quarter — bookings, the
+  installed base, pipeline, signups, and support — with charts embedded
+  where the narrative needs them rather than gathered into a chart wall.
+theme: paper
+
+source: dundersign_db
+
+style:
+  frame:
+    width: 1440
+
+queries:
+  # ── The anchor ──────────────────────────────────────────────────────────
+  # Every window and every monthly chart on this board derives from this one
+  # query. close_at on an OPEN opportunity is a projected date running past
+  # the last real close, so "now" is defined off CLOSED business only,
+  # truncated to a month boundary. window_start drops the dataset's partial
+  # opening month the same way; both edges of the fixture are partial
+  # calendar months (see examples/AGENTS.md), so every monthly series below
+  # starts at window_start and stops before period_end.
+  report_window:
+    sql: |
+      SELECT
+        (date_trunc('month', (SELECT MIN(created_at) FROM users)) + INTERVAL 1 MONTH)::DATE AS window_start,
+        (SELECT date_trunc('month', MAX(close_at)) FROM opportunities WHERE is_closed)::DATE AS period_end,
+        (SELECT date_trunc('month', MAX(close_at)) - INTERVAL 1 DAY FROM opportunities WHERE is_closed)::DATE AS today
+
+  # Shared month domain for every monthly chart, so a month with zero rows in
+  # one table still gets a labeled column rather than disappearing.
+  report_months:
+    sql: |
+      WITH bounds AS (SELECT * FROM {{ queries.report_window }})
+      SELECT DISTINCT date_trunc('month', close_at)::DATE AS month
+      FROM opportunities, bounds
+      WHERE is_closed AND close_at >= bounds.window_start AND close_at < bounds.period_end
+
+  monthly_bookings:
+    sql: |
+      WITH bounds AS (SELECT * FROM {{ queries.report_window }}),
+      months AS (SELECT * FROM {{ queries.report_months }}),
+      monthly AS (
+        SELECT
+          months.month,
+          SUM(o.amount) FILTER (WHERE o.is_won)::INT AS bookings,
+          COUNT(*) FILTER (WHERE o.is_won)             AS won_n,
+          COUNT(o.id)                                  AS total_n
+        FROM months
+        LEFT JOIN opportunities o
+          ON date_trunc('month', o.close_at)::DATE = months.month AND o.is_closed
+        GROUP BY 1
+      )
+      -- 3-month rolling window: single-digit deal counts in the ramp-up
+      -- months (5 closed in October, 15 in November) make a bare monthly
+      -- win rate meaningless on its own.
+      SELECT
+        month,
+        bookings,
+        SUM(won_n) OVER (ORDER BY month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)::FLOAT
+          / NULLIF(SUM(total_n) OVER (ORDER BY month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW), 0) AS win_rate_3mo
+      FROM monthly
+      ORDER BY month
+
+  active_subs_trend:
+    sql: |
+      WITH months AS (SELECT * FROM {{ queries.report_months }})
+      SELECT
+        months.month,
+        COUNT(*) FILTER (
+          WHERE s.created_at < months.month + INTERVAL 1 MONTH
+            AND (s.canceled_at IS NULL OR s.canceled_at >= months.month + INTERVAL 1 MONTH)
+        ) AS active_subs
+      FROM months
+      CROSS JOIN subscriptions s
+      GROUP BY 1
+      ORDER BY 1
+
+  signups_by_month:
+    sql: |
+      WITH months AS (SELECT * FROM {{ queries.report_months }})
+      SELECT months.month, COUNT(u.id) AS signups
+      FROM months
+      LEFT JOIN users u
+        ON date_trunc('month', u.created_at)::DATE = months.month AND NOT u.is_junk
+      GROUP BY 1
+      ORDER BY 1
+
+  plan_mix:
+    sql: |
+      SELECT
+        plan,
+        COUNT(*) AS accounts,
+        COUNT(*)::FLOAT / SUM(COUNT(*)) OVER () AS share
+      FROM users
+      WHERE NOT is_junk
+      GROUP BY 1
+      ORDER BY accounts DESC
+
+  tickets_trend:
+    sql: |
+      WITH months AS (SELECT * FROM {{ queries.report_months }})
+      SELECT
+        months.month,
+        COUNT(t.id) AS created,
+        COUNT(t.id) FILTER (WHERE t.status = 'solved') AS solved
+      FROM months
+      LEFT JOIN tickets t ON date_trunc('month', t.created_at)::DATE = months.month
+      GROUP BY 1
+      ORDER BY 1
+
+  ticket_status:
+    sql: |
+      SELECT status, COUNT(*) AS tickets
+      FROM tickets
+      GROUP BY 1
+      ORDER BY tickets DESC
+
+  pipeline_by_stage:
+    sql: |
+      SELECT
+        stage_name,
+        COUNT(*)          AS deals,
+        SUM(amount)::INT  AS pipeline,
+        SUM(amount)::FLOAT / SUM(SUM(amount)) OVER () AS share
+      FROM opportunities
+      WHERE NOT is_closed
+      GROUP BY 1
+      ORDER BY pipeline DESC
+
+  kpi_data:
+    sql: |
+      WITH bounds AS (SELECT * FROM {{ queries.report_window }}),
+      recent AS (
+        SELECT * FROM opportunities, bounds
+        WHERE is_closed AND close_at > bounds.today - INTERVAL 90 DAY AND close_at <= bounds.today
+      ),
+      prior AS (
+        SELECT * FROM opportunities, bounds
+        WHERE is_closed AND close_at > bounds.today - INTERVAL 180 DAY AND close_at <= bounds.today - INTERVAL 90 DAY
+      )
+      SELECT
+        (SELECT COALESCE(SUM(amount), 0) FROM recent WHERE is_won) AS bookings,
+        (SELECT COALESCE(SUM(amount), 0) FROM recent WHERE is_won)::FLOAT
+          / NULLIF((SELECT SUM(amount) FROM prior WHERE is_won), 0) - 1 AS bookings_growth_pct,
+        (SELECT COUNT(*) FILTER (WHERE is_won)::FLOAT / NULLIF(COUNT(*), 0) FROM recent) AS win_rate,
+        (SELECT COUNT(*) FROM recent) AS deals_closed,
+        (SELECT COUNT(*) FROM subscriptions WHERE status = 'active') AS active_subs,
+        (SELECT COUNT(*) FROM subscriptions WHERE status = 'active')::FLOAT
+          / NULLIF(
+              (SELECT COUNT(*) FROM subscriptions, bounds
+               WHERE status = 'active' AND created_at <= bounds.today - INTERVAL 90 DAY)
+              , 0) - 1 AS active_subs_growth_pct,
+        (SELECT SUM(amount)::INT FROM opportunities WHERE NOT is_closed) AS open_pipeline,
+        (SELECT COUNT(*) FROM opportunities WHERE NOT is_closed) AS open_deals
+      FROM bounds
+
+charts:
+  # ── KPI rail ────────────────────────────────────────────────────────────
+  kpi_bookings:
+    type: kpi
+    query: kpi_data
+    label: Bookings (last 90 days)
+    value: bookings
+    style:
+      value:
+        format: "$,.0f"
+    support:
+      value: bookings_growth_pct
+      label: vs prior 90 days
+      format: "+.1%"
+      glyph: "▼"
+      tone: negative
+
+  kpi_win_rate:
+    type: kpi
+    query: kpi_data
+    label: Win rate (last 90 days)
+    value: win_rate
+    style:
+      value:
+        format: ".1%"
+    support:
+      value: deals_closed
+      label: deals closed
+      format: ",.0f"
+      tone: info
+
+  kpi_active_subs:
+    type: kpi
+    query: kpi_data
+    label: Active subscriptions
+    value: active_subs
+    style:
+      value:
+        format: ",.0f"
+    support:
+      value: active_subs_growth_pct
+      label: vs 90 days ago
+      format: "+.1%"
+      glyph: "▲"
+      tone: positive
+
+  kpi_pipeline:
+    type: kpi
+    query: kpi_data
+    label: Open pipeline
+    value: open_pipeline
+    style:
+      value:
+        format: "$,.0f"
+    support:
+      value: open_deals
+      label: open deals
+      format: ",.0f"
+      tone: info
+
+  # ── Section 1: bookings & win rate ──────────────────────────────────────
+  bookings_trend:
+    query: monthly_bookings
+    type: bar
+    title: Bookings by month
+    subtitle: Closed-won dollars, last 10 complete months
+    x: month
+    y: bookings
+    style:
+      axis_y:
+        labels:
+          format: currency
+      axis_x:
+        labels:
+          time_unit: yearmonth
+
+  win_rate_trend:
+    query: monthly_bookings
+    type: line
+    title: Win rate
+    subtitle: 3-month rolling close rate
+    x: month
+    y: win_rate_3mo
+    style:
+      axis_y:
+        labels:
+          format: ".0%"
+      axis_x:
+        labels:
+          time_unit: yearmonth
+
+  # ── Section 2: installed base ───────────────────────────────────────────
+  active_subs_chart:
+    query: active_subs_trend
+    type: area
+    title: Active subscriptions
+    subtitle: Count at the end of each month
+    x: month
+    y: active_subs
+    style:
+      axis_y:
+        labels:
+          format: ",.0f"
+      axis_x:
+        labels:
+          time_unit: yearmonth
+
+  # ── Section 3: pipeline ─────────────────────────────────────────────────
+  pipeline_chart:
+    query: pipeline_by_stage
+    type: bar
+    title: Open pipeline by stage
+    subtitle: Dollars not yet closed
+    x: stage_name
+    y: pipeline
+    style:
+      orientation: horizontal
+      axis_y:
+        labels:
+          format: currency
+
+  pipeline_table:
+    type: table
+    query: pipeline_by_stage
+    title: ""
+    style:
+      pagination:
+        enabled: false
+      columns:
+        stage_name:
+          label: Stage
+        deals:
+          label: Open deals
+          format: ",.0f"
+          align: right
+        pipeline:
+          label: Pipeline
+          format: "$,.0f"
+          align: right
+        share:
+          label: Share
+          format: ".0%"
+          align: right
+
+  # ── Section 4: signups ──────────────────────────────────────────────────
+  signups_chart:
+    query: signups_by_month
+    type: bar
+    title: New signups by month
+    subtitle: Every account created, before plan or trial status
+    x: month
+    y: signups
+    style:
+      axis_y:
+        labels:
+          format: ",.0f"
+      axis_x:
+        labels:
+          time_unit: yearmonth
+
+  plan_mix_chart:
+    query: plan_mix
+    type: bar
+    title: Where signups land
+    subtitle: Current plan for every account ever created
+    x: plan
+    y: accounts
+    style:
+      orientation: horizontal
+      axis_y:
+        labels:
+          format: ",.0f"
+
+  # ── Section 5: support ──────────────────────────────────────────────────
+  tickets_chart:
+    query: tickets_trend
+    type: bar
+    title: Tickets opened vs. solved
+    subtitle: Monthly count
+    x: month
+    y: created
+    layers:
+      - type: line
+        y: solved
+    style:
+      axis_y:
+        labels:
+          format: ",.0f"
+      axis_x:
+        labels:
+          time_unit: yearmonth
+
+  ticket_status_chart:
+    query: ticket_status
+    type: donut
+    title: Support backlog
+    subtitle: All tickets ever filed, by status
+    theta: tickets
+    color: status
+    total:
+      label: Total tickets
+      format: ",.0f"
+
+rows:
+  - text: |
+      This report walks through Dundersign's trailing quarter — bookings,
+      the installed base, pipeline, signups, and support — the way an
+      analyst would write it up, with charts placed where the argument
+      needs them.
+
+      Dundersign closed **$13,356** in new business over the trailing 90
+      days (through July 31, 2026), down 8% from the $14,544 booked in the
+      90 days before that. Fewer deals reached the table — 191 closed
+      compared with 239 — but the ones that did close won more often: a
+      **41.9%** win rate, up from 36.0% the quarter before.
+
+      The story underneath bookings is stronger. Active subscriptions have
+      grown every month since October, from 5 to 313 by the last complete
+      month and **339** as of today — up 61% from 90 days ago. Even as new
+      bookings soften, the business is keeping more of what it has already
+      sold.
+
+      Growth is not uniform, though. New signups climbed through the fall to a
+      412 peak in December, spiked again to 340 in March, and have since leveled
+      into the 150–230 range, and only 10.7% of
+      everyone who has ever signed up has converted to a paid plan. Support
+      tells a similar story: ticket volume is down by roughly half from
+      last fall, but resolution has not kept pace — 159 of the 245 tickets
+      ever filed remain open. $14,868 sits in open pipeline across 89
+      deals, and more than half of it is concentrated in just two stages.
+      The sections below walk through each of these threads in turn.
+
+  - cols:
+      - width: "40%"
+        text: |
+          ## Bookings cooled, but win rate held up
+
+          Monthly bookings are choppy by nature — the average Dundersign
+          deal is $167, so a handful of closes can swing a month's total.
+          December's $8,388 was a seasonal peak; July closed at $3,600. A
+          cleaner read is the trailing 90 days, which is where the **8%
+          decline** actually lives — from $14,544 to $13,356.
+
+          Win rate is the more encouraging number. The 100% marks in
+          October and November reflect only 5 and 15 closed deals — too
+          few to read as a rate. January and February still ran hot (62%
+          and 51%); from March on, a 3-month rolling win rate settled into
+          the high-30s to low-40s and has held near **42%** since.
+      - width: "60%"
+        cols:
+          - bookings_trend
+          - win_rate_trend
+
+  - cols:
+      - width: "40%"
+        text: |
+          ## The installed base keeps growing
+
+          Active subscriptions have risen in every one of the last ten
+          months, from 5 in October to 313 by July and **339 today** — a
+          61% increase versus 90 days ago. Whatever is happening upstream
+          in bookings, existing customers are staying, and the subscriber
+          base compounds regardless.
+      - width: "60%"
+        rows:
+          - active_subs_chart
+
+  - text: |
+      > Nearly two-thirds of every support ticket Dundersign has ever
+      > filed is still open.
+
+  - text: |
+      A quick pulse check before the detail:
+
+  - cols:
+      - kpi_bookings
+      - kpi_win_rate
+      - kpi_active_subs
+      - kpi_pipeline
+
+  - cols:
+      - width: "40%"
+        text: |
+          ## Pipeline is concentrated in two stages
+
+          Dundersign is carrying **$14,868** in open pipeline across 89
+          deals. Negotiation and Prospecting together hold 56% of that
+          value — $4,248 and $4,032 respectively — while Proposal, the
+          stage closest to closing, holds only $1,512 across 9 deals. A
+          pipeline this front-loaded is worth watching: growth this
+          quarter depends on those early-stage deals actually advancing.
+      - width: "60%"
+        rows:
+          - pipeline_chart
+
+  - text: |
+      The same five stages, in full:
+
+  - cols:
+      - pipeline_table
+
+  - cols:
+      - width: "40%"
+        text: |
+          ## New signups are decelerating
+
+          Monthly signups peaked at 412 in December, spiked again to 340
+          in March, and have since leveled into the 150–230 range —
+          averaging **196 a month** over the trailing quarter (May–July),
+          roughly half the December peak.
+
+          Of the 2,588 accounts created since launch, only 10.7% have
+          converted to a paid plan; 21.8% are still mid-trial and 66.8%
+          have expired without converting. Trial-to-paid conversion, not
+          top-of-funnel volume, looks like the more binding constraint.
+      - width: "60%"
+        cols:
+          - signups_chart
+          - plan_mix_chart
+
+  - cols:
+      - width: "40%"
+        text: |
+          ## Support backlog is building
+
+          Ticket volume has fallen by nearly half since last fall — an
+          average of 30 new tickets a month in October–December 2025, down
+          to 16 a month in May–July 2026. Resolution has not kept pace: of
+          the 245 tickets filed since launch, only 86 have been solved,
+          leaving **159 still open**.
+      - width: "60%"
+        cols:
+          - tickets_chart
+          - ticket_status_chart
+
+  - text: |
+      ## What we are watching
+
+      - Whether the Negotiation and Prospecting stages convert — 56% of
+        open pipeline sits in those two stages alone.
+      - Trial-to-paid conversion: only 10.7% of all accounts ever created
+        have become paying customers.
+      - The support backlog: 159 open tickets against a resolution rate
+        that has not grown alongside ticket volume.
+      - Whether active-subscription growth (+61% over 90 days) can
+        outpace the slowdown in new bookings.
+
+  - text: |
+      Figures reflect Dundersign's demo dataset through the last complete
+      month of closed bookings (July 31, 2026). Two partial calendar
+      months at each edge of the underlying tables (September 2025 and
+      August 2026) are excluded from every monthly trend so no chart ends
+      on a part-month stub.
+    style:
+      text:
+        font:
+          size: 13

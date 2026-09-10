@@ -207,7 +207,7 @@ class TestComposedQueryWithFilter:
         """CAST(column AS DATE) truncates a TIMESTAMP to midnight before the
         BETWEEN compares it, so a row on the afternoon of the range's end date
         is included — the range is inclusive of the whole end day, not just
-        midnight. This differs from the pre-cast behaviour (which excluded any
+        midnight. This differs from the pre-cast behavior (which excluded any
         end-day timestamp after 00:00:00); pin the new, intended semantics."""
         yaml_body = "\n".join(
             [

@@ -56,7 +56,7 @@ class TestWidthOffset:
             _width_offset,
         )
 
-        get_config()  # ensure settings initialised
+        get_config()  # ensure settings initialized
         offsets = get_theme_style().title.width_offsets
         assert _width_offset(_TINY_MAX / 2, _EFF) == offsets.tiny
         assert _width_offset(_TINY_MAX - 0.1, _EFF) == offsets.tiny
@@ -68,7 +68,7 @@ class TestWidthOffset:
             _width_offset,
         )
 
-        get_config()  # ensure settings initialised
+        get_config()  # ensure settings initialized
         offsets = get_theme_style().title.width_offsets
         assert _width_offset(_TINY_MAX, _EFF) == offsets.narrow
         assert _width_offset(_NARROW_MAX - 0.1, _EFF) == offsets.narrow
@@ -80,7 +80,7 @@ class TestWidthOffset:
             _width_offset,
         )
 
-        get_config()  # ensure settings initialised
+        get_config()  # ensure settings initialized
         offsets = get_theme_style().title.width_offsets
         assert _width_offset(_NARROW_MAX, _EFF) == offsets.medium
         assert _width_offset(_WIDE_MIN - 0.1, _EFF) == offsets.medium
@@ -91,7 +91,7 @@ class TestWidthOffset:
             _width_offset,
         )
 
-        get_config()  # ensure settings initialised
+        get_config()  # ensure settings initialized
         offsets = get_theme_style().title.width_offsets
         assert _width_offset(_WIDE_MIN, _EFF) == offsets.wide
         assert _width_offset(_WIDE_MIN * 2, _EFF) == offsets.wide
@@ -162,7 +162,7 @@ class TestChartTitleSpec:
         from dbt_charts.core.compile.config import get_config
         from dbt_charts.core.compile.resolve.style.typography import chart_title_spec
 
-        get_config()  # ensure settings initialised
+        get_config()  # ensure settings initialized
         distinctive = "'dbt Test Distinctive Title', serif"
         new_font = get_theme_style().title.font.model_copy(
             update={"family": distinctive}
@@ -196,7 +196,7 @@ class TestChartTitleSpec:
         from dbt_charts.core.compile.config import get_config
         from dbt_charts.core.compile.resolve.style.typography import chart_title_spec
 
-        get_config()  # ensure settings initialised
+        get_config()  # ensure settings initialized
         new_font = get_theme_style().title.font.model_copy(
             update={"family": "'dbt Test Distinctive Title', serif"}
         )
@@ -221,7 +221,7 @@ class TestChartTitleSpec:
         from dbt_charts.core.compile.config import get_config
         from dbt_charts.core.compile.resolve.style.typography import chart_title_spec
 
-        get_config()  # ensure settings initialised
+        get_config()  # ensure settings initialized
         new_font = get_theme_style().title.font.model_copy(
             update={"family": "'dbt Test Distinctive Title', serif"}
         )
@@ -250,7 +250,7 @@ class TestChartTitleSpec:
         from dbt_charts.core.compile.config import get_config
         from dbt_charts.core.compile.resolve.style.typography import chart_title_spec
 
-        get_config()  # ensure settings initialised
+        get_config()  # ensure settings initialized
         new_font = get_theme_style().title.font.model_copy(update={"weight": 650})
         new_title = get_theme_style().title.model_copy(update={"font": new_font})
         new_style = get_theme_style().model_copy(update={"title": new_title})
@@ -267,7 +267,7 @@ class TestChartTitleSpec:
             chart_title_spec,
         )
 
-        get_config()  # ensure settings initialised
+        get_config()  # ensure settings initialized
         new_title = get_theme_style().title.model_copy(update={"compact_weight": 611.0})
         new_style = get_theme_style().model_copy(update={"title": new_title})
         charts = resolve_chart_style_context(new_style)
@@ -280,7 +280,7 @@ class TestChartTitleSpec:
         from dbt_charts.core.compile.config import get_config
         from dbt_charts.core.compile.resolve.style.typography import chart_title_spec
 
-        get_config()  # ensure settings initialised
+        get_config()  # ensure settings initialized
         new_font = get_theme_style().title.font.model_copy(update={"weight": 650})
         new_title = get_theme_style().title.model_copy(update={"font": new_font})
         new_style = get_theme_style().model_copy(update={"title": new_title})
@@ -294,7 +294,7 @@ class TestChartTitleSpec:
         from dbt_charts.core.compile.config import get_config
         from dbt_charts.core.compile.resolve.style.typography import chart_title_spec
 
-        get_config()  # ensure settings initialised
+        get_config()  # ensure settings initialized
         new_font = get_theme_style().title.font.model_copy(update={"weight": "bold"})
         new_title = get_theme_style().title.model_copy(
             update={"font": new_font, "compact_weight": "bold"}

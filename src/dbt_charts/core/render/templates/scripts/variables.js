@@ -1,7 +1,7 @@
 /*{# The variable-control runtime. Ships with the host, never with the artifact.
 
    The server draws every control into the board SVG, so this script adds no
-   markup: it binds behaviour to elements that are already there. That is what
+   markup: it binds behavior to elements that are already there. That is what
    keeps interactive surfaces out of the board's scaled coordinate system — a
    `position: fixed` element inside a transformed ancestor inherits the
    transform, so anything laid *over* a board comes out at the board's scale.
@@ -551,7 +551,7 @@
     /*{# out: a board is a fixed-viewBox SVG the host stretches to fit, so any #}*/
     /*{# element positioned over it is measured in page pixels while the space #}*/
     /*{# reserved for it was measured in board units — the two move in opposite #}*/
-    /*{# directions as the board scales. Binding behaviour to what is already #}*/
+    /*{# directions as the board scales. Binding behavior to what is already #}*/
     /*{# drawn is what makes that whole class of bug unreachable. #}*/
 
     /*{# ARIA role per resolved widget. A drawn control is a <g>, which carries #}*/
@@ -810,7 +810,7 @@
         });
     }
 
-    /*{# Slider commits in SVG: the track is drawn, so the pointer maths happens #}*/
+    /*{# Slider commits in SVG: the track is drawn, so the pointer math happens #}*/
     /*{# in the board's own coordinates and nothing is overlaid at all. #}*/
     function _bindSlider(el, name) {
         var track = el.querySelector('[data-dbt-ornament="slider"]');
@@ -1176,7 +1176,7 @@
                 /*{# First pick (or re-start after a completed pair). #}*/
                 range = [dt, null];
             } else if (dt < range[0]) {
-                /*{# Second pick before the first — normalise to [earlier, later]. #}*/
+                /*{# Second pick before the first — normalize to [earlier, later]. #}*/
                 range = [dt, range[0]];
             } else if (dt.getTime() === range[0].getTime()) {
                 range = [dt, dt];

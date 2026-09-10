@@ -1,4 +1,4 @@
-"""Regression tests: board-level table style overrides must be honoured by the height provider.
+"""Regression tests: board-level table style overrides must be honored by the height provider.
 
 The bug: ``_get_table_height_from_data`` previously called
 ``resolve_style(get_theme_style())``, giving bare defaults, while the renderer
@@ -205,7 +205,7 @@ class TestPaginationPageRowsOverride:
     cascade. Pre-fix: ``effective_charts.pagination`` came from bare
     ``get_theme_style().model_copy(deep=True)`` defaults (page_rows=20) regardless of
     ``resolved_style``. Post-fix: it comes from ``build_chart_style_context(resolved_style,
-    chart_style)`` and honours the board setting.
+    chart_style)`` and honors the board setting.
     """
 
     def _resolved_with_page_rows(
@@ -1072,8 +1072,8 @@ rows:
         )
         return board
 
-    def test_auto_sibling_unaffected_by_neighbours_floor(self, local_project):
-        """An auto-sized sibling must not be squeezed by a neighbour's floor firing.
+    def test_auto_sibling_unaffected_by_neighbors_floor(self, local_project):
+        """An auto-sized sibling must not be squeezed by a neighbor's floor firing.
 
         Regression: when the container is under-measured (see the test above),
         ``_calculate_rows_dimensions`` computes ``remaining`` from that too-small
@@ -1101,7 +1101,7 @@ rows:
         auto_item = board.layout.items[1]
 
         assert auto_item.height == natural_auto_height, (
-            f"auto sibling squeezed to {auto_item.height}px by the neighbour's "
+            f"auto sibling squeezed to {auto_item.height}px by the neighbor's "
             f"floor firing; it should render at its own natural content height "
             f"({natural_auto_height}px), unaffected by the other item's authored "
             "height"

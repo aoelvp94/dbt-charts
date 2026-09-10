@@ -22,7 +22,7 @@ from dbt_charts.core.render.chart.spark import (
 # Resolve against `stark` so the threshold test below can pin the
 # theme-accent fallback color (stark uses dbt-grays.accent #3b82f6). The
 # shipped editorial `default` overrides the accent and would emit a
-# different fallback colour.
+# different fallback color.
 _EFF = resolve_style(get_theme_style("stark")).chart_defaults
 
 
@@ -510,7 +510,7 @@ class TestSparkBarSigned:
 
     def test_negative_color_default_off_keeps_one_color(self) -> None:
         """Without opting in, negative and positive bars share the same fill —
-        one colour by default."""
+        one color by default."""
         svg_neg = render_spark_bar(
             -30, max_value=100, width=100, has_negative=True, resolved_style=_EFF
         )
@@ -635,7 +635,7 @@ class TestSparkColumnsZeroBaseline:
 
 class TestSparkNonFiniteValues:
     """NaN/±Infinity must follow the null rule every other numeric-cell
-    consumer uses (`utils.coerce_numeric_cell`): no colour, no domain
+    consumer uses (`utils.coerce_numeric_cell`): no color, no domain
     contribution — never a full-extent, wrongly-signed bar."""
 
     def test_bar_nan_renders_nothing(self) -> None:

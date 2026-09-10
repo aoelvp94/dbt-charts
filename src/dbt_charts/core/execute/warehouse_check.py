@@ -28,7 +28,7 @@ so ``_is_query_defect`` can't classify them and they fall back to
 ``unchecked``.
 
 The last row is the point: an adapter with no primitive that runs without
-executing reports ``unchecked``, never ``valid``. "Unchecked" is not a flavour
+executing reports ``unchecked``, never ``valid``. "Unchecked" is not a flavor
 of valid — nothing looked at that SQL, so the caller must say so. Databricks is
 held in that row deliberately even though it has an ``EXPLAIN``: Spark returns
 planner errors as plan *text* instead of failing the statement, so an EXPLAIN

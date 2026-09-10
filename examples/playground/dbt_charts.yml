@@ -8,23 +8,15 @@ server:
 
 sources:
   # DuckDB example database (built from CSVs via build_examples_db.py)
-  # duckdb_config opts the source into enable_external_access=True so every
-  # connection to this file (SqlAdapter, LayeredSchemaResolver, super-schema)
-  # opens with the same config. DuckDB rejects mismatched configs on the same
-  # file; declaring the value once on the source keeps all openers consistent.
   examples_db:
     type: duckdb
     path: examples.duckdb
-    duckdb_config:
-      enable_external_access: true
 
   # Dundersign demo company — sampled schema inside examples.duckdb
   dundersign_db:
     type: duckdb
     path: examples.duckdb
     schema: dundersign
-    duckdb_config:
-      enable_external_access: true
 
   # Demo-parity source for the docs copy/paste fences. Every environment in
   # the Dundersign lineage names its warehouse source `db` (the
@@ -36,17 +28,6 @@ sources:
   db:
     type: duckdb
     path: examples.duckdb
-    duckdb_config:
-      enable_external_access: true
-
-  # DuckDB source for dev-only labs boards only. The ../tutorial_dbt sibling path
-  # resolves in the repo but NOT in an installed wheel (labs are excluded from the
-  # bundle), so no shipped gallery board may reference this source.
-  duckdb_local:
-    type: duckdb
-    path: ../tutorial_dbt/data/sample.duckdb
-    duckdb_config:
-      enable_external_access: true
 
   # Named CSV file sources for the table/KPI specimen boards. files: paths are
   # relative to this project root, so they resolve no matter which charts/
@@ -75,11 +56,11 @@ sources:
       events_dates: charts/assets/data/table-specimens/events_dates.csv
       events_dates_full: charts/assets/data/table-specimens/events_dates_full.csv
 
-  area_stack_modes:
-    type: csv
-    files:
-      three_series: charts/assets/data/area-stack-modes/three_series.csv
-
+  # No public board reads this source; the archived chart-lab-import-review
+  # board (examples/playground-experimental/charts/archive/reference/) does,
+  # and the visual golden harness renders every manifest board through THIS
+  # project's source registry (dbt-charts/tests/visual/discovery.py), so the
+  # declaration has to stay here.
   chart_lab_import_review:
     type: csv
     files:

@@ -942,7 +942,8 @@ def test_correct_facet_overshoot_skips_nonpositive_shrink() -> None:
 
 def test_namespace_svg_ids_rewrites_definition_and_references() -> None:
     """_namespace_svg_ids must rewrite a clipPath id and every reference to it,
-    scoped by chart_id, and leave unrelated ids/refs untouched.
+    scoped by a content token plus chart_id, and leave unrelated ids/refs
+    untouched.
     """
     from dbt_charts.core.render.converters import chart as chart_converter
 
@@ -957,11 +958,11 @@ def test_namespace_svg_ids_rewrites_definition_and_references() -> None:
 
     result = chart_converter._namespace_svg_ids(svg, "revenue_trend")
 
-    assert 'id="clip3-revenue_trend"' in result
+    assert re.search(r'id="clip3-[0-9a-f]{8}-revenue_trend"', result)
     assert 'id="clip3"' not in result
-    assert "url(#clip3-revenue_trend)" in result
-    assert 'xlink:href="#clip3-revenue_trend"' in result
-    assert 'href="#clip3-revenue_trend"' in result
+    assert re.search(r"url\(#clip3-[0-9a-f]{8}-revenue_trend\)", result)
+    assert re.search(r'xlink:href="#clip3-[0-9a-f]{8}-revenue_trend"', result)
+    assert re.search(r'href="#clip3-[0-9a-f]{8}-revenue_trend"', result)
     assert 'id="other-id"' in result, "unrelated ids must be left untouched"
 
 
@@ -979,8 +980,8 @@ def test_namespace_svg_ids_rewrites_gradient_ids_too() -> None:
 
     result = chart_converter._namespace_svg_ids(svg, "sales_by_region")
 
-    assert 'id="gradient_0-sales_by_region"' in result
-    assert "url(#gradient_0-sales_by_region)" in result
+    assert re.search(r'id="gradient_0-[0-9a-f]{8}-sales_by_region"', result)
+    assert re.search(r"url\(#gradient_0-[0-9a-f]{8}-sales_by_region\)", result)
     assert 'id="gradient_0"' not in result
 
 
@@ -1008,8 +1009,8 @@ def test_namespace_svg_ids_is_idempotent() -> None:
     twice = chart_converter._namespace_svg_ids(once, "c")
 
     assert once == twice
-    assert 'id="clip3-c"' in once
-    assert "url(#clip3-c)" in once
+    assert re.search(r'id="clip3-[0-9a-f]{8}-c"', once)
+    assert re.search(r"url\(#clip3-[0-9a-f]{8}-c\)", once)
 
 
 def test_namespace_svg_ids_sanitizes_chart_id_for_funciri_safety() -> None:
@@ -1049,7 +1050,7 @@ def test_namespace_svg_ids_disambiguates_chart_ids_that_sanitize_to_the_same_tok
     assert id_a is not None
     assert id_b is not None
     assert id_a.group(1) != id_b.group(1)
-    assert id_b.group(1) == "clip1-a_b", "an already-safe chart id is untouched"
+    assert id_b.group(1).endswith("-a_b"), "an already-safe chart id is untouched"
 
 
 def test_namespace_svg_ids_noop_when_no_vlc_ids_present() -> None:
@@ -1117,7 +1118,7 @@ def test_render_vega_spec_namespaces_ids_through_the_cache(
     assert not duplicate_ids, (
         f"colliding ids across independently-cached charts: {duplicate_ids}"
     )
-    assert 'id="clip0-chart_a"' in board_svg
-    assert 'id="clip0-chart_b"' in board_svg
-    assert 'id="gradient_0-chart_a"' in board_svg
-    assert 'id="gradient_0-chart_b"' in board_svg
+    assert re.search(r'id="clip0-[0-9a-f]{8}-chart_a"', board_svg)
+    assert re.search(r'id="clip0-[0-9a-f]{8}-chart_b"', board_svg)
+    assert re.search(r'id="gradient_0-[0-9a-f]{8}-chart_a"', board_svg)
+    assert re.search(r'id="gradient_0-[0-9a-f]{8}-chart_b"', board_svg)

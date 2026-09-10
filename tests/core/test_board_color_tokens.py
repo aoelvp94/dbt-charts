@@ -269,16 +269,6 @@ def test_gap_margin_padding_do_not_cascade_to_styled_child():
     assert child_rs.font.color == "#a1a1a1"
 
 
-def test_root_color_does_not_cascade_to_styled_child():
-    """style.color (root ink fallback) is per-board authoring like gap/margin/
-    padding — Style.color carries the same Merge(nested=Strategy.CHILD)."""
-    child_rs = _compile_and_get_child_resolved(
-        parent_style={"color": "#ff0000"},
-        child_style={"frame": {"card_padding": 20}},
-    )
-    assert child_rs.color is None
-
-
 def test_frame_does_not_cascade_to_styled_child():
     """FrameStyle's own docstring says it must not cascade to child boards —
     Style.frame carries Merge(nested=Strategy.CHILD) for the same reason as
@@ -367,20 +357,18 @@ def test_layout_field_authored_by_child_does_not_pull_in_ancestor_layout_field()
     )
 
 
-def test_page_footer_timestamp_do_not_cascade_to_styled_child():
-    """page/footer/timestamp are root-board-only chrome: a nested board has
-    no page canvas, footer, or timestamp line of its own, so Style.page/
-    footer/timestamp carry Merge(nested=Strategy.CHILD) like layout/frame."""
+def test_footer_timestamp_do_not_cascade_to_styled_child():
+    """footer/timestamp are root-board-only chrome: a nested board has no
+    footer or timestamp line of its own, so Style.footer/timestamp carry
+    Merge(nested=Strategy.CHILD) like layout/frame."""
     theme_default = resolve_style(get_theme_style())
     child_rs = _compile_and_get_child_resolved(
         parent_style={
-            "page": {"background": "#ff00ff"},
             "footer": {"text": "custom footer text"},
             "timestamp": {"format": "%Y"},
         },
         child_style={"background": "#eeeeee"},
     )
-    assert child_rs.page.background == theme_default.page.background
     assert child_rs.footer.text == theme_default.footer.text
     assert child_rs.timestamp.format == theme_default.timestamp.format
 

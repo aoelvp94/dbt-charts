@@ -750,8 +750,8 @@ class TestCadenceTokenWidthYearContext:
     row (``_month_label``/``_quarter_label`` painting "2024" under "Jan")
     renders that row as a SEPARATE text line at a different y
     (``_year_row_width``), never folded into this width via ``max()``: row 1
-    can only ever collide with a neighbour's row 1, the year row only with a
-    neighbour's year row (see ``_pair_clears``, which checks the two rows as
+    can only ever collide with a neighbor's row 1, the year row only with a
+    neighbor's year row (see ``_pair_clears``, which checks the two rows as
     two independent clearances — a max()'d block over-reserves ~6px on
     every flushed edge label that carries the year row, rejecting rungs that
     render cleanly).
@@ -1031,8 +1031,8 @@ class TestPairClearsCarriesYearRow:
     boundary. It is not the domain's literal first tick: the two diverge
     whenever the domain opens before its first labeled opener. But that row is a SEPARATE text line at a
     different y than row 1 (the tick's own month/quarter text) — it can
-    only ever collide with a neighbour's own year row, never with a
-    neighbour's row 1. A neighbour that does not itself carry a year row
+    only ever collide with a neighbor's own year row, never with a
+    neighbor's row 1. A neighbor that does not itself carry a year row
     has nothing painted on that line to collide with, so the row is
     entirely inert for that pair's clearance check.
     """

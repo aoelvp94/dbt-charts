@@ -808,7 +808,7 @@ class TestJinjaFormatFilter:
         assert result == "1.00M", f"expected '1.00M', got {result!r}"
 
     def test_si_spec_with_explicit_trim_trims(self) -> None:
-        """Author-supplied '~' in the spec is honoured as native d3."""
+        """Author-supplied '~' in the spec is honored as native d3."""
         result = self._render("{{ value | format('.3~s') }}", 1_000_000.0)
         assert result == "1M", f"expected '1M', got {result!r}"
 
@@ -953,7 +953,7 @@ class TestSiSubUnitFloor:
         config = FormatConfig(spec="number", suffix=" ms")
         assert format_value(0.002, config) == "2m ms"
 
-    def test_unrecognised_suffix_keeps_si_reading(self) -> None:
+    def test_unrecognized_suffix_keeps_si_reading(self) -> None:
         config = FormatConfig(spec="number", suffix=" rpm")
         assert format_value(0.002, config) == "2m rpm"
 
@@ -986,7 +986,7 @@ class TestSiSubUnitFloor:
 
 
 class TestSubUnitFloorVote:
-    """resolve_format_for_values: the Vega-painted analogue of TestSiSubUnitFloor.
+    """resolve_format_for_values: the Vega-painted analog of TestSiSubUnitFloor.
 
     Vega paints per-datum inside its own runtime, so the per-value floor
     format_value/format_kpi_parts apply cannot run there -- this decides the

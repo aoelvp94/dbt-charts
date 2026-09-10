@@ -77,17 +77,17 @@ obviously screaming*. Hold these when touching `compile/`:
   project root and errors when both hold the file; it never adds anchors beyond
   those two.
 - **Presentation lives in the board cascade, never `dbt_charts.yml`.** Board dimensions,
-  accents, and theme choices merge outermost→innermost: `charts/meta.yaml` →
-  `charts/<dir>/meta.yaml` → `charts/<name>.yml`, each an `AuthoredBoard`/`BoardPatch`
+  accents, and theme choices merge outermost→innermost: `charts/meta.yml` →
+  `charts/<dir>/meta.yml` → `charts/<name>.yml`, each an `AuthoredBoard`/`BoardPatch`
   deep-merged into the one above.
 - **`theme:` is permanent authoring sugar for `extends:`** — rewritten at parse time;
   using both is an error. Prefer `extends:` (it accepts lists and path refs).
 - **Underscore-prefixed boards are hidden building blocks**: excluded from listings
   and search, valid as extends targets, still validated standalone — a template board
   cannot be an empty shell.
-- **Root-only board frame.** Outer dimensions, padding, and page background are
-  computed once at the root; nested boards render into the parent's grid and their
-  `FrameStyle` is ignored.
+- **Root-only board frame.** Outer dimensions and padding are computed once at
+  the root; nested boards render into the parent's grid and their `FrameStyle`
+  is ignored.
 - **Theme YAMLs are `BoardPatch` fragments** (`extends:` + `style:`), loadable via
   `build_patch_model_ext(AuthoredBoard, ...)`.
 - **Cross-board chart imports scope queries lexically, variables board-globally.** An
@@ -96,7 +96,7 @@ obviously screaming*. Hold these when touching `compile/`:
   reserved-prefix keys. `{{ filter(...) }}` resolves against the importer's.
 - **Board width is two keys: `frame.width` binds, `frame.max_width` bounds.**
   `width` authored anywhere in the cascade (board, extends template,
-  meta.yaml; root `width:` sugar) is the board's exact width. With no
+  meta.yml; root `width:` sugar) is the board's exact width. With no
   `width`, the board hugs its charts' `preferred_width` measurement up to
   `max_width` — so a lone generated chart stays a small card, never a
   full-width one. Never reintroduce a provenance split ("binds if the board's
@@ -122,11 +122,11 @@ See `../AGENTS.md` → **Two validation boundaries** for the boundary these sit 
 
 Presentation keys (`board:`, `style:`, `theme:`) in `dbt_charts.yml` raise a
 `ValidationError`; the project-wide default theme's home is
-`charts/meta.yaml: extends: <theme>`.
+`charts/meta.yml: extends: <theme>`.
 
 ### `extends:` and theme resolution
 
-`extends:` is a board's inheritance list. The normaliser scans it for a built-in theme
+`extends:` is a board's inheritance list. The normalizer scans it for a built-in theme
 name (`_theme_from_extends`, **last match wins** — it scans reversed) and applies it;
 other entries are board path refs (`./_template.yaml`) or board names resolved at
 the *project root* (`compiler.py` passes `boards_root=project.directory(".")`),
@@ -144,5 +144,6 @@ Built-in theme names are the YAML stems under `defaults/themes/` (user-facing:
 `stark`, the structural root every other built-in theme transitively
 extends; `_base.yaml` is the hidden completeness floor beneath that.
 `clarity` is the configured default. Working example:
-`examples/playground/charts/composition/`; unit test:
+`examples/playground/charts/composition/_report-base.yml`, a template any
+board extends via `./_report-base.yml`; unit test:
 `test_merge_extends_relative_path_title`.

@@ -95,7 +95,7 @@ class VendoredFace:
 # No keycap or ZWJ group: a keycap glyph needs a bare ASCII digit as its base
 # character, which would claim U+0030-0039 for the emoji face — the same range the
 # text/Latin face serves — and the canonical spelling every emoji picker emits
-# (digit + U+FE0F + U+20E3) is painted by the OS colour font regardless, so the
+# (digit + U+FE0F + U+20E3) is painted by the OS color font regardless, so the
 # claim never even fires. No person/profession ZWJ emoji is in this set either, so
 # a ZWJ sequence always falls to the OS on both halves. Neither composition
 # codepoint (U+200D, U+20E3) earns a place without a group that needs it. U+FE0F
@@ -104,7 +104,7 @@ class VendoredFace:
 # authored here in their canonical VS16-forcing spelling (\u26a0\ufe0f, \u2139\ufe0f, the
 # arrows, \u2600\ufe0f/\U0001f327\ufe0f/\u2744\ufe0f, \u2699\ufe0f/\U0001f6e0\ufe0f, \u270f\ufe0f, \U0001f5d3\ufe0f). Per
 # render/fonts/README.md, that selector defeats this font in a browser — Chromium
-# always paints those from the OS colour font regardless of what we subset — but
+# always paints those from the OS color font regardless of what we subset — but
 # vl-convert/resvg static exports have no such override, so a subset that still
 # carries U+FE0F is what lets those glyphs pair correctly there. Kept deliberately;
 # not worth stripping VS16 from the glyphs above just to also drop it from the

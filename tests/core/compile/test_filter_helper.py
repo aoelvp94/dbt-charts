@@ -92,7 +92,7 @@ class TestFilterHelperParameterized:
         result = fn("col", 0)
         assert result == "col = $1"
 
-    # --- none='deny' new behaviour ---
+    # --- none='deny' new behavior ---
 
     def test_none_with_deny_gives_deny(self):
         fn = _make_helper()

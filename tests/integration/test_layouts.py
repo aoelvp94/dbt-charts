@@ -74,10 +74,8 @@ rows:
         )
         assert wrapper_style is not None
         assert "max-width:" not in wrapper_style.group(1)
-        # No wrapper padding — any non-zero padding paints a strip of body
-        # background around the SVG, which clashes with the SVG's own
-        # background rect when the theme's page.background differs from the
-        # board's style.background (e.g. editorial-cream over a gray page).
+        # No wrapper padding — the wrapper must not introduce its own gap
+        # around the SVG; any layout spacing belongs to the board itself.
         assert "padding:" not in wrapper_style.group(1)
 
 
@@ -332,7 +330,7 @@ rows:
         project = local_project(DBT_CHARTS_DIR)
         result = compile_file(
             project.path(
-                "examples/playground/charts/reference/nested-layouts.yml"
+                "examples/playground/charts/cards/nested-layouts.yml"
             ).read_board()
         )
         assert result.success

@@ -277,7 +277,7 @@ def test_uncovered_only_board_is_returned_unmigrated_and_silent() -> None:
     original with no warning. Pinned because the docstring calls this out as a
     known rough edge: the author sees ``extra_forbidden`` on retired syntax with
     no hint that a migration was skipped. If this ever starts warning, the
-    docstring should stop apologising for it.
+    docstring should stop apologizing for it.
 
     A second self-nesting (``rows.*.rows.*``) is used here (rather than the
     single nesting in the test above) just to exercise a deeper uncovered

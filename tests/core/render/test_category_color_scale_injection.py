@@ -24,6 +24,7 @@ from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.board_resolve import build_resolved_board
 from dbt_charts.core.render.chart.emitters.pie import prepare_pie_render_rows
 from dbt_charts.core.render.chart.session import BoardRenderSession
+from dbt_charts.core.render.chart.spec import RenderBox
 
 _DATA_MARKS = frozenset(
     {"bar", "line", "area", "point", "circle", "square", "arc", "rect", "trail"}
@@ -77,7 +78,11 @@ def _specs(yaml_content: str) -> dict[str, dict[str, Any]]:
             if i.chart and i.chart.id == chart_id
         )
         out[chart_id] = session.finalize_vl(
-            session.emit_chart(chart, item, {chart.query_name: rows})
+            session.emit_chart(
+                chart,
+                RenderBox(width=item.width, height=item.height),
+                {chart.query_name: rows},
+            )
         )
     return out
 
@@ -153,12 +158,12 @@ def _color_scale(spec: dict[str, Any]) -> dict[str, Any]:
     return _color_enc(spec)["scale"]
 
 
-def _colour_of(spec: dict[str, Any], value: str) -> str:
+def _color_of(spec: dict[str, Any], value: str) -> str:
     scale = _color_scale(spec)
     return scale["range"][scale["domain"].index(value)]
 
 
-def _label_colour_of(spec: dict[str, Any], value: str) -> str:
+def _label_color_of(spec: dict[str, Any], value: str) -> str:
     """A donut's own direct-label ink for ``value`` (dark-companion contrast)."""
     inks = [i for i in _label_inks(spec) if isinstance(i, dict) and "scale" in i]
     assert inks, f"no label ink scale in spec: {sorted(spec)}"
@@ -238,9 +243,7 @@ class TestCrossChartConsistency:
     def test_a_missing_category_does_not_reflow_the_others(self) -> None:
         specs = _specs(_TWO_SERIES_BARS)
         for value in ("Electronics", "Tools"):
-            assert _colour_of(specs["full"], value) == _colour_of(
-                specs["partial"], value
-            )
+            assert _color_of(specs["full"], value) == _color_of(specs["partial"], value)
 
     def test_every_bound_value_gets_a_distinct_color(self) -> None:
         scale = _color_scale(_specs(_TWO_SERIES_BARS)["full"])
@@ -267,7 +270,7 @@ rows:
 """
             )
         )
-        assert _colour_of(specs["bars"], "Electronics") == _colour_of(
+        assert _color_of(specs["bars"], "Electronics") == _color_of(
             specs["slices"], "Electronics"
         )
 
@@ -314,7 +317,7 @@ rows:
             )
         )
         for value in ("Electronics", "Tools"):
-            assert _colour_of(specs["bars"], value) == _colour_of(specs["grid"], value)
+            assert _color_of(specs["bars"], value) == _color_of(specs["grid"], value)
 
 
 class TestOneChartPlacedTwiceIsStillOneChart:
@@ -561,7 +564,7 @@ class TestAnnotationLayersKeepTheirInk:
         """
         specs = _specs(_TWO_DONUTS)
         for value in ("Electronics", "Tools"):
-            assert _label_colour_of(specs["d1"], value) == _label_colour_of(
+            assert _label_color_of(specs["d1"], value) == _label_color_of(
                 specs["d2"], value
             )
 
@@ -722,7 +725,7 @@ rows:
         )
         domain = _color_scale(specs["extra"])["domain"]
         assert "Zeta" in domain, domain
-        assert _colour_of(specs["extra"], "Accessories") == _colour_of(
+        assert _color_of(specs["extra"], "Accessories") == _color_of(
             specs["full"], "Accessories"
         )
 
@@ -887,7 +890,7 @@ rows:
 """
             )
         )
-        assert _colour_of(specs["bars"], "Electronics") == _colour_of(
+        assert _color_of(specs["bars"], "Electronics") == _color_of(
             specs["pts"], "Electronics"
         )
 
@@ -920,7 +923,7 @@ rows:
 """,
             )
         )
-        assert _colour_of(specs["bars"], "Electronics") == _colour_of(
+        assert _color_of(specs["bars"], "Electronics") == _color_of(
             specs["pts"], "Electronics"
         )
 
@@ -962,7 +965,7 @@ rows:
 """,
             )
         )
-        assert _colour_of(specs["bars"], "Electronics") == _colour_of(
+        assert _color_of(specs["bars"], "Electronics") == _color_of(
             specs["pts"], "Electronics"
         )
 
@@ -1020,7 +1023,7 @@ rows:
 """,
             )
         )
-        assert _colour_of(specs["bars"], "Electronics") == _colour_of(
+        assert _color_of(specs["bars"], "Electronics") == _color_of(
             specs["fill"], "Electronics"
         )
 
@@ -1158,7 +1161,7 @@ rows:
             )
         )
         for value in ("A", "B", "C"):
-            assert _colour_of(specs["plain"], value) == _colour_of(
+            assert _color_of(specs["plain"], value) == _color_of(
                 specs["dashed"], value
             ), value
 
@@ -1195,8 +1198,8 @@ style:
 
     def test_authored_pins_reach_the_spec(self) -> None:
         specs = _specs(self._PINNED)
-        assert _colour_of(specs["full"], "Tools") == "#abcdef"
-        assert _colour_of(specs["partial"], "Tools") == "#abcdef"
+        assert _color_of(specs["full"], "Tools") == "#abcdef"
+        assert _color_of(specs["partial"], "Tools") == "#abcdef"
 
     def test_authored_binding_does_not_reorder_the_domain(self) -> None:
         """Pinning a color must never reorder where a chart displays a value.
@@ -1391,8 +1394,8 @@ rows:
         assert root_scale.slots == nested_scale.slots
 
         specs = _specs(self._NESTED)
-        root_a = _colour_of(specs["root_chart"], "A")
-        nested_a = _colour_of(specs["nested_chart"], "A")
+        root_a = _color_of(specs["root_chart"], "A")
+        nested_a = _color_of(specs["nested_chart"], "A")
         # The rendered fill must be exactly what indexing THIS chart's own
         # palette by the shared slot produces — not merely "some color from
         # the right palette", which a coincidental VL default could satisfy
@@ -1562,7 +1565,7 @@ class TestAttachedTableSwatchMatchesWedge:
 
         assert len(attached_rows) == len(data)
         for row in attached_rows:
-            wedge_fill = _colour_of(spec, str(row["name"]))
+            wedge_fill = _color_of(spec, str(row["name"]))
             assert row["swatch"] == wedge_fill, (
                 f"table swatch for {row['name']!r} is {row['swatch']!r}, "
                 f"but its own wedge paints {wedge_fill!r}"
@@ -1668,7 +1671,7 @@ style:
         dark_palette = list(chart.style.series_label.dark_companion_palette)
         strip_inks = _strip_label_fills(spec)
         for cat in self._CATEGORIES:
-            own_fill = _colour_of(spec, cat)
+            own_fill = _color_of(spec, cat)
             expected_ink = dark_palette[palette.index(own_fill)]
             assert strip_inks[cat] == expected_ink, (
                 f"{cat}: strip ink {strip_inks[cat]!r} is not the companion "
@@ -1742,7 +1745,7 @@ rows:
         spec = self._spec_with_strip(self._BOARD)
         strip_inks = _strip_label_fills(spec)
         for cat in self._CATEGORIES:
-            own_fill = _colour_of(spec, cat)
+            own_fill = _color_of(spec, cat)
             assert own_fill in self._LOCAL_PALETTE, own_fill
             expected_ink = chart_dark_palette[self._LOCAL_PALETTE.index(own_fill)]
             assert strip_inks[cat] == expected_ink, (

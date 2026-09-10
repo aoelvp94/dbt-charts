@@ -1,6 +1,6 @@
-"""Tests for meta.yaml resolution.
+"""Tests for meta.yml resolution.
 
-meta.yaml is a partial AuthoredBoard, deep-merged as a lower-priority layer
+meta.yml is a partial AuthoredBoard, deep-merged as a lower-priority layer
 beneath each board in its directory subtree. This module covers:
 - finding meta files in the directory chain (find_meta_files)
 - loading a single meta file + extracting its lint directives (load_meta_file)
@@ -37,10 +37,10 @@ def temp_project():
 
 @pytest.fixture
 def nested_dirs(temp_project):
-    """Nested directory structure with meta.yaml files (new top-level surface)."""
+    """Nested directory structure with meta.yml files (new top-level surface)."""
     root = temp_project
 
-    (root / "meta.yaml").write_text(
+    (root / "meta.yml").write_text(
         yaml.dump(
             {
                 "source": "production_db",
@@ -52,7 +52,7 @@ def nested_dirs(temp_project):
 
     analytics = root / "analytics"
     analytics.mkdir()
-    (analytics / "meta.yaml").write_text(
+    (analytics / "meta.yml").write_text(
         yaml.dump(
             {
                 "source": "analytics_db",
@@ -63,7 +63,7 @@ def nested_dirs(temp_project):
 
     sales = analytics / "sales"
     sales.mkdir()
-    (sales / "meta.yaml").write_text(
+    (sales / "meta.yml").write_text(
         yaml.dump(
             {"charts": {"revenue_chart": {"type": "line", "query": "sales_query"}}}
         )
@@ -96,10 +96,10 @@ class TestLoadMetaFile:
     def test_returns_dict_and_lint(
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
-        (temp_project / "meta.yaml").write_text(
+        (temp_project / "meta.yml").write_text(
             yaml.dump({"source": "prod_db", "queries": {"q": "SELECT 1"}})
         )
-        meta_file = local_project(temp_project).path("meta.yaml")
+        meta_file = local_project(temp_project).path("meta.yml")
 
         data, lint = load_meta_file(meta_file)
 
@@ -111,7 +111,7 @@ class TestLoadMetaFile:
     def test_lint_is_extracted_and_stripped(
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
-        (temp_project / "meta.yaml").write_text(
+        (temp_project / "meta.yml").write_text(
             yaml.dump(
                 {
                     "source": "db",
@@ -122,7 +122,7 @@ class TestLoadMetaFile:
                 }
             )
         )
-        meta_file = local_project(temp_project).path("meta.yaml")
+        meta_file = local_project(temp_project).path("meta.yml")
 
         data, lint = load_meta_file(meta_file)
 
@@ -135,10 +135,10 @@ class TestLoadMetaFile:
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
         """A typo'd lint.ignore code is a loud compile error, not a silent no-op."""
-        (temp_project / "meta.yaml").write_text(
+        (temp_project / "meta.yml").write_text(
             yaml.dump({"lint": {"ignore": ["WARN-FANOUT-RISKK"]}})
         )
-        meta_file = local_project(temp_project).path("meta.yaml")
+        meta_file = local_project(temp_project).path("meta.yml")
 
         with pytest.raises(CompilationError, match="WARN-FANOUT-RISKK"):
             load_meta_file(meta_file)
@@ -147,10 +147,10 @@ class TestLoadMetaFile:
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
         """A typo'd lint.ignore_queries code is a loud compile error too."""
-        (temp_project / "meta.yaml").write_text(
+        (temp_project / "meta.yml").write_text(
             yaml.dump({"lint": {"ignore_queries": {"q": ["WARN-REAGGREGATIONN"]}}})
         )
-        meta_file = local_project(temp_project).path("meta.yaml")
+        meta_file = local_project(temp_project).path("meta.yml")
 
         with pytest.raises(CompilationError, match="WARN-REAGGREGATIONN"):
             load_meta_file(meta_file)
@@ -160,10 +160,10 @@ class TestLoadMetaFile:
     ):
         # access / the old `board:` wrapper are NOT silently dropped — they stay
         # so AuthoredBoard rejects them loudly once meta is merged under the board.
-        (temp_project / "meta.yaml").write_text(
+        (temp_project / "meta.yml").write_text(
             yaml.dump({"access": [{"role": "admin"}], "board": {"x": 1}})
         )
-        meta_file = local_project(temp_project).path("meta.yaml")
+        meta_file = local_project(temp_project).path("meta.yml")
 
         data, _ = load_meta_file(meta_file)
 
@@ -180,32 +180,32 @@ class TestLoadMetaFile:
     def test_invalid_yaml_raises(
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
-        (temp_project / "meta.yaml").write_text("invalid: yaml: content: [")
-        meta_file = local_project(temp_project).path("meta.yaml")
+        (temp_project / "meta.yml").write_text("invalid: yaml: content: [")
+        meta_file = local_project(temp_project).path("meta.yml")
         with pytest.raises(CompilationError, match="Failed to parse"):
             load_meta_file(meta_file)
 
     def test_non_mapping_raises(
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
-        (temp_project / "meta.yaml").write_text(yaml.dump(["a", "b"]))
-        meta_file = local_project(temp_project).path("meta.yaml")
+        (temp_project / "meta.yml").write_text(yaml.dump(["a", "b"]))
+        meta_file = local_project(temp_project).path("meta.yml")
         with pytest.raises(CompilationError, match="must be a YAML mapping"):
             load_meta_file(meta_file)
 
     def test_lint_non_mapping_raises(
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
-        (temp_project / "meta.yaml").write_text(yaml.dump({"lint": ["fanout_risk"]}))
-        meta_file = local_project(temp_project).path("meta.yaml")
+        (temp_project / "meta.yml").write_text(yaml.dump({"lint": ["fanout_risk"]}))
+        meta_file = local_project(temp_project).path("meta.yml")
         with pytest.raises(CompilationError, match="'lint' must be a mapping"):
             load_meta_file(meta_file)
 
     def test_empty_file(
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
-        (temp_project / "meta.yaml").write_text("")
-        meta_file = local_project(temp_project).path("meta.yaml")
+        (temp_project / "meta.yml").write_text("")
+        meta_file = local_project(temp_project).path("meta.yml")
         data, lint = load_meta_file(meta_file)
         assert data == {}
         assert lint.ignore == []
@@ -220,12 +220,12 @@ class TestFindMetaFiles:
     def test_single(
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
-        (temp_project / "meta.yaml").write_text("source: db")
+        (temp_project / "meta.yml").write_text("source: db")
         project = local_project(temp_project)
         board_file = project.path("dashboard.yaml")
         files = find_meta_files(board_file, project.directory("."))
         assert len(files) == 1
-        assert files[0].relpath == "meta.yaml"
+        assert files[0].relpath == "meta.yml"
 
     def test_nested_root_to_leaf_order(
         self, nested_dirs, local_project: Callable[..., FilesystemProject]
@@ -251,37 +251,50 @@ class TestFindMetaFiles:
         files = find_meta_files(board_file, project.directory("."))
         assert files == []
 
-    def test_yml_variant(
+    def test_yaml_variant(
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
-        (temp_project / "meta.yml").write_text("source: db")
+        """`.yaml` stays accepted; only our own files are pinned to `.yml`."""
+        (temp_project / "meta.yaml").write_text("source: db")
         project = local_project(temp_project)
-        board_file = project.path("dashboard.yaml")
+        board_file = project.path("dashboard.yml")
         files = find_meta_files(board_file, project.directory("."))
         assert len(files) == 1
         from pathlib import PurePosixPath
 
-        assert PurePosixPath(files[0].relpath).name == "meta.yml"
+        assert PurePosixPath(files[0].relpath).name == "meta.yaml"
 
-    def test_prefers_yaml_over_yml(
+    def test_prefers_yml_over_yaml(
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
+        """Same precedence as board resolution (BOARD_CANDIDATE_SUFFIXES)."""
         (temp_project / "meta.yaml").write_text("source: yaml_db")
         (temp_project / "meta.yml").write_text("source: yml_db")
         project = local_project(temp_project)
-        board_file = project.path("dashboard.yaml")
+        board_file = project.path("dashboard.yml")
         files = find_meta_files(board_file, project.directory("."))
         from pathlib import PurePosixPath
 
-        assert [PurePosixPath(f.relpath).name for f in files] == ["meta.yaml"]
+        assert [PurePosixPath(f.relpath).name for f in files] == ["meta.yml"]
+
+    def test_charts_meta_default_source_prefers_yml_over_yaml(
+        self, temp_project, local_project: Callable[..., FilesystemProject]
+    ):
+        """The host-default-source probe in core.board shares the precedence."""
+        from dbt_charts.core.board import _charts_meta_default_source
+
+        (temp_project / "meta.yaml").write_text("source: yaml_db")
+        (temp_project / "meta.yml").write_text("source: yml_db")
+        project = local_project(temp_project)
+        assert _charts_meta_default_source(project.directory(".")) == "yml_db"
 
     def test_explicit_root_finds_meta_at_root(
         self, tmp_path, local_project: Callable[..., FilesystemProject]
     ):
-        """When root_dir is explicitly given, meta.yaml at root is found."""
+        """When root_dir is explicitly given, meta.yml at root is found."""
         repo = (tmp_path / "repo").resolve()
         repo.mkdir()
-        (repo / "meta.yaml").write_text("source: root_db\n")
+        (repo / "meta.yml").write_text("source: root_db\n")
 
         (repo / "pkg" / "charts").mkdir(parents=True)
         board_path = repo / "pkg" / "charts" / "dashboard.yaml"
@@ -290,7 +303,7 @@ class TestFindMetaFiles:
         project = local_project(repo)
         board_file = project.path_for_fspath(board_path)
         files = find_meta_files(board_file, project.directory("."))
-        assert any(f.relpath == "meta.yaml" for f in files)
+        assert any(f.relpath == "meta.yml" for f in files)
 
     def test_non_dot_root_stops_walk_at_root(
         self, nested_dirs, local_project: Callable[..., FilesystemProject]
@@ -302,9 +315,9 @@ class TestFindMetaFiles:
 
         files = find_meta_files(board_file, project.directory("analytics"))
 
-        # Stops at analytics/; the root-level meta.yaml is above the bound.
+        # Stops at analytics/; the root-level meta.yml is above the bound.
         relpaths = [f.relpath for f in files]
-        assert relpaths == ["analytics/meta.yaml", "analytics/sales/meta.yaml"]
+        assert relpaths == ["analytics/meta.yml", "analytics/sales/meta.yml"]
 
 
 # ============================================================================
@@ -316,7 +329,7 @@ class TestCompileFileWithMeta:
     def test_applies_meta_queries(
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
-        (temp_project / "meta.yaml").write_text(
+        (temp_project / "meta.yml").write_text(
             yaml.dump(
                 {
                     "queries": {
@@ -347,7 +360,7 @@ class TestCompileFileWithMeta:
     def test_apply_meta_false_skips_meta(
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
-        (temp_project / "meta.yaml").write_text(
+        (temp_project / "meta.yml").write_text(
             yaml.dump(
                 {"queries": {"meta_query": {"sql": "SELECT 'meta'", "source": "db"}}}
             )
@@ -375,7 +388,7 @@ class TestCompileFileWithMeta:
     def test_board_overrides_meta_query(
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
-        (temp_project / "meta.yaml").write_text(
+        (temp_project / "meta.yml").write_text(
             yaml.dump({"queries": {"q1": {"sql": "SELECT 'meta'", "source": "db"}}})
         )
         board = {
@@ -398,7 +411,7 @@ class TestCompileFileWithMeta:
     def test_meta_charts_available(
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
-        (temp_project / "meta.yaml").write_text(
+        (temp_project / "meta.yml").write_text(
             yaml.dump(
                 {
                     "charts": {
@@ -436,7 +449,7 @@ class TestCompileFileWithMeta:
         """End-to-end: meta frame.width survives a board setting frame.margin,
         all the way through to the resolved style.
         """
-        (temp_project / "meta.yaml").write_text(
+        (temp_project / "meta.yml").write_text(
             yaml.dump({"style": {"frame": {"width": 700}}})
         )
         board = {
@@ -459,7 +472,7 @@ class TestCompileFileWithMeta:
     def test_threads_meta_lint(
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
-        (temp_project / "meta.yaml").write_text(
+        (temp_project / "meta.yml").write_text(
             yaml.dump({"lint": {"ignore": ["WARN-FANOUT-RISK"]}})
         )
         board = {"title": "T", "rows": [{"cols": [{"text": "hi"}]}]}
@@ -478,8 +491,8 @@ class TestCompileFileWithMeta:
     def test_malformed_meta_fails_loud(
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
-        # D-04: a malformed meta.yaml is a hard error, not warn-and-continue.
-        (temp_project / "meta.yaml").write_text("source: [unclosed list\n")
+        # D-04: a malformed meta.yml is a hard error, not warn-and-continue.
+        (temp_project / "meta.yml").write_text("source: [unclosed list\n")
         board_path = temp_project / "dashboard.yaml"
         board_path.write_text(
             yaml.dump({"title": "T", "rows": [{"cols": [{"text": "hi"}]}]})
@@ -496,11 +509,9 @@ class TestCompileFileWithMeta:
     def test_board_wrapper_key_is_rejected(
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
-        # The old `board:` wrapper is gone — a meta.yaml using it merges the
+        # The old `board:` wrapper is gone — a meta.yml using it merges the
         # stray `board` key under the board, which AuthoredBoard rejects.
-        (temp_project / "meta.yaml").write_text(
-            yaml.dump({"board": {"theme": "cream"}})
-        )
+        (temp_project / "meta.yml").write_text(yaml.dump({"board": {"theme": "cream"}}))
         board_path = temp_project / "dashboard.yaml"
         board_path.write_text(
             yaml.dump({"title": "T", "rows": [{"cols": [{"text": "hi"}]}]})
@@ -519,7 +530,7 @@ class TestCompileFileWithMeta:
     ):
         subdir = temp_project / "reports"
         subdir.mkdir()
-        (temp_project / "meta.yaml").write_text(
+        (temp_project / "meta.yml").write_text(
             yaml.dump(
                 {
                     "queries": {"root_query": {"sql": "SELECT 'root'", "source": "db"}},
@@ -527,7 +538,7 @@ class TestCompileFileWithMeta:
                 }
             )
         )
-        (subdir / "meta.yaml").write_text(
+        (subdir / "meta.yml").write_text(
             yaml.dump(
                 {
                     "queries": {

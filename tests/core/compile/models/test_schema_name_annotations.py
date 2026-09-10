@@ -38,7 +38,13 @@ class TestExtendsOpenForms:
         assert board.extends == ["stark", "./_report-base.yml"]
 
     def test_theme_sugar_still_desugars_to_extends(self) -> None:
-        board = AuthoredBoard.model_validate({"theme": "editorial", "rows": []})
+        from dbt_charts.core.compile.models.board.authored import (
+            AUTHORED_BOARD_ADAPTER,
+        )
+
+        board = AUTHORED_BOARD_ADAPTER.validate_python(
+            {"theme": "editorial", "rows": []}
+        )
         assert board.extends == "editorial"
 
 

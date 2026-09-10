@@ -1063,7 +1063,7 @@ def validate_query(
             calibration. When provided, fanout_risk findings are refined
             using known multiplicity, fanout factor, and confidence.
         suppress: Optional set of diagnostic codes to suppress externally
-            (e.g. from YAML ``ignore`` or ``meta.yaml`` lint config).
+            (e.g. from YAML ``ignore`` or ``meta.yml`` lint config).
         return_suppressed: If True, return a tuple of
             (active_diagnostics, suppressed_diagnostics).
 

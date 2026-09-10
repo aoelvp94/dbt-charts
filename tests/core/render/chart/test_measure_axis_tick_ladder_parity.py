@@ -342,7 +342,7 @@ def test_horizontal_bar_zero_anchor_default_path_pins_sub_zero_domain_floor() ->
     )
 
     # Geometry, not just text: a real linear scale places every tick at a
-    # pixel position matching its numeric distance from its neighbours. A
+    # pixel position matching its numeric distance from its neighbors. A
     # domain that silently excluded the negative rung or
     # clipped/mispositioned it would fail this even on a coincidentally
     # correct label SET.

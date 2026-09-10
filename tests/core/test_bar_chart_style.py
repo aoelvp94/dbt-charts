@@ -141,7 +141,7 @@ class TestChartSortOrderEmitsCanonicalVLValues:
     sort contract is broken and ``order: desc`` produces ascending output.
 
     Regression: chart-lab `bar_review` had `sort: {by: value, order: desc}`
-    and rendered smallest-on-top (ascending behaviour) instead of biggest-
+    and rendered smallest-on-top (ascending behavior) instead of biggest-
     on-top (the documented intent).
     """
 
@@ -297,7 +297,7 @@ class TestColorEncodedMarkOmitsPalette0Fill:
     conditional), the mark must NOT hardcode ``palette[0]`` as its
     fill/stroke. The palette[0] default is for charts WITHOUT a color
     encoding (single-series); when an encoding is present, the color
-    scale (or conditional encoding) owns mark colour.
+    scale (or conditional encoding) owns mark color.
 
     Regression: stacked column with ``color: region`` rendered every bar
     in palette[0] blue because the bar profile unconditionally emitted

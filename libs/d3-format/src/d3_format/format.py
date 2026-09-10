@@ -449,7 +449,7 @@ def _resolve_type(spec: FormatSpec) -> None:
     """Apply d3's type aliases in place, before any formatting decision.
 
     ``n`` is ``,g``. The empty type and any letter that selects no formatter are
-    alike ``.12~g`` — d3 does not reject an unrecognised type letter, it falls
+    alike ``.12~g`` — d3 does not reject an unrecognized type letter, it falls
     back to a general-purpose format, so neither do we.
     """
     if spec.type == "n":

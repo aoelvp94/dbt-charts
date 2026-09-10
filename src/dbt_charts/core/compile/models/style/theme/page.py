@@ -1,4 +1,4 @@
-"""Theme-stage style classes: page chrome (inputs, footer, timestamp, page canvas)."""
+"""Theme-stage style classes: page chrome (inputs, footer, timestamp)."""
 
 from __future__ import annotations
 
@@ -74,15 +74,14 @@ class FooterStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     visible: bool = Field(description="Show the footer attribution line.")
-    text: str = Field(
-        description="Attribution text shown in the footer. The first 'dbt charts' in it is drawn as the dbt charts wordmark, in the same ink as the text."
-    )
+    text: str = Field(description="Attribution text shown in the footer.")
     # Cascade sentinel: None (theme sets link: null) or absent = no link, the
-    # wordmark renders plain. When set, the wordmark links here (an anchor
-    # classed .dbt-footer-link).
+    # brand phrase renders unlinked (still set heavier — that is brand styling,
+    # not a link affordance). When set, the *first* occurrence of the brand
+    # phrase links here; a second occurrence is left plain.
     link: str | None = Field(
         default=None,
-        description="URL the footer's dbt charts wordmark links to; null renders it plain.",
+        description="URL the footer brand phrase 'dbt charts' links to; null renders plain text.",
     )
     font: FontStyle = Field(
         default_factory=FontStyle,
@@ -170,17 +169,3 @@ class TimestampStyle(BaseModel):
                 "'%H:%M %Z'"
             )
         return self
-
-
-class PageStyle(BaseModel):
-    """Page-level (outer HTML canvas) styling.
-
-    Distinct from the top-level `background` which is the working-surface color
-    (board/card fills). `page.background` is the off-white canvas behind the board.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    background: Annotated[str, Color()] = Field(
-        description="Page canvas background color (behind the board)."
-    )

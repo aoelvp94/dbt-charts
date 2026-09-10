@@ -101,16 +101,16 @@ def _effective_single_series_fill(
     rhythm_slot: int = 0,
     has_layers: bool = False,
 ) -> str:
-    """Return the base fill colour for a cartesian family chart.
+    """Return the base fill color for a cartesian family chart.
 
     A chart with ``layers`` is a multi-series chart in disguise: its base must
     share the category palette with its overlay layers (slot 0), matching the
-    pre-migration ``type: layered`` behaviour where every series — base
+    pre-migration ``type: layered`` behavior where every series — base
     included — read from one implicit categorical scale. Only a chart with NO
     layers is a true single series, whose ink is overridden ONLY by
     ``style.single_series_palette`` (indexed by the chart's rhythm slot).
     ``style.color.categorical`` / ``style.range.category`` configure the multi-series
-    *colour channel* and must NOT recolour a genuine single-series mark.
+    *color channel* and must NOT recolor a genuine single-series mark.
     """
     # per-chart static color override (style.<family>.color.static) takes
     # highest precedence for single-series ink — it is an explicit hex value

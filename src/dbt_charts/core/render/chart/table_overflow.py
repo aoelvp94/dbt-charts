@@ -1,9 +1,9 @@
 """Render-time capture of tables that don't fit the width they were given.
 
-A table sizes its columns to honour each one's minimum readable width. When
+A table sizes its columns to honor each one's minimum readable width. When
 those widths sum past the width the table was handed (its dashboard tile, or the
 page), the renderer has no choice but to widen the whole table past its slot —
-so it spills over its neighbour or is clipped, printing columns on top of each
+so it spills over its neighbor or is clipped, printing columns on top of each
 other. Nothing surfaces that to the author.
 
 This module is the seam that lets a warning detector see it. The table renderer
@@ -33,7 +33,7 @@ class TableOverflow(BaseModel):
 
     Measured at render time from the settled column layout, so it reflects what
     actually rendered — not an estimate. ``required_width`` is the table's
-    natural width once every column has its honoured (minimum readable) width;
+    natural width once every column has its honored (minimum readable) width;
     ``available_width`` is the width the table was given. Recorded exactly when
     ``required_width > available_width`` — the renderer's own widen boundary.
     """

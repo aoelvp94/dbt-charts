@@ -199,7 +199,7 @@ class TestKpiTitleAndLabelInResolvedChart:
         assert resolved.label == "Quarterly Revenue"
         assert resolved.title is None
 
-    def test_resolved_kpi_without_label_stays_unlabelled(self):
+    def test_resolved_kpi_without_label_stays_unlabeled(self):
         from dbt_charts.core.compile.models.chart.normalized import KpiChart
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
 

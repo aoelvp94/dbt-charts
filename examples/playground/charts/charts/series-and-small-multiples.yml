@@ -1,0 +1,347 @@
+# Series and small multiples
+# ===========================
+# How dbt Charts handles many series, repeated small-multiple panels, ragged
+# and gappy data, and dense or long-labeled category axes — using real
+# product, customer, and pipeline data.
+
+title: Series and small multiples
+notes: |
+  Series-count, small-multiples, raggedness, null-gap, label-length, density, and
+  temporal-cadence idioms, each shown with real business data instead of synthetic
+  series.
+theme: stark
+style:
+  frame:
+    width: 1872
+text: |
+  A chart might carry two series or two dozen, and the same shape can repeat once
+  per category with `multiples:`. This board walks through both, along with how
+  dbt Charts handles gaps, late starts, long labels, and dense axes — using real
+  product, customer, and pipeline data.
+queries:
+  docs_created_completed:
+    source: examples_db
+    sql: |
+      WITH bounds AS (
+        SELECT
+          date_trunc('month', min(created_at))::DATE AS first_month,
+          date_trunc('month', max(created_at))::DATE AS last_month
+        FROM dundersign.documents
+      ),
+      created AS (
+        SELECT date_trunc('month', created_at)::DATE AS month, 'Created' AS series, count(*) AS value
+        FROM dundersign.documents
+        GROUP BY 1
+      ),
+      completed AS (
+        SELECT date_trunc('month', completed_at)::DATE AS month, 'Completed' AS series, count(*) AS value
+        FROM dundersign.documents
+        WHERE completed_at IS NOT NULL
+        GROUP BY 1
+      )
+      SELECT month, series, value
+      FROM (SELECT * FROM created UNION ALL SELECT * FROM completed) u
+      WHERE month > (SELECT first_month FROM bounds)
+        AND month < (SELECT last_month FROM bounds)
+      ORDER BY 1, 2
+  daily_revenue_top6:
+    source: examples_db
+    sql: |
+      SELECT date, product, SUM(revenue) AS revenue
+      FROM main.ecommerce_orders
+      WHERE product IN ('Widget B', 'Gadget Y', 'Widget A', 'Gadget X', 'Widget C', 'Tool Z')
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+  daily_revenue_by_region_category:
+    source: examples_db
+    sql: |
+      SELECT date, region || ' · ' || category AS segment, SUM(revenue) AS revenue
+      FROM main.ecommerce_orders
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+  daily_revenue_top5:
+    source: examples_db
+    sql: |
+      SELECT date, product, SUM(revenue) AS revenue
+      FROM main.ecommerce_orders
+      WHERE product IN ('Widget B', 'Gadget Y', 'Widget A', 'Gadget X', 'Widget C')
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+  ragged_weekly_revenue:
+    source: examples_db
+    sql: |
+      SELECT date_trunc('week', date)::DATE AS week, product, SUM(revenue) AS revenue
+      FROM main.ecommerce_orders
+      WHERE product IN ('Widget B', 'Gadget Z')
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+  gapped_revenue:
+    source: examples_db
+    sql: |
+      WITH cal AS (
+        SELECT (DATE '2024-01-01' + INTERVAL (d) DAY)::DATE AS date
+        FROM generate_series(0, 29) t(d)
+      ),
+      products AS (
+        SELECT DISTINCT product FROM main.ecommerce_orders WHERE product IN ('Tool A', 'Tool Z')
+      ),
+      grid AS (
+        SELECT cal.date, products.product FROM cal CROSS JOIN products
+      ),
+      actual AS (
+        SELECT date, product, SUM(revenue) AS revenue
+        FROM main.ecommerce_orders
+        WHERE product IN ('Tool A', 'Tool Z')
+        GROUP BY 1, 2
+      )
+      SELECT grid.date, grid.product, actual.revenue
+      FROM grid
+      LEFT JOIN actual USING (date, product)
+      ORDER BY grid.product, grid.date
+  weekly_revenue_by_category:
+    source: examples_db
+    sql: |
+      SELECT date_trunc('week', date)::DATE AS week, category, SUM(revenue) AS revenue
+      FROM main.ecommerce_orders
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+  daily_revenue_by_region:
+    source: examples_db
+    sql: |
+      SELECT date, region, SUM(revenue) AS revenue
+      FROM main.ecommerce_orders
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+  template_usage_top8:
+    source: examples_db
+    sql: |
+      SELECT name, SUM(usage_count) AS total_uses
+      FROM dundersign.templates
+      GROUP BY 1
+      ORDER BY total_uses DESC
+      LIMIT 8
+  country_gdp_top25:
+    source: examples_db
+    sql: |
+      SELECT name, gdp * 1000000 AS gdp
+      FROM main.world_countries
+      ORDER BY gdp DESC
+      LIMIT 25
+  docs_daily:
+    source: examples_db
+    sql: |
+      SELECT date_trunc('day', created_at)::DATE AS day, count(*) AS documents
+      FROM dundersign.documents
+      WHERE created_at >= (SELECT max(created_at) FROM dundersign.documents) - INTERVAL 30 DAY
+      GROUP BY 1
+      ORDER BY 1
+  docs_weekly:
+    source: examples_db
+    sql: |
+      SELECT date_trunc('week', created_at)::DATE AS week, count(*) AS documents
+      FROM dundersign.documents
+      WHERE date_trunc('week', created_at)::DATE
+              > (SELECT date_trunc('week', min(created_at))::DATE FROM dundersign.documents)
+        AND date_trunc('week', created_at)::DATE
+              < (SELECT date_trunc('week', max(created_at))::DATE FROM dundersign.documents)
+      GROUP BY 1
+      ORDER BY 1
+  docs_monthly:
+    source: examples_db
+    sql: |
+      SELECT date_trunc('month', created_at)::DATE AS month, count(*) AS documents
+      FROM dundersign.documents
+      WHERE date_trunc('month', created_at)::DATE
+              > (SELECT date_trunc('month', min(created_at))::DATE FROM dundersign.documents)
+        AND date_trunc('month', created_at)::DATE
+              < (SELECT date_trunc('month', max(created_at))::DATE FROM dundersign.documents)
+      GROUP BY 1
+      ORDER BY 1
+  single_point_stack:
+    source: examples_db
+    sql: |
+      WITH weekly AS (
+        SELECT date_trunc('week', date)::DATE AS week, product AS series, SUM(revenue) AS value
+        FROM main.ecommerce_orders
+        WHERE product IN ('Widget B', 'Gadget Y', 'Widget A', 'Gadget X')
+        GROUP BY 1, 2
+      )
+      SELECT week, series, value FROM weekly
+      UNION ALL
+      SELECT DATE '2024-01-22', 'Holiday bundle (one-time promo)', 9500
+      ORDER BY 1, 2
+charts:
+  two_series_line:
+    query: docs_created_completed
+    type: line
+    title: Documents created vs. completed, by month
+    subtitle: "`color:` splits one query into two lines."
+    x: month
+    y: value
+    color: series
+    style:
+      number_format: integer
+  six_series_line:
+    query: daily_revenue_top6
+    type: line
+    title: Daily revenue for our top 6 products
+    subtitle: Six series still read clearly, each labeled at the end of its line.
+    x: date
+    y: revenue
+    color: product
+    style:
+      number_format: currency
+  twelve_series_line:
+    query: daily_revenue_by_region_category
+    type: line
+    title: Daily revenue, by region and category
+    subtitle: Twelve series push the legend — watch how the theme copes.
+    x: date
+    y: revenue
+    color: segment
+    style:
+      number_format: currency
+  stacked_area_five:
+    query: daily_revenue_top5
+    type: area
+    title: Daily revenue mix across our top 5 products
+    subtitle: "`style.stack: zero` stacks five series into one band."
+    x: date
+    y: revenue
+    color: product
+    style:
+      stack: zero
+      number_format: currency
+  ragged_series_line:
+    query: ragged_weekly_revenue
+    type: line
+    title: "Weekly revenue: a steady seller vs. a phased-out one"
+    subtitle: Gadget Z stopped selling after week 4 — its line ends there.
+    x: week
+    y: revenue
+    color: product
+    style:
+      number_format: currency
+  gapped_series_line:
+    query: gapped_revenue
+    type: line
+    title: Daily revenue for two tool products
+    subtitle: Days with no sales become gaps in the line, not zeros.
+    x: date
+    y: revenue
+    color: product
+    style:
+      number_format: currency
+  small_multiples_bar_category:
+    query: weekly_revenue_by_category
+    type: bar
+    title: Weekly revenue by product category
+    subtitle: "`multiples: rows:` repeats the chart once per category."
+    x: week
+    y: revenue
+    style:
+      number_format: currency
+      stack: zero
+    multiples:
+      rows: category
+  small_multiples_line_region:
+    query: daily_revenue_by_region
+    type: line
+    title: Daily revenue by region
+    subtitle: "`multiples: columns:` lays one panel per region side by side."
+    x: date
+    y: revenue
+    style:
+      number_format: currency
+    multiples:
+      columns: region
+  long_label_bar:
+    query: template_usage_top8
+    type: bar
+    title: Most-used contract templates
+    subtitle: Long category names stay fully readable as a horizontal list.
+    x: name
+    y: total_uses
+    sort:
+      by: total_uses
+      order: desc
+    style:
+      number_format: integer
+  dense_category_bar:
+    query: country_gdp_top25
+    type: bar
+    title: The world's 25 largest economies, by GDP
+    subtitle: Twenty-five categories stay readable as a ranked horizontal list.
+    height: 640
+    x: name
+    y: gdp
+    style:
+      orientation: horizontal
+      number_format: currency
+  cadence_daily:
+    query: docs_daily
+    type: bar
+    title: Documents created each day
+    subtitle: Daily cadence, over the last 30 days.
+    x: day
+    y: documents
+    style:
+      number_format: integer
+  cadence_weekly:
+    query: docs_weekly
+    type: bar
+    title: Documents created each week
+    subtitle: Weekly cadence, over the last year.
+    x: week
+    y: documents
+    style:
+      number_format: integer
+  cadence_monthly:
+    query: docs_monthly
+    type: bar
+    title: Documents created each month
+    subtitle: Monthly cadence, over the last year.
+    x: month
+    y: documents
+    style:
+      number_format: integer
+  single_point_stack:
+    query: single_point_stack
+    type: bar
+    title: Weekly revenue by product, plus a one-time promo
+    subtitle: The promo band appears once in the stack, then disappears.
+    x: week
+    y: value
+    color: series
+    style:
+      stack: zero
+      number_format: currency
+rows:
+  - text: |
+      **14 charts.** Series count, small multiples, ragged and gapped data, long
+      labels, dense axes, and temporal cadence, all with real product, customer,
+      and pipeline data.
+  - cols:
+      - two_series_line
+      - six_series_line
+      - twelve_series_line
+  - cols:
+      - stacked_area_five
+      - ragged_series_line
+      - gapped_series_line
+  - cols:
+      - small_multiples_bar_category
+      - long_label_bar
+      - dense_category_bar
+  - cols:
+      - width: 1800
+        rows:
+          - small_multiples_line_region
+  - cols:
+      - cadence_daily
+      - cadence_weekly
+      - cadence_monthly
+  - cols:
+      - width: 1800
+        rows:
+          - single_point_stack

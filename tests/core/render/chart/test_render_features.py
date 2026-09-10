@@ -279,6 +279,25 @@ def test_zero_baseline_does_not_apply_to_pie(pie_style: ResolvedPieStyle) -> Non
     assert BaselineFeature().applies_to(_pie(pie_style)) is False
 
 
+def test_zero_baseline_does_not_apply_to_heatmap(
+    heatmap_style: ResolvedHeatmapStyle,
+) -> None:
+    """Heatmap is a cartesian family but has no quantitative position axis --
+    both channels always render as bands -- so it must fall out of the
+    structural applies_to() check even though it shares the cartesian base
+    class with bar/line/area/scatter."""
+    chart = ResolvedHeatmapChart(
+        panel_axes=(),
+        id="hm1",
+        chart_type="heatmap",
+        x="category",
+        y="segment",
+        style=heatmap_style,
+        **_C,
+    )
+    assert BaselineFeature().applies_to(chart) is False
+
+
 # ---------------------------------------------------------------------------
 # BaselineFeature — apply (unit)
 # ---------------------------------------------------------------------------
@@ -495,6 +514,23 @@ def test_zero_baseline_skips_empty_data(bar_style: ResolvedBarStyle) -> None:
     assert len(result.layers) == 0
 
 
+def test_zero_baseline_skips_independent_dual_axis(
+    line_style: ResolvedLineStyle,
+) -> None:
+    """An independent-y dual-axis layered spec (spec.resolve.scale.y ==
+    "independent") skips the whole feature -- a datum:0 rule would get its
+    own y scale VL can't bind to the base measure scale, so it would float
+    to the wrong position rather than sit on the shared baseline."""
+    chart = _line(line_style)
+    data = [{"month": "Jan", "revenue": -5}, {"month": "Feb", "revenue": 5}]
+    spec = _spec("line")
+    spec.resolve = {"scale": {"y": "independent"}}
+    result = BaselineFeature().apply(
+        spec, chart, _DEFAULT_BOX, {chart.query_name: data}
+    )
+    assert len(result.layers) == 0
+
+
 def test_zero_baseline_horizontal_bar_uses_y_as_measure(
     bar_style: ResolvedBarStyle,
 ) -> None:
@@ -540,6 +576,36 @@ def test_zero_baseline_horizontal_bar_rule_anchors_on_x_axis(
     )
 
 
+def test_zero_baseline_horizontal_bar_log_typed_axis_y_skips_rule(
+    bar_style: ResolvedBarStyle,
+) -> None:
+    """A log-typed axis_y (the cascade's measure slot, regardless of
+    orientation) must never carry the datum:0 rule on a horizontal bar --
+    same incompatibility as the vertical case. Built directly against
+    ``BaselineFeature`` (bypassing ``_resolve_bar``'s own log-scale rejection,
+    which is unconditional on orientation) so this exercises the guard's own
+    axis read rather than the compile-time validation that would otherwise
+    make this combination unreachable through the full pipeline.
+    """
+    from dbt_charts.core.compile.models.style.resolved import (
+        ResolvedScaleContinuousStyle,
+        ResolvedScaleStyle,
+    )
+
+    ax, ay = _baked_axes_for("bar")
+    ay = dataclasses.replace(
+        ay,
+        scale=ResolvedScaleStyle(continuous=ResolvedScaleContinuousStyle(type="log")),
+    )
+    chart = _bar(bar_style, orientation="horizontal", axis_x=ax, axis_y=ay)
+    spec = _spec("bar")
+    data = [{"month": "Jan", "revenue": 100}, {"month": "Feb", "revenue": 200}]
+    result = BaselineFeature().apply(
+        spec, chart, _DEFAULT_BOX, {chart.query_name: data}
+    )
+    assert len(result.layers) == 0
+
+
 # ---------------------------------------------------------------------------
 # BaselineFeature — top/unity behavior (unit)
 #
@@ -561,6 +627,17 @@ def test_baseline_unstacked_bar_emits_only_zero_rule(
     )
     assert len(result.layers) == 1
     assert result.layers[0].encoding["y"]["datum"] == 0
+
+
+def test_baseline_streamgraph_emits_no_rule(area_style: ResolvedAreaStyle) -> None:
+    """Streamgraph (stack: center): y=0 is the silhouette's own centerline,
+    not a meaningful baseline -- neither the zero rule nor top rules fire."""
+    chart = _area(area_style, stack="center")
+    data = [{"date": "Jan", "value": -5}, {"date": "Feb", "value": 5}]
+    result = BaselineFeature().apply(
+        _spec("area"), chart, _DEFAULT_BOX, {chart.query_name: data}
+    )
+    assert len(result.layers) == 0
 
 
 def test_baseline_normalize_stacked_area_without_percent_format_emits_top_rules(
@@ -902,7 +979,7 @@ def test_endpoint_label_right_pane_font_style_reaches_mark(
     assert result.endpoint_label_data.label_mark_font_props.get("fontStyle") == "italic"
 
 
-def test_endpoint_label_rail_colours_by_board_slot_not_local_sort_position(
+def test_endpoint_label_rail_colors_by_board_slot_not_local_sort_position(
     line_style: ResolvedLineStyle,
 ) -> None:
     """Each series' rail fill/ink must key off ITS OWN board slot.
@@ -910,7 +987,7 @@ def test_endpoint_label_rail_colours_by_board_slot_not_local_sort_position(
     ``all_series = sorted(...)`` inside the feature puts "Alpha" before
     "Zeta" — but the board assigned the OPPOSITE slots (Zeta=0, Alpha=1,
     e.g. because some other chart on the board first-saw Zeta). A fix that
-    colours by enumeration position over the locally-sorted list would hand
+    colors by enumeration position over the locally-sorted list would hand
     "Alpha" the swatch that actually belongs to Zeta.
     """
     palette = ("#111111", "#222222")
@@ -1584,31 +1661,29 @@ def test_click_interactivity_color_field_uses_the_dimension_for_wide_plus_color(
     assert _channel_field(resolved, "color") == "region"
 
 
-def test_baseline_normalize_stacked_percent_area_fires_unity_rule_only(
+def test_baseline_normalize_stacked_percent_area_dedupes_unity_rule(
     area_style: ResolvedAreaStyle,
 ) -> None:
-    """Normalize-stacked area with % format: only the unity y=1 rule fires.
-
-    The top 0/1 rule pair is ceded — a duplicate y=1 reference line would
-    otherwise be drawn on top of the unity rule.
+    """Normalize-stacked area with % format: the 0% baseline still fires,
+    and the 100% line fires exactly once (from the unity gate, not doubled
+    up with the top-rule pair's own datum-1) — never the old duplicate-unity
+    ``[0, 1, 1]`` triple.
     """
     chart = _area(area_style, stack="normalize", format=".0%")
     result = BaselineFeature().apply(
         _spec("area"), chart, _DEFAULT_BOX, {chart.query_name: []}
     )
-    assert len(result.layers) == 1
-    rule = result.layers[0]
-    assert rule.encoding.get("y", {}).get("datum") == 1
-    assert "color" in rule.mark_props and "strokeWidth" in rule.mark_props
+    datums = sorted(layer.encoding.get("y", {}).get("datum") for layer in result.layers)
+    assert datums == [0, 1]
+    for rule in result.layers:
+        assert "color" in rule.mark_props and "strokeWidth" in rule.mark_props
 
 
-def test_baseline_normalize_stacked_percent_bar_fires_top_rule_pair(
+def test_baseline_normalize_stacked_percent_bar_dedupes_unity_rule(
     bar_style: ResolvedBarStyle,
 ) -> None:
-    """Normalize-stacked bar with % format MUST get the 0/1 top rule pair.
-
-    The unity rule only covers line/area/layered — bars are excluded, so
-    BaselineFeature must not cede the bar case; it fires the top pair itself.
+    """Normalize-stacked bar with % format: mirrors the area case above --
+    the 0% baseline fires and the 100% line fires exactly once.
     """
     ax, ay = _baked_axes_for("bar")
     chart = ResolvedBarChart(
@@ -1626,8 +1701,8 @@ def test_baseline_normalize_stacked_percent_bar_fires_top_rule_pair(
     result = BaselineFeature().apply(
         _spec("bar"), chart, _DEFAULT_BOX, {chart.query_name: []}
     )
-    assert len(result.layers) == 2
-    assert [layer.encoding["y"]["datum"] for layer in result.layers] == [0, 1]
+    datums = sorted(layer.encoding["y"]["datum"] for layer in result.layers)
+    assert datums == [0, 1]
 
 
 def test_channel_to_encoding_gradient_both_bounds_uses_domain_array() -> None:
@@ -2120,3 +2195,28 @@ def test_dashes_with_empty_chart_local_palette_and_board_category_colors_does_no
 
     color_scale = spec.encoding["color"].get("scale", {})
     assert "range" not in color_scale
+
+
+def test_baseline_normalize_stacked_grid_not_visible_emits_no_rules(
+    area_style: ResolvedAreaStyle,
+) -> None:
+    """A normalize stack with `axis_y.grid.visible: false` emits no rules.
+
+    The 0%/100% pair frames a normalize stack rather than decorating it, so the
+    block used to emit it unconditionally; deferring to the blanket grid switch
+    is new behavior. Without this test the `grid.visible` term can be deleted
+    and the suite stays green — every other `visible=False` case is a
+    non-normalize chart, and the normalize off-switch case uses
+    `threshold.visible` instead.
+    """
+    import dataclasses
+
+    # grid/axis are frozen dataclasses; the family style is a pydantic model.
+    hidden_grid = dataclasses.replace(area_style.axis_y.grid, visible=False)
+    hidden_axis = dataclasses.replace(area_style.axis_y, grid=hidden_grid)
+    style = area_style.model_copy(update={"axis_y": hidden_axis})
+    chart = _area(style, stack="normalize")
+    result = BaselineFeature().apply(
+        _spec("area"), chart, _DEFAULT_BOX, {chart.query_name: []}
+    )
+    assert result.layers == []

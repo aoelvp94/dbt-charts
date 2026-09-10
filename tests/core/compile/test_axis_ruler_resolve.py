@@ -788,7 +788,7 @@ def test_non_compacting_ladder_bakes_tick_label_when_unauthored():
 def test_non_compacting_ladder_leaves_an_authored_format_untouched():
     """``format_authored`` is a required keyword, no default — this call
     passes True explicitly for an author who wrote the SI format
-    themselves, keeping today's behaviour.
+    themselves, keeping today's behavior.
     """
     ay_merged = _merged_axis_y()
     ticks = (0.0, 20_000.0, 40_000.0, 60_000.0)

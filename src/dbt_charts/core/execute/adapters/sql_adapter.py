@@ -82,7 +82,7 @@ def bigquery_default_dataset(source_config: dict[str, Any]) -> str | None:
 def _source_config_hash(source_config: dict[str, Any]) -> str:
     """Stable hash of source_config for adapter cache keys.
 
-    Uses sorted JSON serialisation so key order doesn't affect the hash.
+    Uses sorted JSON serialization so key order doesn't affect the hash.
 
     ``attribution`` is excluded: it is cost metadata that rides along to the
     warehouse, not connection identity. Hashing it would give every distinct set of

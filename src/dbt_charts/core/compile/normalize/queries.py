@@ -183,7 +183,7 @@ def dialect_for_source(source: str | None, sources: dict[str, Any]) -> str | Non
     lives in the profile and isn't knowable until execute. sqlglot's own
     registry is the arbiter — asking it for an unknown name raises rather
     than degrading, and `dialects.get_dialect` can't stand in here because
-    it silently answers postgres for anything it doesn't recognise.
+    it silently answers postgres for anything it doesn't recognize.
 
     None means "could not establish one", and callers must treat it as "do
     not report parse findings" rather than falling back to the default
@@ -580,7 +580,7 @@ def resolve_external_query(
     """Resolve an external query reference.
 
     Parses references like `path/to/file.yml#query_name` and loads
-    queries from the external file, memoising via query_registry (compile-scoped).
+    queries from the external file, memoizing via query_registry (compile-scoped).
 
     Args:
         query_ref: Query reference with file path (e.g., "_shared.yml#sales")

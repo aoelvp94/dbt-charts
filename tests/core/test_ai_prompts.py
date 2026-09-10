@@ -162,6 +162,13 @@ class TestBuildContextSection:
 class TestSharedPromptComposition:
     """Shared dbt charts prompt composition is the only generic AI instruction path."""
 
+    def test_system_prompt_opens_with_the_american_english_rule(self) -> None:
+        prompt = build_dbt_charts_system_prompt(
+            "dashboard_design", database_context="Tables: orders"
+        )
+
+        assert prompt.startswith("Write in American English.")
+
     def test_data_exploration_skill_renders_tool_surface(self) -> None:
         prompt = load_shared_prompt("data-exploration", surface="tool")
 
@@ -433,7 +440,7 @@ class TestDashboardBuildSkill:
         prompt = " ".join(load_shared_prompt("board-build", surface="tool").split())
 
         assert "Scope is your host's to define" in prompt
-        # No blanket folder-sweep licence from a layer that cannot check access.
+        # No blanket folder-sweep license from a layer that cannot check access.
         assert "copy everything under" not in prompt
         assert "as explicit as one over a filename" not in prompt
 

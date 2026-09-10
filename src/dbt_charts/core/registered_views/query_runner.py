@@ -185,7 +185,7 @@ def run_registry_queries(
             types declared in the view (e.g. ``type: schema``, ``type: sql``).
         cache: Optional content-addressed result cache. When provided, a cache
             hit skips ``adapter_registry.execute`` entirely. ``None`` disables
-            caching (existing behaviour). Pass the serve cache instance so
+            caching (existing behavior). Pass the serve cache instance so
             ``/data/`` results share the same file and TTL as dashboard queries.
         slow_query_threshold_s: Emit a ``logging.warning`` when a single
             registry query takes longer than this many seconds (default 2.0).

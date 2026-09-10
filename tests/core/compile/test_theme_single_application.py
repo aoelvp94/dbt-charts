@@ -69,7 +69,7 @@ def project_dir(tmp_path: Path) -> Path:
 
 
 class TestMetaThemeBaseSelection:
-    """Test 1: theme declared in meta.yaml propagates as board.theme."""
+    """Test 1: theme declared in meta.yml propagates as board.theme."""
 
     def test_meta_theme_is_effective_theme(
         self, project_dir: Path, local_project: Callable[..., FilesystemProject]
@@ -81,7 +81,7 @@ class TestMetaThemeBaseSelection:
         chosen_theme = non_default[0]
         boards_dir = project_dir / "charts"
 
-        (boards_dir / "meta.yaml").write_text(
+        (boards_dir / "meta.yml").write_text(
             textwrap.dedent(
                 f"""\
                 theme: {chosen_theme}

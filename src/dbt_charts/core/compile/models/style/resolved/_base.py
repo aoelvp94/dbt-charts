@@ -50,7 +50,6 @@ from dbt_charts.core.compile.models.style.theme import (
     LegendPosition,
     LineChartStyle,
     PaddingStyle,
-    PageStyle,
     PieChartStyle,
     PlaceholderStyle,
     PointMapChartStyle,
@@ -357,9 +356,10 @@ class ResolvedAxisElementStyle:
 
 
 @dataclasses.dataclass(frozen=True)
-class ResolvedAxisGridZeroStyle:
+class ResolvedAxisGridThresholdStyle:
     color: str
     width: float
+    visible: bool
 
 
 @dataclasses.dataclass(frozen=True)
@@ -371,9 +371,11 @@ class ResolvedAxisGridStyle:
     width: float
     color: str
     dash: list[float] | None  # None → solid line (VL default)
-    # None on non-measure axes (axis_x, axis_quantitative, axis_band):
-    # zero-baseline gridline only makes sense on the measure (y) axis.
-    zero: ResolvedAxisGridZeroStyle | None
+    # Every axis carries a threshold block — a threshold rule is a property
+    # of a quantitative axis, on either channel, not of the measure (y) axis
+    # specifically. It is inert on an axis that never ticks at the
+    # threshold (a band axis, or a categorical x-axis).
+    threshold: ResolvedAxisGridThresholdStyle
 
 
 @dataclasses.dataclass(frozen=True)
@@ -681,14 +683,12 @@ class ResolvedStyle:
     placeholder: PlaceholderStyle
     layout: LayoutStyle
     variables: VariablesStyle
-    page: PageStyle
     footer: FooterStyle
     timestamp: TimestampStyle
     # Per-board CSS-chrome. None = not authored; theme supplies no default.
     padding: SpacingValues | None
     margin: SpacingValues | None
     gap: float | None
-    color: str | None
     # Root emoji mode — preserved from RootFontStyle.emoji so render code
     # can read it without re-accessing get_config().
     emoji_mode: Literal["monochrome", "system-default", "disabled"]
@@ -715,7 +715,7 @@ def effective_padding(resolved: ResolvedStyle) -> SpacingValues:
 __all__ = [
     "ResolvedAxisElementStyle",
     "ResolvedAxisGridStyle",
-    "ResolvedAxisGridZeroStyle",
+    "ResolvedAxisGridThresholdStyle",
     "ResolvedAxisLineStyle",
     "ResolvedAxisStyle",
     "ResolvedAxisTicksStyle",

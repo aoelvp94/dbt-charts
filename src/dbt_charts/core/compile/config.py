@@ -20,11 +20,11 @@ Runtime defaults are assembled from:
 YAML is the single source of truth — no Python dataclass defaults.
 
 Presentation (style, board width) belongs in the Board cascade via
-charts/meta.yaml — NOT in dbt_charts.yml. Any stray ``style:`` key in
+charts/meta.yml — NOT in dbt_charts.yml. Any stray ``style:`` key in
 ``dbt_charts.yml`` raises a pydantic ValidationError (``Extra inputs are not
 permitted``).
 
-Project-wide theme defaults live in ``charts/meta.yaml: extends: <theme>``,
+Project-wide theme defaults live in ``charts/meta.yml: extends: <theme>``,
 not in ``dbt_charts.yml``. Unknown top-level keys in ``dbt_charts.yml`` raise a
 pydantic ValidationError (``Extra inputs are not permitted``).
 """
@@ -105,7 +105,7 @@ _MODULE_DEFAULT_PATHS = [
 _compiled_theme_cache: dict[str, Any] = {}  # str -> Style
 
 # Shipped built-in default theme name. Immutable — never patched at runtime.
-# Project-wide overrides live in charts/meta.yaml: extends: <name>.
+# Project-wide overrides live in charts/meta.yml: extends: <name>.
 # The VS Code inspector flips the theme per-session via DCT_DEFAULT_THEME env var,
 # read at call time by get_default_theme_name() without any global mutation.
 SHIPPED_DEFAULT_THEME_NAME: str = "clarity"
@@ -189,7 +189,7 @@ def load_config(project: Project) -> Config:
     Merges the defaults stack with the project's dbt_charts.yml. Any unknown
     top-level key in dbt_charts.yml (e.g. ``style:``, ``board:``, ``theme:``)
     raises a pydantic ValidationError; presentation and theme defaults belong
-    in charts/meta.yaml.
+    in charts/meta.yml.
 
     Args:
         project: Project whose dbt_charts.yml to read.
@@ -708,10 +708,10 @@ def user_facing_theme_names() -> list[str]:
     endpoint, LSP hints, and the Cloud design panel's theme picker all read
     this instead of each filtering list_built_in_themes() on their own. (The
     VS Code/engine-shipped JSON Schema's `theme`/`extends` enum arms arrive
-    separately, via ThemeName introspection in json_schema.py — not through
-    this function.) Backed by the generated ThemeName Literal (private
-    `_base` and diagnostic-only themes already excluded at codegen time), not
-    a second hand-maintained filter.
+    separately, via the SchemaSugar marker on AuthoredBoardInput in
+    authored.py — not through this function.) Backed by the generated
+    ThemeName Literal (private `_base` and diagnostic-only themes already
+    excluded at codegen time), not a second hand-maintained filter.
     """
     return sorted(get_args(ThemeName))
 
@@ -789,7 +789,7 @@ def get_default_theme_name() -> str:
     ``SHIPPED_DEFAULT_THEME_NAME`` when unset.
 
     This is distinct from per-board theming: ``extends:``/``theme:`` on a board (or
-    ``charts/meta.yaml``) resolves through the cascade and wins over this default
+    ``charts/meta.yml``) resolves through the cascade and wins over this default
     via ``theme_name or get_default_theme_name()``.
     """
     env_value = os.getenv("DCT_DEFAULT_THEME")  # noqa: TID251 — DCT_DEFAULT_THEME knob
@@ -838,7 +838,7 @@ def load_project_sources(project: FilesystemProject) -> ProjectSourcesConfig:
     reasoning as ``get_project_cache_root``.
 
     ``sources.default`` is not supported at the project level; set
-    ``source: <name>`` on the board or folder ``meta.yaml`` instead.
+    ``source: <name>`` on the board or folder ``meta.yml`` instead.
     """
     # dbt_charts.yml sources — default key is rejected
     filename, sources_section = _dbt_charts_yml_mapping_section(project, "sources")
@@ -847,7 +847,7 @@ def load_project_sources(project: FilesystemProject) -> ProjectSourcesConfig:
     elif "default" in sources_section:
         raise TypeError(
             f"{filename}: sources.default is no longer supported. "
-            "Set the default source at the board or folder meta.yaml level: `source: <name>`."
+            "Set the default source at the board or folder meta.yml level: `source: <name>`."
         )
     all_sources = {k: v for k, v in sources_section.items() if isinstance(v, dict)}
     for name, entry in all_sources.items():
@@ -931,7 +931,7 @@ class ProjectSourcesConfig:
 
     A pure name→definition map. The project-level ``sources.default`` key
     has been removed; per-board defaults come from ``source:`` on the board or
-    folder ``meta.yaml``.
+    folder ``meta.yml``.
     """
 
     def __init__(

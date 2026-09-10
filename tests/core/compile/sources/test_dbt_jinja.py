@@ -209,7 +209,7 @@ class TestJinjaFreeFastPath:
         assert out == {"d": "2026-01-01", "dt": "2026-01-01T12:00:00"}
 
     @pytest.mark.parametrize("value", [{1, 2}, ("a", "b"), object()])
-    def test_unmodelled_value_type_still_raises(self, value: object) -> None:
+    def test_unmodeled_value_type_still_raises(self, value: object) -> None:
         """dbt's walk models dict/list/str/int/float/bool/None/date and raises on
         anything else. Passing such a value through silently would turn a loud
         error into a wrong config."""

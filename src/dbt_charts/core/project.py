@@ -115,7 +115,7 @@ SKIP_SCAN_DIRS: frozenset[str] = frozenset(
 # Markdown document/board suffixes (matched case-insensitively on the filename).
 MARKDOWN_SUFFIXES: tuple[str, ...] = (".md", ".markdown")
 
-# File suffixes recognised as candidate board files during enumeration.
+# File suffixes recognized as candidate board files during enumeration.
 BOARD_CANDIDATE_SUFFIXES: tuple[str, ...] = (".yml", ".yaml", *MARKDOWN_SUFFIXES)
 
 # Filenames a directory URL resolves to as its index board, in priority order.
@@ -335,7 +335,7 @@ class ProjectPath:
     def is_meta(self) -> bool:
         """True if this is a cascade fragment, not a standalone board.
 
-        ``meta.yaml``/``meta.yml`` carry inherited defaults for their
+        ``meta.yml``/``meta.yaml`` carry inherited defaults for their
         directory; they compile as cascade input, never as their own board.
         """
         return self.name in META_FILENAMES
@@ -412,10 +412,10 @@ class BoardFile:
     """A board's content bound to its (optional) project location.
 
     The compiler's and renderer's input. ``path`` — a ``ProjectPath`` or
-    ``None`` — anchors the ``charts/meta.yaml`` cascade, relative refs, and the
+    ``None`` — anchors the ``charts/meta.yml`` cascade, relative refs, and the
     error/link identity when the board is a real stored file. It is ``None`` for
     in-memory content with no location (AI output, scratch), which then compiles
-    with no meta.yaml cascade beyond the inherited default source and never
+    with no meta.yml cascade beyond the inherited default source and never
     leaks a fabricated leaf into errors or preview URLs. ``content`` is a
     property, so a stored board reads lazily while in-memory content supplies a
     buffer.

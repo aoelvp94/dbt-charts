@@ -168,7 +168,7 @@ def test_heading_margin_is_the_same_for_every_heading_level() -> None:
     font's line box, not from ``get_heading_size(level)``, and mdsvg's
     px-override path always prefers it over the level-scaled em fallback. A
     24px h1 and a 14px h3 (the same size as body text) should visually earn
-    different leading space; today they don't. Characterisation, unchanged by
+    different leading space; today they don't. Characterization, unchanged by
     this fix -- an opening heading now collapses whichever margin it was given,
     so the two are equal at zero as well as mid-blob.
     """

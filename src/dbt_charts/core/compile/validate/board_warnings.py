@@ -338,8 +338,9 @@ def _is_fragmenting_prose_slot(item: LayoutItem) -> bool:
     themselves differently has to discard a style; merging a conditionally
     visible row into an unconditional one publishes prose the author hid. The
     fix the warning names is not available on those rows, so it must not name
-    it. This is also most of what the prose specimens under `charts/labs/` are
-    made of — rows that each demonstrate one measure.
+    it. This is also most of what the prose specimens under
+    `examples/playground-experimental/charts/labs/` are made of — rows that
+    each demonstrate one measure.
     """
     nested = item.board
     if nested is None or nested.layout.items or not nested.text:
@@ -411,14 +412,14 @@ def _detect_axis_align_discarded(board: Board, warnings: list[Diagnostic]) -> No
       at resolve time from the x column type, not at compile time). HeatmapChart is also
       excluded: its resolve path hardcodes format_is_alias=False.
     - axis_y.position is explicitly "right" (auto/unset may resolve to left, where
-      the force never fires and the authored align is honoured).
+      the force never fires and the authored align is honored).
     - axis_y.labels.align is authored.
     - axis_y.labels.format (chart-local, falling back to the theme's own
       axis_quantitative default when the chart authors no format at all) is
       an engine-predefined name.
     - The effective axis label font has tabular figures. _force_right requires
       tabular_figures=True when column_forming=True. If the chart-local font override
-      is non-tabular, the force never fires and the authored align is honoured.
+      is non-tabular, the force never fires and the authored align is honored.
 
     model_dump() is used instead of direct attribute access because the TYPE_CHECKING
     stub for patch models inherits from the non-patch base (all fields non-None), which

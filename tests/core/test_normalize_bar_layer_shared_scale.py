@@ -84,7 +84,7 @@ _BOARD_CTX = resolve_chart_style_context(get_theme_style())
 _QUARTILE_VALUES = [0, 0.25, 0.5, 0.75, 1.0]
 _PERCENT_WHOLE_FORMAT = ".0%"
 
-# No `color`/`status` field: a series-colour channel opts a vertical bar into
+# No `color`/`status` field: a series-color channel opts a vertical bar into
 # the endpoint-label rail, which independently back-fills encoding.y.scale as
 # a side effect of positioning its labels — masking the bug this test exists
 # to catch. Single-series data keeps the base emitter's own scale bare.

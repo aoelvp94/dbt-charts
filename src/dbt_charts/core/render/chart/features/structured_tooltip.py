@@ -85,7 +85,7 @@ _GROUP_PCT_FIELD = "__dct_group_pct"
 def _value_tooltip_field(
     field: str, title: str, data: ChartRenderData, fmt: str
 ) -> TooltipField:
-    """One dependent/peer VALUE row honouring the datum's inferred VL type.
+    """One dependent/peer VALUE row honoring the datum's inferred VL type.
 
     Quantitative applies the theme's ``tooltip_format``; temporal/nominal
     pass the raw value through. Shared by scatter's two peer value rows
@@ -114,7 +114,7 @@ def _series_order_role(spec: ChartSpec, color_field: str) -> tuple[TooltipField,
 
     Stamps a ``calculate`` transform + returns an invisible ROLE_ORDER
     tooltip entry, so ``chart_interactivity.js`` can sort the x-unified
-    bubble by rank even when no legend renders (an endpoint-labelled line,
+    bubble by rank even when no legend renders (an endpoint-labeled line,
     the common default, has no ``.role-legend-label`` DOM for the runtime's
     other order-reading path). Absent (``()``) when the color scale carries
     no explicit domain -- a numeric/boolean color field -- leaving nothing to
@@ -123,7 +123,7 @@ def _series_order_role(spec: ChartSpec, color_field: str) -> tuple[TooltipField,
     A domain that happens to equal its own sorted order still earns a rank.
     Skipping those looks tempting and is wrong: the runtime's only fallback is
     legend DOM order, and the charts most likely to sort alphabetically by
-    coincidence are the endpoint-labelled ones that render no legend at all.
+    coincidence are the endpoint-labeled ones that render no legend at all.
     """
     color_enc = spec.encoding.get("color") if spec.encoding else None
     scale = color_enc.get("scale") if isinstance(color_enc, dict) else None
@@ -316,11 +316,11 @@ def _scatter_roles(
 
     Locked design's screen-informed exception: y (dependent) leads, x
     (independent) follows -- neither axis alone identifies a scatter point.
-    Plain scatter (no colour) carries no header at all. A bound colour
+    Plain scatter (no color) carries no header at all. A bound color
     channel promotes its value to a swatched header-like row (mirrors pie's
     header_is_swatched -- the header IS the series here), so the LUT key
     switches to "scatter_colored". Per the locked table this promotion is
-    "colour if present" -- no cardinality gate, unlike cartesian's series row.
+    "color if present" -- no cardinality gate, unlike cartesian's series row.
 
     "Connected" scatter (an order/time field leading as the header) is a
     third locked variant, but scatter has no authored order/time channel to
@@ -350,11 +350,11 @@ def _scatter_roles(
 def _heatmap_roles(
     chart: ResolvedHeatmapChart, data: ChartRenderData
 ) -> tuple[tuple[TooltipField, ...], list[TooltipField]]:
-    """Header (compound [x, y] identity pair), values (the colour measure).
+    """Header (compound [x, y] identity pair), values (the color measure).
 
     Heatmap's two independents (x, y) TOGETHER identify the cell -- neither
-    alone does -- so both header as a pair; the colour-encoded value is the
-    sole dependent row. No series row (colour IS the dependent, not an
+    alone does -- so both header as a pair; the color-encoded value is the
+    sole dependent row. No series row (color IS the dependent, not an
     identity dimension) and no total (a grid of cells has no group to sum).
     """
     assert isinstance(chart.x, str)  # narrowed by applies_to

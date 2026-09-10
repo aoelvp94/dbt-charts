@@ -179,7 +179,7 @@ class TestPickTiltAngle:
             resolve_chart_style_context,
         )
 
-        get_config()  # ensure settings initialised
+        get_config()  # ensure settings initialized
         patched = get_theme_style().model_copy(
             deep=True,
             update={

@@ -250,7 +250,7 @@ def test_propose_pack_multi_schema_source_all_schemas_visible(
 
     dundersign has a 'db' source with zendesk, salesforce, hubspot, etc.
     propose_pack must not silently drop schemas after the first — every schema
-    with recognised entity tables must produce a proposed folder.
+    with recognized entity tables must produce a proposed folder.
     """
     (tmp_path / "dbt_charts.yml").write_text("")
 

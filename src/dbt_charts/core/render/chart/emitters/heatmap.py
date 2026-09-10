@@ -14,9 +14,13 @@ from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_LABEL_FORMAT_AXIS_MISMATCH,
 )
+from dbt_charts.core.render.chart._types import VLDict
+from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.emitters._cartesian import (
     canonicalize_cartesian_x_data,
+    dimension_sort_to_vl,
     distinct_series_values,
+    pin_sorted_x_domain,
     resolve_xy_titles,
     spatial_color_scale,
 )
@@ -43,6 +47,24 @@ from dbt_charts.core.render.chart.vl_field_maps import (
 )
 from dbt_charts.core.render.utils import normalize_data_types, slug_to_text
 from dbt_charts.core.text.case import format_display_text
+
+
+def _write_x_sort(
+    x_enc: VLDict, chart: ResolvedHeatmapChart, data: ChartRenderData
+) -> None:
+    """Write an authored dimension sort onto a heatmap's x encoding, in place.
+
+    Only when authored: heatmap's unauthored x is Vega-Lite's own alphabetical
+    order, so a bare ``"sort": None`` would silently switch that default to
+    query row order. Shared by both of the emitter's x-encoding sites — the
+    single-measure path and the multi-measure (``y:`` a list) one, which
+    returns before it.
+    """
+    vl_sort = dimension_sort_to_vl(chart.sort)
+    if vl_sort is None:
+        return
+    x_enc["sort"] = vl_sort
+    pin_sorted_x_domain(x_enc, data, chart)
 
 
 @dataclass
@@ -80,6 +102,7 @@ class HeatmapEmitter:
                     "field": chart.x,
                     "type": "nominal",
                 }
+                _write_x_sort(top_encoding["x"], chart, data)
                 # No axis dict on this branch, so nothing can merge — but the
                 # band still draws category labels, and the single-measure
                 # path below gates the same authored fields. Validate-only,
@@ -184,6 +207,7 @@ class HeatmapEmitter:
                 "type": x_type,
                 "title": xy.x_title,
             }
+            _write_x_sort(x_enc, chart, data)
             if x_axis:
                 x_enc["axis"] = x_axis
             encoding["x"] = x_enc

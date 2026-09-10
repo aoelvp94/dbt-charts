@@ -1,7 +1,7 @@
 """Public re-export of the diagnostic registry for cli/ and LSP consumers.
 
 cli/ and the LSP server may not import dbt_charts.core.* directly (tach
-enforces this). This module is the authorised boundary for reading the
+enforces this). This module is the authorized boundary for reading the
 registry and its types, plus the list/get lookups both the CLI (`dct docs
 errors`/`dct docs warnings`) and MCP (`list_diagnostic_codes`/
 `get_diagnostic_code`) call — no lookup logic lives in either wrapper.
@@ -139,7 +139,7 @@ def _first_sentence(text: str) -> str:
     whitespace or end-of-string, parens are balanced, backticks are
     balanced, and the candidate has a plausible sentence's word count.
     Anything else — a period inside an inline code span (`` `scale.type:
-    log` ``), a bare identifier (`meta.yaml`), an abbreviation inside
+    log` ``), a bare identifier (`meta.yml`), an abbreviation inside
     parens (`(e.g. ...)`) — is not a real boundary and raises rather than
     guessing at a later one. A code whose doc trips this must author an
     explicit `summary` on its DiagnosticCode instead of relying on
@@ -202,9 +202,9 @@ def get_diagnostic_code(code: str) -> DiagnosticCodeDetailResult:
         the caller didn't expect still resolves, so the caller decides
         whether/how to flag the mismatch.
     """
-    normalised = code.upper()
+    normalized = code.upper()
     all_codes = REGISTRY.codes()
-    if normalised not in all_codes:
+    if normalized not in all_codes:
         return DiagnosticCodeDetailResult(
             success=False,
             mode="diagnostic_detail",
@@ -213,7 +213,7 @@ def get_diagnostic_code(code: str) -> DiagnosticCodeDetailResult:
                 f"Registered codes: {', '.join(sorted(all_codes))}"
             ],
         )
-    dc = REGISTRY.get(normalised)
+    dc = REGISTRY.get(normalized)
     detail = DiagnosticCodeDetail(
         code=dc.code, level=dc.level, summary=_summary_for(dc), doc=dc.doc
     )

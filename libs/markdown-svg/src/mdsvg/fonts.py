@@ -49,7 +49,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 # One glyph's width for an emoji cluster, however many codepoints compose it.
 # Matches Noto Emoji's advance for the curated glyphs (2600/2048 units) -- a
-# real, measured value, not a guess at an OS's colour-emoji metrics.
+# real, measured value, not a guess at an OS's color-emoji metrics.
 _EMOJI_ADVANCE_EM = 1.27
 
 # Default-emoji-presentation pictograph blocks: always render as a picture,
@@ -58,7 +58,7 @@ _EMOJI_PICTOGRAPH_RANGES: tuple[tuple[int, int], ...] = (
     (0x1F300, 0x1F5FF),
     (0x1F600, 0x1F64F),
     (0x1F680, 0x1F6FF),
-    (0x1F7E0, 0x1F7EB),  # coloured status-dot squares/circles (🟠🟡🟢...)
+    (0x1F7E0, 0x1F7EB),  # colored status-dot squares/circles (🟠🟡🟢...)
     (0x1F900, 0x1F9FF),
     (0x1FA70, 0x1FAFF),
 )
@@ -491,7 +491,7 @@ class FontMeasurer:
         """Whether this file can be measured at a caller-chosen weight.
 
         True only for a variable font with a ``wght`` axis. Lets a caller ask for a
-        weight where the font can honour it and keep the default elsewhere, rather
+        weight where the font can honor it and keep the default elsewhere, rather
         than constructing a ``FontMeasurer(weight=...)`` and catching the raise.
         """
         return self._supports_weight

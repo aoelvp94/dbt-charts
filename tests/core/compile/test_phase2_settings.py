@@ -29,7 +29,7 @@ def _reset():
 def test_settings_rejects_style_key_in_dbt_charts_yml(
     tmp_path, local_project: Callable[..., FilesystemProject]
 ):
-    """dbt_charts.yml: style: {...} must raise ValidationError pointing to charts/meta.yaml."""
+    """dbt_charts.yml: style: {...} must raise ValidationError pointing to charts/meta.yml."""
     (tmp_path / "dbt_charts.yml").write_text("style:\n  frame:\n    width: 700\n")
     (tmp_path / "charts").mkdir()
 
@@ -49,7 +49,7 @@ def test_settings_rejects_style_key_in_dbt_charts_yml(
 def test_dbt_charts_yml_theme_key_raises_validation_error(
     tmp_path, local_project: Callable[..., FilesystemProject]
 ):
-    """dbt_charts.yml: theme: was removed — project theme lives in charts/meta.yaml: extends:.
+    """dbt_charts.yml: theme: was removed — project theme lives in charts/meta.yml: extends:.
     load_config raises pydantic ValidationError (extra inputs are not permitted)."""
     from pydantic import ValidationError
 
@@ -97,7 +97,7 @@ def test_resolved_charts_style_has_preferred_width():
 
 
 # ---------------------------------------------------------------------------
-# Regression: charts/meta.yaml style.frame.width propagates project-wide
+# Regression: charts/meta.yml style.frame.width propagates project-wide
 # (Phase 1 wired this; Phase 2 must keep it working)
 # ---------------------------------------------------------------------------
 
@@ -105,10 +105,10 @@ def test_resolved_charts_style_has_preferred_width():
 def test_meta_yaml_style_board_width_propagates(
     tmp_path, local_project: Callable[..., FilesystemProject]
 ):
-    """charts/meta.yaml: style.frame.width must apply to all boards."""
+    """charts/meta.yml: style.frame.width must apply to all boards."""
     boards_dir = tmp_path / "charts"
     boards_dir.mkdir()
-    (boards_dir / "meta.yaml").write_text("style:\n  frame:\n    width: 888\n")
+    (boards_dir / "meta.yml").write_text("style:\n  frame:\n    width: 888\n")
     board_path = boards_dir / "test.yaml"
     board_path.write_text("title: Test\nrows:\n  - text: hello\n")
     (tmp_path / "dbt_charts.yml").write_text("")

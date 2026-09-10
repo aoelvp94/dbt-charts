@@ -114,8 +114,8 @@ def _build_in_memory_project() -> InMemoryProject:
         "charts/sub/board.yaml": _BOARD_YAML,
         "charts/sub/_base.yml": _BASE_YAML,
         "shared_template.yaml": _SHARED_TEMPLATE_YAML,
-        "charts/meta.yaml": _ROOT_META_YAML,
-        "charts/sub/meta.yaml": _SUB_META_YAML,
+        "charts/meta.yml": _ROOT_META_YAML,
+        "charts/sub/meta.yml": _SUB_META_YAML,
     }
     return InMemoryProject(files)
 
@@ -131,8 +131,8 @@ def _build_filesystem_project(
     write("charts/sub/board.yaml", _BOARD_YAML)
     write("charts/sub/_base.yml", _BASE_YAML)
     write("shared_template.yaml", _SHARED_TEMPLATE_YAML)
-    write("charts/meta.yaml", _ROOT_META_YAML)
-    write("charts/sub/meta.yaml", _SUB_META_YAML)
+    write("charts/meta.yml", _ROOT_META_YAML)
+    write("charts/sub/meta.yml", _SUB_META_YAML)
 
     return local_project(tmp_path)
 
@@ -231,8 +231,8 @@ def test_resolve_meta_lint_in_memory() -> None:
     from dbt_charts.core.compile.parse.meta import resolve_meta_lint
 
     files = {
-        "charts/meta.yaml": "lint:\n  ignore:\n    - WARN-FANOUT-RISK\n",
-        "charts/sub/meta.yaml": "lint:\n  ignore:\n    - WARN-REAGGREGATION\n",
+        "charts/meta.yml": "lint:\n  ignore:\n    - WARN-FANOUT-RISK\n",
+        "charts/sub/meta.yml": "lint:\n  ignore:\n    - WARN-REAGGREGATION\n",
         "charts/sub/board.yaml": "title: T\n",
     }
     project = InMemoryProject(files)

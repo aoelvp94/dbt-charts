@@ -145,7 +145,8 @@ class TestRetiredThemeNamesMigrateViaUncappedTextRewrite:
         # file it rewrites before writing it back -- the rewritten text must
         # itself parse clean under the current grammar, not just contain the
         # right string. `theme:` desugars to `extends:` at parse time
-        # (`_desugar_theme`), so the parsed `AuthoredBoard` carries it there.
+        # (`desugar_theme`, a module-level function run as a BeforeValidator),
+        # so the parsed `AuthoredBoard` carries it there.
         board = parse_yaml(migrated)
         assert board.extends == expected_theme
 
@@ -406,12 +407,12 @@ class TestRetiredExtendsNamesResolveInAProject:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """The exact shape Cloud's `set_project_default_theme` writes into
-        `charts/meta.yaml` (`extends: <theme>, theme: None`) -- the retired
+        `charts/meta.yml` (`extends: <theme>, theme: None`) -- the retired
         name must resolve without needing `theme:` at all."""
         charts = tmp_path / "charts"
         charts.mkdir()
         (tmp_path / "dbt_charts.yml").write_text("name: t\n", encoding="utf-8")
-        (charts / "meta.yaml").write_text("extends: cream\n", encoding="utf-8")
+        (charts / "meta.yml").write_text("extends: cream\n", encoding="utf-8")
         (charts / "board.yaml").write_text(_board("title: t"), encoding="utf-8")
 
         project = local_project(tmp_path)

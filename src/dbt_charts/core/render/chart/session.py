@@ -179,6 +179,6 @@ class BoardRenderSession:
             spec: ``ChartSpec`` returned by ``emit_chart``.
 
         Returns:
-            Vega-Lite JSON-serialisable spec dict with config and background applied.
+            Vega-Lite JSON-serializable spec dict with config and background applied.
         """
         return assemble_final_vl(spec, self.board_style)

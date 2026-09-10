@@ -2832,10 +2832,10 @@ def _render_pagination_controls(
     chevrons and inactive page numbers) get an invisible ``<rect>`` with an
     ``onclick=updateVariable(...)`` handler \u2014 this is the hit target.
     Disabled chevrons, the active page, and the ellipsis are non-interactive.
-    Disabled state is signalled by colour (``color_disabled``), not opacity.
+    Disabled state is signaled by color (``color_disabled``), not opacity.
 
     A muted ``"Rows {row_start}\u2013{row_end} of {total_rows}"`` label sits
-    left-aligned at ``padding`` in the same control band \u2014 an unlabelled
+    left-aligned at ``padding`` in the same control band \u2014 an unlabeled
     ``\u2039 1 2 \u2026 37 \u203a`` reads as "37 pages of dashboards", not "this
     table has 37 pages of rows". ``row_start``/``row_end`` are this page's real
     1-based row range (the caller's own page offset and painted row count, so
@@ -2877,7 +2877,7 @@ def _render_pagination_controls(
 
     # Right-anchored layout: walk slot widths so chevrons and ellipses
     # get narrower slots than digits, sitting closer to their boundary
-    # neighbours. Total width is the sum of slot widths; the rightmost
+    # neighbors. Total width is the sum of slot widths; the rightmost
     # slot's right edge sits at ``table_width``.
     aux_slot_w = item_width * _PAGINATOR_AUX_SLOT_RATIO
     slot_widths = [
@@ -2941,7 +2941,7 @@ def _render_pagination_controls(
             clickable = True
 
         if clickable:
-            # Rect is centred on the glyph and narrower than the slot so
+            # Rect is centered on the glyph and narrower than the slot so
             # cursor:pointer doesn't extend into the gap between items.
             rect_x = center_x - rect_w / 2
             # Interactive hosts (dct serve, Cloud) ship variables.js and can
@@ -3830,7 +3830,7 @@ def _render_table_svg_core(
 
     # When the columns' honored widths sum past the width the table was given,
     # the table can only widen past its slot — in a dashboard tile that means it
-    # spills over / collides with its neighbour. Record it (a no-op unless a
+    # spills over / collides with its neighbor. Record it (a no-op unless a
     # warning sink is open) so TABLE_COLUMNS_OVERFLOW can surface it, using the
     # renderer's own widen boundary as the threshold — no separate cutoff.
     if actual_content_width > available_width:

@@ -35,7 +35,7 @@ These rules hold on **every** surface, regardless of the default:
 
 - **Never silently append to or mutate an existing board the user did not name** (e.g. `overview.yml`). Editing someone's saved dashboard because it happened to be the nearest file changes state they never asked you to change.
 - When a save is intended but no target is named, write a **new** board rather than folding into an existing one.
-{{#if_tool write_file}}- **A direct instruction is work to do, not work to hand back.** When the user asks you to save, copy, or edit a file, do it rather than describing how they could. A preview-first default governs work you were *not* asked to save. **Scope is your host's to define** — how many files one request may touch, and where you may write, is a permission question your host's instructions answer; follow them, and don't infer a broader licence from this rule.
+{{#if_tool write_file}}- **A direct instruction is work to do, not work to hand back.** When the user asks you to save, copy, or edit a file, do it rather than describing how they could. A preview-first default governs work you were *not* asked to save. **Scope is your host's to define** — how many files one request may touch, and where you may write, is a permission question your host's instructions answer; follow them, and don't infer a broader license from this rule.
 {{/if_tool}}
 Build dashboards and reports **incrementally** — one chart at a time, validating at every step. Never one-shot an entire dashboard.
 

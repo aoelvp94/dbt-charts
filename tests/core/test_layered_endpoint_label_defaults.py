@@ -1,8 +1,8 @@
 """Line and area endpoint labels turn off when the chart carries an overlay layer.
 
 The endpoint-label cascade walks the base chart's own series only — it never sees a
-layer. Direct labelling in that shape names the base and leaves the overlay anonymous,
-so any layer disqualifies direct labelling the same way it already does on bar
+layer. Direct labeling in that shape names the base and leaves the overlay anonymous,
+so any layer disqualifies direct labeling the same way it already does on bar
 (`_bar_endpoint_labels_for_stack`), and the legend must come up in its place even
 under a theme (editorial) that hides legends board-wide.
 """
@@ -161,7 +161,7 @@ def test_line_with_a_right_axis_layer_still_falls_back_to_a_legend() -> None:
 def test_layered_line_labels_directly_when_the_author_asks_for_it() -> None:
     """The layer rule steers the default, like every disqualifier on bar. An
     author who writes `endpoint_labels.visible: true` on a layered line with
-    no base colour channel gets the base series AND the overlay labelled
+    no base color channel gets the base series AND the overlay labeled
     directly on the rail (``EndpointLabelFeature._apply_layered_single_series``)
     — the legend would only repeat what the rail already names, so it retires.
     """

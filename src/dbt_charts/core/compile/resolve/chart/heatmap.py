@@ -76,7 +76,7 @@ def _resolve_heatmap(
     heatmap = merge_onto_base(chart_style_context.heatmap, primary)
     channels = plan.channels
     ax_merged, ay_merged = plan.ax_merged, plan.ay_merged
-    # Heatmap's colour channel is always a gradient (a continuous scale over
+    # Heatmap's color channel is always a gradient (a continuous scale over
     # cell values), never a row of discrete series entries -- a gradient
     # legend is a different shape that does not wrap into a horizontal row,
     # so the top-legend fit rule does not apply here.

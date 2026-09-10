@@ -221,9 +221,7 @@ def test_migrate_paths_records_parse_error_as_migrate_error(
     Before the fix, this escaped migrate_paths' (OSError, ValueError) handler
     and aborted the rest of the migration run.
     """
-    project = in_memory_project(
-        tmp_path, {"charts/meta.yaml": "style:\n  color: red\n"}
-    )
+    project = in_memory_project(tmp_path, {"charts/meta.yml": "style:\n  color: red\n"})
 
     from dbt_charts.core.compile import migrations
 
@@ -232,13 +230,11 @@ def test_migrate_paths_records_parse_error_as_migrate_error(
 
     monkeypatch.setattr(migrations, "migrate_board_yaml_text", migrate_text)
 
-    summary = migrate_paths(
-        [PurePosixPath("meta.yaml")], project=project, dry_run=False
-    )
+    summary = migrate_paths([PurePosixPath("meta.yml")], project=project, dry_run=False)
 
     assert summary.errors == [
         MigrateError(
-            path=PurePosixPath("charts/meta.yaml"), message="Empty YAML document"
+            path=PurePosixPath("charts/meta.yml"), message="Empty YAML document"
         )
     ]
     assert not summary.updated

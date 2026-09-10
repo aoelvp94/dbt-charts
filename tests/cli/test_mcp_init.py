@@ -227,7 +227,7 @@ def test_mcp_init_auto_detects_markers_at_git_root_without_dbt_charts_marker(
 
     # --project-dir bypasses _resolve_project_dir's marker check so the command
     # reaches the workspace-detection branch regardless of project resolution.
-    # We want to isolate ai_config_root behaviour (not project resolution).
+    # We want to isolate ai_config_root behavior (not project resolution).
     git_root_dbt = tmp_path / "dbt-project"
     git_root_dbt.mkdir()
     (git_root_dbt / "dbt_project.yml").write_text("name: x\n")

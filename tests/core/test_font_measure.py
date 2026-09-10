@@ -40,7 +40,7 @@ def test_css_weight_to_axis_accepts_the_full_css_keyword_vocabulary(weight, expe
 
 
 def test_centered_baseline_offset_is_the_face_s_own_ascent_descent_split():
-    """A centred line's content box straddles the middle, so the baseline sits
+    """A centered line's content box straddles the middle, so the baseline sits
     ``(ascent - descent) / 2`` below it -- the face's ratio, not a constant.
 
     Read off the loaded face rather than pinned to a number: the value it

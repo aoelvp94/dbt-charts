@@ -22,7 +22,7 @@ _QUERY_REGISTRY = {"q": ValuesQuery(rows=_ROWS)}
 
 
 def _theme_ink() -> str:
-    """The ink the KPI cascade lands on when nothing nearer names a colour.
+    """The ink the KPI cascade lands on when nothing nearer names a color.
 
     Read from the resolved theme rather than pinned as a hex: this file is
     about slot precedence, and a token tweak in ``_base.yaml`` is not a

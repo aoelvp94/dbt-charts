@@ -2,11 +2,9 @@ title: Commercial finance
 notes: |
   Bookings, win rate, and subscription health — a dense above-the-fold board
   for sales finance. Authored data-honestly against the Dundersign silver
-  layer (no invented dimensions). Theme-swap at the top of the file:
-  cream / editorial / stark all render coherently
-  because no chart pins a color — palettes cycle through the cascade.
+  layer (no invented dimensions). Renders on the shipped default theme; no
+  chart pins a color, so palettes cycle through the cascade.
 
-theme: paper
 source: dundersign_db
 
 style:
@@ -146,7 +144,7 @@ queries:
   # CFOs care about this mix because it is the ARPU story.
   plan_mix:
     sql: |
-      -- Shared anchor — see kpi_data. Capping here is what makes the centre
+      -- Shared anchor — see kpi_data. Capping here is what makes the center
       -- total equal the cumulative-area chart's final value: both are
       -- "closed-won $ through the last complete month".
       WITH bounds AS (SELECT * FROM {{ queries.book_period }}),
@@ -318,12 +316,9 @@ queries:
 
 charts:
   # ── KPIs ────────────────────────────────────────────────────────────────
-  # KPI tones are hand-pinned per data sign — dbt charts's KPI ToneLiteral is
-  # static (positive|negative|neutral|warning), there is no value-driven
-  # tone today. Both KPIs trend up in the default 90-day window, so both are
-  # pinned positive. This re-pinning after a data refresh is exactly the
-  # defaults-wrong case in the tweaks log: a hand-pinned tone silently
-  # contradicts its own number the moment the underlying data moves.
+  # KPI tone and glyph are static (no value-driven tone), so each is pinned to
+  # the sign the fixture produces today: bookings down, subscriptions up.
+  # Re-check both after any data refresh.
   kpi_bookings:
     type: kpi
     query: kpi_data
@@ -336,8 +331,8 @@ charts:
       value: bookings_growth_pct
       label: vs prior 90 days
       format: "+.1%"
-      glyph: "▲"
-      tone: positive
+      glyph: "▼"
+      tone: negative
 
   kpi_active_subs:
     type: kpi
@@ -391,11 +386,6 @@ charts:
       # Wedge labels carry the legend — hide the auto-rendered one.
       legend:
         visible: false
-      # Force sans title — narrow chart override compensating for the
-      # theme-blind chart_title_spec bug (fix prompt in another session).
-      title:
-        font:
-          family: "'Inter Variable', Inter, system-ui, sans-serif"
       marks:
         slice:
           labels:
@@ -418,10 +408,6 @@ charts:
     style:
       legend:
         visible: false
-      # Force sans title (chart_title_spec theme-blind bug compensator).
-      title:
-        font:
-          family: "'Inter Variable', Inter, system-ui, sans-serif"
       padding:
         right: 36
       axis_y:
@@ -442,9 +428,6 @@ charts:
     x: month
     y: cumulative
     style:
-      title:
-        font:
-          family: "'Inter Variable', Inter, system-ui, sans-serif"
       padding:
         right: 36
       axis_y:

@@ -192,15 +192,20 @@ class TestRenderJsonSchemaInheritance:
 
 
 class TestThemeProperty:
-    """theme: has no backing Pydantic field (_desugar_theme consumes it before
-    validation), so render_yaml_schema hand-injects it — this must reach the
+    """theme: has no backing Pydantic field -- a BeforeValidator on
+    AuthoredBoardInput desugars it into extends: before validation runs.
+    introspect() surfaces it as a synthetic field (SchemaSugar marker on
+    AuthoredBoardInput), and this renderer derives its JSON Schema shape the
+    same way it derives any other enum-backed field's -- no hand-assembled
+    property, and no explicit "type" alongside "enum" (draft-07 doesn't
+    require one; see _type_schema's enum branch). This must reach the
     engine-shipped schema too, not just the VS Code decorator, and must never
     drift from extends's own ThemeName enum arm."""
 
     def test_theme_property_present_with_non_empty_description(self) -> None:
         schema = render_json_schema(introspect())
         theme_prop = schema["properties"]["theme"]
-        assert theme_prop["type"] == "string"
+        assert "type" not in theme_prop
         assert theme_prop["enum"]
         assert theme_prop["description"]
 

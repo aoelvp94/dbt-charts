@@ -139,7 +139,7 @@ def test_served_html_declares_font_face_with_expected_shape(
     fmt = spec["format"]
     assert f"format('{fmt}')" in block, (
         f"@font-face for {family!r} must declare format('{fmt}'). "
-        f"`woff2` ignores the variable axis; `woff2-variations` honours it. "
+        f"`woff2` ignores the variable axis; `woff2-variations` honors it. "
         f"Block: {block!r}"
     )
     weight = spec["weight"]

@@ -9,7 +9,7 @@ This module owns two public factories:
     types in ``authored.py``.
 
 ``build_patch_model_ext(compiled_cls, is_recursive)``
-    Parameterised variant.  Pass ``is_recursive=False`` to make every field
+    Parameterized variant.  Pass ``is_recursive=False`` to make every field
     ``T | None = None`` while keeping nested BaseModel fields as their
     original compiled types (e.g. ``PaddingStyle | None``).  Use for
     cascade-sentinel bases where cascade fills fields with compiled values.
@@ -45,7 +45,7 @@ class _PatchBase(BaseModel):
 
 
 # Maps compiled class → its hand-written patch class, consulted before synthesis.
-# Prevents build_patch_model from synthesising a duplicate when a hand-written patch
+# Prevents build_patch_model from synthesizing a duplicate when a hand-written patch
 # already exists for a compiled type (e.g. BorderStyle → BorderStylePatch).
 _PATCH_REGISTRY: dict[type, type] = {}
 
@@ -71,7 +71,7 @@ def register_as_own_patch(cls: type[BaseModel]) -> type[BaseModel]:
 
     Use for models that are authored-only patch shapes with no corresponding compiled
     class — e.g. ``BorderStylePatch``.  Prevents ``build_patch_model`` from recursively
-    synthesising a ``BorderStylePatchPatch`` when it encounters the type as a field.
+    synthesizing a ``BorderStylePatchPatch`` when it encounters the type as a field.
     """
     _PATCH_REGISTRY[cls] = cls
     return cls
@@ -181,7 +181,8 @@ def build_patch_model_ext(
             bases where the cascade fills fields with compiled-type values.
         base_cls: Override the generated model's base class. Defaults to
             ``_PatchBase``. Pass a subclass of ``_PatchBase`` to inject
-            validators into the generated patch model (e.g. desugar mixins).
+            validators into the generated patch model (e.g.
+            ``ScaleDomainValidationMixin``, ``ScaleTargetPaletteValidationMixin``).
 
     Returns:
         A dynamically created BaseModel subclass named ``<OriginalName>Patch``

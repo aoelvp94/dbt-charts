@@ -13,9 +13,9 @@ from dbt_charts.core.compile.models.style.authored import (
     AxisLabelStylePatch,
     AxisYStylePatch,
     BarChartStylePatch,
+    BaseAxisGridStylePatch,
     BaseScaleStylePatch,
     LineChartStylePatch,
-    MeasureGridStylePatch,
     ScaleContinuousStylePatch,
     ScatterChartStylePatch,
 )
@@ -196,13 +196,76 @@ def test_normalize_ratio_percent_bar_dedupes_top_and_unity_rule() -> None:
     assert len(_unity_rule_layers(spec)) == 1
 
 
-def test_non_normalize_ratio_percent_bar_does_not_auto_emit_unity_rule() -> None:
+def test_normalize_area_grid_threshold_visible_false_skips_top_rules() -> None:
+    """axis_y.grid.threshold.visible=false is the granular off-switch for
+    ``_insert_top_rules`` (the normalize-stack 0/1 pair), distinct from the
+    blanket grid.visible gate."""
+    style = AreaChartStylePatch(
+        axis_y=AxisYStylePatch(
+            grid=BaseAxisGridStylePatch(threshold={"visible": False}),
+        ),
+    )
+
+    spec = _spec("area", _RATIO_DATA, style=style, color="x", stack="normalize")
+
+    assert _zero_rule_layers(spec) == []
+    assert _unity_rule_layers(spec) == []
+
+
+def test_normalize_area_no_percent_format_emits_zero_and_top_rules() -> None:
+    """Correct end state pin: a normalize-stacked area with no percent format
+    keeps its long-standing 0 and 1 top-rule pair — this branch must not
+    disturb that path, only the percent-format carve-out below."""
+    style = AreaChartStylePatch()
+
+    spec = _spec("area", _RATIO_DATA, style=style, color="x", stack="normalize")
+
+    assert len(_zero_rule_layers(spec)) == 1
+    assert len(_unity_rule_layers(spec)) == 1
+
+
+def test_normalize_area_percent_format_keeps_zero_baseline_dedupes_unity() -> None:
+    """Regression pin: a percent-formatted normalize area must keep its 0%
+    baseline — the percent carve-out's early ``return`` dropped it along with
+    the duplicate 1 it was meant to dedupe — while still emitting exactly one
+    100% rule (from ``_apply_unity``), never the old ``[0, 1, 1]`` triple."""
+    style = AreaChartStylePatch(number_format="percent_whole")
+
+    spec = _spec("area", _RATIO_DATA, style=style, color="x", stack="normalize")
+
+    assert len(_zero_rule_layers(spec)) == 1
+    assert len(_unity_rule_layers(spec)) == 1
+
+
+def test_non_normalize_ratio_percent_bar_domain_including_one_emits_unity_rule() -> (
+    None
+):
+    """Bar is no longer excluded from the unity gate: a non-normalize percent
+    bar whose domain reaches 1.0 gets the same unity rule line/area do."""
     style = BarChartStylePatch(
         number_format="percent_whole",
         orientation="vertical",
         axis_y=AxisYStylePatch(
             scale=BaseScaleStylePatch(
                 continuous=ScaleContinuousStylePatch(domain=[0, 1.2])
+            )
+        ),
+    )
+
+    spec = _spec("bar", _RATIO_DATA, style=style)
+
+    assert len(_unity_rule_layers(spec)) == 1
+
+
+def test_non_normalize_ratio_percent_bar_domain_excluding_one_skips_unity_rule() -> (
+    None
+):
+    style = BarChartStylePatch(
+        number_format="percent_whole",
+        orientation="vertical",
+        axis_y=AxisYStylePatch(
+            scale=BaseScaleStylePatch(
+                continuous=ScaleContinuousStylePatch(domain=[1.02, 1.2])
             )
         ),
     )
@@ -233,7 +296,25 @@ def test_grid_not_visible_skips_unity_rule() -> None:
     style = LineChartStylePatch(
         number_format="percent_whole",
         axis_y=AxisYStylePatch(
-            grid=MeasureGridStylePatch(visible=False),
+            grid=BaseAxisGridStylePatch(visible=False),
+            scale=BaseScaleStylePatch(
+                continuous=ScaleContinuousStylePatch(domain=[0.95, 1.2])
+            ),
+        ),
+    )
+
+    spec = _spec("line", _RATIO_DATA, style=style)
+
+    assert _unity_rule_layers(spec) == []
+
+
+def test_grid_threshold_visible_false_skips_unity_rule() -> None:
+    """axis_y.grid.threshold.visible=false is the granular off-switch for
+    ``_apply_unity``, distinct from the blanket grid.visible gate above."""
+    style = LineChartStylePatch(
+        number_format="percent_whole",
+        axis_y=AxisYStylePatch(
+            grid=BaseAxisGridStylePatch(threshold={"visible": False}),
             scale=BaseScaleStylePatch(
                 continuous=ScaleContinuousStylePatch(domain=[0.95, 1.2])
             ),

@@ -17,8 +17,8 @@ from dbt_charts.core.compile.models.style.authored import (
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
-# Endpoint labels off — a stacked bar with a series colour channel otherwise
-# suppresses the legend entirely in favour of direct labelling, which would
+# Endpoint labels off — a stacked bar with a series color channel otherwise
+# suppresses the legend entirely in favor of direct labeling, which would
 # leave every legend-layout assertion below with no legend to inspect.
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(
     get_theme_style().model_copy(

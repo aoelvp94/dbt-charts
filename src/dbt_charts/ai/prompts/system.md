@@ -1,3 +1,5 @@
+Write in American English.
+
 {% if context_section -%}
 {{ context_section }}
 {% if sections or surface_suffix %}

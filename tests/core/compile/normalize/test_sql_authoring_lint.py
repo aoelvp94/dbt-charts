@@ -62,8 +62,8 @@ class TestHasLiteralEscapedNewlines:
         sql = "SELECT\\n  1\\nFROM range(10)"
         assert has_literal_escaped_newlines(sql, dialect="duckdb") is True
 
-    def test_sqlserver_dialect_normalised(self):
-        """'sqlserver' dialect is normalised to 'tsql' — must not raise ValueError.
+    def test_sqlserver_dialect_normalized(self):
+        """'sqlserver' dialect is normalized to 'tsql' — must not raise ValueError.
 
         sqlglot does not know 'sqlserver'; the mapping translates it to 'tsql'.
         This test would crash before the fix: sqlglot.parse(..., read='sqlserver')
@@ -72,14 +72,14 @@ class TestHasLiteralEscapedNewlines:
         sql = "SELECT\\n  revenue\\nFROM sales"
         assert has_literal_escaped_newlines(sql, dialect="sqlserver") is True
 
-    def test_mssql_dialect_normalised(self):
+    def test_mssql_dialect_normalized(self):
         """'mssql' is also mapped to 'tsql' and must not raise ValueError."""
         sql = "SELECT\\n  1"
         # Must not raise; accept either True or False depending on sqlglot tsql parsing.
         result = has_literal_escaped_newlines(sql, dialect="mssql")
         assert isinstance(result, bool)
 
-    def test_mariadb_dialect_normalised(self):
+    def test_mariadb_dialect_normalized(self):
         """'mariadb' is mapped to 'mysql' and must not raise ValueError."""
         sql = "SELECT\\n  revenue\\nFROM t"
         assert has_literal_escaped_newlines(sql, dialect="mariadb") is True

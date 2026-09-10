@@ -10,9 +10,10 @@ Identical duplicates (constant rules, ``@font-face``) are fine; two byte-equal
 rules cannot conflict.
 
 Scope: CSS selectors only. Element ids are the other document-global namespace
-and have the same defect, deliberately not covered here: an in-process
-assertion would pass vacuously, because vl-convert's id counter keeps
-advancing across renders in one process.
+and have the same defect; their guard lives in
+``test_svg_composition_no_id_collision.py``, which renders in separate
+subprocesses because an in-process assertion would pass vacuously (vl-convert's
+id counter keeps advancing across renders in one process).
 """
 
 from __future__ import annotations

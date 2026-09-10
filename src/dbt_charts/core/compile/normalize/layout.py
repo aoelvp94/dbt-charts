@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 from dbt_charts.core.compile.errors import CompilationError, ReferenceError
 from dbt_charts.core.compile.models.board.authored import (
+    AUTHORED_BOARD_ADAPTER,
     AuthoredBoard,
     GridLayout,
     LayoutType,
@@ -614,7 +615,7 @@ def _resolve_board_file_import(
     from dbt_charts.core.compile.normalize.dispatch import normalize_board
     from dbt_charts.core.compile.template.jinja import resolve_jinja_template
 
-    # Resolve the file path (might contain Jinja templates for parameterised imports
+    # Resolve the file path (might contain Jinja templates for parameterized imports
     # like `partials/{{ chart_type }}.yml`). This always uses parent_variables so
     # file paths with interactive variable defaults still resolve at compile time.
     parent_variables = parent_variables or {}
@@ -655,7 +656,7 @@ def _resolve_board_file_import(
         )
 
     # Convert raw YAML dict to AuthoredBoard; model_validate handles all nested models.
-    nested_board = AuthoredBoard.model_validate(board_data)
+    nested_board = AUTHORED_BOARD_ADAPTER.validate_python(board_data)
 
     # An imported file never reaches validate_board — it is loaded here, after
     # validation ran on the importing board. Its `theme:`/`extends:` is inert
@@ -861,7 +862,7 @@ def _resolve_tab_items(
             # Tab is a nested board. Pop TabItem-only fields not on AuthoredBoard,
             # then model_validate so style errors include the "style." loc prefix.
             tab_dict.pop("icon", None)
-            nested_board = AuthoredBoard.model_validate(tab_dict)
+            nested_board = AUTHORED_BOARD_ADAPTER.validate_python(tab_dict)
             tab_path = _tab_source_path(path_prefix, idx)
             compiled_nested = normalize_board(
                 nested_board,
@@ -892,7 +893,10 @@ def _resolve_tab_items(
             )
 
         elif tab_item.text:
-            # Content-only tab
+            # Content-only tab. resolved_style/chart_style_context here are the
+            # parent's — a transient placeholder that normalize_board's later
+            # _propagate_resolved_style pass overwrites from authored_style,
+            # same as every other nested board (see the nested-board branch above).
             content_board = Board(
                 id=f"{board_id}_tab{idx}",
                 title=tab_item.title,
@@ -900,6 +904,7 @@ def _resolve_tab_items(
                 text=tab_item.text,
                 layout=Layout(type=LayoutType.ROWS, items=[]),
                 theme=theme,
+                authored_style=tab_item.style,
                 resolved_style=resolved_style,
                 chart_style_context=chart_style_context,
                 level=parent_level + 1,
@@ -914,13 +919,15 @@ def _resolve_tab_items(
             )
 
         else:
-            # Empty tab
+            # Empty tab. Same transient-placeholder note as the content-only
+            # branch above — _propagate_resolved_style resolves the real value.
             empty_board = Board(
                 id=f"{board_id}_tab{idx}",
                 title=tab_item.title,
                 notes=tab_item.notes or "",  # type-state: silent_fallback — notes: str
                 layout=Layout(type=LayoutType.ROWS, items=[]),
                 theme=theme,
+                authored_style=tab_item.style,
                 resolved_style=resolved_style,
                 chart_style_context=chart_style_context,
                 level=parent_level + 1,

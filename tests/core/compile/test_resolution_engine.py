@@ -602,7 +602,7 @@ def test_multi_layer_list_style_override_is_idempotent(
 def test_unknown_extends_name_raises_compilation_error(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """An unrecognised extends entry raises CompilationError with the entry name."""
+    """An unrecognized extends entry raises CompilationError with the entry name."""
     from dbt_charts.core.compile.errors import CompilationError
     from dbt_charts.core.compile.merge import merge_extends
     from dbt_charts.core.compile.models.board.patch import BoardPatch

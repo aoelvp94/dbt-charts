@@ -400,7 +400,7 @@ class TestEmojiMeasurement:
         )
         assert width == pytest.approx(1.27 * font_size, rel=1e-6)
 
-    def test_coloured_status_dot_measures_at_emoji_width(
+    def test_colored_status_dot_measures_at_emoji_width(
         self, measurer: FontMeasurer
     ) -> None:
         """Pins the `(0x1F7E0, 0x1F7EB)` pictograph range: without it, a
@@ -409,7 +409,7 @@ class TestEmojiMeasurement:
         paired red dot measured correctly -- a silent 5x mismatch between two
         glyphs painted identically."""
         font_size = 14.0
-        cluster = "\U0001f7e2"  # large green circle: coloured status-dot pictograph
+        cluster = "\U0001f7e2"  # large green circle: colored status-dot pictograph
         width = self._cluster_width(
             measurer, f"before {cluster} after", cluster, font_size
         )
@@ -636,7 +636,7 @@ class TestUsedFaces:
 
         renderer = SVGRenderer(fonts=self._faces())
         renderer.render(parse("Plain"), width=300, padding=0.0)
-        renderer.render(parse("*Emphasised*"), width=300, padding=0.0)
+        renderer.render(parse("*Emphasized*"), width=300, padding=0.0)
         assert {"regular", "italic"} <= renderer.used_faces
 
 

@@ -14,17 +14,17 @@ class TestAxisStyleHasVLFields:
 
     def test_axis_grid_has_color(self):
         from dbt_charts.core.compile.models.style.theme import (
-            AxisGridZeroStyle,
+            AxisGridThresholdStyle,
             BaseAxisGridStyle,
-            MeasureGridStyle,
         )
 
-        # MeasureGridStyle (y-axis) carries zero; BaseAxisGridStyle (x/base) does not
-        g = MeasureGridStyle(
+        # threshold lives on the shared BaseAxisGridStyle — every axis
+        # variant (x/y/quantitative/band) carries it.
+        g = BaseAxisGridStyle(
             visible=True,
             opacity=1.0,
             width=1.0,
-            zero=AxisGridZeroStyle(color="#000", width=2.0),
+            threshold=AxisGridThresholdStyle(color="#000", width=2.0, visible=True),
         )
         assert g.color is None  # optional, None = no override
         # Verify the field round-trips when set

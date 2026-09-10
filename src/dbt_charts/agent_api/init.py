@@ -18,6 +18,10 @@ GITIGNORE_ENTRIES = ("renders/", ".venv/", "__pycache__/", "*.duckdb")
 
 _EXCLUDED_TEMPLATE_NAMES = frozenset({"__init__.py", "__pycache__"})
 
+# The user's file the moment it exists: `force` refreshes engine-owned scaffold
+# files, never a project README.
+_NEVER_REFRESHED = frozenset({"README.md"})
+
 
 def _walk_templates(
     node: Traversable, prefix: str = ""
@@ -77,7 +81,7 @@ def init_project(
 
     for rel, handle in _TEMPLATE_FILES:
         target = root / rel
-        if target.exists() and not force:
+        if target.exists() and (not force or rel in _NEVER_REFRESHED):
             result.skipped_files.append(Path(rel))
             continue
         content = handle.read_text(encoding="utf-8")

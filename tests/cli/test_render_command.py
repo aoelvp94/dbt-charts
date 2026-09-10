@@ -1278,7 +1278,7 @@ class TestRenderCommandInlinesFonts:
     """`dct render --format html` writes a file nobody serves, so it carries its fonts.
 
     The engine only inlines when the caller says the output is standalone. That flag
-    lives in this command, and every other test of the behaviour calls the engine
+    lives in this command, and every other test of the behavior calls the engine
     directly — so without this one, deleting `standalone=True` from render_command
     would break every HTML export and no test would notice.
     """

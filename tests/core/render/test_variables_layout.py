@@ -409,7 +409,7 @@ def test_every_other_input_draws_no_ornament(input_type: str) -> None:
 
 
 def test_a_chooser_is_sized_by_what_it_displays_and_a_text_box_has_a_floor() -> None:
-    """Content sizing versus theme sizing, pinned behaviourally.
+    """Content sizing versus theme sizing, pinned behaviorally.
 
     A chooser is measured from the text it will draw and nothing else. A
     theme-sized field takes its width from the theme instead — a floor, not a

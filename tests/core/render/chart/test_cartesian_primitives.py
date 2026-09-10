@@ -8,6 +8,12 @@ is covered separately by the render-v2 emitter parity suite.
 
 from __future__ import annotations
 
+import json
+import re
+
+import pytest
+import vl_convert as vlc
+
 from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
 from dbt_charts.core.compile.models.chart.authored._annotations import ChartSort
 from dbt_charts.core.compile.models.style.resolved._base import ResolvedAxisStyle
@@ -27,6 +33,7 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
     resolve_xy_titles,
 )
 from dbt_charts.core.render.chart.spec import RenderBox
+from dbt_charts.core.utils import x_domain_order
 
 from ...conftest import fixture_chart_for_type
 
@@ -102,7 +109,9 @@ def test_resolve_xy_titles_returns_named_fields() -> None:
 
 
 def test_build_x_enc_uses_resolved_fields() -> None:
-    enc = build_x_enc("date", "temporal", "Date", {"grid": True}, {"padding": 1})
+    enc = build_x_enc(
+        "date", "temporal", "Date", {"grid": True}, {"padding": 1}, sort=None
+    )
     assert enc == {
         "field": "date",
         "type": "temporal",
@@ -113,16 +122,173 @@ def test_build_x_enc_uses_resolved_fields() -> None:
     }
 
 
+def test_build_x_enc_carries_an_authored_sort() -> None:
+    """The authored sort reaches the encoding verbatim, so a discrete x scale
+    takes its domain order from the sort field rather than from row order."""
+    enc = build_x_enc(
+        "month",
+        "nominal",
+        "Month",
+        {},
+        {},
+        sort=chart_sort_to_vl(ChartSort(by="seq", order="desc")),
+    )
+    assert enc["sort"] == {"field": "seq", "order": "descending"}
+
+
+def test_x_domain_order_ops_disagree_on_multi_row_categories() -> None:
+    """``sum`` and ``min`` are different orders, and only multi-row categories
+    show it — which is why the argument is undefaulted. Jan sums to 11 and
+    mins to 1; Feb sums to 10 and mins to 4.
+    """
+    rows = [
+        {"m": "Jan", "v": 10.0},
+        {"m": "Jan", "v": 1.0},
+        {"m": "Feb", "v": 6.0},
+        {"m": "Feb", "v": 4.0},
+    ]
+    assert x_domain_order(rows, "m", "v", True, op="sum") == ["Jan", "Feb"]
+    assert x_domain_order(rows, "m", "v", True, op="min") == ["Feb", "Jan"]
+
+
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize(
+    ("op", "sort_field", "expected"),
+    [
+        # sum over text totals to NaN per category; VL's comparator returns 0
+        # and its sort is stable, so row order stands — in BOTH directions.
+        ("sum", "r", ["Feb", "Mar", "Jan"]),
+        # A number against a string is incomparable the same way.
+        ("min", "k", ["Feb", "Mar", "Jan"]),
+    ],
+)
+def test_x_domain_order_leaves_row_order_where_vega_lite_does(
+    op: str, sort_field: str, expected: list[str], descending: bool
+) -> None:
+    """Row order here is not a fallback — it is what Vega-Lite draws. Returning
+    an empty domain instead would blank the chart, and returning a ranking VL
+    does not produce would reorder an axis behind the author's back. Both cases
+    are measured against ``vl_convert`` in
+    ``test_vega_lite_leaves_row_order_where_it_cannot_rank`` below.
+    """
+    assert x_domain_order(_UNRANKABLE_ROWS, "m", sort_field, descending, op=op) == (
+        expected
+    )
+
+
+_UNRANKABLE_ROWS = [
+    {"m": "Feb", "r": "north", "k": 2, "v": 1.0},
+    {"m": "Mar", "r": "south", "k": "n/a", "v": 2.0},
+    {"m": "Jan", "r": "east", "k": 1, "v": 3.0},
+]
+
+
+@pytest.mark.parametrize(("op", "sort_field"), [("sum", "r"), ("min", "k")])
+@pytest.mark.parametrize("order", ["ascending", "descending"])
+def test_vega_lite_leaves_row_order_where_it_cannot_rank(
+    op: str, sort_field: str, order: str
+) -> None:
+    """The oracle for the test above: what Vega-Lite actually draws for a sort
+    it cannot rank. Pinned here so the reproduction and the thing it reproduces
+    are checked against each other, not asserted from memory."""
+    spec = {
+        "data": {"values": _UNRANKABLE_ROWS},
+        "mark": "bar",
+        "encoding": {
+            "x": {
+                "field": "m",
+                "type": "nominal",
+                "sort": {"field": sort_field, "order": order, "op": op},
+            },
+            "y": {"field": "v", "type": "quantitative"},
+        },
+    }
+    svg = vlc.vegalite_to_svg(json.dumps(spec))
+    drawn = re.findall(r'aria-label="X-axis[^:]*: ([^"]*)"', svg)
+    assert drawn == ["Feb, Mar, Jan"]
+
+
+# Two arrangements of the same heterogeneous category. Only the string-first
+# one discriminates: with the number first, d3's fold, a +Infinity-seeded fold
+# and Python's own min all answer 1.
+_HETEROGENEOUS_ROWS = {
+    "number-first": [
+        {"m": "Feb", "k": 2, "v": 1.0},
+        {"m": "Mar", "k": 3, "v": 2.0},
+        {"m": "Jan", "k": 1, "v": 3.0},
+        {"m": "Jan", "k": "n/a", "v": 3.0},
+    ],
+    "string-first": [
+        {"m": "Feb", "k": 2, "v": 1.0},
+        {"m": "Mar", "k": 3, "v": 2.0},
+        {"m": "Jan", "k": "n/a", "v": 3.0},
+        {"m": "Jan", "k": 1, "v": 3.0},
+    ],
+}
+
+# (arrangement, order, what Vega draws, what x_domain_order returns). The two
+# agree except in the last row, where Jan folds to "n/a" and Vega's comparator
+# cannot order it against 2 or 3: it reports "equal" for those pairs, and
+# `Array.prototype.sort` over a non-transitive comparator partially ranks on
+# its own pivot choices. Row order is the deterministic reading of that. The
+# divergence cannot reach a rendered axis on the families this PR pins — an
+# explicit domain is what Vega draws — so it is recorded, not chased.
+_HETEROGENEOUS_CASES = [
+    ("number-first", "ascending", "Jan, Feb, Mar", ["Jan", "Feb", "Mar"]),
+    ("number-first", "descending", "Mar, Feb, Jan", ["Mar", "Feb", "Jan"]),
+    ("string-first", "ascending", "Feb, Mar, Jan", ["Feb", "Mar", "Jan"]),
+    ("string-first", "descending", "Mar, Feb, Jan", ["Feb", "Mar", "Jan"]),
+]
+
+
+@pytest.mark.parametrize(("arrangement", "order", "vega", "ours"), _HETEROGENEOUS_CASES)
+def test_x_domain_order_folds_a_heterogeneous_category_like_vega(
+    arrangement: str, order: str, vega: str, ours: list[str]
+) -> None:
+    """``vega`` is measured by the oracle below; ``ours`` is what this returns."""
+    rows = _HETEROGENEOUS_ROWS[arrangement]
+    assert x_domain_order(rows, "m", "k", order == "descending", op="min") == ours
+
+
+@pytest.mark.parametrize(("arrangement", "order", "vega", "ours"), _HETEROGENEOUS_CASES)
+def test_vega_lite_folds_a_heterogeneous_category_to_its_comparable_value(
+    arrangement: str, order: str, vega: str, ours: list[str]
+) -> None:
+    """The oracle for the test above — it fails if Vega's own answer moves."""
+    spec = {
+        "data": {"values": _HETEROGENEOUS_ROWS[arrangement]},
+        "mark": "line",
+        "encoding": {
+            "x": {
+                "field": "m",
+                "type": "nominal",
+                "sort": {"field": "k", "order": order, "op": "min"},
+            },
+            "y": {"field": "v", "type": "quantitative"},
+        },
+    }
+    svg = vlc.vegalite_to_svg(json.dumps(spec))
+    assert re.findall(r'aria-label="X-axis[^:]*: ([^"]*)"', svg) == [vega]
+
+
+def test_x_domain_order_ranks_a_text_column_under_min() -> None:
+    """``min`` is a comparison, so a text column IS an ordering there —
+    east/north/south, not the rows' own order."""
+    assert x_domain_order(_UNRANKABLE_ROWS, "m", "r", False, op="min") == (
+        ["Jan", "Feb", "Mar"]
+    )
+
+
 def test_chart_sort_to_vl_does_not_pin_op() -> None:
     """chart_sort_to_vl stays unopinionated about VL's own sort ``op`` default.
 
-    It's a shared helper: bar's grouped-vertical x-sort sometimes sits beside
-    an unstacked ``y.stack: null`` (which flips VL's inferred default from
-    ``sum`` to ``min``), but scatter's categorical-y sort never carries a
-    stack concept at all. Pinning ``op`` here to solve bar's problem would
-    silently change scatter's VL-inferred default too — the fix belongs at
-    the point that actually needs it (bar suppressing ``y.stack`` only when
-    the x scale is genuinely continuous), not in this shared mapper.
+    It is the shared mapper, reached by surfaces with no aggregate in common:
+    bar's grouped-vertical x-sort sits beside an unstacked ``y.stack: null``
+    (which flips VL's inferred default from ``sum`` to ``min``), while the
+    support table's category domain is not a VL scale at all. A caller that
+    needs the aggregate stated says so at its own point —
+    ``dimension_sort_to_vl`` for a dimension axis — rather than making this
+    mapper opine on every surface at once.
     """
     vl_sort = chart_sort_to_vl(ChartSort(by="val", order="desc"))
     assert vl_sort == {"field": "val", "order": "descending"}, (

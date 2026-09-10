@@ -1,0 +1,466 @@
+title: Cards and layouts
+style:
+  frame:
+    width: 1440
+text: |
+  A board is built from a handful of card types — KPIs, markdown, tables, and
+  charts — arranged with a handful of layout devices. This board shows one of
+  each, using our own product metrics as the data.
+queries:
+  kpi_metrics:
+    source: examples_db
+    sql: |
+      WITH complete_months AS (
+        SELECT *
+        FROM dundersign_serving.monthly_metrics
+        WHERE month > (SELECT min(month) FROM dundersign_serving.monthly_metrics)
+          AND month < (SELECT max(month) FROM dundersign_serving.monthly_metrics)
+      ),
+      ranked AS (
+        SELECT
+          month, revenue, active_users, documents_completed, tickets_resolved,
+          LAG(revenue) OVER (ORDER BY month) AS prev_revenue,
+          LAG(active_users) OVER (ORDER BY month) AS prev_active_users,
+          LAG(documents_completed) OVER (ORDER BY month) AS prev_documents_completed,
+          LAG(tickets_resolved) OVER (ORDER BY month) AS prev_tickets_resolved
+        FROM complete_months
+      )
+      SELECT
+        month, revenue, active_users, documents_completed, tickets_resolved,
+        (revenue - prev_revenue) / prev_revenue AS revenue_delta,
+        (active_users - prev_active_users)::DOUBLE / prev_active_users AS active_users_delta,
+        (documents_completed - prev_documents_completed)::DOUBLE / prev_documents_completed AS documents_completed_delta,
+        (tickets_resolved - prev_tickets_resolved)::DOUBLE / prev_tickets_resolved AS tickets_resolved_delta
+      FROM ranked
+      WHERE prev_revenue IS NOT NULL
+      ORDER BY month DESC
+      LIMIT 1
+  product_performance:
+    source: examples_db
+    sql: |
+      WITH per_order AS (
+        SELECT
+          product,
+          date_trunc('week', date)::DATE AS week,
+          SUM(revenue) OVER (PARTITION BY product, date_trunc('week', date)::DATE) AS week_revenue,
+          SUM(revenue) OVER (PARTITION BY product) AS total_revenue
+        FROM main.ecommerce_orders
+      ),
+      distinct_weeks AS (
+        SELECT DISTINCT product, week, week_revenue, total_revenue FROM per_order
+      )
+      SELECT
+        product,
+        any_value(total_revenue) AS total_revenue,
+        ARRAY_AGG(week_revenue ORDER BY week) AS weekly_trend,
+        (arg_max(week_revenue, week) - arg_min(week_revenue, week)) / arg_min(week_revenue, week) AS growth_pct
+      FROM distinct_weeks
+      GROUP BY product
+      ORDER BY total_revenue DESC
+  category_region_pivot:
+    source: examples_db
+    sql: |
+      SELECT category, region, SUM(revenue) AS revenue, SUM(units_sold) AS units_sold
+      FROM main.ecommerce_orders
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+  weekly_revenue:
+    source: examples_db
+    sql: |
+      SELECT
+        date_trunc('week', date)::DATE AS week,
+        SUM(revenue) AS revenue,
+        SUM(units_sold) AS units,
+        COUNT(*) AS orders
+      FROM main.ecommerce_orders
+      GROUP BY 1
+      ORDER BY 1
+  category_revenue:
+    source: examples_db
+    sql: |
+      SELECT category, SUM(revenue) AS revenue
+      FROM main.ecommerce_orders
+      GROUP BY 1
+      ORDER BY 2 DESC
+  region_revenue:
+    source: examples_db
+    sql: |
+      SELECT region, SUM(revenue) AS revenue
+      FROM main.ecommerce_orders
+      GROUP BY 1
+      ORDER BY 2 DESC
+  monthly_revenue:
+    source: examples_db
+    sql: |
+      SELECT month, revenue
+      FROM dundersign_serving.monthly_metrics
+      WHERE month > (SELECT min(month) FROM dundersign_serving.monthly_metrics)
+        AND month < (SELECT max(month) FROM dundersign_serving.monthly_metrics)
+      ORDER BY month
+  monthly_tickets_resolved:
+    source: examples_db
+    sql: |
+      SELECT month, tickets_resolved
+      FROM dundersign_serving.monthly_metrics
+      WHERE month > (SELECT min(month) FROM dundersign_serving.monthly_metrics)
+        AND month < (SELECT max(month) FROM dundersign_serving.monthly_metrics)
+      ORDER BY month
+  monthly_active_users:
+    source: examples_db
+    sql: |
+      SELECT month, active_users
+      FROM dundersign_serving.monthly_metrics
+      WHERE month > (SELECT min(month) FROM dundersign_serving.monthly_metrics)
+        AND month < (SELECT max(month) FROM dundersign_serving.monthly_metrics)
+      ORDER BY month
+  monthly_tickets_created_resolved:
+    source: examples_db
+    sql: |
+      WITH complete_months AS (
+        SELECT *
+        FROM dundersign_serving.monthly_metrics
+        WHERE month > (SELECT min(month) FROM dundersign_serving.monthly_metrics)
+          AND month < (SELECT max(month) FROM dundersign_serving.monthly_metrics)
+      )
+      SELECT month, 'Created' AS series, tickets_created AS value FROM complete_months
+      UNION ALL
+      SELECT month, 'Resolved' AS series, tickets_resolved AS value FROM complete_months
+      ORDER BY 1, 2
+  documents_by_status:
+    source: examples_db
+    sql: |
+      SELECT status, count(*) / SUM(count(*)) OVER () AS share
+      FROM dundersign.documents
+      GROUP BY 1
+      ORDER BY 1
+  recent_orders:
+    source: examples_db
+    sql: |
+      SELECT date, region, product, category, revenue, units_sold
+      FROM main.ecommerce_orders
+      ORDER BY date DESC, revenue DESC
+      LIMIT 10
+charts:
+  kpi_revenue:
+    type: kpi
+    query: kpi_metrics
+    label: Revenue, this month
+    value: revenue
+    style:
+      value:
+        format: currency
+    support:
+      value: revenue_delta
+      label: vs last month
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  kpi_active_users:
+    type: kpi
+    query: kpi_metrics
+    label: Active users, this month
+    value: active_users
+    style:
+      value:
+        format: integer
+    support:
+      value: active_users_delta
+      label: vs last month
+      format: percent_delta
+      glyph: ▼
+      tone: negative
+  kpi_documents_completed:
+    type: kpi
+    query: kpi_metrics
+    label: Documents completed
+    value: documents_completed
+    style:
+      value:
+        format: integer
+    support:
+      value: documents_completed_delta
+      label: vs last month
+      format: percent_delta
+      glyph: ▼
+      tone: negative
+  kpi_tickets_resolved:
+    type: kpi
+    query: kpi_metrics
+    label: Tickets resolved
+    value: tickets_resolved
+    style:
+      value:
+        format: integer
+    support:
+      value: tickets_resolved_delta
+      label: vs last month
+      format: percent_delta
+      glyph: ▲
+      tone: positive
+  callout_card:
+    type: callout
+    style:
+      tone: positive
+    title: "Support load is healthy"
+    message: |
+      Tickets resolved rose to **7** this month, up from 6, while new tickets
+      stayed about the same. No backlog action needed.
+  product_performance_table:
+    type: table
+    query: product_performance
+    title: Product performance, this January
+    style:
+      columns:
+        product:
+          label: Product
+        total_revenue:
+          label: Total revenue
+          format: currency
+        weekly_trend:
+          label: 5-week trend
+          spark:
+            type: line
+        growth_pct:
+          label: Week 1 → week 5
+          format: percent_delta
+    conditional_formatting:
+      growth_pct:
+        when:
+          - gte: 0
+            glyph: "▲"
+            tone: positive
+          - lt: 0
+            glyph: "▼"
+            tone: negative
+  category_region_pivot:
+    type: table
+    query: category_region_pivot
+    title: Revenue and units, by category and region
+    rows:
+      - category
+    columns:
+      - region
+    values:
+      - revenue
+      - units_sold
+    style:
+      columns:
+        revenue:
+          label: Revenue
+          format: currency_whole
+        units_sold:
+          label: Units
+          format: integer
+  weekly_revenue_support:
+    query: weekly_revenue
+    type: bar
+    title: Weekly revenue, with the underlying counts
+    height: 320
+    x: week
+    y: revenue
+    style:
+      number_format: currency
+    support_table:
+      - source: revenue
+        format: currency_whole
+        label: Revenue
+      - source: units
+        format: ",d"
+        label: Units
+      - source: orders
+        format: ",d"
+        label: Orders
+  width_demo_bar:
+    query: category_revenue
+    type: bar
+    title: Revenue by category
+    height: 260
+    x: category
+    y: revenue
+    style:
+      number_format: currency
+  width_demo_kpi:
+    type: kpi
+    query: kpi_metrics
+    label: Revenue, this month
+    value: revenue
+    style:
+      value:
+        format: currency
+  grid_tall_chart:
+    query: region_revenue
+    type: table
+    title: Revenue by region
+    style:
+      columns:
+        region:
+          label: Region
+        revenue:
+          label: Revenue
+          format: currency_whole
+  grid_chart_top:
+    query: monthly_revenue
+    type: line
+    title: Revenue trend
+    height: 220
+    x: month
+    y: revenue
+    style:
+      number_format: currency
+  grid_side_chart:
+    query: category_revenue
+    type: table
+    title: Revenue by category
+    style:
+      columns:
+        category:
+          label: Category
+        revenue:
+          label: Revenue
+          format: currency_whole
+  grid_chart_bottom:
+    query: monthly_tickets_resolved
+    type: bar
+    title: Tickets resolved
+    height: 220
+    x: month
+    y: tickets_resolved
+    style:
+      number_format: integer
+  tabs_revenue_bar:
+    query: category_revenue
+    type: bar
+    title: Revenue by category
+    height: 280
+    x: category
+    y: revenue
+    style:
+      number_format: currency
+  tabs_active_users_line:
+    query: monthly_active_users
+    type: line
+    title: Active users, by month
+    height: 280
+    x: month
+    y: active_users
+    style:
+      number_format: integer
+  tabs_tickets_line:
+    query: monthly_tickets_created_resolved
+    type: line
+    title: Tickets created vs. resolved
+    height: 280
+    x: month
+    y: value
+    color: series
+    style:
+      number_format: integer
+  documents_status_bar:
+    type: bar
+    query: documents_by_status
+    title: Documents, by status
+    subtitle: Share of all documents
+    height: 300
+    x: status
+    y: share
+    style:
+      number_format: percent_whole
+  recent_orders_table:
+    type: table
+    query: recent_orders
+    title: Most recent orders
+    style:
+      columns:
+        date:
+          label: Date
+        revenue:
+          label: Revenue
+          format: currency_whole
+        units_sold:
+          label: Units
+          format: integer
+rows:
+  - text: |
+      **Every card type, one page.** KPIs, markdown, callouts, tables, a
+      pivot, and an attached support table — plus the layout devices that
+      arrange them: `rows:`, `cols:`, `grid:`, `tabs:`, and `details:`.
+  - text: "Card types, side by side — markdown (with an inline local image), a callout with a KPI block, and a table"
+  - cols:
+      - text: |
+          ### Highlights this month
+
+          - Revenue held steady at **$2,931**, up slightly from June
+          - Active users dipped to 818, down from June's 858
+
+          > Document completions slipped in July as fewer signers finished
+          > mid-cycle.
+
+          ![dbt logo](data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzkxIiBoZWlnaHQ9IjkwIiB2aWV3Qm94PSIwIDAgMzkxIDkwIiBmaWxsPSJub25lIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgo8ZyBjbGlwLXBhdGg9InVybCgjY2xpcDBfMjk0MF80MzYpIj4KPHBhdGggZD0iTTIxMy4yIDcwLjAzQzIwOC4xMyA3MC4wMyAyMDQuNDIgNjUuOTIgMjA0LjQyIDYwLjg1VjM5LjIzSDE5OC4xNFYyOS41N0gyMDQuOTJMMjA0LjgyIDE5Ljc2TDIxNC45NyAxNi4yNVYyOS41N0gyMjMuNzVWMzkuMjNIMjE0Ljk3VjYwLjE5SDIyMi43NFY3MC4wM0gyMTMuMloiIGZpbGw9ImJsYWNrIi8+CjxwYXRoIGQ9Ik0xNzguNjUgNzAuNDg5OUMxNzMuMzQgNzAuNDg5OSAxNjkuMzEgNjguNzY5OSAxNjYuNDEgNjQuMDk5OUwxNjUuODUgNjQuMTc5OUMxNjUuOTMgNjYuMTg5OSAxNjYuMDEgNjcuOTM5OSAxNjYuMDEgNzAuMDI5OUgxNTUuM1YxNi4yOTk5TDE2Ni4xNyAxMi42Mjk5VjI1Ljg1OTlDMTY2LjE3IDI5LjcxOTkgMTY2LjE3IDMxLjgxOTkgMTY1Ljc3IDM1LjQzOTlMMTY2LjQxIDM1LjU5OTlDMTY5LjM5IDMwLjc2OTkgMTczLjgyIDI4LjU5OTkgMTc4Ljk3IDI4LjU5OTlDMTg5LjkyIDI4LjU5OTkgMTk2Ljc2IDM3LjkzOTkgMTk2Ljc2IDQ5Ljg0OTlDMTk2Ljc2IDYxLjc1OTkgMTg5LjY4IDcwLjQ4OTkgMTc4LjY0IDcwLjQ4OTlIMTc4LjY1Wk0xNzYuMDggNjAuNzQ5OUMxODIuMTIgNjAuNzQ5OSAxODUuOTggNTYuMjA5OSAxODUuOTggNDkuNjg5OUMxODUuOTggNDMuMTY5OSAxODIuMTIgMzguMzM5OSAxNzYuMDggMzguMzM5OUMxNzAuMDQgMzguMzM5OSAxNjUuOTQgNDMuMDg5OSAxNjUuOTQgNDkuNzY5OUMxNjUuOTQgNTYuNDQ5OSAxNjkuODggNjAuNzQ5OSAxNzYuMDggNjAuNzQ5OVoiIGZpbGw9ImJsYWNrIi8+CjxwYXRoIGQ9Ik0xMjMuMTIgNzAuNDg5N0MxMTIuNDEgNzAuNDg5NyAxMDUuMzMgNjEuNDQ5NyAxMDUuMzMgNDkuNjg5N0MxMDUuMzMgMzcuOTI5NyAxMTIuMzMgMjguNTk5NyAxMjMuNTIgMjguNTk5N0MxMjguNTkgMjguNTk5NyAxMzIuODYgMzAuNjA5NiAxMzUuNzYgMzUuMzU5NkwxMzYuMzIgMzUuMTk5NkMxMzYgMzEuODE5NiAxMzYgMjkuNDc5NiAxMzYgMjUuODU5NlYxNi4zMDk3TDE0Ni44NyAxMi42Mzk2VjcwLjA0OTdIMTM2LjE2QzEzNi4xNiA2OC4wMzk3IDEzNi4xNiA2Ni4xOTk3IDEzNi4zMiA2NC4xODk3TDEzNS43NiA2NC4wMjk3QzEzMi43OCA2OC43Nzk3IDEyOC40MyA3MC40OTk3IDEyMy4xMiA3MC40OTk3VjcwLjQ4OTdaTTEyNi4xIDYwLjc0OTdDMTMyLjMgNjAuNzQ5NyAxMzYuMjQgNTYuMzc5NyAxMzYuMjQgNDkuNjg5N0MxMzYuMjQgNDIuOTk5NyAxMzIuMjkgMzguMzM5NyAxMjYuMSAzOC4zMzk3QzExOS45OCAzOC40MTk3IDExNi4yIDQzLjI0OTcgMTE2LjIgNDkuNzY5N0MxMTYuMiA1Ni4yODk3IDExOS45OCA2MC43NDk3IDEyNi4xIDYwLjc0OTdaIiBmaWxsPSJibGFjayIvPgo8cGF0aCBkPSJNMzg0LjggNjcuNjA5N0gzODUuNjdWNzAuMDQ5N0gzODYuMTdWNjcuNjA5N0gzODcuMDVWNjcuMTc5N0gzODQuOFY2Ny42MDk3WiIgZmlsbD0iYmxhY2siLz4KPHBhdGggZD0iTTM5MC40NSA2Ny4xNzk3SDM5MC4wNEgzODkuOTNMMzg5LjA0IDY5LjI3OTdMMzg4LjE1IDY3LjE3OTdIMzg4LjA0SDM4Ny42NEgzODcuNTRWNzAuMDQ5N0gzODguMDRWNjguMDg5N0wzODguOTEgNzAuMDQ5N0gzODkuMTdMMzkwLjA0IDY4LjA4OTdWNzAuMDQ5N0gzOTAuNTRWNjcuMTc5N0gzOTAuNDVaIiBmaWxsPSJibGFjayIvPgo8cGF0aCBkPSJNMjQ4LjY5IDEyLjYxOTZMMjQxLjMyIDE1LjA0OTZWNzAuMDM5NkgyNzAuMzRWNjMuNjY5NkgyNDguNjlWMTIuNjE5NloiIGZpbGw9ImJsYWNrIi8+CjxwYXRoIGQ9Ik04NS40MSA0LjMyOTg2Qzg3LjQ5IDYuMzM5ODYgODguODU5OSA4Ljk3OTg3IDg5LjE3OTkgMTEuODY5OUM4OS4xNzk5IDEzLjA2OTkgODguODYgMTMuODc5OSA4OC4xMyAxNS4zODk5Qzg3LjQgMTYuOTA5OSA3OC41MSAzMi4yOTk5IDc1Ljg1IDM2LjU1OTlDNzQuMzMgMzkuMDU5OSA3My41MyA0Mi4wMTk5IDczLjUzIDQ0Ljg5OTlDNzMuNTMgNDcuNzc5OSA3NC4zNCA1MC43NDk5IDc1Ljg1IDUzLjIzOTlDNzguNDkgNTcuNDk5OSA4Ny40IDcyLjk1OTkgODguMTMgNzQuNTA5OUM4OC44NiA3Ni4wMjk5IDg5LjE3OTkgNzYuNzU5OSA4OS4xNzk5IDc3Ljk1OTlDODguODU5OSA4MC44NDk5IDg3LjU5IDgzLjQ4OTkgODUuNDggODUuNDE5OUM4My40NyA4Ny40OTk5IDgwLjgyOTkgODguODY5OSA3OC4wMTk5IDg5LjExOTlDNzYuODE5OSA4OS4xMTk5IDc2LjAxIDg4Ljc5OTkgNzQuNTcgODguMDY5OUM3My4xMyA4Ny4zMzk5IDMxLjA5IDYzLjAzOTkgMzEuMDkgNjMuMDM5OUMzMS41OCA2Ny4wNDk5IDMzLjM0IDcwLjg5OTkgMzYuMjMgNzMuNzA5OUMzNi43OSA3NC4yNjk5IDM3LjM1OTkgNzQuNzU5OSAzNy45ODk5IDc1LjIyOTlDMzcuNDk5OSA3NS40Njk5IDE2Ljc1IDg3LjU4OTkgMTUuMjEgODguMzE5OUMxMy42OSA4OS4wNDk5IDEyLjk2IDg5LjM2OTkgMTEuNjkgODkuMzY5OUM4Ljc5OTk2IDg5LjA0OTkgNi4xNTk5NSA4Ny43Nzk5IDQuMjI5OTUgODUuNjY5OUMyLjE0OTk1IDgzLjY1OTkgMC43Nzk5NjEgODEuMDE5OSAwLjQ1OTk2MSA3OC4xMjk5QzAuNTI5OTYxIDc2LjkyOTkgMC44Nzk5NDkgNzUuNzI5OSAxLjUwOTk1IDc0LjY3OTlDMi4yMzk5NSA3My4xNTk5IDExLjEyOTkgNTcuNjY5OSAxMy43ODk5IDUzLjQwOTlDMTUuMzA5OSA1MC45MDk5IDE2LjExIDQ4LjAyOTkgMTYuMTEgNDUuMDY5OUMxNi4xMSA0Mi4xMDk5IDE1LjI5OTkgMzkuMjE5OSAxMy43ODk5IDM2LjcyOTlDMTEuMTQ5OSAzMi4zMjk5IDIuMTY5OTUgMTYuODI5OSAxLjUwOTk1IDE1LjMxOTlDMC44Njk5NDkgMTQuMjY5OSAwLjU1OTk2MSAxMy4wNjk5IDAuNDU5OTYxIDExLjg2OTlDMC43Nzk5NjEgOC45Nzk4NyAyLjA0OTk2IDYuMzM5ODYgNC4xNTk5NiA0LjMyOTg2QzYuMTY5OTYgMi4yNDk4NiA4LjgwOTk1IDAuOTQ5ODgzIDExLjcgMC42Mjk4ODNDMTIuOSAwLjY5OTg4MyAxNC4xIDEuMDQ5ODcgMTUuMjIgMS42Nzk4N0MxNi40OSAyLjIzOTg3IDU4LjQ0IDI2Ljk3OTkgNTguNDQgMjYuOTc5OUM1Ny45NSAyMi4xNzk5IDU1LjU5IDE3LjgzOTkgNTEuNzIgMTQuODc5OUM1Mi4wMiAxNC43MTk5IDcyLjg0OTkgMi4zNjk4NyA3NC4zOTk5IDEuNzA5ODdDNzUuNDQ5OSAxLjA2OTg3IDc2LjY1IDAuNzU5ODgyIDc3LjkyIDAuNjU5ODgyQzgwLjczIDAuOTc5ODgyIDgzLjM4IDIuMjQ5ODYgODUuMzggNC4zNTk4Nkw4NS40Mjk5IDQuMzM5ODdMODUuNDEgNC4zMjk4NlpNNDYuMzEgNTIuNDg5OUw1Mi4zMSA0Ni40Njk5QzUzLjE0IDQ1LjYyOTkgNTMuMTQgNDQuMzc5OSA1Mi4zMSA0My41MDk5TDQ2LjMxIDM3LjQ4OTlDNDUuNDggMzYuNjQ5OSA0NC4yMjk5IDM2LjY0OTkgNDMuMzU5OSAzNy40ODk5TDM3LjM1OTkgNDMuNTA5OUMzNi41Mjk5IDQ0LjM0OTkgMzYuNTI5OSA0NS41OTk5IDM3LjM1OTkgNDYuNDY5OUw0My4zNTk5IDUyLjQ4OTlDNDQuMDk5OSA1My4yMjk5IDQ1LjQ0IDUzLjIyOTkgNDYuMzEgNTIuNDg5OVoiIGZpbGw9IiNGRTY3MDMiLz4KPHBhdGggZD0iTTMyMi44NSA2Mi45Mjk5TDMyMi40NiA2My4wMDk5QzMyMi41NCA2NS41MTk5IDMyMi41NCA2Ny4zNTk5IDMyMi41NCA3MC4wMTk5SDMxNS45NVYxNS4wMzk5TDMyMi42MiAxMi42MDk5VjI5LjM0OTlDMzIyLjYyIDMzLjEwOTkgMzIyLjYyIDM0LjkxOTkgMzIyLjM4IDM4LjM2OTlMMzIyLjg1IDM4LjQ0OTlDMzI1Ljc1IDMzLjAzOTkgMzMwLjU0IDMwLjIwOTkgMzM2LjU4IDMwLjIwOTlDMzQ3LjE3IDMwLjIwOTkgMzUzLjc2IDM4Ljk4OTkgMzUzLjc2IDUwLjU5OTlDMzUzLjc2IDYyLjIwOTkgMzQ3LjAxIDcwLjQ3OTkgMzM2LjE5IDcwLjQ3OTlDMzMwLjE1IDcwLjQ3OTkgMzI1LjY4IDY4LjMxOTkgMzIyLjg2IDYyLjkwOTlMMzIyLjg1IDYyLjkyOTlaTTM0Ny4xNyA1MC41Mzk5QzM0Ny4xNyA0Mi4zNzk5IDM0Mi41NCAzNi4yNTk5IDMzNS4wMSAzNi4yNTk5QzMyNy40OCAzNi4yNTk5IDMyMi4zIDQyLjEzOTkgMzIyLjMgNTAuNjA5OUMzMjIuMyA1OS4wNzk5IDMyNy4xNiA2NC41Mjk5IDMzNS4wMSA2NC41Mjk5QzM0Mi42MiA2NC40NDk5IDM0Ny4xNyA1OC42ODk5IDM0Ny4xNyA1MC41Mjk5VjUwLjUzOTlaIiBmaWxsPSJibGFjayIvPgo8cGF0aCBkPSJNMzU3LjIxIDY0LjI2OTlMMzYxLjc2IDYwLjEwOTlDMzY0LjMgNjMuMDM5OSAzNjcuNTQgNjQuOTY5OSAzNzEuMjQgNjQuOTY5OUMzNzUuNTYgNjQuOTY5OSAzNzguNzIgNjIuODY5OSAzNzguNzIgNTkuMDE5OUMzNzguNzIgNTUuMTY5OSAzNzUuMDIgNTQuMDA5OSAzNzAuODYgNTIuODQ5OUMzNjQuNjkgNTEuMDc5OSAzNTkuMDcgNDguNTI5OSAzNTkuMDcgNDEuNTE5OUMzNTkuMDcgMzQuNTA5OSAzNjQuNzcgMzAuMTg5OSAzNzIuMTcgMzAuMTg5OUMzNzYuODcgMzAuMTg5OSAzODAuOCAzMS44MDk5IDM4My44OCAzNS4xOTk5TDM3OS41NiAzOS4zNTk5QzM3Ny40OCAzNi45Njk5IDM3NS4wMSAzNS43Mzk5IDM3Mi4wOCAzNS43Mzk5QzM2OC4wNyAzNS43Mzk5IDM2NS4xNCAzNy43Mzk5IDM2NS4xNCA0MS4yODk5QzM2NS4xNCA0NC44Mzk5IDM2OC42OSA0Ni4wNjk5IDM3Mi43NyA0Ny4yMTk5QzM3OS4wOSA0OS4wNjk5IDM4NC43OSA1MS4zNzk5IDM4NC43OSA1OC42OTk5QzM4NC43OSA2Ni4wMTk5IDM3OC45MyA3MC41MDk5IDM3MC45OSA3MC41MDk5QzM2NS41MiA3MC41MDk5IDM2MC41OCA2OC4xMTk5IDM1Ny4xOSA2NC4yNjk5SDM1Ny4yMVoiIGZpbGw9ImJsYWNrIi8+CjxwYXRoIGQ9Ik0zMDYuNDggNDMuOTg5N1Y3MC4wMzk3SDI5OS44MkMyOTkuODIgNjcuMzA5NyAyOTkuODIgNjUuNjM5NyAyOTkuOTggNjIuOTg5N0wyOTkuNiA2Mi45Mzk3QzI5Ni42MyA2OC40Njk3IDI5My41MiA3MC40ODk3IDI4Ny40MyA3MC40ODk3QzI3OS44OCA3MC40ODk3IDI3NS42MSA2NC42Njk3IDI3NS42MSA1OS42MDk3QzI3NS42MSA1Mi44NDk3IDI3OC42OCA0Ny44Mjk3IDI4OS44NSA0Ny44Mjk3SDMwMi4yN0wzMDAuMSA0OS4wMDk3VjQ0LjczOTdDMzAwLjEgNDAuMzE5NyAyOTguMTEgMzYuMjU5NyAyOTEuNDMgMzYuMjU5N0MyODQuNzUgMzYuMjU5NyAyODAuNDQgMzkuOTU5NyAyODAuMzkgMzkuOTk5N0wyNzcuNDkgMzQuOTM5N0MyNzcuNDkgMzQuOTM5NyAyODMuNDMgMzAuMTc5NyAyOTIuMDcgMzAuMTc5N0MyOTkuOCAzMC4xNzk3IDMwNi40OSAzNC40Mzk3IDMwNi40OSA0My45ODk3SDMwNi40OFpNMjg5LjU4IDUzLjExOTdDMjgzLjI0IDUzLjExOTcgMjgxLjY4IDU0LjkyOTcgMjgxLjY4IDU4Ljg3OTdDMjgxLjY4IDYzLjA0OTcgMjg1LjE3IDY0LjgwOTcgMjg5LjU1IDY0LjgwOTdDMjk2LjczIDY0LjgwOTcgMzAwLjA2IDU4LjkwOTcgMzAwLjA2IDUzLjExOTdIMjg5LjU4WiIgZmlsbD0iYmxhY2siLz4KPC9nPgo8ZGVmcz4KPGNsaXBQYXRoIGlkPSJjbGlwMF8yOTQwXzQzNiI+CjxyZWN0IHdpZHRoPSIzOTEiIGhlaWdodD0iOTAiIGZpbGw9IndoaXRlIi8+CjwvY2xpcFBhdGg+CjwvZGVmcz4KPC9zdmc+Cg==){width=140}
+
+          *dbt Charts boards compile straight from a dbt project — no
+          separate semantic layer to keep in sync.*
+      - rows:
+          - callout_card
+          - cols:
+              - kpi_revenue
+              - kpi_active_users
+          - cols:
+              - kpi_documents_completed
+              - kpi_tickets_resolved
+      - product_performance_table
+  - text: "Pivot table (`rows:`/`columns:`/`values:`) and a chart with an attached `support_table:`, side by side"
+  - cols:
+      - category_region_pivot
+      - weekly_revenue_support
+  - text: "Layout — `cols:` with explicit width percentages (25% / 50% / 25%)"
+  - cols:
+      - width: "25%"
+        text: |
+          This column is pinned to **25%** width. The middle column takes
+          **50%**, and the KPI on the right takes the remaining **25%**.
+      - width: "50%"
+        rows:
+          - width_demo_bar
+      - width: "25%"
+        rows:
+          - width_demo_kpi
+  - text: "Layout — `grid:` with `col_span` and `row_span`"
+  - grid:
+      columns: 24
+      items:
+        - item: grid_tall_chart
+          col_span: 8
+          row_span: 2
+        - item: grid_chart_top
+          col_span: 8
+          row_span: 1
+        - item: grid_side_chart
+          col_span: 8
+          row_span: 2
+        - item: grid_chart_bottom
+          col_span: 8
+          row_span: 1
+  - text: "Layout — `tabs:` groups related views behind clickable tabs"
+  - tabs:
+      items:
+        - title: Revenue
+          rows:
+            - tabs_revenue_bar
+        - title: Customers
+          rows:
+            - tabs_active_users_line
+        - title: Support
+          rows:
+            - tabs_tickets_line
+  - text: "Layout — `cols:` nested inside `rows:`"
+  - cols:
+      - text: |
+          Nesting `cols:` inside a `rows:` item builds a two-panel section:
+          this text on the left, a chart on the right.
+      - documents_status_bar
+  - text: "Layout — `details:` collapses a section behind a summary bar"
+  - details:
+      summary: Show the underlying order rows
+      expanded_title: Hide the underlying order rows
+    rows:
+      - recent_orders_table

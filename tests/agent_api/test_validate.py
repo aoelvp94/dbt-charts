@@ -522,7 +522,7 @@ class TestValidatePathsConcatenatesArgvOrder:
 
 
 class TestValidatePathSkipsMetaYaml:
-    """validate_paths() skips meta.yaml/meta.yml in directory walk."""
+    """validate_paths() skips meta.yml/meta.yaml in directory walk."""
 
     def test_dir_walk_skips_meta_yaml(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -530,7 +530,7 @@ class TestValidatePathSkipsMetaYaml:
         from dbt_charts.agent_api.validate import validate_paths
 
         (tmp_path / "charts").mkdir()
-        (tmp_path / "charts" / "meta.yaml").write_text("source: analytics\n")
+        (tmp_path / "charts" / "meta.yml").write_text("source: analytics\n")
         _write_board(tmp_path / "charts", _VALID_BOARD, "good.yml")
 
         results = validate_paths([tmp_path / "charts"], project=local_project(tmp_path))
@@ -553,7 +553,7 @@ class TestValidatePathSkipsMetaYaml:
 
 
 class TestValidateBrokenMetaYamlTransitive:
-    """A board in a dir with a broken meta.yaml still fails validate."""
+    """A board in a dir with a broken meta.yml still fails validate."""
 
     def test_board_with_broken_meta_yaml_fails(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -561,8 +561,8 @@ class TestValidateBrokenMetaYamlTransitive:
         from dbt_charts.agent_api.validate import validate_paths
 
         (tmp_path / "charts").mkdir()
-        # meta.yaml with an unknown top-level key — AuthoredBoard extra="forbid" rejects it
-        (tmp_path / "charts" / "meta.yaml").write_text("not_a_board_key: 99\n")
+        # meta.yml with an unknown top-level key — AuthoredBoard extra="forbid" rejects it
+        (tmp_path / "charts" / "meta.yml").write_text("not_a_board_key: 99\n")
         _write_board(tmp_path / "charts", _VALID_BOARD, "board.yml")
 
         results = validate_paths([tmp_path / "charts"], project=local_project(tmp_path))
@@ -641,14 +641,14 @@ class TestValidateContentInMemory:
 
 
 class TestValidateMetaYamlSingleFile:
-    """validate() on a standalone meta.yaml validates as BoardPatch, not full board."""
+    """validate() on a standalone meta.yml validates as BoardPatch, not full board."""
 
     def test_valid_meta_yaml_succeeds(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         from dbt_charts.agent_api.validate import validate
 
-        meta = tmp_path / "meta.yaml"
+        meta = tmp_path / "meta.yml"
         meta.write_text("source: analytics\n")
 
         result = validate(meta, project=local_project(tmp_path))
@@ -660,7 +660,7 @@ class TestValidateMetaYamlSingleFile:
     ) -> None:
         from dbt_charts.agent_api.validate import validate
 
-        meta = tmp_path / "meta.yaml"
+        meta = tmp_path / "meta.yml"
         meta.write_text("not_a_real_key: 123\n")
 
         result = validate(meta, project=local_project(tmp_path))
@@ -674,7 +674,7 @@ class TestValidateMetaYamlSingleFile:
     ) -> None:
         from dbt_charts.agent_api.validate import validate
 
-        meta = tmp_path / "meta.yaml"
+        meta = tmp_path / "meta.yml"
         meta.write_text("not_a_real_key: 123\n")
 
         result = validate(meta, project=local_project(tmp_path))
@@ -690,7 +690,7 @@ class TestValidateMetaYamlSingleFile:
         """Pydantic loc with ≥2 segments renders as dot-separated, not unicode arrow."""
         from dbt_charts.agent_api.validate import validate
 
-        meta = tmp_path / "meta.yaml"
+        meta = tmp_path / "meta.yml"
         meta.write_text("style:\n  bogus_key: bad\n")
 
         result = validate(meta, project=local_project(tmp_path))

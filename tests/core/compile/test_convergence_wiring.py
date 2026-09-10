@@ -32,15 +32,19 @@ def _write(tmp_path: Path, relpath: str, content: str) -> Path:
 
 
 def test_board_patch_desugars_theme() -> None:
-    """BoardPatch.model_validate must convert theme: X → extends: X.
+    """BOARD_PATCH_ADAPTER must convert theme: X → extends: X.
 
     Fragments loaded as BoardPatch (meta files, extends targets) may use
-    theme: as sugar just like AuthoredBoard. Without this, a meta.yaml
-    with ``theme: paper`` would be silently ignored — .extends stays None.
+    theme: as sugar just like AuthoredBoard. The desugaring lives on the
+    adapter's BeforeValidator (BoardPatchInput), not on the bare BoardPatch
+    class — validating through BoardPatch.model_validate directly would
+    reject an authored ``theme:`` key with extra_forbidden instead of
+    converting it. Without the adapter, a meta.yml with ``theme: paper``
+    would be silently ignored — .extends stays None.
     """
-    from dbt_charts.core.compile.models.board.patch import BoardPatch
+    from dbt_charts.core.compile.models.board.patch import BOARD_PATCH_ADAPTER
 
-    patch = BoardPatch.model_validate({"theme": "paper"})
+    patch = BOARD_PATCH_ADAPTER.validate_python({"theme": "paper"})
     assert patch.extends == "paper"
 
 
@@ -48,10 +52,10 @@ def test_board_patch_desugar_rejects_both_theme_and_extends() -> None:
     """BoardPatch must reject simultaneous theme: and extends:."""
     from pydantic import ValidationError
 
-    from dbt_charts.core.compile.models.board.patch import BoardPatch
+    from dbt_charts.core.compile.models.board.patch import BOARD_PATCH_ADAPTER
 
     with pytest.raises(ValidationError, match="Cannot specify both"):
-        BoardPatch.model_validate({"theme": "paper", "extends": "stark"})
+        BOARD_PATCH_ADAPTER.validate_python({"theme": "paper", "extends": "stark"})
 
 
 # ===========================================================================
@@ -66,7 +70,7 @@ def test_merged_patch_meta_title_reaches_board(
     from dbt_charts.core.compile.merge import merged_patch
     from dbt_charts.core.compile.models.board.patch import BoardPatch
 
-    _write(tmp_path, "charts/meta.yaml", "title: FromMeta\n")
+    _write(tmp_path, "charts/meta.yml", "title: FromMeta\n")
     project = local_project(tmp_path)
     board_file = project.path("charts/board.yaml")
     board_node = BoardPatch.model_validate({})
@@ -82,7 +86,7 @@ def test_merged_patch_board_title_overrides_meta(
     from dbt_charts.core.compile.merge import merged_patch
     from dbt_charts.core.compile.models.board.patch import BoardPatch
 
-    _write(tmp_path, "charts/meta.yaml", "title: MetaTitle\n")
+    _write(tmp_path, "charts/meta.yml", "title: MetaTitle\n")
     project = local_project(tmp_path)
     board_file = project.path("charts/board.yaml")
     board_node = BoardPatch.model_validate({"title": "FaceTitle"})
@@ -102,7 +106,7 @@ def test_merged_patch_tags_append_meta_then_board(
     from dbt_charts.core.compile.merge import merged_patch
     from dbt_charts.core.compile.models.board.patch import BoardPatch
 
-    _write(tmp_path, "charts/meta.yaml", "tags:\n  - meta-tag\n")
+    _write(tmp_path, "charts/meta.yml", "tags:\n  - meta-tag\n")
     project = local_project(tmp_path)
     board_file = project.path("charts/board.yaml")
     board_node = BoardPatch.model_validate({"tags": ["board-tag"]})
@@ -118,7 +122,7 @@ def test_merged_patch_frame_width_survives_sibling_frame_key(
     from dbt_charts.core.compile.merge import merged_patch
     from dbt_charts.core.compile.models.board.patch import BoardPatch
 
-    _write(tmp_path, "charts/meta.yaml", "style:\n  frame:\n    width: 700\n")
+    _write(tmp_path, "charts/meta.yml", "style:\n  frame:\n    width: 700\n")
     project = local_project(tmp_path)
     board_file = project.path("charts/board.yaml")
     board_node = BoardPatch.model_validate({"style": {"frame": {"margin": 33}}})
@@ -161,7 +165,7 @@ def test_merged_patch_no_meta_no_extends(
 
 
 # ===========================================================================
-# Meta lint in meta.yaml doesn't break merge_metas
+# Meta lint in meta.yml doesn't break merge_metas
 # ===========================================================================
 
 
@@ -174,7 +178,7 @@ def test_merge_metas_strips_lint_key(
 
     _write(
         tmp_path,
-        "charts/meta.yaml",
+        "charts/meta.yml",
         "title: MetaTitle\nlint:\n  ignore:\n    - WARN-FANOUT-RISK\n",
     )
     project = local_project(tmp_path)
@@ -218,11 +222,11 @@ def test_compile_file_extends_resolves_end_to_end(
 def test_compile_file_meta_tags_append(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """End-to-end: tags from meta.yaml and board APPEND, not replace."""
+    """End-to-end: tags from meta.yml and board APPEND, not replace."""
     from dbt_charts.core.compile.compiler import compile_file
 
     project = local_project(tmp_path)
-    _write(tmp_path, "charts/meta.yaml", "tags:\n  - meta-tag\n")
+    _write(tmp_path, "charts/meta.yml", "tags:\n  - meta-tag\n")
     board_yaml = "title: T\ntags:\n  - board-tag\nrows:\n  - cols:\n    - text: hi\n"
     _write(tmp_path, "charts/board.yaml", board_yaml)
 
@@ -240,7 +244,7 @@ def test_compile_file_board_width_survives_sibling_end_to_end(
     from dbt_charts.core.compile.compiler import compile_file
 
     project = local_project(tmp_path)
-    _write(tmp_path, "charts/meta.yaml", "style:\n  frame:\n    width: 700\n")
+    _write(tmp_path, "charts/meta.yml", "style:\n  frame:\n    width: 700\n")
     board_yaml = (
         "title: T\nstyle:\n  frame:\n    margin: 33\nrows:\n  - cols:\n    - text: hi\n"
     )
@@ -257,13 +261,13 @@ def test_compile_file_board_width_survives_sibling_end_to_end(
 def test_compile_file_threads_lint_through_engine(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """Lint from meta.yaml still reaches result.meta_lint after engine wiring."""
+    """Lint from meta.yml still reaches result.meta_lint after engine wiring."""
     from dbt_charts.core.compile.compiler import compile_file
 
     project = local_project(tmp_path)
     _write(
         tmp_path,
-        "charts/meta.yaml",
+        "charts/meta.yml",
         "lint:\n  ignore:\n    - WARN-FANOUT-RISK\n",
     )
     board_yaml = "title: T\nrows:\n  - cols:\n    - text: hi\n"
@@ -286,7 +290,7 @@ def test_compiler_wiring_respects_merge_marker_not_hardcoded_set(
     ever changes its marker from Merge('append') to Merge('override'), this
     test detects it and the wiring follows automatically.  Concretely: verify
     that the Merge marker on BoardPatch.tags is 'append' and that the compiler
-    wiring produces append behaviour for that field.
+    wiring produces append behavior for that field.
     """
     from dbt_charts.core.compile.compiler import compile_file
     from dbt_charts.core.compile.merge import merge_marker
@@ -304,7 +308,7 @@ def test_compiler_wiring_respects_merge_marker_not_hardcoded_set(
 
     # End-to-end: meta tags append to board tags.
     project = local_project(tmp_path)
-    _write(tmp_path, "charts/meta.yaml", "tags:\n  - meta_tag\n")
+    _write(tmp_path, "charts/meta.yml", "tags:\n  - meta_tag\n")
     board_yaml = "title: T\ntags:\n  - board_tag\nrows:\n  - cols:\n    - text: hi\n"
     _write(tmp_path, "charts/board.yaml", board_yaml)
 
@@ -521,7 +525,7 @@ def test_compiler_strategy_loop_raises_on_append_type_mismatch(
     from dbt_charts.core.compile.compiler import compile_file
 
     project = local_project(tmp_path)
-    _write(tmp_path, "charts/meta.yaml", "tags:\n  - meta-tag\n")
+    _write(tmp_path, "charts/meta.yml", "tags:\n  - meta-tag\n")
     # Provide tags as a non-list to trigger type mismatch in strategy=append path
     board_yaml = "title: T\ntags: not-a-list\nrows:\n  - cols:\n    - text: hi\n"
     _write(tmp_path, "charts/board.yaml", board_yaml)
@@ -562,7 +566,7 @@ def test_orphaned_meta_functions_deleted() -> None:
 def test_resolve_meta_lint_returns_none_when_no_meta(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """resolve_meta_lint returns None when no meta.yaml exists."""
+    """resolve_meta_lint returns None when no meta.yml exists."""
     from dbt_charts.core.compile.parse.meta import resolve_meta_lint
 
     (tmp_path / "charts").mkdir()
@@ -575,10 +579,10 @@ def test_resolve_meta_lint_returns_none_when_no_meta(
 def test_resolve_meta_lint_returns_config_when_meta_exists(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """resolve_meta_lint returns MetaLintConfig when meta.yaml has lint: block."""
+    """resolve_meta_lint returns MetaLintConfig when meta.yml has lint: block."""
     from dbt_charts.core.compile.parse.meta import resolve_meta_lint
 
-    _write(tmp_path, "charts/meta.yaml", "lint:\n  ignore:\n    - WARN-FANOUT-RISK\n")
+    _write(tmp_path, "charts/meta.yml", "lint:\n  ignore:\n    - WARN-FANOUT-RISK\n")
     project = local_project(tmp_path)
     board_file = project.path("charts/board.yaml")
     result = resolve_meta_lint(board_file, project.directory("."))
@@ -625,7 +629,7 @@ def test_style_null_clears_meta_provided_style(
     """
     from dbt_charts.core.compile.compiler import compile_file
 
-    _write(tmp_path, "charts/meta.yaml", "style:\n  frame:\n    width: 700\n")
+    _write(tmp_path, "charts/meta.yml", "style:\n  frame:\n    width: 700\n")
     _write(
         tmp_path,
         "charts/board.yaml",
@@ -652,7 +656,7 @@ def test_tags_null_clears_meta_provided_tags(
     """
     from dbt_charts.core.compile.compiler import compile_file
 
-    _write(tmp_path, "charts/meta.yaml", "tags:\n  - team_a\n  - team_b\n")
+    _write(tmp_path, "charts/meta.yml", "tags:\n  - team_a\n  - team_b\n")
     _write(
         tmp_path,
         "charts/board.yaml",

@@ -279,19 +279,15 @@ def _require_resolved(
         should_fetch_table_fk_links,
         should_synthesize_auto_link,
     )
-    from dbt_charts.core.diagnostics.execution import ExecutionError  # noqa: PLC0415
     from dbt_charts.core.render.chart.auto_link import (  # noqa: PLC0415
         get_auto_link_context,
         synthesize_auto_link,
     )
 
-    qn = chart.query_name
     try:
+        qn = chart.query_name
         data = executor.execute_query(qn, variables) if qn else []
-    except ExecutionError:
-        data = []
 
-    try:
         auto_link_enabled = get_auto_link_context()
         automatic_link_candidate: AutomaticLinkCandidate = None
         if should_synthesize_auto_link(chart, data, auto_link_enabled):

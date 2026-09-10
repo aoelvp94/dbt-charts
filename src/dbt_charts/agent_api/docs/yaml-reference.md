@@ -15,8 +15,8 @@ AuthoredBoard definition from YAML.
 | `_schema_version` | str | The latest released dbt charts YAML schema version this file was last migrated to, written by `dct migrate` only -- never hand-author this. Informational: nothing reads it back when your board loads, and it is not a validated guarantee about the file's actual grammar (a hand-edit after migration can make it stale). YAML key: _schema_version. |
 | `text` | str | Markdown text content for text-only sections. |
 | `html_policy` | enum: "none", "safe-subset", "trusted-raw" | HTML rendering policy for the board's body text. One of: "none" (default): HTML is escaped and rendered as plain markdown; "safe-subset": reserved for a parser-checked allowlist (not yet enforced; currently renders as none); "trusted-raw": raw HTML via foreignObject. TRUSTED-CONTENT ONLY: this is NOT a security sandbox. &lt;script&gt;/event-handlers are stripped as a best-effort guard, not a guarantee. Enable only on first-party boards you fully control. |
-| `source` | str | Default source name for all queries in this board. Inheritable via meta.yaml cascade. |
-| `cache` | [Cache](#cache) | Cache policy for every query in this dashboard, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts the whole dashboard out. Inheritable via the meta.yaml cascade. |
+| `source` | str | Default source name for all queries in this board. Inheritable via meta.yml cascade. |
+| `cache` | [Cache](#cache) | Cache policy for every query in this dashboard, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts the whole dashboard out. Inheritable via the meta.yml cascade. |
 | `incremental` | str \| const: false | Default watermark column for incremental refresh: queries in this board fetch only new rows since the last run and merge them with the cached result, keyed on this column. Queries inherit this value and may override it with their own incremental: setting. Set to false on a nested board to opt out of a parent's incremental setting. |
 | `variables` | dict[str, [Variable](#variable) \| str \| [VariableRef](#variableref)] | Named inputs that parameterize queries; each renders as a control unless it sets visible: false. |
 | `queries` | dict[str, str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) \| [QueryRef](#queryref)] | Named result sets the charts draw from (SQL, CSV, HTTP, and more). |
@@ -29,12 +29,13 @@ AuthoredBoard definition from YAML.
 | `chart_focus` | str | Render only this named chart with its dependent variables (useful for embedding or SVG export). |
 | `details` | [BoardDetails](#boarddetails) | Collapsible section metadata. String shorthand: details: 'text' → BoardDetails(summary='text'). Block form: details: {summary: ..., expanded_title: ..., expanded: false}. |
 | `id` | str | Explicit ID for this board. Auto-generated from filename if omitted. |
-| `style` | [Style](#style) | Appearance overrides for this board (background, border, and more). Most fields this board or an ancestor board explicitly authors cascade to nested child boards. Per-board fields (frame, layout, gap, margin, padding, color): a nested board that authors any style of its own resolves these against its own theme, never an ancestor's. Root-board-only fields (page, footer, timestamp): a nested board never draws its own page canvas, footer, or timestamp line, so these never reach it either. |
+| `style` | [Style](#style) | Appearance overrides for this board (background, border, and more). Most fields this board or an ancestor board explicitly authors cascade to nested child boards. Per-board fields (frame, layout, gap, margin, padding): a nested board that authors any style of its own resolves these against its own theme, never an ancestor's. Root-board-only fields (footer, timestamp): a nested board never draws its own footer or timestamp line, so these never reach it either. |
 | `width` | str \| int | Width when nested (e.g., '50%', '400px', or an integer in pixels). On the root board there is no parent to place it into, so it instead sets the board's own width (equivalent to 'style.frame.width'); percentages are rejected there since there's nothing to size relative to. |
 | `height` | str \| int | Height when nested (e.g., '300px' or an integer in pixels). |
 | `visible` | bool \| str \| [SingleRowBoolProbe](#singlerowboolprobe) | Controls whether this layout item is rendered. Accepts a bool, variable name, Jinja expression, or {query, column} probe. |
 | `extends` | str \| list[str] \| enum: "clarity", "neon", "paper", "stark", "vivid" | Board name(s) or relative path(s) this board inherits from, low to high priority. A built-in theme name resolves it directly. |
 | `auto_link` | bool | When True, table charts with no explicit link: automatically link each row to its canonical /data/&lt;source&gt;/&lt;schema&gt;/&lt;table&gt;/detail/ page. Default off. An explicit link: always wins; set link: false on a chart to suppress its automatic link. |
+| `theme` | enum: "clarity", "neon", "paper", "stark", "vivid" | Built-in theme name; shorthand for `extends: &lt;name&gt;`. |
 
 <a id="cache"></a>
 ## Cache
@@ -635,7 +636,6 @@ Authored overlay for Style: all fields optional. Adds CSS shorthand coercers.
 | `charts` | [ChartsStyle](#chartsstyle) | Root of all chart-type styles and shared chart configuration. |
 | `layout` | [LayoutStyle](#layoutstyle) | Spacing and arrangement inside the containers (rows, cols, grid, tabs, details). |
 | `variables` | [VariablesStyle](#variablesstyle) | Variable controls chrome style. |
-| `page` | [PageStyle](#pagestyle) | Page-level canvas style (behind the board). |
 | `footer` | [FooterStyle](#footerstyle) | Page footer chrome visibility. |
 | `timestamp` | [TimestampStyle](#timestampstyle) | Data-freshness chrome: visibility, placement, format, and font. |
 | `formats` | dict[str, str] | Format alias map; None means no aliases at this cascade level. |
@@ -645,7 +645,6 @@ Authored overlay for Style: all fields optional. Adds CSS shorthand coercers.
 | `padding` | [SpacingValues](#spacingvalues) | Per-board padding override (CSS shorthand or structured). |
 | `margin` | [SpacingValues](#spacingvalues) | Per-board margin override (CSS shorthand or structured). |
 | `gap` | float | Per-board gap between layout items in pixels. |
-| `color` | str | Per-board text color override as a CSS color string. |
 
 <a id="singlerowboolprobe"></a>
 ## SingleRowBoolProbe
@@ -1031,7 +1030,7 @@ Authored overlay for TableChartStyle. Table chart style overrides layered on top
 | `spark` | [SparkStyle](#sparkstyle) | Inline sparkline defaults for table cells. |
 | `transpose` | bool | When True, render a single wide data row as N (label, value) rows, one per column. Raises ChartDataError when data has more than one row. Used for Looker single-value summary tiles with multiple measures. |
 | `text_baseline_offset` | float | Vertical offset to align SVG text baseline with cell grid in pixels. |
-| `title_subtitle_gap` | float | Pure whitespace between the title's descent and the subtitle's ascent, in pixels, not a baseline-to-baseline distance. Combined with the title and subtitle font sizes to reproduce Vega-Lite's title-&gt;subtitle spacing at any font size, not one calibrated pair. Font size and colour for the subtitle itself come from style.title.subtitle (the same source chart-family titles use), not a table-local constant. |
+| `title_subtitle_gap` | float | Pure whitespace between the title's descent and the subtitle's ascent, in pixels, not a baseline-to-baseline distance. Combined with the title and subtitle font sizes to reproduce Vega-Lite's title-&gt;subtitle spacing at any font size, not one calibrated pair. Font size and color for the subtitle itself come from style.title.subtitle (the same source chart-family titles use), not a table-local constant. |
 
 <a id="basemapconfig"></a>
 ## BasemapConfig
@@ -1168,8 +1167,8 @@ Authored overlay for FrameStyle. Board-level structural dimensions. Do NOT casca
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `width` | float | Exact board width in pixels. Set it, on a board, a template it extends, or a project's meta.yaml, and the board is exactly this wide; the layout distributes it. Leave it unset and the board sizes itself to its content, bounded by max_width. Rendered as an on-screen pixel size everywhere except the dct HTML page (dct serve, dct render --format html), which scales the board to its container. |
-| `max_width` | float | Widest a board without an exact width may grow, in pixels. A board with no width of its own measures its charts' preferred widths and hugs them up to this bound: a single small chart stays a small card. Ignored when width is set. Themes supply the default; a project's meta.yaml can lower or raise it. |
+| `width` | float | Exact board width in pixels. Set it, on a board, a template it extends, or a project's meta.yml, and the board is exactly this wide; the layout distributes it. Leave it unset and the board sizes itself to its content, bounded by max_width. Rendered as an on-screen pixel size everywhere except the dct HTML page (dct serve, dct render --format html), which scales the board to its container. |
+| `max_width` | float | Widest a board without an exact width may grow, in pixels. A board with no width of its own measures its charts' preferred widths and hugs them up to this bound: a single small chart stays a small card. Ignored when width is set. Themes supply the default; a project's meta.yml can lower or raise it. |
 | `min_height` | float | Minimum board height in pixels. |
 | `margin` | float | Board outer margin in pixels. |
 | `card_padding` | float | Padding added to each card side in pixels. |
@@ -1323,14 +1322,6 @@ Authored overlay for VariablesStyle. Variable controls chrome styling.
 | `control_gap` | float | Gap between label and input within a single control in pixels. |
 | `input` | [InputStyle](#inputstyle) | Input control style. |
 
-<a id="pagestyle"></a>
-## PageStyle
-Authored overlay for PageStyle. Page-level (outer HTML canvas) styling.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `background` | str | Page canvas background color (behind the board). |
-
 <a id="footerstyle"></a>
 ## FooterStyle
 Authored overlay for FooterStyle. Page footer chrome: visibility, attribution text, font, and rule.
@@ -1338,8 +1329,8 @@ Authored overlay for FooterStyle. Page footer chrome: visibility, attribution te
 | Field | Type | Description |
 |-------|------|-------------|
 | `visible` | bool | Show the footer attribution line. |
-| `text` | str | Attribution text shown in the footer. The first 'dbt charts' in it is drawn as the dbt charts wordmark, in the same ink as the text. |
-| `link` | str | URL the footer's dbt charts wordmark links to; null renders it plain. |
+| `text` | str | Attribution text shown in the footer. |
+| `link` | str | URL the footer brand phrase 'dbt charts' links to; null renders plain text. |
 | `font` | [FontStyle](#fontstyle) | Footer text font style (size and color required). |
 | `y_offset` | float | Vertical offset from bottom edge in pixels. |
 | `rule` | [FooterRule](#footerrule) | Hairline rule above footer text; null disables the rule. |
@@ -1521,7 +1512,7 @@ Authored overlay for AxisYStyle. Measure axis style. Theme slot: axis_y.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `grid` | [MeasureGridStyle](#measuregridstyle) | Measure axis grid style (includes zero-baseline override). |
+| `grid` | [BaseAxisGridStyle](#baseaxisgridstyle) | Grid line style for this axis. |
 | `line` | [AxisLineStyle](#axislinestyle) | Domain line style for this axis. |
 | `ticks` | [AxisTicksStyle](#axisticksstyle) | Tick mark style for this axis. |
 | `labels` | [AxisLabelStyle](#axislabelstyle) | Axis label style. |
@@ -2114,7 +2105,7 @@ Authored overlay for TooltipStyle. Tooltip box style: all cascade keys for the h
 | `value` | [TooltipSlotStyle](#tooltipslotstyle) | Value-column font overrides (color, weight). |
 | `border` | [TooltipBorderStyle](#tooltipborderstyle) | Tooltip border style; theme always provides this. |
 | `shadow` | [TooltipShadowStyle](#tooltipshadowstyle) | Tooltip drop-shadow config; theme always provides this. |
-| `swatch` | [TooltipSwatchStyle](#tooltipswatchstyle) | Series colour swatch size/shape; theme always provides this. |
+| `swatch` | [TooltipSwatchStyle](#tooltipswatchstyle) | Series color swatch size/shape; theme always provides this. |
 | `active_marker` | enum: "fill", "triangle" | How the hovered row is marked in a multi-row (x-unified) tooltip: 'fill' tints the row background (default); 'triangle' draws an edge-flush wedge in the box's left padding instead. Theme always provides this. |
 
 <a id="viewstyle"></a>
@@ -2282,6 +2273,7 @@ Authored overlay for BaseAxisGridStyle. Grid line style for all axis variants.
 | `width` | float | Grid line width in pixels; None uses Vega-Lite's default. |
 | `color` | str | Grid line color; None uses Vega-Lite's default. |
 | `dash` | list[float] | Dash pattern for grid lines; None renders a solid line. |
+| `threshold` | [AxisGridThresholdStyle](#axisgridthresholdstyle) | Threshold-rule gridline style; None inherits from parent axis. |
 
 <a id="axislinestyle"></a>
 ## AxisLineStyle
@@ -2304,7 +2296,7 @@ Authored overlay for AxisTicksStyle. Tick marks on an axis: visibility, color, s
 | `length` | float | Tick length in pixels; None uses Vega-Lite's default. |
 | `width` | float | Tick stroke width in pixels; None uses Vega-Lite's default. |
 | `offset` | float | Pixel offset of ticks from their default position; None means no offset. |
-| `count` | int | Target number of axis ticks: a target everywhere, never an exact count. On the measure axis (axis_y) the renderer computes an explicit round-numbered ladder of at most this many ticks. On axis_x it passes through as VL's axis.tickCount: a temporal scale honours it closely, a quantitative one rounds to a nearby round-numbered ladder. To name the interval instead of the count, author ticks.step on a quantitative axis_x. An ordinal axis_x has no tick-count concept and ignores this. |
+| `count` | int | Target number of axis ticks: a target everywhere, never an exact count. On the measure axis (axis_y) the renderer computes an explicit round-numbered ladder of at most this many ticks. On axis_x it passes through as VL's axis.tickCount: a temporal scale honors it closely, a quantitative one rounds to a nearby round-numbered ladder. To name the interval instead of the count, author ticks.step on a quantitative axis_x. An ordinal axis_x has no tick-count concept and ignores this. |
 | `step` | int | Tick interval on axis_x. Alongside ticks.time_unit it is a multiple of that calendar grain (time_unit: year, step: 5 -&gt; a tick every 5 years). On its own it is a numeric interval for a quantitative axis (step: 1000 -&gt; a tick every 1000), and acts as a floor rather than a fixed ladder, so the axis keeps covering the data as its range grows. A bare step on an axis that is not quantitative is an error, not a no-op; axis_y rejects step entirely (set ticks.count there instead). |
 
 <a id="axislabelstyle"></a>
@@ -2408,7 +2400,7 @@ Authored overlay for DimensionTicksStyle. axis_x-only: adds the calendar unit th
 | `length` | float | Tick length in pixels; None uses Vega-Lite's default. |
 | `width` | float | Tick stroke width in pixels; None uses Vega-Lite's default. |
 | `offset` | float | Pixel offset of ticks from their default position; None means no offset. |
-| `count` | int | Target number of axis ticks: a target everywhere, never an exact count. On the measure axis (axis_y) the renderer computes an explicit round-numbered ladder of at most this many ticks. On axis_x it passes through as VL's axis.tickCount: a temporal scale honours it closely, a quantitative one rounds to a nearby round-numbered ladder. To name the interval instead of the count, author ticks.step on a quantitative axis_x. An ordinal axis_x has no tick-count concept and ignores this. |
+| `count` | int | Target number of axis ticks: a target everywhere, never an exact count. On the measure axis (axis_y) the renderer computes an explicit round-numbered ladder of at most this many ticks. On axis_x it passes through as VL's axis.tickCount: a temporal scale honors it closely, a quantitative one rounds to a nearby round-numbered ladder. To name the interval instead of the count, author ticks.step on a quantitative axis_x. An ordinal axis_x has no tick-count concept and ignores this. |
 | `step` | int | Tick interval on axis_x. Alongside ticks.time_unit it is a multiple of that calendar grain (time_unit: year, step: 5 -&gt; a tick every 5 years). On its own it is a numeric interval for a quantitative axis (step: 1000 -&gt; a tick every 1000), and acts as a floor rather than a fixed ladder, so the axis keeps covering the data as its range grows. A bare step on an axis that is not quantitative is an error, not a no-op; axis_y rejects step entirely (set ticks.count there instead). |
 | `time_unit` | enum: "auto", "year", "yearquarter", "yearmonth", "yearweek", "yearmonthdate", "monthofyear", "dayofweek", "dayofmonth", "dayofyear", "hourofday", "none" | Step-anchored tick cadence unit; None disables step-anchored ticks. |
 
@@ -2450,19 +2442,6 @@ Authored overlay for XScaleStyle. Scale config for axis_x.scale only.
 | `values` | list[Any] | Explicit tick values; None uses Vega-Lite's auto tick values. |
 | `continuous` | [ScaleContinuousStyle](#scalecontinuousstyle) | Continuous-scale overrides (type, domain, zero, log/pow/symlog params); None means no override. |
 | `x_reverse` | bool | Reverse the x-axis scale direction; None means no reversal. |
-
-<a id="measuregridstyle"></a>
-## MeasureGridStyle
-Authored overlay for MeasureGridStyle. BaseAxisGridStyle + zero-baseline override for the measure (y) axis.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `visible` | bool | Show grid lines; None inherits from parent axis. |
-| `opacity` | float | Grid line opacity; None uses Vega-Lite's default. |
-| `width` | float | Grid line width in pixels; None uses Vega-Lite's default. |
-| `color` | str | Grid line color; None uses Vega-Lite's default. |
-| `dash` | list[float] | Dash pattern for grid lines; None renders a solid line. |
-| `zero` | [AxisGridZeroStyle](#axisgridzerostyle) | Zero-baseline gridline style; None inherits from parent axis. |
 
 <a id="axismirrorstyle"></a>
 ## AxisMirrorStyle
@@ -2798,7 +2777,7 @@ Authored overlay for TooltipShadowStyle. Tooltip drop-shadow toggle. JS applies 
 
 <a id="tooltipswatchstyle"></a>
 ## TooltipSwatchStyle
-Authored overlay for TooltipSwatchStyle. Series colour swatch in the tooltip: the mark-coloured chip next to each
+Authored overlay for TooltipSwatchStyle. Series color swatch in the tooltip: the mark-colored chip next to each
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -2872,6 +2851,16 @@ Authored overlay for RangeDefaults.
 | `default_max` | float | Default maximum value for range inputs. |
 | `default_step` | float | Default step size for range inputs. |
 
+<a id="axisgridthresholdstyle"></a>
+## AxisGridThresholdStyle
+Authored overlay for AxisGridThresholdStyle. Threshold-rule color, width, and visibility overrides.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `visible` | bool | Show the threshold rule; None inherits from parent axis. |
+| `color` | str | Color of the threshold rule; None inherits from parent axis. |
+| `width` | float | Width of the threshold rule in pixels; None inherits from parent axis. |
+
 <a id="axislabeloverlapconfig"></a>
 ## AxisLabelOverlapConfig
 Authored overlay for AxisLabelOverlapConfig. Two-bool overlap strategy enablement for x-axis labels.
@@ -2893,15 +2882,6 @@ Authored overlay for ScaleContinuousStyle. Continuous-scale-only config: type, d
 | `log` | [ScaleLogStyle](#scalelogstyle) | Log-scale param (base); only meaningful with type: log. |
 | `pow` | [ScalePowStyle](#scalepowstyle) | Power-scale param (exponent); only meaningful with type: pow. |
 | `symlog` | [ScaleSymlogStyle](#scalesymlogstyle) | Symlog-scale param (constant); only meaningful with type: symlog. |
-
-<a id="axisgridzerostyle"></a>
-## AxisGridZeroStyle
-Authored overlay for AxisGridZeroStyle. Zero-baseline gridline color and width overrides.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `color` | str | Color of the zero-baseline grid line; None inherits from parent axis. |
-| `width` | float | Width of the zero-baseline grid line in pixels; None inherits from parent axis. |
 
 <a id="supporttablerowpaddingstyle"></a>
 ## SupportTableRowPaddingStyle

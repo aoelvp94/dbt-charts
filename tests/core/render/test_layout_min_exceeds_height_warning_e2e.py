@@ -281,7 +281,7 @@ def test_silent_for_a_faceted_horizontal_bar_whose_disjoint_panel_categories_nar
     only needs the WIDEST panel's own count (5), not the whole-dataset
     union (15). 1000px comfortably clears the correct ~801px floor (5
     categories -> ~267px/panel -> 3 panels); the OLD, pre-domain-subset
-    behaviour would have wrongly demanded ~1971px here (see the sibling
+    behavior would have wrongly demanded ~1971px here (see the sibling
     test above, whose fixture actually needs that)."""
     yaml_source = """
 title: Probe

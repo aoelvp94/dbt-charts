@@ -49,7 +49,7 @@ class TestStyleTitleSection:
 
     def test_title_font_theme_color_survives_cascade(self):
         """Theme-set title.font.color is not overridden by cascade."""
-        get_config()  # ensure settings initialised
+        get_config()  # ensure settings initialized
         resolved = resolve_style(get_theme_style())
         # cascade must preserve whatever the theme set, not overwrite it
         assert resolved.title.font.color == get_theme_style().title.font.color

@@ -173,7 +173,7 @@ class TestReaderPolicyBound:
 class TestSlotsAreIndependent:
     """Rows and error are two slots on one row; a write touches only its own.
 
-    This is the two-table behaviour preserved. A failure never destroys rows —
+    This is the two-table behavior preserved. A failure never destroys rows —
     which matters because the key is shared: the query that failed is not
     necessarily the query that will read next, and it does not get to decide
     what that reader is entitled to.
@@ -523,7 +523,7 @@ class TestTimestampsAreAwareUTC:
         """The relabel must not shift the reading.
 
         A freshly written entry is seconds old, never hours — which is what a
-        naive-local value relabelled as UTC looks like. Comparing against an
+        naive-local value relabeled as UTC looks like. Comparing against an
         aware `now` also proves the two frames match, since a mismatch is a
         TypeError rather than a bad number.
         """
@@ -532,7 +532,7 @@ class TestTimestampsAreAwareUTC:
         assert isinstance(hit, CacheHit)
         age = datetime.now(timezone.utc) - hit.written_at
         assert timedelta(0) <= age < timedelta(minutes=5), (
-            f"entry reads as {age} old — a naive-local timestamp relabelled as "
+            f"entry reads as {age} old — a naive-local timestamp relabeled as "
             "UTC lands off by the machine's offset"
         )
 

@@ -106,7 +106,7 @@ class CacheHit:
     rows: CacheRows
     # Timezone-aware UTC, from every backend. Both compare it against a bound
     # and callers take min() across a render's hits — one naive value in the set
-    # makes that a TypeError, and one mislabelled value makes it silently wrong.
+    # makes that a TypeError, and one mislabeled value makes it silently wrong.
     written_at: datetime
     # None when the rows were not truncated at write time. The truncation
     # fact travels with the cached data rather than being re-derived from how
@@ -228,7 +228,7 @@ class QueryResultCache(Protocol):
         and rebuild each row from it on read, the same way the type map above is
         carried. ``TrivialDuckDBCache`` gets column order from its result
         table's own declared columns, but derives those columns from the first
-        row alone — so it honours this only when every row in one ``put()``
+        row alone — so it honors this only when every row in one ``put()``
         shares a key set, and a heterogeneous batch loses keys the first row
         lacked.
 

@@ -23,9 +23,7 @@
 # All color from vivid-10 marks only. Confident marks, flat fills.
 extends: stark
 style:
-  background: &void dbt-grays.void
-  page:
-    background: *void
+  background: dbt-grays.void
   accent: &high dbt-grays.grid
   muted: &mid dbt-grays.subtitle
   font:
@@ -94,6 +92,8 @@ style:
         # the background sits on the other side.
         color: *faint
         width: 1
+        threshold:
+          color: &value dbt-grays.canvas  # baseline anchors at max contrast
       ticks:
         color: *faint
       labels:
@@ -105,8 +105,6 @@ style:
     axis_y:
       grid:
         color: &measure_grid dbt-grays.inactive  # measure grid reads above the vertical one
-        zero:
-          color: &value dbt-grays.canvas  # baseline anchors at max contrast
       ticks:
         # A tick and its gridline mark the same value; they read as one mark
         # crossing the axis line. Without this the measure tick wore the

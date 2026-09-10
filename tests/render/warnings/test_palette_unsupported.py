@@ -49,7 +49,7 @@ def test_fires_when_chart_authors_alias_palette() -> None:
     assert w.chart == "c1"
     assert "RdYlGn" in w.message
     # Message must name the substitute palette an author can act on, not
-    # unlabelled hex stops (docs/guides/palette-resolver.md promises this).
+    # unlabeled hex stops (docs/guides/palette-resolver.md promises this).
     assert "dbt-div-crimson-green" in w.message
     assert "#" not in w.message
     assert w.fix is not None

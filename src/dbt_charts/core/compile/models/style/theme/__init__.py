@@ -27,7 +27,7 @@ Package layout (one file per concern, mirroring chart/normalized/):
   spark_bar.py   — spark_bar (standalone chart) family
   charts.py      — ChartsStyle registry (aggregates every *ChartStyle)
   layout.py      — layout containers (rows, cols, grid, tabs, details)
-  page.py        — page chrome (inputs, footer, timestamp, page canvas)
+  page.py        — page chrome (inputs, footer, timestamp)
   variables.py   — variable controls chrome
   style.py       — Style root
 """
@@ -52,7 +52,7 @@ from dbt_charts.core.compile.models.style.theme.area import (
     AreaLineStyle,
 )
 from dbt_charts.core.compile.models.style.theme.axis import (
-    AxisGridZeroStyle,
+    AxisGridThresholdStyle,
     AxisLabelOverlapConfig,
     AxisLabelStyle,
     AxisLineStyle,
@@ -67,7 +67,6 @@ from dbt_charts.core.compile.models.style.theme.axis import (
     BaseScaleStyle,
     DimensionLabelStyle,
     DimensionTicksStyle,
-    MeasureGridStyle,
     QuantitativeAxisStyle,
     ScaleContinuousStyle,
     ScaleDomainValidationMixin,
@@ -187,7 +186,6 @@ from dbt_charts.core.compile.models.style.theme.page import (
     FooterStyle,
     InputStyle,
     InputWidths,
-    PageStyle,
     RangeDefaults,
     TimestampStyle,
 )
@@ -252,7 +250,7 @@ __all__ = [
     "AreaLayerStyle",
     "AreaLineStyle",
     "AreaMarkStyle",
-    "AxisGridZeroStyle",
+    "AxisGridThresholdStyle",
     "AxisLabelOverlapConfig",
     "AxisLabelStyle",
     "AxisLineStyle",
@@ -267,7 +265,6 @@ __all__ = [
     "BaseScaleStyle",
     "DimensionLabelStyle",
     "DimensionTicksStyle",
-    "MeasureGridStyle",
     "QuantitativeAxisStyle",
     "ScaleContinuousStyle",
     "ScaleLogStyle",
@@ -329,7 +326,6 @@ __all__ = [
     "LineMarkStyle",
     "MarkLabelsStyle",
     "PaddingStyle",
-    "PageStyle",
     "PaginatorStyle",
     "PieChartMarksStyle",
     "PieChartStyle",

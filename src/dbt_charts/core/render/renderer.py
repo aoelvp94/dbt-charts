@@ -945,9 +945,10 @@ def render(
         )
 
     elif format == "html":
-        # Exclude keys that are already positional args to to_html — specifically
-        # 'background', which callers pass as an SVG canvas override but is not
-        # a to_html option (the HTML page background comes from resolved_style).
+        # 'background' is an SVG canvas override callers pass through
+        # options, not a to_html() option — to_html() reads the HTML page
+        # background separately, off the rendered SVG's own
+        # data-dbt-page-background attribute, unaffected by this override.
         html_options = {k: v for k, v in options.items() if k != "background"}
         html_output = to_html(
             svg_content,

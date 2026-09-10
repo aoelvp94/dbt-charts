@@ -234,7 +234,7 @@ class TestQuotingRoundTrips:
 
     def test_a_list_replaces_an_indented_block_sequence(self) -> None:
         # How the value being *replaced* is written, not the new one. Every
-        # table chart in `examples/playground/charts/reference/pivot-tables.yml`
+        # table chart in `examples/playground/charts/cards/pivot-tables.yml`
         # authors its pivot channels this way, and the extent check reads the
         # item lines as a nested mapping under the key.
         original = "charts:\n  t:\n    type: table\n    rows:\n      - region\n"
@@ -605,7 +605,7 @@ class TestSequenceItemPaths:
         assert len(cols) == 2
         assert cols[0]["title"] == "Monthly Revenue"
         assert cols[1]["title"] == "Customers"
-        # `style` held nothing but that colour, so it goes too: an empty
+        # `style` held nothing but that color, so it goes too: an empty
         # `style:` parses as None, which the chart model rejects on load.
         assert "style" not in cols[0]
 
@@ -661,7 +661,7 @@ class TestSequenceItemPathRefusals:
         """No sequence to index means refuse — never create `0:` beside it.
 
         Creating the key turns a list into a mapping, or writes a second
-        structure next to a sequence the walker failed to recognise.
+        structure next to a sequence the walker failed to recognize.
         """
         with pytest.raises(ValueError, match=r"rows\.0\.title"):
             set_board_values("title: T\nrows:\n", {"rows.0.title": "X"})

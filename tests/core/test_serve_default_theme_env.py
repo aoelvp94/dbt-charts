@@ -3,7 +3,7 @@
 After removing the global-mutable pattern:
 - get_default_theme_name() reads DCT_DEFAULT_THEME at call time — no set_default_theme_name
 - Serve startup validates DCT_DEFAULT_THEME early and raises DbtChartsError on bad values
-- dbt_charts.yml: theme: is gone; project theme lives in charts/meta.yaml: extends:
+- dbt_charts.yml: theme: is gone; project theme lives in charts/meta.yml: extends:
 """
 
 from collections.abc import Callable

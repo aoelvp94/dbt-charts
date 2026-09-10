@@ -4,7 +4,7 @@ Every format the engine treats as a semantic name -- with house rules (notation
 registers, round-aware trim, native formatters) -- lives here. Format values
 from three sources:
 
-| source          | behaviour                                                  |
+| source          | behavior                                                  |
 |-----------------|-----------------------------------------------------------|
 | enum member     | house rules: engine spec + notation register + trim       |
 | style.formats   | native d3: literal spec, no post-processing               |

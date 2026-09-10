@@ -117,7 +117,7 @@ def mark_extents(svg: str) -> list[MarkExtent]:
     """Per-chart mark geometry, measured from a rendered board's SVG.
 
     Width alone is not enough. A bar chart on a quantitative x emits the right
-    number of marks, at the right x positions, in the right colours — with
+    number of marks, at the right x positions, in the right colors — with
     height 0. Every naming and legibility check passed it; the chart was
     blank. Measure both axes.
     """
@@ -342,11 +342,11 @@ def _arc_points(  # the SVG arc command's own parameter list
     """Points that bound an elliptical arc: its endpoints plus any axis extreme on it.
 
     A wedge's bulge lies outside its chord, so measuring endpoints alone under-reports
-    every pie slice. This converts to the centre parameterisation (SVG F.6.5) and keeps
+    every pie slice. This converts to the center parameterization (SVG F.6.5) and keeps
     whichever of the ellipse's four axis extremes fall inside the arc's actual sweep.
     """
     if rotation % 360 != 0:
-        # Not emitted by any mark renderer here, and the maths below assumes it away.
+        # Not emitted by any mark renderer here, and the math below assumes it away.
         return None
     if not rx or not ry or (x0, y0) == (x1, y1):
         return [(x0, y0), (x1, y1)]
@@ -367,16 +367,16 @@ def _arc_points(  # the SVG arc command's own parameter list
 
     start = math.atan2((y0 - cy) / ry, (x0 - cx) / rx)
     end = math.atan2((y1 - cy) / ry, (x1 - cx) / rx)
-    travelled = (end - start) % (2 * math.pi)
+    traveled = (end - start) % (2 * math.pi)
     if not sweep:
-        travelled -= 2 * math.pi
+        traveled -= 2 * math.pi
 
     points = [(x0, y0), (x1, y1)]
     for quarter in range(4):
         angle = quarter * math.pi / 2
         delta = (angle - start) % (2 * math.pi)
-        if travelled < 0:
+        if traveled < 0:
             delta -= 2 * math.pi
-        if abs(delta) <= abs(travelled):
+        if abs(delta) <= abs(traveled):
             points.append((cx + rx * math.cos(angle), cy + ry * math.sin(angle)))
     return points

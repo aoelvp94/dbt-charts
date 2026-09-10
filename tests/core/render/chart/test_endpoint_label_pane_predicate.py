@@ -241,7 +241,7 @@ def test_multi_series_vertical_bar_with_endpoint_labels_flips_axis_left():
 
 
 # --------------------------------------------------------------------------
-# Layered charts with no base colour-series channel: the rail fires only when
+# Layered charts with no base color-series channel: the rail fires only when
 # x and y are both plain scalar columns (layered_endpoint_rail_shape, in
 # dbt_charts.core.utils). compile's has_layers term (_bake_ay_orient) and
 # render's applies_to() share that one leaf so a list y (folded wide) or an

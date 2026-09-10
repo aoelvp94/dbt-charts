@@ -21,7 +21,7 @@ def to_html(
 
     HTML format wraps the SVG artifact without changing its body. The SVG
     carries all chart rendering and layout, including the variable controls the
-    server draws — a host adds behaviour to them, not markup.
+    server draws — a host adds behavior to them, not markup.
 
     Args:
         svg_content: The SVG content to wrap
@@ -68,9 +68,9 @@ def to_html(
 
     page_title = metadata["page-title"]
     font_family = metadata["font-family"]
-    page_background = metadata["page-background"]
+    board_background = metadata["page-background"]
     escaped_title = html_module.escape(page_title)
-    bg_style = f"background-color: {page_background};"
+    bg_style = f"background-color: {board_background};"
 
     chrome = options.get("chrome", "")
 

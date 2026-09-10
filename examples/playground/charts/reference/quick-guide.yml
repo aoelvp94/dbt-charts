@@ -517,7 +517,8 @@ rows:
           Real-time insights into **{{ style_category }}** performance and revenue trends.
         style:
           background: "#667eea"
-          color: white
+          font:
+            color: white
           padding: "24px"
           border:
             radius: 8
@@ -539,7 +540,8 @@ rows:
               ✅ **Revenue up 12%** this quarter
             style:
               background: "#d4edda"
-              color: "#155724"
+              font:
+                color: "#155724"
               padding: "12px 16px"
               border:
                 radius: 8
@@ -550,7 +552,8 @@ rows:
               📊 **549 units** sold this period
             style:
               background: "#cce5ff"
-              color: "#004085"
+              font:
+                color: "#004085"
               padding: "12px 16px"
               border:
                 radius: 8
@@ -561,7 +564,8 @@ rows:
               🎯 **On track** for Q4 goals
             style:
               background: "#fff3cd"
-              color: "#856404"
+              font:
+                color: "#856404"
               padding: "12px 16px"
               border:
                 radius: 8
@@ -572,7 +576,7 @@ rows:
           margin: "16px 0 0 0"
 
   - text: |
-      Style properties accept any CSS: `background`, `padding`, `border`, `color`, `border-radius`, and more. Use `content` for markdown text, headers, and even images.
+      Style properties accept any CSS: `background`, `padding`, `border`, `font.color`, `border-radius`, and more. Use `content` for markdown text, headers, and even images.
 
       ---
 

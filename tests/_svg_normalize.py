@@ -11,7 +11,7 @@ between two renders in one process, none of them visual:
   ``clipN``, all of which increment per render for the process's lifetime.
 
 Any test asserting that two renders are equal — or that they differ — has to
-strip all four or it is asserting the clock. Kept here rather than in one test
+strip all three or it is asserting the clock. Kept here rather than in one test
 module because the second caller is what found the first one's gaps.
 
 A narrower sibling of ``tests/visual/discovery.py``'s ``normalize_svg``, which
@@ -26,10 +26,6 @@ import re
 
 def normalize_same_run_svg(svg: str) -> str:
     """``svg`` with every same-run-varying token removed or renumbered."""
-    # Not same-run-varying — it is md5 of the board's dimensions — but stripped
-    # with the rest so a caller comparing across sizes is not tripped by a hash
-    # that restates the width and height printed beside it.
-    svg = re.sub(r'\s*id="dbt-charts-svg-[^"]*"', "", svg)
     svg = re.sub(r'\s*data-rendered-at="[^"]*"', "", svg)
     svg = re.sub(
         r'<text\s+data-role="render-timestamp"[^>]*>.*?</text>',

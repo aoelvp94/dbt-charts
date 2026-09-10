@@ -12,7 +12,7 @@ themselves (those are tunable theme values, and pinning them is banned — see
   * where a theme differentiates the two axes, the vertical grid is a different
     color from the horizontal one (which axis is lighter depends on whether the
     theme's canvas is light or dark, so only difference is asserted here — the
-    direction is a visual judgement, checked by the committed goldens);
+    direction is a visual judgment, checked by the committed goldens);
   * scatter is quant x quant, so both of its axes match in color *and* width.
 """
 

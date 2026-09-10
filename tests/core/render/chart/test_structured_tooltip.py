@@ -235,7 +235,7 @@ def test_board_bound_grouped_bar_earns_a_rank_from_its_new_domain():
     ``distinct_series_values``'s natural order, so nothing about display moves.
 
     Suppressing the rank whenever the domain equals its own sorted order was
-    tried and reverted: it also stripped the rank from endpoint-labelled lines
+    tried and reverted: it also stripped the rank from endpoint-labeled lines
     that sort alphabetically by coincidence, and those render no legend for
     the runtime to fall back to.
     """
@@ -881,7 +881,7 @@ _HEATMAP_DATA = [
 
 def test_heatmap_header_carries_both_x_and_y():
     """Heatmap's identity is the PAIR [x, y] -- both x and y header the cell;
-    the colour-encoded value is the sole dependent row, no series/no total."""
+    the color-encoded value is the sole dependent row, no series/no total."""
     chart = HeatmapChart(id="t", type="heatmap", x="day", y="hour", color="visits")
     labels = _render(chart, _HEATMAP_DATA)
     row = next(
@@ -893,7 +893,7 @@ def test_heatmap_header_carries_both_x_and_y():
 
 
 def test_heatmap_without_color_channel_does_not_crash():
-    """A heatmap with no bound colour channel is a degenerate but valid
+    """A heatmap with no bound color channel is a degenerate but valid
     chart (color: str | None) -- structured tooltip must simply not apply
     (matches cartesian's optional-header pattern), never assert-crash."""
     chart = HeatmapChart(id="t", type="heatmap", x="day", y="hour")
@@ -917,7 +917,7 @@ _PLAIN_SCATTER_DATA = [
 
 
 def test_plain_scatter_no_header_two_peer_value_rows():
-    """Plain scatter (no colour): no header row at all -- y (dependent)
+    """Plain scatter (no color): no header row at all -- y (dependent)
     leads, x (independent) follows as a second peer value row, since
     neither axis alone identifies the point."""
     chart = ScatterChart(id="t", type="scatter", x="cost", y="revenue")
@@ -939,7 +939,7 @@ _COLORED_SCATTER_DATA = [
 
 
 def test_colored_scatter_series_leads_as_swatched_header():
-    """Colour channel present: the series identity leads as a swatched
+    """Color channel present: the series identity leads as a swatched
     header-like line (mirrors pie's header_is_swatched), then the two peer
     value rows -- no separate series row, the header IS the series."""
     chart = ScatterChart(id="t", type="scatter", x="cost", y="revenue", color="region")
@@ -1020,7 +1020,7 @@ def test_missing_series_at_x_is_omitted_not_a_placeholder_mark():
     data_labels = [lb for lb in labels if ROLE_HEADER in lb]
     # No row's own value (5.5, 2.0, 3.3) is tiny relative to the others, so
     # BarHoverBandFeature correctly adds no hover band layer here at all (see
-    # bar_hover_band.py's module docstring) -- one aria-labelled entry per
+    # bar_hover_band.py's module docstring) -- one aria-labeled entry per
     # real data row, no doubling.
     assert len(data_labels) == len(_SPARSE_SERIES_DATA), data_labels
     assert not any(

@@ -2756,11 +2756,10 @@ class TestOverlayBarLabelSortPreservation:
     not just its own base-chart rendering.
 
     ``_reconcile_x_domain`` pins an explicit, correctly-sorted
-    ``scale.domain`` array whenever a transform-carrying label sublayer
-    with no x channel of its own shares the scale (``force=True``):
-    verified empirically that Vega-Lite's own native sort-by-field does
-    not resolve correctly across a shared scale for this trigger, pinned
-    domain or not, so the pin has to carry the sort order itself. This
+    ``scale.domain`` array on every layered categorical x. It has to carry
+    the sort order itself: verified empirically that Vega-Lite's own native
+    sort-by-field does not resolve across a shared scale that a
+    transform-carrying label sublayer forked, pinned domain or not. This
     class verifies the actual rendered order via vl_convert, not just the
     emitted spec's structure — a structural-only check already let two
     prior variants of this regression ship.
@@ -2770,8 +2769,8 @@ class TestOverlayBarLabelSortPreservation:
         """Bar chart with sort: {by: revenue, order: desc} + an overlay bar
         layer carrying an alias-format label must render in the authored
         sort order, not query-row order — via an explicit scale.domain
-        pinned to that same order (the label's calculate transform firing
-        the ``force=True`` trigger).
+        pinned to that same order (the label's calculate transform is what
+        breaks VL's own native sort here).
 
         Data order: Jan (1.2M), Feb (2.4M), Mar (3.6M).
         Authored sort: desc by revenue → expected render order: Mar, Feb, Jan.
@@ -2800,8 +2799,8 @@ class TestOverlayBarLabelSortPreservation:
                                     "visible": True,
                                     # "number" is a theme alias for "~s" (SI).
                                     # resolve_label_format("number", ...) → is_house=True
-                                    # → calculate transform → _reconcile_x_domain's
-                                    # force=True trigger fires.
+                                    # → calculate transform, which breaks
+                                    # VL's own native sort-by-field.
                                     "format": "number",
                                 }
                             }
@@ -2849,8 +2848,8 @@ class TestOverlayBarLabelSortPreservation:
         """Without an authored sort, scale.domain stays in first-seen row order.
 
         This is the unchanged-behavior regression guard: _reconcile_x_domain
-        already pins a domain (force=True, house label present) but must not
-        apply any sort when none was authored.
+        pins a domain on any layered categorical x, but must not apply any
+        sort when none was authored.
         """
         from dbt_charts.core.compile.normalize.charts import normalize_chart
         from dbt_charts.core.render.chart.session import BoardRenderSession
@@ -3243,7 +3242,7 @@ class TestOverlayLayerXTypePreservation:
     """
 
     def test_line_overlay_label_on_temporal_x_renders_text(self) -> None:
-        """Line chart with ISO-date temporal x + labelled line overlay must
+        """Line chart with ISO-date temporal x + labeled line overlay must
         produce real <text> nodes. A nominal x-type injection causes blank charts."""
         from dbt_charts.core.compile.normalize.charts import normalize_chart
         from dbt_charts.core.render.chart.session import BoardRenderSession
@@ -3264,7 +3263,7 @@ class TestOverlayLayerXTypePreservation:
         )
 
     def test_area_overlay_label_on_temporal_x_renders_text(self) -> None:
-        """Area chart with ISO-date x + labelled area overlay must produce text."""
+        """Area chart with ISO-date x + labeled area overlay must produce text."""
         from dbt_charts.core.compile.normalize.charts import normalize_chart
         from dbt_charts.core.render.chart.session import BoardRenderSession
 
@@ -3281,7 +3280,7 @@ class TestOverlayLayerXTypePreservation:
         assert texts, "area overlay with temporal x must render non-empty <text> nodes"
 
     def test_scatter_overlay_label_on_quantitative_x_renders_text(self) -> None:
-        """Scatter chart with quantitative x + labelled scatter overlay must render
+        """Scatter chart with quantitative x + labeled scatter overlay must render
         real text nodes via vl_convert (not blank). The old design injected a
         hardcoded nominal x type on the label sublayer, producing a spurious third
         axis and potentially blanking the chart. The label sublayer carries no x
@@ -3651,7 +3650,7 @@ class TestOverlayLineVsPointRenderLevel:
     else point_label_is_house`.
 
     TestLineVsPointLabelRenderLevel proves this ternary at the base-chart
-    level; this class proves the overlay-layer analogue, with the two mark
+    level; this class proves the overlay-layer analog, with the two mark
     labels authoring divergent formats (alias vs literal) so a flattened
     ternary is render-detectable, not just resolve-level.
     """
@@ -3871,11 +3870,11 @@ class TestOverlayBarSortAggregateMatchesUnlabeled:
     """A house-register overlay label must not change the base chart's own
     category order.
 
-    ``rendered_x_domain`` pins an explicit domain (the force=True trigger,
-    since the label sublayer's calculate transform breaks Vega-Lite's native
-    sort-by-field across the shared scale). That pinned domain must sort by
-    the same aggregate Vega-Lite's own EncodingSortField.op applies when
-    nothing forces a pin — sum, unconditionally, since the bar emitter never
+    ``rendered_x_domain`` pins an explicit domain (the label sublayer's
+    calculate transform is what breaks Vega-Lite's native sort-by-field
+    across the shared scale). That pinned domain must sort by the same
+    aggregate Vega-Lite's own EncodingSortField.op applies when nothing
+    pins one — sum, unconditionally, since the bar emitter never
     emits stack: null even for a grouped (xOffset) chart. With multi-row-per-x
     data, sum and min give different category orders, so this is the case
     that would catch a wrong aggregate: render the identical chart with and
@@ -4778,7 +4777,7 @@ class TestNullMeasureLabels:
             )
 
     @pytest.mark.parametrize("position", ["middle", "middle_aligned", "bottom"])
-    def test_genuine_zero_still_labelled(self, make_chart, position) -> None:
+    def test_genuine_zero_still_labeled(self, make_chart, position) -> None:
         """An exact 0 is a value, not a gap — it keeps its label."""
         pytest.importorskip("vl_convert")
         board_rs, board_ctx = _board_with_bar_labels_visible(True, position=position)
@@ -5327,7 +5326,7 @@ class TestStackGeometryFidelity:
     def test_offset_matches_the_bars_own_stack_mode(self, make_chart, mode):
         """`normalize` pins a [0,1] axis and `center` straddles the baseline.
 
-        Stacking labels from zero puts them off-axis or inside the neighbouring
+        Stacking labels from zero puts them off-axis or inside the neighboring
         segment — a wrong result that looks right.
         """
         board_rs, board_ctx = _board_with_bar_labels({"position": "middle"})

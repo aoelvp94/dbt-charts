@@ -3,7 +3,7 @@
 Vega's ``autosize: fit`` sizes the plot to fit everything the scenegraph draws,
 so any mark spilling past the plot rect pushes the plot box inward. On line and
 area charts most of that spill was invisible — an ``opacity: 0`` hover
-hit-target and a background-coloured halo — and it left the grid ~9px inside the
+hit-target and a background-colored halo — and it left the grid ~9px inside the
 card padding the chart title sits on.
 
 Clipping is the fix, and it is also why the clipped set is narrow: a clip cuts a
@@ -29,7 +29,7 @@ CARD_PADDING = resolve_style(get_theme_style()).frame.card_padding
 # A temporal x-axis, as on the reported board: Vega-Lite flushes the first and last
 # tick labels against the plot edge, so the axis claims no width of its own there and
 # the only thing that can push the plot inward is mark spill. On a nominal x the first
-# label is centred on the edge and legitimately overhangs it — that inset is the
+# label is centered on the edge and legitimately overhangs it — that inset is the
 # label's, not this bug's.
 _LINE_BOARD = """
 title: Alignment
@@ -139,7 +139,7 @@ def test_plot_box_reserves_nothing_for_invisible_ink(chart_type: str):
 def test_every_layer_that_paints_nothing_is_clipped(chart_type: str):
     """The hit target and every halo clip — the four sites, not just the first.
 
-    A halo is invisible by colour, not by opacity: it paints the theme background
+    A halo is invisible by color, not by opacity: it paints the theme background
     at 1.0. Matching on ``opacity == 0`` alone would leave three of the four clip
     sites unpinned.
     """

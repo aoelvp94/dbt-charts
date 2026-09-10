@@ -33,9 +33,7 @@ from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 from .._paths import DBT_CHARTS_DIR
 
 EXAMPLES_DIR = DBT_CHARTS_DIR / "examples"
-SPECIMEN = (
-    EXAMPLES_DIR / "playground" / "charts" / "tables-and-kpis" / "table-emphasis.yml"
-)
+SPECIMEN = EXAMPLES_DIR / "playground" / "charts" / "cards" / "table-emphasis.yml"
 
 
 def _registry(local_project: Callable[..., FilesystemProject]) -> AdapterRegistry:
@@ -57,9 +55,7 @@ def _compile_and_render(
     # state and causes failures when running in parallel with other tests that
     # also chdir.
     project = local_project(EXAMPLES_DIR / "playground")
-    result = compile_file(
-        project.path("charts/tables-and-kpis/table-emphasis.yml").read_board()
-    )
+    result = compile_file(project.path("charts/cards/table-emphasis.yml").read_board())
     assert result.success, f"Compile failed: {result.errors}"
     board = result.board
     assert board is not None

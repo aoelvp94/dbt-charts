@@ -146,10 +146,10 @@ rows:
     def test_list_boards_skips_meta_cascade_files(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """``meta.yaml`` carries a directory's defaults; it is never its own board."""
+        """``meta.yml`` carries a directory's defaults; it is never its own board."""
         boards = tmp_path / "charts"
         boards.mkdir()
-        (boards / "meta.yaml").write_text(
+        (boards / "meta.yml").write_text(
             "extends: paper\nqueries:\n  shared:\n    sql: SELECT 1\n    source: test\n"
         )
         (boards / "dashboard.yml").write_text("title: Main\ntext: Hello\n")
@@ -431,11 +431,11 @@ rows:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """In-memory render (yaml_content, no path) inherits the project-level
-        default source from charts/meta.yaml.
+        default source from charts/meta.yml.
 
         Hosts that compile a stored/edited board in isolation (Cloud, playground)
-        pass yaml_content, which bypasses the on-disk meta.yaml cascade. A board
-        whose SQL query omits `source:` and relies on `charts/meta.yaml: source:`
+        pass yaml_content, which bypasses the on-disk meta.yml cascade. A board
+        whose SQL query omits `source:` and relies on `charts/meta.yml: source:`
         would otherwise fail with ERR-SOURCE-REQUIRED.
         """
         from dbt_charts.core.execute.adapters import build_adapter_registry
@@ -445,7 +445,7 @@ rows:
         )
         boards = tmp_path / "charts"
         boards.mkdir()
-        (boards / "meta.yaml").write_text("source: db\n")
+        (boards / "meta.yml").write_text("source: db\n")
 
         # Covers both a named query and an inline chart query — the inherited
         # default must reach the synthesized inline query too, not only named ones.
@@ -486,12 +486,12 @@ rows:
         """A BoardFile's own location is the sole meta cascade root — not a
         separate 'base_dir' concept.
 
-        BoardFile unifies the ref-resolution anchor and the meta.yaml cascade
+        BoardFile unifies the ref-resolution anchor and the meta.yml cascade
         root into a single `path`, so there is no longer a second,
         independently-supplied base_dir that could silently read a *different*
-        directory's meta.yaml (the old bug this test used to catch). Content
+        directory's meta.yml (the old bug this test used to catch). Content
         anchored outside charts/ (e.g. a sibling `reports/` directory with no
-        meta.yaml of its own) must not inherit charts/meta.yaml's default
+        meta.yml of its own) must not inherit charts/meta.yml's default
         source — the cascade only walks the anchor's own ancestors.
         """
         from dbt_charts.core.execute.adapters import build_adapter_registry
@@ -501,9 +501,9 @@ rows:
         )
         boards = tmp_path / "charts"
         boards.mkdir()
-        (boards / "meta.yaml").write_text("source: db\n")
+        (boards / "meta.yml").write_text("source: db\n")
 
-        # A sibling directory with no meta.yaml of its own — proves the cascade
+        # A sibling directory with no meta.yml of its own — proves the cascade
         # doesn't cross into charts/ from an unrelated anchor.
         reports = tmp_path / "reports"
         reports.mkdir()
@@ -521,7 +521,7 @@ rows:
             result_cache=None,
         )
         assert result.status == "failed", (
-            "content anchored outside charts/ must not inherit charts/meta.yaml's "
+            "content anchored outside charts/ must not inherit charts/meta.yml's "
             "default source"
         )
 

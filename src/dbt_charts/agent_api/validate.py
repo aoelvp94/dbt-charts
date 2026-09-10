@@ -170,11 +170,11 @@ def _validate_one_path(
 
 
 def _validate_meta_file(resolved: ProjectPath) -> ValidateResult:
-    """Validate a meta.yaml as a BoardPatch fragment — no layout required."""
+    """Validate a meta.yml as a BoardPatch fragment — no layout required."""
     from pydantic import ValidationError as PydanticValidationError
 
     from dbt_charts.core.compile.errors import CompilationError
-    from dbt_charts.core.compile.models.board.patch import BoardPatch
+    from dbt_charts.core.compile.models.board.patch import BOARD_PATCH_ADAPTER
     from dbt_charts.core.compile.parse.meta import load_meta_file
 
     relpath = resolved.relpath
@@ -192,7 +192,7 @@ def _validate_meta_file(resolved: ProjectPath) -> ValidateResult:
         )
 
     try:
-        BoardPatch.model_validate(meta_data)
+        BOARD_PATCH_ADAPTER.validate_python(meta_data)
     except PydanticValidationError as exc:
         errors = [
             DbtChartsError.from_code(

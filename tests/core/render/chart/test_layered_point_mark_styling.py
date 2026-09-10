@@ -52,7 +52,7 @@ _POINT = {
 }
 # What _POINT must become in VL. `fill` rides along only because `filled` is
 # False — encoding.color owns the fill channel otherwise (`_emit_point_mark`).
-# `paint` is synthesised by `_effective_paint`, not a VL mark prop.
+# `paint` is synthesized by `_effective_paint`, not a VL mark prop.
 _EXPECTED_VL = {
     "size": 120.0,
     "filled": False,
@@ -105,7 +105,7 @@ def _point_specs(spec: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _effective_paint(node: dict[str, Any]) -> Any:
-    """The colour that actually paints this point's ink.
+    """The color that actually paints this point's ink.
 
     A hollow point takes its ink from `stroke`, a filled one from `fill`. The
     layered path pins that channel through `encoding`, which beats the mark
@@ -121,8 +121,8 @@ def _effective_paint(node: dict[str, Any]) -> Any:
 def _authored_point_marks(spec: dict[str, Any]) -> list[dict[str, Any]]:
     """The points carrying authored ink, reduced to the tracked channels.
 
-    Filters on `color`, which drops the background-coloured halo point — the
-    theme's own knockout mask, which never carries the authored colour (it does
+    Filters on `color`, which drops the background-colored halo point — the
+    theme's own knockout mask, which never carries the authored color (it does
     carry a scaled copy of the authored `size`, so `size` cannot be the filter).
     """
     out: list[dict[str, Any]] = []

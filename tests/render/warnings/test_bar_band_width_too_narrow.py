@@ -284,9 +284,9 @@ def test_fires_when_faceted_by_the_color_field() -> None:
     """Small multiples partitioned on the same field bound to color.
 
     `multiples: {columns: series}` splits the *data* before it reaches a
-    panel, but the colour/offset scale is never one of the channels
+    panel, but the color/offset scale is never one of the channels
     `facet_bound_position_channels` narrows — only a position channel (x/y)
-    double-encoding the facet field resolves independently, and colour stays
+    double-encoding the facet field resolves independently, and color stays
     shared across panels by design. So each panel's band still divides
     across the full, global series domain, with a single sub-slot occupied.
     Real render measurement: 1.18px bars at this exact shape. The detector

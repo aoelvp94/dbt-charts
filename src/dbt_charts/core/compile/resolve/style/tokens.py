@@ -393,7 +393,7 @@ def _stops(value: str, ref: str, field: str, palettes: Mapping[str, str]) -> lis
         return resolve_palette(ref)
     except ValueError as e:
         # Every resolver failure subclasses ValueError — unknown name, a tone
-        # (colour-token only), an over-request, a surface it cannot carve. Any
+        # (color-token only), an over-request, a surface it cannot carve. Any
         # of them escaping here becomes ERR-INTERNAL, which AGENTS.md classes
         # as a defect tier.
         raise _unknown_palette(value, field, palettes) from e

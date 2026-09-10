@@ -30,17 +30,16 @@ from dbt_charts.core.compile.models.chart.resolved import ResolvedBarStyle
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.style.authored import (
     AreaChartStylePatch,
-    AxisGridStylePatch,
     AxisLabelStylePatch,
     AxisTicksStylePatch,
     AxisXStylePatch,
     AxisYStylePatch,
     BandAxisStylePatch,
     BarChartStylePatch,
+    BaseAxisGridStylePatch,
     DimensionLabelStylePatch,
     LegendStylePatch,
     LineChartStylePatch,
-    MeasureGridStylePatch,
     QuantitativeAxisStylePatch,
 )
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
@@ -133,7 +132,7 @@ class TestChartLocalAxisYMerge:
 
     def test_grid_visible_propagates(self) -> None:
         patch = BarChartStylePatch(
-            axis_y=AxisYStylePatch(grid=MeasureGridStylePatch(visible=False))
+            axis_y=AxisYStylePatch(grid=BaseAxisGridStylePatch(visible=False))
         )
         result = build_chart_style_context(
             _board(), BarChart(id="t", type="bar", style=patch)
@@ -201,8 +200,8 @@ class TestChartLocalAxisGlobalMerge:
 
     def test_global_grid_not_visible_applies_to_both(self) -> None:
         patch = BarChartStylePatch(
-            axis_x=AxisXStylePatch(grid=AxisGridStylePatch(visible=False)),
-            axis_y=AxisYStylePatch(grid=MeasureGridStylePatch(visible=False)),
+            axis_x=AxisXStylePatch(grid=BaseAxisGridStylePatch(visible=False)),
+            axis_y=AxisYStylePatch(grid=BaseAxisGridStylePatch(visible=False)),
         )
         result = build_chart_style_context(
             _board(), BarChart(id="t", type="bar", style=patch)
@@ -219,8 +218,8 @@ class TestChartLocalAxisGlobalMerge:
     def test_per_axis_overrides_global(self) -> None:
         """style.axis_y.grid.visible=True wins over style.axis_x.grid.visible=False for axis_y."""
         patch = BarChartStylePatch(
-            axis_x=AxisXStylePatch(grid=AxisGridStylePatch(visible=False)),
-            axis_y=AxisYStylePatch(grid=MeasureGridStylePatch(visible=True)),
+            axis_x=AxisXStylePatch(grid=BaseAxisGridStylePatch(visible=False)),
+            axis_y=AxisYStylePatch(grid=BaseAxisGridStylePatch(visible=True)),
         )
         result = build_chart_style_context(
             _board(), BarChart(id="t", type="bar", style=patch)
@@ -239,7 +238,7 @@ class TestChartLocalAxisQuantitativeMerge:
     def test_quantitative_grid_dash_propagates(self) -> None:
         patch = BarChartStylePatch(
             axis_quantitative=QuantitativeAxisStylePatch(
-                grid=AxisGridStylePatch(dash=[2, 2])
+                grid=BaseAxisGridStylePatch(dash=[2, 2])
             )
         )
         result = build_chart_style_context(
@@ -1352,7 +1351,7 @@ class TestEmojiInResolvedStyle:
         )
 
     def test_patch_rejects_deleted_color_emoji_mode(self) -> None:
-        """The colour emoji font is deleted — 'color' must fail validation, not
+        """The color emoji font is deleted — 'color' must fail validation, not
         silently downgrade or resolve to a family."""
         from pydantic import ValidationError
 

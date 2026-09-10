@@ -115,6 +115,7 @@ class TestChartLocalPaletteCapacity:
         exactly the coloring the chart had before board-wide binding
         existed."""
         from dbt_charts.core.render.chart.session import BoardRenderSession
+        from dbt_charts.core.render.chart.spec import RenderBox
 
         resolved_board, executor = _resolve_board(_BOARD)
         narrow = resolved_board.charts["narrow"]
@@ -124,7 +125,11 @@ class TestChartLocalPaletteCapacity:
             i for i in resolved_board.layout.items if i.chart and i.chart.id == "narrow"
         )
         spec = session.finalize_vl(
-            session.emit_chart(narrow, item, {narrow.query_name: rows})
+            session.emit_chart(
+                narrow,
+                RenderBox(width=item.width, height=item.height),
+                {narrow.query_name: rows},
+            )
         )
         color_range = spec["config"]["range"]["category"]
         assert color_range == list(narrow.palette)

@@ -265,9 +265,10 @@ path = "dbt_charts.agent_api"
 layer = "agent_api"
 # FilesystemProject construction is confined to the dbt_charts.cli leaf. agent_api
 # receives a Project and may reference the concrete type only under TYPE_CHECKING;
-# a runtime import (i.e. construction) is a boundary break. The lone exception is
-# the host-type guard in _paths.resolve_board_or_error / _relpath_for_fs_location
-# (carries a # tach-ignore + tracked task). project_session is unchecked, so its
+# a runtime import (i.e. construction) is a boundary break. The exceptions are the
+# host-type guard in _paths.resolve_board_or_error / _relpath_for_fs_location and
+# the direct construction in _paths.compile_editor_buffer (each covered by a
+# tach-ignore + tracked task). project_session is unchecked, so its
 # ProjectSession.open construction is
 # not caught here — its migration to the edge is the tracked follow-up.
 cannot_depend_on = ["dbt_charts.cli", "dbt_charts.cli.filesystem_project"]

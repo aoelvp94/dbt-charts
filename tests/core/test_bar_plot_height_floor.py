@@ -310,7 +310,7 @@ def test_the_row_legends_charge_does_not_track_series_count() -> None:
     series the region-name generator's longer "Region NN" labels overflow
     the single row and the fit-rule ladder wraps the legend into the
     row-count-tracking ``compact`` layout instead, which is exactly the
-    behaviour this test is distinguishing itself from.
+    behavior this test is distinguishing itself from.
     """
     assert (
         _resolved(640.0, series=6).style.estimated_plot_height_px
@@ -337,7 +337,7 @@ def test_a_layered_bar_is_charged_for_the_legend_its_layers_earn() -> None:
     """A bar with ``layers:`` draws a top legend naming the base series and
     each overlay, even with no ``color:`` and a plain string ``y``.
 
-    Layers are a third source of legend entries alongside a colour channel
+    Layers are a third source of legend entries alongside a color channel
     and a wide (list) ``y``. Count only the first two and this shape reads
     as zero entries, so the no-entries guard bills it nothing for a strip
     Vega really draws — measured on the spec as two entries, oriented top
@@ -455,7 +455,7 @@ def test_a_suppressed_legend_is_charged_nothing() -> None:
     )
 
 
-def _coloured_overlay(
+def _colored_overlay(
     rows: list[dict[str, str | float]],
     *,
     layer_color: str | None,
@@ -483,14 +483,14 @@ def _coloured_overlay(
     return resolved.style
 
 
-def test_an_overlay_adds_an_entry_to_a_colour_legend() -> None:
-    """An overlay joins the colour legend rather than starting its own, so a
-    coloured bar with a layer is charged for one more entry than its colour
+def test_an_overlay_adds_an_entry_to_a_color_legend() -> None:
+    """An overlay joins the color legend rather than starting its own, so a
+    colored bar with a layer is charged for one more entry than its color
     cardinality.
 
     Measured on the emitted spec: 3 regions plus one line layer produce the
     domain ``["APAC", "EMEA", "NA", "target"]`` under one shared top legend.
-    Counting only the colour cardinality charges ``ceil(3/2) = 2`` rows where
+    Counting only the color cardinality charges ``ceil(3/2) = 2`` rows where
     the legend draws ``ceil(4/2) = 2`` — harmless until the cardinality is
     even, where 4-vs-5 entries is a whole row of height and the difference
     between reporting a starved plot and staying quiet. The expected delta is
@@ -506,8 +506,8 @@ def test_an_overlay_adds_an_entry_to_a_colour_legend() -> None:
     ]
 
     # Four regions fill two rows; the overlay's entry starts a third.
-    plain = _coloured_overlay(rows, layer_color=None, with_layer=False)
-    layered = _coloured_overlay(rows, layer_color=None, with_layer=True)
+    plain = _colored_overlay(rows, layer_color=None, with_layer=False)
+    layered = _colored_overlay(rows, layer_color=None, with_layer=True)
     legend = resolve_chart_style_context(get_theme_style()).legend
     four_entries = legend_wrap_marginal_height_px(4, None, legend.compact_columns)
     five_entries = legend_wrap_marginal_height_px(5, None, legend.compact_columns)
@@ -516,12 +516,12 @@ def test_an_overlay_adds_an_entry_to_a_colour_legend() -> None:
     ) == pytest.approx(five_entries - four_entries)
 
 
-def test_a_layer_with_its_own_colour_adds_no_entry_of_its_own() -> None:
+def test_a_layer_with_its_own_color_adds_no_entry_of_its_own() -> None:
     """A layer authoring `color:` contributes only values not already in the
-    base's colour domain — for a per-region target line, none of them.
+    base's color domain — for a per-region target line, none of them.
 
-    The emitter appends a colour-less overlay's label unconditionally, but
-    skips a coloured layer's values that the scale already holds
+    The emitter appends a color-less overlay's label unconditionally, but
+    skips a colored layer's values that the scale already holds
     (``_overlay.py``: ``if value in scale_domain: continue``). Charging such
     a layer +1 regardless bills a compact row the legend never draws:
     measured at 4 regions on a 300px card, that took the estimate from 71.0
@@ -533,7 +533,7 @@ def test_a_layer_with_its_own_colour_adds_no_entry_of_its_own() -> None:
         for i, q in enumerate(["Q1", "Q2", "Q3", "Q4"])
         for r in ("North America", "EMEA", "APAC", "LATAM")
     ]
-    plain = _coloured_overlay(rows, layer_color=None, with_layer=False)
-    same_domain = _coloured_overlay(rows, layer_color="region", with_layer=True)
+    plain = _colored_overlay(rows, layer_color=None, with_layer=False)
+    same_domain = _colored_overlay(rows, layer_color="region", with_layer=True)
     assert same_domain.estimated_plot_height_px == plain.estimated_plot_height_px
     assert same_domain.plot_height_below_floor is False

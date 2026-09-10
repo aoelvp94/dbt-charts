@@ -107,10 +107,10 @@ def _rule_layers(spec: dict[str, Any]) -> list[dict[str, Any]]:
     return [lay for lay in layers if lay.get("mark", {}).get("type") == "rule"]
 
 
-def test_zero_anchored_scatter_emits_zero_rule_styled_from_grid_zero() -> None:
+def test_zero_anchored_scatter_emits_zero_rule_styled_from_grid_threshold() -> None:
     """A zero-anchored scatter (all-positive, close-to-zero ratio) must draw
     the heavy zero rule at datum 0, styled identically to the same rule on a
-    bar chart under the same board style (both read `axis_y.grid.zero`)."""
+    bar chart under the same board style (both read `axis_y.grid.threshold`)."""
     scatter_spec = _spec("scatter", _ABSTAIN_DATA)
     rule_layers = _rule_layers(scatter_spec)
     assert len(rule_layers) == 1
@@ -294,12 +294,17 @@ def test_layered_scatter_brackets_zero_across_positive_base_and_negative_overlay
     assert len(_rule_layers(spec)) == 1
 
 
-def test_rotated_dot_plot_scatter_with_categorical_y_emits_no_zero_rule() -> None:
+def test_rotated_dot_plot_scatter_emits_x_zero_rule_not_y_zero_rule() -> None:
     """Unlike line/area, scatter has no orientation field -- a "dot plot"
     recipe rotates by putting the quantitative value on x and the category on
-    y. The datum:0 rule must not fire against a categorical y-axis, even
-    though nothing pinned `scale.continuous.zero=False` there (regression:
-    test_chart_shape_recipes.py::test_dot_plot_recipe_survives_rotation)."""
+    y. The measure-axis datum:0 rule must not fire against a categorical
+    y-axis, even though nothing pinned `scale.continuous.zero=False` there
+    (regression: test_chart_shape_recipes.py::test_dot_plot_recipe_survives_rotation).
+
+    x is still quantitative and straddles zero, though, so the independent
+    quantitative-x zero rule (``_apply_x_threshold``'s generalization of the
+    measure-axis rule) fires there -- the rotated dot plot is exactly the
+    shape that previously had nothing at either axis."""
     payload: dict[str, Any] = {
         "id": "t",
         "type": "scatter",
@@ -313,4 +318,7 @@ def test_rotated_dot_plot_scatter_with_categorical_y_emits_no_zero_rule() -> Non
     spec = generate_vega_lite_spec(
         chart, data, width=400, board_style=_BOARD_STYLE, chart_style_context=_BOARD_CTX
     )
-    assert _rule_layers(spec) == []
+    rules = _rule_layers(spec)
+    assert len(rules) == 1
+    assert rules[0]["encoding"]["x"]["datum"] == 0
+    assert "datum" not in rules[0]["encoding"].get("y", {})

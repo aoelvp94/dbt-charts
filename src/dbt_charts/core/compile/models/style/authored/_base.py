@@ -60,7 +60,6 @@ from dbt_charts.core.compile.models.style.theme import (
     LineChartStyle,
     LineLayerStyle,
     LineMarkStyle,
-    MeasureGridStyle,
     PaddingStyle,
     PieChartStyle,
     PointMapChartStyle,
@@ -132,14 +131,13 @@ DimensionTicksStylePatch = build_patch_model(DimensionTicksStyle)
 # ── Axis leaf patches ─────────────────────────────────────────────────────────
 # Generated before axis variant patches so the recursive variant builds reuse
 # these exact classes for their sub-object fields.
-AxisGridZeroStylePatch: type  # declared for forward reference clarity
+AxisGridThresholdStylePatch: type  # declared for forward reference clarity
 from dbt_charts.core.compile.models.style.theme.axis import (
-    AxisGridZeroStyle,  # noqa: PLC0415, E402
+    AxisGridThresholdStyle,  # noqa: PLC0415, E402
 )
 
-AxisGridZeroStylePatch = build_patch_model(AxisGridZeroStyle)
+AxisGridThresholdStylePatch = build_patch_model(AxisGridThresholdStyle)
 BaseAxisGridStylePatch = build_patch_model(BaseAxisGridStyle)
-MeasureGridStylePatch = build_patch_model(MeasureGridStyle)
 AxisLineStylePatch = build_patch_model(AxisLineStyle)
 AxisTitleStylePatch = build_patch_model(AxisTitleStyle)
 AxisLabelStylePatch = build_patch_model(AxisLabelStyle)
@@ -342,11 +340,10 @@ class StylePatch(_StylePatchBase):
         return coerce_gap(v)
 
 
-# AxisGridStylePatch / AxisDomainStylePatch / AxisElementStylePatch are built
-# earlier (before the axis variant patches); they are not rebuilt here.
+# BaseAxisGridStylePatch / AxisDomainStylePatch / AxisElementStylePatch are
+# built earlier (before the axis variant patches); they are not rebuilt here.
 # AxisTicksStylePatch is built explicitly above (with the cadence validator
 # base_cls) — not rebuilt here.
-AxisGridStylePatch = BaseAxisGridStylePatch  # backwards-compat alias
 if TYPE_CHECKING:
 
     class PointMarkStylePatch(PointMarkStyle):

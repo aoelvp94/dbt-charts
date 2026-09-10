@@ -101,12 +101,14 @@ def test_normalize_stack_still_emits_top_rule_pair(make_chart) -> None:
     assert datums == [0, 1]
 
 
-def test_normalize_stack_with_percent_format_emits_only_unity_rule(
+def test_normalize_stack_with_percent_format_dedupes_unity_rule(
     make_chart,
 ) -> None:
-    """Regression pin: percent-format normalize area gets ONLY the single
-    unity rule at datum 1 -- no duplicate y=1 reference line."""
+    """Regression pin: percent-format normalize area keeps its 0% baseline
+    and gets exactly ONE 100% unity rule at datum 1 -- never the old
+    duplicate-unity ``[0, 1, 1]`` triple (two datum-1 rules, one from the
+    top-rule pair and one from the unity gate)."""
     spec = _render(make_chart, stack="normalize", format=".0%")
     rules = _rule_layers(spec)
-    assert len(rules) == 1
-    assert rules[0]["encoding"]["y"]["datum"] == 1
+    datums = sorted(layer["encoding"]["y"]["datum"] for layer in rules)
+    assert datums == [0, 1]

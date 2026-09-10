@@ -156,7 +156,7 @@ class TestAuthoredTitleStyleWinsOverWidthAware:
     ``font`` (family) applies AFTER the style overlay. Its ``fontSize`` and
     ``fontWeight`` keep the original ordering (applied BEFORE the style
     overlay) so authored overrides flow through. These tests pin that split
-    behaviour so a future refactor that "simplifies" the overlay back to a
+    behavior so a future refactor that "simplifies" the overlay back to a
     single application doesn't silently drop authored size/weight.
     """
 

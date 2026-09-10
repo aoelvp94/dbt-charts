@@ -1,9 +1,9 @@
-"""Regression fixture for the `charts/meta.yaml` cascade on a real on-disk
+"""Regression fixture for the `charts/meta.yml` cascade on a real on-disk
 project.
 
 `meta-cascade` is a minimal project whose `overview` board owns no `queries:`
 of its own — its only chart references `shared_kpi`, a query defined solely in
-`charts/meta.yaml`. This proves the fixture is valid and that `compile_file`'s
+`charts/meta.yml`. This proves the fixture is valid and that `compile_file`'s
 `apply_meta` cascade resolves it locally. Cloud's stored-board render path does
 not run this cascade yet (see
 `apps/cloud/tests/integration/test_meta_cascade.py`, the xfail premise test

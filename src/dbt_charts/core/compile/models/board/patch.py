@@ -12,23 +12,25 @@ base in ``merge_extends`` / ``merge_metas`` before any fragment is layered on.
 
 from __future__ import annotations
 
+from typing import Annotated
+
+from pydantic import BeforeValidator, TypeAdapter
+
 from dbt_charts.core.compile.models.board.authored import (
     AuthoredBoard,
-    _BoardDesugarMixin,
+    desugar_theme,
 )
-from dbt_charts.core.compile.models.factories import (
-    _PatchBase,
-    build_patch_model_ext,
-)
+from dbt_charts.core.compile.models.factories import build_patch_model_ext
 
-
-class _BoardPatchBase(_PatchBase, _BoardDesugarMixin):
-    """Base for BoardPatch: inherits extra="forbid" from _PatchBase and
-    theme→extends desugaring from _BoardDesugarMixin.
-    """
-
-
-BoardPatch = build_patch_model_ext(AuthoredBoard, base_cls=_BoardPatchBase)
+BoardPatch = build_patch_model_ext(AuthoredBoard)
 
 # All-None sentinel: no fields set, safe as the identity element for merge_patches.
 EMPTY_PATCH: BoardPatch = BoardPatch.model_construct()  # type: ignore[valid-type]
+
+# BoardPatch's authoring-input entry point: desugars theme: -> extends: ahead of
+# validation, mirroring AuthoredBoardInput (authored.py's desugar_theme). No
+# SchemaSugar marker here -- BoardPatch is never schema-walked by introspection,
+# and a fragment validated through the bare BoardPatch class (e.g. a nested
+# item's own recursive field type) never sees a top-level `theme:` key.
+BoardPatchInput = Annotated[BoardPatch, BeforeValidator(desugar_theme)]  # type: ignore[valid-type]  # type-state: type_ignore — BoardPatch is a runtime-built class (build_patch_model_ext), not a static type expression; same shape as EMPTY_PATCH's annotation above
+BOARD_PATCH_ADAPTER: TypeAdapter[BoardPatch] = TypeAdapter(BoardPatchInput)  # type: ignore[valid-type]  # type-state: type_ignore — BoardPatch is a runtime-built class (build_patch_model_ext), not a static type expression; same shape as EMPTY_PATCH's annotation above

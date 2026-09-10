@@ -339,7 +339,7 @@ class TestNavHtml:
         assert ">north-america<" in html
 
     def test_labels_are_html_escaped(self) -> None:
-        # this_url "/a&b/" produces a crumb labelled "a&b"; the sibling label
+        # this_url "/a&b/" produces a crumb labeled "a&b"; the sibling label
         # "c<d>" exercises angle-bracket escaping in the file menu.
         ctx = _dir_ctx(
             this_url="/a&b/",

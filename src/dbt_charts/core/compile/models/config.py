@@ -10,7 +10,7 @@ mapping-like nodes that still support mapping access.
 from __future__ import annotations
 
 from collections.abc import ItemsView, Iterator, KeysView, Mapping, ValuesView
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -255,8 +255,10 @@ class ChartRenderingConfig(ConfigNode):
     class FrameConfig(ConfigNode):
         footer_rule_gap_px: int
         footer_timestamp_gap_px: int
-        footer_wordmark_height_em: float = Field(gt=0)
-        footer_wordmark_gap_em: float = Field(ge=0)
+        # Constrained to the weights with a static font face in
+        # fonts.WEIGHT_FACE_ALIASES: any other value renders correctly in a
+        # browser and collapses to Regular in every rasterized export.
+        footer_brand_weight: Literal[500, 600]
 
     class SupportTableConfig(ConfigNode):
         divider_gap: float
@@ -505,7 +507,7 @@ class Config(ConfigMappingBase):
     """Authoritative required runtime settings model.
 
     Engine knobs and definition registries only. Presentation (style, board
-    layout) lives in the Board cascade via charts/meta.yaml — not here.
+    layout) lives in the Board cascade via charts/meta.yml — not here.
 
     Closed top-level fields define the supported global settings surface; any
     stray key in dbt_charts.yml (e.g. ``style:``, ``board:``, ``theme:``) raises a

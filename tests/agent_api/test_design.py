@@ -17,18 +17,20 @@ from dbt_charts.agent_api.design import (
     DesignNode,
     DesignProperty,
     DesignTarget,
+    build_design,
     build_design_target,
 )
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.authoring.yaml_patch import set_board_values
+from dbt_charts.core.compile.errors import ParseError
 from dbt_charts.core.compile.models.markers import Format
 from dbt_charts.core.compile.models.schema_names import (
     FormatAlias,
     NumberFormatAlias,
     TimeFormatAlias,
 )
-from dbt_charts.core.compile.parse.parser import parse_yaml
+from dbt_charts.core.compile.parse.parser import load_yaml_mapping, parse_yaml
 from dbt_charts.core.compile.parse.source_map import build_source_index
 from dbt_charts.core.compile.schema.introspection import introspect
 from dbt_charts.core.execute import Executor
@@ -227,7 +229,7 @@ _PARSE_FIXTURES = {
         "    rows: [month]\n"
         "    columns: [region]\n"
     ),
-    # The one cartesian family whose colour channel is already its measure, so
+    # The one cartesian family whose color channel is already its measure, so
     # the wide fold has nothing left to spend.
     "heatmap": (
         "rows:\n"
@@ -359,6 +361,22 @@ def test_schema_version_is_not_a_design_control(targets) -> None:
     assert "_schema_version" not in _flat(targets[""])
 
 
+def test_theme_is_not_a_design_control(targets) -> None:
+    """`theme` is a synthetic `SchemaSugar` field: desugared into `extends:`
+    before any instance the panel walks exists, so `getattr(instance, "theme",
+    None)` always finds nothing and a control here would render empty (the
+    same defect `_schema_version`'s regression test above guards). Regression
+    test for `_NOT_DESIGN`'s "theme" entry, same reasoning as
+    `test_schema_version_is_not_a_design_control`.
+    """
+    assert "theme" not in _flat(targets[""])
+    nested_targets = _targets(
+        "theme: paper\nrows:\n  - title: Section\n    theme: neon\n    rows: []\n"
+    )
+    assert "theme" not in _flat(nested_targets[""])
+    assert "theme" not in _flat(nested_targets["rows.0"])
+
+
 def test_each_target_carries_its_own_models_name(targets) -> None:
     """The union is discriminated by the document, not guessed from the schema."""
     assert targets["charts.rev"].model == "LineChart"
@@ -384,7 +402,7 @@ def test_a_kpi_and_an_area_chart_expose_different_property_sets(targets) -> None
 
 
 def test_authored_values_are_distinguished_from_inherited_ones(targets) -> None:
-    """The panel greys what the file does not set; that needs the source map."""
+    """The panel grays what the file does not set; that needs the source map."""
     area = _flat(targets["rows.0.cols.0"])
     assert area["title"].value == "Monthly Revenue"
     assert area["title"].authored_here is True
@@ -436,7 +454,7 @@ def test_axis_x_ticks_visible_widget_stays_a_checkbox() -> None:
 
 
 def test_a_required_field_offers_no_default(targets) -> None:
-    """Required fields hold `dataclasses.MISSING`, which must never be serialised."""
+    """Required fields hold `dataclasses.MISSING`, which must never be serialized."""
     value = _flat(targets["rows.0.cols.1"])["value"]
     assert value.required is True
     assert value.default_repr is None
@@ -731,7 +749,7 @@ def test_a_nested_board_keeps_its_own_width() -> None:
 
     The equivalence is wired at the root only (`_root_width_style_patch`), so
     the pair the root must choose between does not exist here — the nested
-    `width` is a real, honoured field. Its `style.frame` twin is suppressed for
+    `width` is a real, honored field. Its `style.frame` twin is suppressed for
     a different reason: a nested board's `FrameStyle` is ignored entirely.
     """
     nested = _targets("rows:\n  - title: R\n    width: 300\n")["rows.0"]
@@ -1307,7 +1325,7 @@ def test_a_nested_board_is_offered_no_frame_controls() -> None:
     assert not [key for key in nested if key.startswith("style.frame.")]
 
 
-def test_a_nested_board_is_offered_no_theme_control() -> None:
+def test_a_nested_board_is_offered_no_extends_control() -> None:
     """`merged_patch` folds the extends chain once, on the root document
     (`compiler.py:957`), so a nested board's `extends:` is never merged at all.
 
@@ -1409,7 +1427,7 @@ def test_a_nested_only_field_is_not_offered_on_the_root_board() -> None:
     from the layout-item branch, so at the root the save succeeds, the compiler
     discards the value, the board is unchanged, and the panel renders it back as
     authored. No raise means the parse guard is structurally unable to see it —
-    `style.frame.min_height` sits two rows away and *is* honoured.
+    `style.frame.min_height` sits two rows away and *is* honored.
     """
     root = _flat(_targets("title: T\nrows: []\n")[""])
     assert "height" not in root
@@ -1474,16 +1492,16 @@ def test_the_multi_metric_rules_follow_the_families_that_enforce_them() -> None:
     assert not _multi_metric("line")["x"].required
 
 
-def test_a_heatmap_spends_its_colour_channel_on_the_measure_and_takes_no_list() -> None:
+def test_a_heatmap_spends_its_color_channel_on_the_measure_and_takes_no_list() -> None:
     """The wide fold has nowhere to go on a heatmap, and nothing says so.
 
     `reject_multi_series_channel_conflicts` states the rule every wide family
     obeys — folding measures onto one mark family spends the mark fill —
-    and a heatmap's colour *is* its measure, so there is nothing left to fold
+    and a heatmap's color *is* its measure, so there is nothing left to fold
     onto. It is the one cartesian family that neither calls that validator nor
     refuses from its own resolver: `y: [region, revenue]` renders, with no
     diagnostic anywhere, as a chart whose y band stacks two columns' values
-    against each other and whose cell colour has stopped encoding magnitude.
+    against each other and whose cell color has stopped encoding magnitude.
     """
     assert "y" not in _multi_metric("heatmap")
     single = _flat(
@@ -1634,7 +1652,7 @@ def test_the_board_offers_no_control_a_design_edit_should_not_reach() -> None:
     - `source` is the warehouse connection. A string parses, nothing in
       `normalize/` validates the name, and `resolve_source_config` raises
       `ERR-SOURCE-NOT-FOUND` at execute for every query on the board.
-    - `auto_link` is a `dct serve` behaviour flag.
+    - `auto_link` is a `dct serve` behavior flag.
     - `html_policy` is a security tier Cloud hard-pins below `trusted-raw`, so
       the higher value is written, read back as authored, and downgraded.
     - `id` is identity. A chart's is overwritten from the `charts:` map key
@@ -1744,7 +1762,7 @@ def test_a_group_that_cannot_be_created_one_control_at_a_time_is_not_offered() -
 
 
 def test_the_group_graph_is_acyclic_so_the_ancestor_guard_never_fires() -> None:
-    """Recursion is bounded by `_design._CHILD_TARGETS`; `ancestors` is defence in depth.
+    """Recursion is bounded by `_design._CHILD_TARGETS`; `ancestors` is defense in depth.
 
     Seven cycles are reachable from `AuthoredBoard` and every one runs through a
     layout container, which the property walk does not descend. If that stops
@@ -1836,16 +1854,16 @@ def test_a_scale_parameter_group_appears_only_under_its_own_scale_type() -> None
         assert sorted(scale.children["continuous"].children) == expected
 
 
-def test_every_colour_control_the_panel_offers_says_it_is_a_colour() -> None:
+def test_every_color_control_the_panel_offers_says_it_is_a_color() -> None:
     """The tripwire, not the classifier — the facets themselves were reviewed.
 
-    A description grep finds only some of the colours (it misses
+    A description grep finds only some of the colors (it misses
     `ColorStylePatch.static` and `KpiTonesStyle.positive`) and it flags things
-    that are not colours, so it cannot decide the set. What it *can* do is fail
+    that are not colors, so it cannot decide the set. What it *can* do is fail
     the day someone adds a field whose own description says "color" and forgets
     the facet, which is the whole drift this replaces a hand-kept list to avoid.
     """
-    # Reviewed and genuinely not colours, though they say the word. Whole paths,
+    # Reviewed and genuinely not colors, though they say the word. Whole paths,
     # not leaf names: `color` as a leaf name matches `style.font.color` and 50
     # other real swatches, so a leaf-name allowlist would exempt the very fields
     # this exists to protect — including the one the facet work is named for.
@@ -1859,14 +1877,14 @@ def test_every_colour_control_the_panel_offers_says_it_is_a_colour() -> None:
     for path in ("", "rows.0"):
         target = build_design_target(board, path)
         for key, prop in _flat(target).items():
-            # Only a free-text control can be mistaken for a colour; a checkbox
-            # or a select whose description happens to mention colour cannot.
+            # Only a free-text control can be mistaken for a color; a checkbox
+            # or a select whose description happens to mention color cannot.
             if prop.widget != "text" or key in allowed:
                 continue
             if "color" in prop.description.lower() and "color" not in prop.facets:
                 missing.append(f"{path or '<board>'}:{key} — {prop.description}")
     assert not missing, (
-        "these controls describe themselves as colours but carry no `Color()` "
+        "these controls describe themselves as colors but carry no `Color()` "
         "facet, so an editor cannot tell them from free text:\n  "
         + "\n  ".join(sorted(missing))
     )
@@ -2691,7 +2709,7 @@ class TestChannelColumnSuggestions:
     unparseable string, a cross-file ref) degrades to the plain control, a
     partly-readable one offers what it can name, and
     `options_complete` says whether the offer names every output — the one
-    licence a consumer needs before closing it into a choice.
+    license a consumer needs before closing it into a choice.
     """
 
     @staticmethod
@@ -3376,7 +3394,7 @@ def test_height_is_read_on_a_nested_board_and_discarded_at_the_root() -> None:
     )
 
     assert _render_output(_ROOT) == _render_output("height: 400\n" + _ROOT), (
-        "the root board now honours `height` — `_design._NESTED_ONLY` is stale"
+        "the root board now honors `height` — `_design._NESTED_ONLY` is stale"
     )
 
     assert "height" not in _flat(_targets(_ROOT)[""])
@@ -3466,7 +3484,7 @@ def test_every_rule_table_names_a_field_that_still_exists() -> None:
     it encoded quietly stops being enforced. The panel then offers a control the
     compiler still refuses, which is the original defect with the guard removed.
 
-    This gates spelling, not behaviour: it says the names resolve, never that the
+    This gates spelling, not behavior: it says the names resolve, never that the
     rule is right. The agreement tests above are what say that.
 
     Model keys resolve two ways on purpose — `_design._BY_DISCRIMINATOR`'s reason. Most
@@ -3556,3 +3574,69 @@ def test_every_rule_table_names_a_field_that_still_exists() -> None:
     )
 
     assert not stale, "\n".join(stale)
+
+
+class TestOneParsePerBuild:
+    """`build_design` composes the board once. The pydantic model, the source
+    map and the mapping Cloud reads the written `type:` from all come off that
+    one node tree — parsing a board is expensive enough that nothing here may
+    scan it twice."""
+
+    def test_the_board_is_scanned_exactly_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import yaml
+
+        scans = 0
+        loads = 0
+        real = yaml.SafeLoader.get_single_node
+
+        def spy(loader: yaml.SafeLoader) -> yaml.Node | None:
+            nonlocal scans
+            scans += 1
+            return real(loader)
+
+        def spy_load(loader: yaml.constructor.BaseConstructor) -> object:
+            nonlocal loads
+            loads += 1
+            return None
+
+        # Every board loader here derives from SafeLoader, so the spy sees the
+        # compose behind the model and the one behind the source map alike;
+        # `get_single_data` is `yaml.load`'s scan-and-construct entry, which
+        # the one composed node feeding `construct_document` never enters.
+        monkeypatch.setattr(yaml.SafeLoader, "get_single_node", spy)
+        monkeypatch.setattr(
+            yaml.constructor.BaseConstructor, "get_single_data", spy_load
+        )
+        build_design(BOARD, "rows.0")
+        assert (scans, loads) == (1, 0)
+
+    def test_a_duplicate_key_still_raises_with_its_line(self) -> None:
+        board = "title: T\nrows: []\ntitle: U\n"
+        with pytest.raises(ParseError, match="duplicate key") as info:
+            build_design(board, "")
+        assert info.value.line == 3
+
+    def test_merge_keys_are_marked_as_written_not_as_constructed(self) -> None:
+        """Construction flattens `<<: *anchor` into the node tree in place; the
+        source map is read before that, so a merged-in field is inherited,
+        not authored, exactly as the string form reports it."""
+        board = (
+            "queries:\n  q: select 1\n"
+            "charts:\n"
+            "  a: &base\n    type: line\n    query: q\n    x: day\n    y: n\n"
+            "  b:\n    <<: *base\n    title: B\n"
+            "rows:\n  - a\n  - b\n"
+        )
+        target, mapping = build_design(board, "charts.b")
+        assert target.properties["title"].authored_here
+        assert not target.properties["x"].authored_here
+        assert mapping["charts"]["b"]["x"] == "day"
+        authored = frozenset(build_source_index(board, "<test>").source_map)
+        assert "charts.b.<<" in authored and "charts.b.x" not in authored
+
+    def test_the_mapping_is_the_board_as_written(self) -> None:
+        target, authored = build_design(BOARD, "rows.0.cols.0")
+        assert target.path == "rows.0.cols.0"
+        assert authored == load_yaml_mapping(BOARD)

@@ -220,8 +220,8 @@ class TestCompositeSeries:
         }
         assert set(by_label) == {label for label, _ in painted}
         assert all(None not in fills for fills in by_label.values()), painted
-        # Every point also draws a halo in one shared colour; the series
-        # colours are what is left once that common fill is removed, and each
+        # Every point also draws a halo in one shared color; the series
+        # colors are what is left once that common fill is removed, and each
         # composite must own one of its own.
         halo = set.intersection(*by_label.values())
         assert len({frozenset(fills - halo) for fills in by_label.values()}) == 4
@@ -255,7 +255,7 @@ class TestCompositeSeries:
     def test_null_dimension_is_rejected_whatever_its_dtype(self, make_chart):
         """A null dimension names no series in Python but VL's fold still
         paints it — so it is refused up front, even on a numeric column that
-        the ordinary series-colour null check would wave through as continuous."""
+        the ordinary series-color null check would wave through as continuous."""
         data = [dict(r, list=(1 if r["list"] == "bugs" else None)) for r in _DATA]
         chart = make_chart("line", x="date", y=["messages", "fixes"], color="list")
         with pytest.raises(ChartDataError) as exc:

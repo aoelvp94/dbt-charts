@@ -173,6 +173,7 @@ _TOOL_GUIDANCE = """## Tool Use
 def build_agent_system_prompt(context: DbtChartsAIContext) -> str:
     """Build the terminal agent system prompt from shared skills and source config."""
     parts = [
+        "Write in American English.",
         build_skills_index(),
         build_docs_pointer(),
         build_sources_context(context.project_session.adapter_registry),

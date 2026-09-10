@@ -228,7 +228,7 @@ Top-level fields:
 | `text` | string | Markdown body for text-only boards |
 | `html_policy` | enum | HTML rendering policy for body text: `none` (default — HTML is escaped), `safe-subset` (reserved; currently renders as `none`), `trusted-raw` (raw HTML — trusted first-party content only; deployments may cap this). |
 | `aliases` | list[string] | Absolute URL paths that 302-redirect here (see [Aliases](#aliases)) |
-| `source` | string | Default source name for every query below (from `dbt_charts.yml`'s `sources:` registry), or an inline file path for a single colocated CSV/JSON/Parquet file. Inheritable via the `meta.yaml` cascade. |
+| `source` | string | Default source name for every query below (from `dbt_charts.yml`'s `sources:` registry), or an inline file path for a single colocated CSV/JSON/Parquet file. Inheritable via the `meta.yml` cascade. |
 | `cache` | scalar \| object | Query-result cache policy for the board's queries (see [Caching](#caching)) |
 | `variables` | object | See [Variables](#variables) |
 | `queries` | object | See [Queries](#queries) |
@@ -343,7 +343,8 @@ style:
   padding: "16px"
   margin: "0 0 12px 0"
   background: dbt-grays.canvas
-  color: dbt-grays.ink
+  font:
+    color: dbt-grays.ink
   gap: 12
   border:
     width: 1
@@ -1424,7 +1425,7 @@ from the rendered output when its condition is falsy.
 
 Accepted forms:
 
-| Form | Example | Behaviour |
+| Form | Example | Behavior |
 |------|---------|-----------|
 | Omitted | — | Always shown (default) |
 | Static bool | `visible: false` | Always hidden / always shown |

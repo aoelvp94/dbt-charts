@@ -293,7 +293,7 @@ class TestAffordabilityGate:
     ``chart_rendering.facet.min_panel_px`` — the same floor
     ``WARN_FACET_PANEL_WIDTH_BELOW_MINIMUM`` already reads — the channel
     does not narrow at all: the panel keeps its full-domain, shared axis
-    (today's exact behaviour) instead of an unreadable, over-narrow one.
+    (today's exact behavior) instead of an unreadable, over-narrow one.
 
     The label-length x card-width matrix below is the reproduction board
     (4 region columns, 5-product domain) at two widths. "before" is what
@@ -359,7 +359,7 @@ class TestAffordabilityGate:
             assert emitted >= min_panel_px
             assert emitted < baseline
         else:
-            # Declined: today's exact, unreduced behaviour — not a
+            # Declined: today's exact, unreduced behavior — not a
             # softened/clamped narrower value, the full baseline.
             assert emitted == pytest.approx(baseline)
 

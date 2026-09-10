@@ -22,6 +22,9 @@ from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.chart.callout import render_callout_svg
 from dbt_charts.core.render.chart.rendering import render_chart_item
 from dbt_charts.core.render.chart.vega_lite import render_chart
+from dbt_charts.core.render.renderer import render
+
+from ._callout_test_helpers import callout_style_for_tone, compute_svg_text_fills
 
 
 @pytest.fixture(autouse=True)
@@ -29,21 +32,6 @@ def reset_config_autouse():
     reset_config()
     yield
     reset_config()
-
-
-def _callout_style_for_tone(tone: str, theme: str = "clarity"):
-    """A ResolvedCalloutStyle resolved for the given tone.
-
-    render_callout_svg no longer accepts a tone override (that decision is
-    baked at chart-resolve time — see _build_resolved_callout_chart / the
-    _callout_tone_colors_patch it shares with _resolve_callout); tests that
-    want a specific tone's colors build the resolved style the same way.
-    """
-    from dbt_charts.core.compile.merge import merge_onto_base
-    from dbt_charts.core.compile.resolve.chart.simple import _callout_tone_colors_patch
-
-    default_ctx = resolve_chart_style_context(get_theme_style(theme))
-    return merge_onto_base(default_ctx.callout, _callout_tone_colors_patch(tone))
 
 
 # --- Schema / model tests ---
@@ -353,7 +341,7 @@ def test_render_callout_svg_renders_resolved_tone_colors() -> None:
     svg = render_callout_svg(
         message="This is a warning",
         width=300,
-        callout_style=_callout_style_for_tone("warning"),
+        callout_style=callout_style_for_tone("warning"),
     )
 
     assert resolve_palette_color("warning.bg") in svg
@@ -365,7 +353,7 @@ def test_render_callout_svg_without_title_skips_fabricated_heading() -> None:
     svg = render_callout_svg(
         message="All values are reported in USD.",
         width=300,
-        callout_style=_callout_style_for_tone("info"),
+        callout_style=callout_style_for_tone("info"),
     )
 
     assert "All values are reported in USD." in svg
@@ -577,7 +565,7 @@ def test_title_renders_in_tone_solid_color_not_message_color() -> None:
         title="**Important** Warning",
         message="Check your settings.",
         width=320,
-        callout_style=_callout_style_for_tone("warning"),
+        callout_style=callout_style_for_tone("warning"),
     )
 
     # Title and message text land on distinct scoped classes, not one shared rule.
@@ -601,12 +589,12 @@ def test_two_tone_callouts_use_distinct_css_class_names() -> None:
     positive_svg = render_callout_svg(
         message="All checks passed.",
         width=320,
-        callout_style=_callout_style_for_tone("positive"),
+        callout_style=callout_style_for_tone("positive"),
     )
     negative_svg = render_callout_svg(
         message="Pipeline failed.",
         width=320,
-        callout_style=_callout_style_for_tone("negative"),
+        callout_style=callout_style_for_tone("negative"),
     )
 
     # Extract all scoped md-* class names from each callout.
@@ -697,3 +685,128 @@ def test_different_width_same_content_produces_distinct_clip_ids() -> None:
     if narrow_clip_ids and wide_clip_ids:
         shared = narrow_clip_ids & wide_clip_ids
         assert not shared, f"Clip-path id collision at different widths: {shared}"
+
+
+def _render_board_svg(yaml_src: str) -> str:
+    result = compile(yaml_src)
+    assert result.success, result.errors
+    assert result.board is not None
+
+    executor = MagicMock(spec=Executor)
+    executor.execute_chart.return_value = []
+    executor.cache_hit_ats = []
+
+    svg = render(result.board, executor, format="svg").output
+    assert isinstance(svg, str)
+    return svg
+
+
+def test_board_with_same_tone_callouts_shares_one_style_block() -> None:
+    """End-to-end: two same-tone callouts on one board, rendered through the
+    real render() pipeline, share one style block -- pins that
+    boards.render_board_svg's style-block dedup pass actually runs on a real
+    board (each callout emits its own complete, content-addressed CSS on its
+    own, via mdsvg's own class scoping; the pass collapses the two identical
+    copies once they land in one document). Resolves the actual cascade
+    winner for each callout's text, not just that both colors appear
+    somewhere in the document, and that the dedup pass didn't drop a rule
+    some element still needs."""
+    svg = _render_board_svg(
+        """
+title: Callout Dedup Board
+charts:
+  c1:
+    type: callout
+    message: First message
+  c2:
+    type: callout
+    message: Second message
+cols: [c1, c2]
+"""
+    )
+    assert "First message" in svg
+    assert "Second message" in svg
+
+    style = callout_style_for_tone("info")  # theme default tone for callouts
+    rendered = compute_svg_text_fills(svg)
+    assert rendered["First message"] == style.message.font.color
+    assert rendered["Second message"] == style.message.font.color
+
+    # The actual dedup: the two callouts' identical CSS collapses to one block.
+    charts_svg = svg.split('id="chart-c1"', 1)[1]
+    assert charts_svg.count("<style>") == 1
+
+
+def test_board_dedup_pass_never_drops_a_rule_a_class_still_needs() -> None:
+    """End-to-end completeness check: on a board with several callouts (some
+    sharing a tone, some not) mixed with `text:` prose, every content-derived
+    `class="md-<hash>-*"` token an element actually carries resolves to some
+    rule still present in the final SVG -- and, since this board also mixes
+    tones, that each callout's text actually resolves to its own tone's
+    color through the real dedup pass, not a hand-concatenated string."""
+    svg = _render_board_svg(
+        """
+text: Board intro copy
+charts:
+  c1:
+    type: callout
+    message: First info callout
+  c2:
+    type: callout
+    message: Second info callout
+  c3:
+    type: callout
+    message: A warning callout
+    style:
+      tone: warning
+cols: [c1, c2, c3]
+"""
+    )
+    used = {
+        cls
+        for m in re.finditer(r'class="([^"]*)"', svg)
+        for cls in m.group(1).split()
+        if cls.startswith("md-")
+    }
+    defined = set(re.findall(r"\.(md-[0-9a-f]+-[a-z]+)\s*\{", svg))
+    assert used, "test setup should exercise at least one mdsvg class"
+    assert used <= defined, f"classes used with no matching rule: {used - defined}"
+
+    info_color = callout_style_for_tone("info").message.font.color
+    warning_color = callout_style_for_tone("warning").message.font.color
+    assert info_color != warning_color
+    rendered = compute_svg_text_fills(svg)
+    assert rendered["First info callout"] == info_color
+    assert rendered["Second info callout"] == info_color
+    assert rendered["A warning callout"] == warning_color
+
+
+def test_visible_callout_is_unaffected_by_a_hidden_sibling_sharing_its_style() -> None:
+    """The dedup pass runs on the fully assembled board SVG, after layout has
+    already decided what's visible -- a `visible: false` item's content never
+    reaches that string in the first place, so it can neither contribute a
+    rule to dedupe against nor be depended on by anything that does ship."""
+    svg = _render_board_svg(
+        """
+title: Hidden Sibling Dedup
+charts:
+  visible_callout:
+    type: callout
+    message: Visible message
+  hidden_callout:
+    type: callout
+    message: Hidden message
+rows:
+  - visible_callout
+  - visible: false
+    rows:
+      - hidden_callout
+"""
+    )
+    style = callout_style_for_tone("info")  # theme default tone for callouts
+
+    assert "Visible message" in svg
+    assert "Hidden message" not in svg
+
+    rendered = compute_svg_text_fills(svg)
+    assert rendered["Visible message"] == style.message.font.color

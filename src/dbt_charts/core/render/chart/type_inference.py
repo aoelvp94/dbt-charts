@@ -144,7 +144,7 @@ def resolve_authored_x_type(axis: ResolvedAxisStyle) -> str | None:
 _CellValue = Any  # type-state: explicit_any — raw query result cell value
 
 
-def _panelled_x_values(
+def _paneled_x_values(
     data: list[dict[str, Any]],  # type-state: explicit_any — raw query rows
     x_field: str,
     panel_fields: tuple[str, ...],
@@ -243,7 +243,7 @@ def resolve_cartesian_x_type(
     # nothing to protect there — skip the verdict, not just the drop below.
     scaffold_ok = (
         ordinal_scaffold_within_budget(
-            _panelled_x_values(data, x_field, panel_fields), time_unit
+            _paneled_x_values(data, x_field, panel_fields), time_unit
         )
         if authored_time_unit is None
         and time_unit in FINE_BUCKET_UNITS
@@ -335,7 +335,7 @@ def apply_x_tick_cadence(
 
     What merges, and what does not:
 
-    - ``count`` is a target, not a ladder. VL honours it closely on a temporal
+    - ``count`` is a target, not a ladder. VL honors it closely on a temporal
       scale and rounds to a nearby nice step on a quantitative one. A discrete
       scale has no tick-count concept, so it falls through unset — that has
       always been a silent no-op and stays one.
@@ -411,7 +411,7 @@ def _reads_as_number(value: Any) -> bool:  # type-state: explicit_any — a raw 
     Neither of the two numeric predicates this repo already has answers this
     question, which is why it is a third one:
 
-    - ``coerce_numeric_cell`` is the shared *null* rule ("no colour, no domain
+    - ``coerce_numeric_cell`` is the shared *null* rule ("no color, no domain
       contribution") and excludes ``bool``, a contract this question does not
       share — d3 reads ``+true`` as ``1`` and paints ``0``/``1`` over a boolean
       dimension rather than NaN.
@@ -583,7 +583,7 @@ def build_cartesian_x_encoding(
     series (``overlay_x_domain_values``). Vega-Lite unions the sub-layer
     domains, so the tick values must be derived from that union and THEN
     thinned to the label cadence; deriving them from the base's rows leaves
-    every extra band unlabelled. Unset means the base's rows are the domain.
+    every extra band unlabeled. Unset means the base's rows are the domain.
 
     outer_chart_width is the card's own outer pixel width — the same basis
     ``typography.width_tier`` classifies — used only to pick the sub-day

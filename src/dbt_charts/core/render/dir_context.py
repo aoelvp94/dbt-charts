@@ -68,7 +68,7 @@ def list_dir_entries(dir_handle: ProjectDirectory, url_prefix: str) -> list[DirE
     - Anything ``iter_dir`` itself excludes (dotfiles, SKIP_SCAN_DIRS
       directory names, symlink escapes on a filesystem host)
     - Files with non-board extensions
-    - ``meta.yaml`` / ``meta.yml`` (cascade fragments, never standalone boards)
+    - ``meta.yml`` / ``meta.yaml`` (cascade fragments, never standalone boards)
 
     Args:
         dir_handle: Directory to list.

@@ -49,7 +49,7 @@ logic, not a model definition — it lives at
 from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedAxisElementStyle,
     ResolvedAxisGridStyle,
-    ResolvedAxisGridZeroStyle,
+    ResolvedAxisGridThresholdStyle,
     ResolvedAxisLabelOverlapConfig,
     ResolvedAxisLineStyle,
     ResolvedAxisStyle,
@@ -108,7 +108,7 @@ __all__ = [
     # _base
     "ResolvedAxisElementStyle",
     "ResolvedAxisGridStyle",
-    "ResolvedAxisGridZeroStyle",
+    "ResolvedAxisGridThresholdStyle",
     "ResolvedAxisLabelOverlapConfig",
     "ResolvedAxisLineStyle",
     "ResolvedAxisStyle",

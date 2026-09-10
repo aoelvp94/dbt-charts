@@ -2,19 +2,13 @@
 
 The footer is a right-aligned muted text line at the bottom of every board,
 with an optional hairline rule above. Theme-controlled, always-on by default,
-disabled by setting style.footer.visible: false. The brand phrase "dbt charts"
-in the footer text is drawn as the dbt charts wordmark in the footer color, and
-links to style.footer.link (a subtle watermark) when set.
+disabled by setting style.footer.visible: false. The brand phrase "dbt Charts"
+in the footer text links to style.footer.link (a subtle watermark) when set.
 """
 
 import re
 
-from dbt_charts.core.compile.config import (
-    get_chart_rendering,
-    get_default_theme_name,
-    get_theme_style,
-)
-from dbt_charts.core.font_measure import get_font_measurer
+from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
 
 from ._svg_render import render_board_to_svg
 
@@ -23,7 +17,7 @@ class TestSVGFooter:
     def test_footer_text_is_visible_by_default(self):
         svg = render_board_to_svg()
         assert "made with" in svg
-        assert 'class="dbt-footer-wordmark"' in svg
+        assert "dbt Charts" in svg
 
     def test_footer_text_is_right_anchored_and_uses_configured_styling(self):
         footer = get_theme_style(get_default_theme_name()).footer
@@ -34,11 +28,10 @@ class TestSVGFooter:
 
         svg_output = render_board_to_svg()
 
-        # The footer <text> open tag carries the right anchor, size, and color;
-        # "made with" is its own run, ending where the mark's gap begins.
+        # Each run is its own right-anchored <text>; this pins the prefix run.
         pattern = (
             rf'<text[^>]*text-anchor="end"[^>]*font-size="{expected_size}"'
-            rf'[^>]*fill="{re.escape(expected_color)}"[^>]*>made with</text>'
+            rf'[^>]*fill="{re.escape(expected_color)}"[^>]*>made with<'
         )
         assert re.search(pattern, svg_output) is not None
 
@@ -64,9 +57,7 @@ style:
   footer:
     visible: false
 """
-        svg = render_board_to_svg(yaml)
-        assert "made with" not in svg
-        assert 'class="dbt-footer-wordmark"' not in svg
+        assert "made with dbt Charts" not in render_board_to_svg(yaml)
 
     def test_footer_text_is_user_overridable(self):
         yaml = """\
@@ -97,7 +88,7 @@ style:
 """
         svg = render_board_to_svg(yaml)
         assert "custom attribution" in svg
-        assert "made with" not in svg
+        assert "made with dbt Charts" not in svg
 
     def test_footer_hairline_rule_color_matches_theme(self):
         footer = get_theme_style(get_default_theme_name()).footer
@@ -108,26 +99,49 @@ style:
         rule_pattern = rf'<line[^>]*stroke="{re.escape(footer.rule.color)}"[^>]*/>'
         assert re.search(rule_pattern, prefix) is not None
 
-    # --- wordmark and link ---------------------------------------------------
+    # --- brand-word link -----------------------------------------------------
 
-    def test_footer_brand_phrase_is_drawn_as_the_wordmark_not_set_in_type(self):
-        svg = render_board_to_svg()
-        assert re.search(r"<text[^>]*>[^<]*dbt charts", svg, re.IGNORECASE) is None
-        assert re.search(
-            r'<g class="dbt-footer-wordmark"[^>]*>(<path d="[^"]+"/>){3}</g>', svg
-        )
-
-    def test_footer_wordmark_is_painted_in_the_footer_font_color(self):
+    def test_footer_brand_word_links_to_configured_url_by_default(self):
         footer = get_theme_style(get_default_theme_name()).footer
+        assert footer.link
         svg = render_board_to_svg()
-        lockup = re.search(r'<g class="dbt-footer-wordmark"[^>]*>', svg)
-        assert lockup is not None
-        assert f'fill="{footer.font.color}"' in lockup.group(0)
-        assert "fill=" not in re.sub(
-            r'<g class="dbt-footer-wordmark"[^>]*>', "", lockup.group(0)
+        # "dbt Charts" is wrapped in an anchor to the configured URL; "made with "
+        # stays plain text outside the link.
+        pattern = (
+            rf'<a class="dbt-footer-link" href="{re.escape(footer.link)}"[^>]*><text'
+            r"[^>]*>dbt Charts</text></a>"
         )
+        assert re.search(pattern, svg) is not None
 
-    def test_footer_wordmark_follows_an_overridden_footer_color(self):
+    def test_run_positions_are_snapped_to_whole_pixels(self):
+        """Snapping is what makes the Python and Rust engines byte-equal.
+
+        The two measure the same variable font face instanced at 600 but
+        interpolate ~0.004px apart, so the board sweep's exact chrome-byte
+        comparison only holds because the emitted position is an integer.
+        Remove the snap and the ordering assertions still pass while the
+        sweep breaks, which is why this pins the integer directly.
+        """
+        svg = render_board_to_svg()
+        for content in ("made with", "dbt Charts"):
+            run = re.search(rf'<text x="([\d.]+)"[^>]*>{content}</text>', svg)
+            assert run is not None, content
+            assert float(run.group(1)).is_integer(), f"{content}: {run.group(1)}"
+
+    def test_the_prefix_run_ends_left_of_the_brand_run(self):
+        """The runs are positioned, not laid out by the renderer.
+
+        Each is its own right-anchored <text>; if the brand run's measured
+        width were wrong the prefix would land on top of it. Asserting on the
+        painted x of each run is what catches that.
+        """
+        svg = render_board_to_svg()
+        prefix = re.search(r'<text x="([\d.]+)"[^>]*>made with</text>', svg)
+        brand = re.search(r'<text x="([\d.]+)"[^>]*>dbt Charts</text>', svg)
+        assert prefix is not None and brand is not None
+        assert float(prefix.group(1)) < float(brand.group(1))
+
+    def test_a_suffix_run_stays_right_of_the_brand_run(self):
         yaml = """\
 title: Test
 queries:
@@ -137,28 +151,28 @@ charts:
 rows: [t]
 style:
   footer:
-    font:
-      color: "#123456"
+    text: "made with dbt Charts for Acme"
 """
         svg = render_board_to_svg(yaml)
-        lockup = re.search(r'<g class="dbt-footer-wordmark"[^>]*>', svg)
-        assert lockup is not None
-        assert 'fill="#123456"' in lockup.group(0)
+        brand = re.search(r'<text x="([\d.]+)"[^>]*>dbt Charts</text>', svg)
+        suffix = re.search(r'<text x="([\d.]+)"[^>]*>for Acme</text>', svg)
+        assert brand is not None and suffix is not None
+        assert float(brand.group(1)) < float(suffix.group(1))
 
-    def test_footer_wordmark_links_to_configured_url_by_default(self):
-        footer = get_theme_style(get_default_theme_name()).footer
-        assert footer.link
+    def test_the_brand_phrase_is_heavier_in_every_renderer_not_only_in_css(self):
+        """font-weight rides as a presentation attribute, not only a CSS class.
+
+        A rasterizer that does not resolve a CSS class against the brand run —
+        the PNG and PDF paths do not — would otherwise drop the weight silently
+        and set the phrase at the same weight as "made with".
+        """
         svg = render_board_to_svg()
-        pattern = (
-            rf'<a class="dbt-footer-link" href="{re.escape(footer.link)}"[^>]*>'
-            r'<g class="dbt-footer-wordmark"'
-        )
-        assert re.search(pattern, svg) is not None
-        # Subtle styling lives in the embedded stylesheet: pointer, dim on hover.
-        assert ".dbt-footer-link" in svg
-        assert ".dbt-footer-link:hover" in svg
+        brand = re.search(r"<text[^>]*>dbt Charts</text>", svg)
+        assert brand is not None
+        assert 'font-weight="600"' in brand.group(0)
 
-    def test_footer_link_null_keeps_the_wordmark_but_no_link(self):
+    def test_the_brand_phrase_is_heavier_even_with_no_link(self):
+        """Weight is brand styling, not link affordance: it survives link: null."""
         yaml = """\
 title: Test
 queries:
@@ -171,11 +185,27 @@ style:
     link: null
 """
         svg = render_board_to_svg(yaml)
-        assert 'class="dbt-footer-wordmark"' in svg
-        assert "<a " not in svg
-        assert 'class="dbt-footer-link"' not in svg
+        # The stylesheet always carries the rule; what must be absent is the
+        # anchor element itself.
+        assert '<a class="dbt-footer-link"' not in svg
+        brand = re.search(r"<text[^>]*>dbt Charts</text>", svg)
+        assert brand is not None, "brand phrase must still be a weighted run"
+        assert 'font-weight="600"' in brand.group(0)
 
-    def test_footer_wordmark_absent_when_brand_word_not_in_text(self):
+    def test_footer_link_styling_is_subtle_not_blue(self):
+        """The linked phrase inherits the footer fill (no blue) and is styled via CSS."""
+        svg = render_board_to_svg()
+        # The run carries the footer's own fill, never a link color.
+        assert re.search(
+            r'<a class="dbt-footer-link"[^>]*><text[^>]*>dbt Charts</text></a>', svg
+        )
+        assert 'class="dbt-footer-link"' in svg
+        # The stylesheet owns only the hover affordance; fill and weight are
+        # inline on the run.
+        assert ".dbt-footer-link" in svg
+        assert ".dbt-footer-link:hover" in svg
+
+    def test_footer_link_absent_when_brand_word_not_in_text(self):
         yaml = """\
 title: Test
 queries:
@@ -189,70 +219,6 @@ style:
 """
         svg = render_board_to_svg(yaml)
         assert "custom attribution" in svg
-        assert 'class="dbt-footer-wordmark"' not in svg
-        assert 'class="dbt-footer-link"' not in svg
-
-    def test_footer_prefix_ends_before_the_wordmark_starts(self):
-        """ "made with" is its own right-anchored run ending left of the lockup."""
-        svg = render_board_to_svg()
-        prefix = re.search(r'<text x="([\d.]+)"[^>]*>made with</text>', svg)
-        lockup = re.search(
-            r'<g class="dbt-footer-wordmark" transform="translate\(([\d.]+), [\d.]+\)',
-            svg,
-        )
-        assert prefix is not None and lockup is not None
-        assert float(prefix.group(1)) < float(lockup.group(1))
-
-    def test_footer_text_after_the_brand_phrase_stays_right_of_the_wordmark(self):
-        yaml = """\
-title: Test
-queries:
-  q: {type: values, rows: [{n: 1}]}
-charts:
-  t: {query: q, type: table}
-rows: [t]
-style:
-  footer:
-    text: "made with dbt Charts for Acme"
-"""
-        svg = render_board_to_svg(yaml)
-        suffix = re.search(r'<text x="([\d.]+)"[^>]*>for Acme</text>', svg)
-        lockup = re.search(
-            r'<g class="dbt-footer-wordmark" transform="translate\(([\d.]+), [\d.]+\) '
-            r"scale\(([\d.]+)\)",
-            svg,
-        )
-        assert suffix is not None and lockup is not None
-        lockup_right = float(lockup.group(1)) + 997 * float(lockup.group(2))
-        style = get_theme_style(get_default_theme_name())
-        assert style.footer.font.size is not None
-        suffix_w = get_font_measurer(style.font.family).measure(
-            "for Acme", float(style.footer.font.size)
-        )
-        assert lockup_right < float(suffix.group(1)) - suffix_w
-
-    def test_footer_right_timestamp_clears_the_lockup(self):
-        """The timestamp ends the configured gap before the leftmost painted
-        edge of the attribution, which is the start of "made with"."""
-        style = get_theme_style(get_default_theme_name())
-        assert style.footer.font.size is not None
-        measure = get_font_measurer(style.font.family).measure
-        size = float(style.footer.font.size)
-        yaml = """\
-title: Test
-queries:
-  q: {type: values, rows: [{n: 1}]}
-charts:
-  t: {query: q, type: table}
-rows: [t]
-style:
-  timestamp:
-    align: right
-"""
-        svg = render_board_to_svg(yaml)
-        stamp = re.search(r'<text data-role="render-timestamp" x="([\d.]+)"', svg)
-        prefix = re.search(r'<text x="([\d.]+)"[^>]*>made with</text>', svg)
-        assert stamp is not None and prefix is not None
-        lockup_left = float(prefix.group(1)) - measure("made with", size)
-        gap = get_chart_rendering().frame.footer_timestamp_gap_px
-        assert abs(lockup_left - float(stamp.group(1)) - gap) < 0.01
+        # No brand phrase to link, so no anchor element. (The class definition
+        # itself always lives in the stylesheet, so assert on the element.)
+        assert '<a class="dbt-footer-link"' not in svg

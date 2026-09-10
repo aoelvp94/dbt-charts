@@ -153,6 +153,17 @@ style:
         visible: true
         opacity: 1
         width: 1.5
+        # Threshold rule: the heavy mark at a quantitative axis's meaningful
+        # crossing point (zero on most axes, 1.0 on a ratio/percent axis).
+        # Lives on the shared `axis` slot — not axis_y-only — so it cascades
+        # to axis_x/axis_y/axis_quantitative from this one declaration; each
+        # named theme overrides only the color it wants on top of this.
+        # Width is load-bearing at 2.0: the rule paints over the gridline it
+        # sits on, so it must read as a distinct line rather than a
+        # slightly-thicker gridline.
+        threshold:
+          visible: true
+          width: 2
       labels:
         font:
           size:     &size_label 11
@@ -223,11 +234,6 @@ style:
       position: auto
       ticks:
         width: 1.5
-      grid:
-        # zero-baseline gridline — measure axis only. Moved from axis.grid.zero
-        # (BaseAxisGridStyle has no zero; only MeasureGridStyle does).
-        zero:
-          width: 2
       scale:
         # Editorial default (settled 2026-07-16): data marks sit ~8% from
         # the visible axis edges. Zero-anchored: domain_max = data_max * 1.08.
@@ -310,7 +316,7 @@ style:
       discrete_width: 360
       discrete_height: 360
       # No bounding box around the plot area by default. Themes can opt back
-      # in by setting stroke to a colour token.
+      # in by setting stroke to a color token.
       stroke: null
 
     table:
@@ -348,7 +354,7 @@ style:
         font:
           size: 11.0
       paginator:
-        # Right-aligned chevrons + page numbers below the table. Colours come
+        # Right-aligned chevrons + page numbers below the table. Colors come
         # from the scaffold gray ramp so the control reads as foreground text
         # rather than as a divider.
         font:
@@ -937,7 +943,7 @@ style:
     #
     # Integers, not fractions, so prose sits on a baseline grid: when text flows
     # into columns, a fractional margin puts one column out of phase with its
-    # neighbour and lines stop aligning across the gutter. Every value here must
+    # neighbor and lines stop aligning across the gutter. Every value here must
     # stay whole for that grid to hold.
     paragraph:
       margin_top: 0.0

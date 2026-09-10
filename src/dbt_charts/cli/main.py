@@ -828,7 +828,7 @@ def render(
             "--allow-chart-errors",
             help=(
                 "Allow per-chart runtime errors without exiting non-zero. "
-                "The default (fail on chart errors) is the CI-safe behaviour: "
+                "The default (fail on chart errors) is the CI-safe behavior: "
                 "exit 1 when any chart errors are present so regressions don't "
                 "ship undetected. Use --allow-chart-errors for live previews and "
                 "agent iteration where partial renders are acceptable."
@@ -890,7 +890,7 @@ def render(
     By default, per-chart runtime errors (missing columns, query failures)
     cause exit 1 so CI smoke tests detect broken charts. Pass
     --allow-chart-errors to suppress this and keep the partial render
-    behaviour for live previews.
+    behavior for live previews.
 
     \b
     Examples:

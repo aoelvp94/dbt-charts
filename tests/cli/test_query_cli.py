@@ -567,3 +567,49 @@ class TestQueryIgnoresCacheEnv:
             ],
         )
         assert result.exit_code == 0, result.output
+
+
+REF_BOARD = """\
+source: wh
+queries:
+  orders:
+    sql: "SELECT * FROM {{ ref('orders') }}"
+charts:
+  c:
+    query: orders
+    type: table
+rows:
+  - c
+"""
+
+
+class TestQueryCliDbtRefOfflineModes:
+    """--validate and --describe reach the warehouse-free preview."""
+
+    @pytest.fixture
+    def ref_board_dir(self, file_duckdb_project_dir: Path) -> Path:
+        (file_duckdb_project_dir / "b.yml").write_text(REF_BOARD)
+        return file_duckdb_project_dir
+
+    @pytest.mark.parametrize(
+        "modes", [["--validate"], ["--describe"], ["--validate", "--describe"]]
+    )
+    def test_offline_modes_resolve_ref(
+        self, ref_board_dir: Path, modes: list[str]
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "query",
+                str(ref_board_dir / "b.yml"),
+                "orders",
+                "--project-dir",
+                str(ref_board_dir),
+                *modes,
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        if "--describe" in modes:
+            # `users` also exists in the fixture and describes cleanly, so the
+            # exit code alone would not catch a ref resolved to the wrong table.
+            assert "user_id" in result.output

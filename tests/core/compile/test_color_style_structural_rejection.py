@@ -126,7 +126,7 @@ def test_categorical_color_style_unauthored_palette_leaves_requested_alias_none(
 def test_categorical_color_style_rejects_authored_requested_alias_palette() -> None:
     """requested_alias_palette is an internal provenance field computed by
     _expand_palette_names — a YAML author fabricating it directly must be
-    rejected loudly, not silently accepted and then honoured or ignored
+    rejected loudly, not silently accepted and then honored or ignored
     depending on cascade layer (see WARN-PALETTE-UNSUPPORTED fabrication bug)."""
     from dbt_charts.core.compile.models.primitives import CategoricalColorStyle
 

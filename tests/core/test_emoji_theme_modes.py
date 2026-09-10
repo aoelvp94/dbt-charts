@@ -93,7 +93,7 @@ class TestDisabledMode:
 
 
 class TestHelpersModeAware:
-    """chart_title_spec, board_title_spec, and get_compact_style must honour font.emoji."""
+    """chart_title_spec, board_title_spec, and get_compact_style must honor font.emoji."""
 
     def _inject_config(self, monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
         import sys
@@ -185,7 +185,7 @@ class TestCompiledRootFontStyleSchema:
             assert s.emoji == mode
 
     def test_rejects_color_emoji_mode(self) -> None:
-        """The colour emoji font is deleted — 'color' is no longer a valid mode."""
+        """The color emoji font is deleted — 'color' is no longer a valid mode."""
         with pytest.raises(ValidationError):
             RootFontStyle(
                 family="Inter",

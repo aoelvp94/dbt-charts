@@ -42,8 +42,8 @@ def test_invalid_meta_file_raises(local_project: Callable[..., FilesystemProject
 
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
-        (root / "meta.yaml").write_text("source: [unclosed list\n")
-        meta_file = local_project(root).path("meta.yaml")
+        (root / "meta.yml").write_text("source: [unclosed list\n")
+        meta_file = local_project(root).path("meta.yml")
 
         with pytest.raises(CompilationError):
             load_meta_file(meta_file)

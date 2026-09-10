@@ -122,7 +122,7 @@ def _find_layer_with_stroke(
 ) -> dict[str, Any]:
     """Return the first layer whose mark.stroke is set to a value not in
     exclude_strokes. Used to find the fg line layer in halo-layered specs
-    (halo layers stroke with the background colour; fg layer carries the
+    (halo layers stroke with the background color; fg layer carries the
     real ink)."""
     for layer in spec.get("layer", []):
         if not isinstance(layer, dict):
@@ -284,7 +284,7 @@ def test_multi_series_line_with_color_encoding_does_not_collapse_to_single_ink(
     _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
     spec = generate_vega_lite_spec(chart, data)
     # Every layer's mark stroke (when present) must NOT be the single_series_palette.
-    # The encoding-driven color scale owns per-series colour.
+    # The encoding-driven color scale owns per-series color.
     for layer in spec.get("layer", []):
         if not isinstance(layer, dict):
             continue
@@ -704,7 +704,7 @@ def test_single_series_histogram_mark_carries_resolved_ink() -> None:
 
 def test_histogram_with_color_channel_leaves_fill_to_the_encoding() -> None:
     """A color channel owns the ink — the mark must not be pinned to the
-    single-series value, which would flatten every group to one colour."""
+    single-series value, which would flatten every group to one color."""
     board_rs, board_ctx = _board_with_single_series_ink()
     chart = _histogram(color="region")
     ink = resolve(
@@ -788,7 +788,7 @@ def test_single_series_area_hover_point_carries_resolved_ink() -> None:
 
 
 def test_multi_series_area_hover_point_leaves_fill_to_the_encoding() -> None:
-    """With a color encoding the hover target inherits the series colour."""
+    """With a color encoding the hover target inherits the series color."""
     board_rs, board_ctx = _board_with_single_series_ink()
     chart = AreaChart(
         id="t",
@@ -827,7 +827,7 @@ def test_single_series_line_hover_point_carries_resolved_ink() -> None:
 
 
 def test_multi_series_line_hover_point_leaves_fill_to_the_encoding() -> None:
-    """With a color encoding the hover target inherits the series colour."""
+    """With a color encoding the hover target inherits the series color."""
     board_rs, board_ctx = _board_with_single_series_ink()
     chart = LineChart(
         id="t",

@@ -734,7 +734,7 @@ class TestSelectDefault:
 
 class TestResolveDarkCompanionStops:
     """The direct-label companion resolver is palette-agnostic: it auto-detects
-    which registered categorical palette the emitted colours came from and
+    which registered categorical palette the emitted colors came from and
     looks up ``<bright>-dark``. Today's catalog has two such pairs registered:
     ``vivid-10`` ↔ ``vivid-10-dark`` (default theme) and
     ``editorial-10`` ↔ ``editorial-10-dark`` (editorial themes).
@@ -745,8 +745,8 @@ class TestResolveDarkCompanionStops:
 
         Chart rendered under the editorial theme cycles ``editorial-10`` stops.
         Without auto-detection, the resolver would fall back to ``vivid-10``
-        lookup (no match for editorial-10 hexes) and return the bright colours
-        unchanged — labels would render at the same colour as their marks.
+        lookup (no match for editorial-10 hexes) and return the bright colors
+        unchanged — labels would render at the same color as their marks.
         """
         from dbt_charts.core.compile.resolve.style.palette import (
             resolve_dark_companion_stops,
@@ -758,7 +758,7 @@ class TestResolveDarkCompanionStops:
         assert result == expected
 
     def test_vivid_10_stops_resolve_to_vivid_10_dark(self):
-        """Status-quo behaviour preserved: vivid-10 marks still get
+        """Status-quo behavior preserved: vivid-10 marks still get
         vivid-10-dark companions when no palette name is passed."""
         from dbt_charts.core.compile.resolve.style.palette import (
             resolve_dark_companion_stops,
@@ -770,9 +770,9 @@ class TestResolveDarkCompanionStops:
         assert result == expected
 
     def test_custom_hex_falls_through_to_bright(self):
-        """When emitted colours don't match any registered palette (board
+        """When emitted colors don't match any registered palette (board
         author hand-pinned hex via ``style.range.category``), labels match
-        the marks — same as today's behaviour in that path."""
+        the marks — same as today's behavior in that path."""
         from dbt_charts.core.compile.resolve.style.palette import (
             resolve_dark_companion_stops,
         )
@@ -800,7 +800,7 @@ class TestResolveDarkCompanionStops:
 
     def test_unknown_explicit_palette_name_falls_through_to_bright(self):
         """An explicit palette name that has no dark companion registered
-        falls through to the bright colours rather than raising."""
+        falls through to the bright colors rather than raising."""
         from dbt_charts.core.compile.resolve.style.palette import (
             resolve_dark_companion_stops,
         )

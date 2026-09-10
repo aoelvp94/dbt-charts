@@ -191,15 +191,15 @@ def test_tagged_box_starts_outside_its_own_ink_by_the_padding_it_was_handed(
 
 
 def test_no_two_authored_blocks_claim_the_same_space() -> None:
-    """A block's selection box may never reach into a neighbour's.
+    """A block's selection box may never reach into a neighbor's.
 
     The x-axis check above passes on a box whose vertical padding was invented
-    rather than allocated, which is exactly what shipped: prose synthesised
+    rather than allocated, which is exactly what shipped: prose synthesized
     ``card_padding`` on all four sides while the layout stacks title and text
     with a deliberate 0 gap, so the title's mark ran 16px past where the text's
     glyphs start and the two boxes overlapped by twice the padding. Overlap is
     the axis-complete statement of the invariant — a mark that covers a
-    neighbour's ink is pointing at the wrong thing, whichever side it grew on.
+    neighbor's ink is pointing at the wrong thing, whichever side it grew on.
     """
     boxes = authored_boxes(
         render_board_to_svg(_SELECTION_BOUNDARY_BOARD), "dbt-box-outer"
@@ -610,7 +610,7 @@ def test_nested_inline_title_band_does_not_carry_the_root_title_path() -> None:
 def test_every_variable_authored_in_this_file_carries_its_own_path() -> None:
     """The wiring, not the strip's own contract, which is pinned elsewhere.
 
-    ``render_variables_strip_svg`` takes ``variables_path`` and honours it —
+    ``render_variables_strip_svg`` takes ``variables_path`` and honors it —
     ``test_variables_chrome.py`` pins both answers. What that cannot see is
     which path each composer passes, and there are four of them.
 
@@ -662,7 +662,7 @@ def test_imported_board_chart_carries_no_handle(tmp_path: Path) -> None:
     handle here would send click-to-source to whatever the importing file
     happens to have at those coordinates. No handle beats a wrong one — and
     A `source_path` of "" is only meaningful if the emission site actually
-    honours it.
+    honors it.
     """
     (tmp_path / "partial.yml").write_text(
         """
@@ -751,7 +751,7 @@ rows:
 
     # No path, no keys: the whole control is value surface. Tagging the label
     # run anyway would offer an edit with nowhere to write, and would split a
-    # control's pointer behaviour on which file it came from.
+    # control's pointer behavior on which file it came from.
     labels = {
         group.get("data-dbt-variable"): [
             run.get("data-authored-kind")
@@ -1077,9 +1077,9 @@ def _title_ink_and_box(svg: str, kind: str = "title") -> _InkAndBox:
     "board", [_TITLE_INK_BOARD, _INLINE_BAND_INK_BOARD], ids=["plain", "inline-band"]
 )
 def test_title_selection_box_sits_evenly_around_its_glyphs(board: str) -> None:
-    """The mark a host traces is centred on the words, not on the band.
+    """The mark a host traces is centered on the words, not on the band.
 
-    A heading band is not centred on its own text — mdsvg reserves
+    A heading band is not centered on its own text — mdsvg reserves
     ``heading_margin_top`` above the line box and a smaller
     ``heading_margin_bottom`` below it — so a box drawn on the band extent
     rides high above the glyphs by roughly the difference. Bounding the

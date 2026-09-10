@@ -383,10 +383,10 @@ def test_merge_metas_empty_returns_empty_patch(
 def test_merge_metas_finds_meta_in_same_dir(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """meta.yaml in the same directory as the board is collected."""
+    """meta.yml in the same directory as the board is collected."""
     from dbt_charts.core.compile.merge import merge_metas
 
-    _write(tmp_path, "charts/sub/meta.yaml", "title: SubMeta\n")
+    _write(tmp_path, "charts/sub/meta.yml", "title: SubMeta\n")
     board_dir = _directory(tmp_path, "charts/sub", local_project)
     boards_root = _directory(tmp_path, "charts", local_project)
     result = merge_metas(board_dir, boards_root)
@@ -396,10 +396,10 @@ def test_merge_metas_finds_meta_in_same_dir(
 def test_merge_metas_finds_meta_in_parent(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """meta.yaml in the parent directory is found when sub-dir has none."""
+    """meta.yml in the parent directory is found when sub-dir has none."""
     from dbt_charts.core.compile.merge import merge_metas
 
-    _write(tmp_path, "charts/meta.yaml", "title: ParentMeta\n")
+    _write(tmp_path, "charts/meta.yml", "title: ParentMeta\n")
     _write(tmp_path, "charts/sub/.keep", "")
     board_dir = _directory(tmp_path, "charts/sub", local_project)
     boards_root = _directory(tmp_path, "charts", local_project)
@@ -411,7 +411,7 @@ def test_merge_metas_bounded_by_boards_root(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
     """Meta above boards_root is not included."""
-    _write(tmp_path, "meta.yaml", "title: AboveRoot\n")
+    _write(tmp_path, "meta.yml", "title: AboveRoot\n")
     _write(tmp_path, "charts/.keep", "")
     board_dir = _directory(tmp_path, "charts", local_project)
     boards_root = _directory(tmp_path, "charts", local_project)
@@ -428,7 +428,7 @@ def test_merge_metas_single_meta(
     from dbt_charts.core.compile.merge import merge_metas
 
     # theme: paper desugars to extends: paper → loads paper YAML → style set.
-    _write(tmp_path, "charts/meta.yaml", "theme: paper\n")
+    _write(tmp_path, "charts/meta.yml", "theme: paper\n")
     board_dir = _directory(tmp_path, "charts", local_project)
     boards_root = _directory(tmp_path, "charts", local_project)
     result = merge_metas(board_dir, boards_root)
@@ -442,8 +442,8 @@ def test_merge_metas_root_to_leaf_chain(
     from dbt_charts.core.compile.merge import merge_metas
 
     # theme: paper desugars to extends: paper → style set.
-    _write(tmp_path, "charts/meta.yaml", "theme: paper\n")
-    _write(tmp_path, "charts/sub/meta.yaml", "title: SubTitle\n")
+    _write(tmp_path, "charts/meta.yml", "theme: paper\n")
+    _write(tmp_path, "charts/sub/meta.yml", "title: SubTitle\n")
     board_dir = _directory(tmp_path, "charts/sub", local_project)
     boards_root = _directory(tmp_path, "charts", local_project)
     result = merge_metas(board_dir, boards_root)
@@ -457,8 +457,8 @@ def test_merge_metas_leaf_overrides_root(
     """Leaf meta's title wins over root meta's title."""
     from dbt_charts.core.compile.merge import merge_metas
 
-    _write(tmp_path, "charts/meta.yaml", "title: RootTitle\n")
-    _write(tmp_path, "charts/sub/meta.yaml", "title: LeafTitle\n")
+    _write(tmp_path, "charts/meta.yml", "title: RootTitle\n")
+    _write(tmp_path, "charts/sub/meta.yml", "title: LeafTitle\n")
     board_dir = _directory(tmp_path, "charts/sub", local_project)
     boards_root = _directory(tmp_path, "charts", local_project)
     result = merge_metas(board_dir, boards_root)
@@ -473,7 +473,7 @@ def test_merge_metas_meta_with_extends(
 
     # base_theme.yaml has theme: paper → desugars to extends: paper → style set.
     _write(tmp_path, "charts/base_theme.yaml", "theme: paper\n")
-    _write(tmp_path, "charts/meta.yaml", "extends: ./base_theme.yaml\n")
+    _write(tmp_path, "charts/meta.yml", "extends: ./base_theme.yaml\n")
     board_dir = _directory(tmp_path, "charts", local_project)
     boards_root = _directory(tmp_path, "charts", local_project)
     result = merge_metas(board_dir, boards_root)

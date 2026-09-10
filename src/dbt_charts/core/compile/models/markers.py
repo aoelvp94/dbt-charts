@@ -67,6 +67,36 @@ class InheritSlot:
     exclude: frozenset[str] = frozenset()
 
 
+@dataclasses.dataclass(frozen=True)
+class SchemaSugar:
+    """Declares a synthetic authoring-sugar field with no backing Pydantic field.
+
+    Unrelated to the inherit-graph markers (``Inherit``/``InheritSlot``) above —
+    this one is read by ``schema/introspection.py``'s ``introspect()``, not
+    ``build_inherit_graph()``. Attached to a model's own ``Annotated`` input
+    wrapper (e.g. ``AuthoredBoardInput = Annotated[AuthoredBoard,
+    BeforeValidator(...), SchemaSugar(...)]``), not to a field — the sugar key
+    (``theme:``) is a sibling key a ``BeforeValidator`` folds into a real field
+    (``extends:``) and deletes, so no field on the model itself carries it.
+    ``introspect()`` reads this metadata off the wrapper and appends a
+    synthetic ``SchemaField`` to the wrapped model's ``AuthorableModel`` entry,
+    so the sugar key still reaches the generated JSON Schema, docs, and
+    highlight manifest without a hand-maintained duplicate of its shape.
+
+    Args:
+        name: The authored YAML key (e.g. ``"theme"``).
+        type_repr: The field's ``SchemaField.type_repr`` value (e.g. ``"str"``).
+        enum_values: Legal string values, or None for an unconstrained type.
+        description: Published field description (same rules as
+                      ``Field(description=...)`` — see ``models/AGENTS.md``).
+    """
+
+    name: str
+    type_repr: str
+    enum_values: tuple[str, ...] | None
+    description: str
+
+
 class Strategy(str, Enum):
     """Valid merge strategies for the Merge marker."""
 
@@ -82,7 +112,7 @@ class Merge:
     """Merge strategy marker for the board-resolution engine.
 
     Declares how a field is combined when two board fragments are merged:
-    ``file`` for file-relation merges (meta.yaml, extends) and ``nested``
+    ``file`` for file-relation merges (meta.yml, extends) and ``nested``
     for nested-board-relation merges (child board inside rows/cols/grid/tabs).
 
     When ``nested`` is None the file strategy is used for both relations.
@@ -159,7 +189,7 @@ class Facet:
 
 @dataclasses.dataclass(frozen=True)
 class Color(Facet):
-    """The value is a CSS colour, so an editor can offer a swatch."""
+    """The value is a CSS color, so an editor can offer a swatch."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -198,10 +228,10 @@ class FontFamily(Facet):
 
 @dataclasses.dataclass(frozen=True)
 class Palette(Facet):
-    """The value names a colour palette, or spells one out as its stops.
+    """The value names a color palette, or spells one out as its stops.
 
     The wheel ships a closed set of palette names, and an editor can offer them
-    as shortcuts rather than a closed set: a bare list of CSS colours stays a
+    as shortcuts rather than a closed set: a bare list of CSS colors stays a
     legal value here too.
 
     **Not** a theme's ``palettes:`` role (``category``, ``sequence``). A role is

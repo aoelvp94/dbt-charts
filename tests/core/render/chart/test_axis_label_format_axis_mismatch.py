@@ -593,7 +593,7 @@ class TestLegalFormatsAreUntouched:
 
     def test_scatter_categorical_y_time_format_routes_to_label_expr(self) -> None:
         """A time spec on a genuinely non-date categorical y is existing,
-        preserved behaviour (scatter.py's UTC labelExpr routing) — the
+        preserved behavior (scatter.py's UTC labelExpr routing) — the
         fold-in gate must not touch it, since a time spec is exempt on any
         channel regardless of what the underlying data actually holds."""
         chart = ScatterChart(

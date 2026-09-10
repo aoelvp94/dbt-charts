@@ -9,7 +9,7 @@ This is distinct from an *authored* ``axis_x.ticks.count`` on a genuinely
 VL-type-temporal x scale (continuous, or ordinal-density-gate-flipped): that
 explicit author input DOES map to VL's ``axis.tickCount`` (see
 ``test_authored_ticks_count_reaches_tickcount_on_density_flipped_temporal``
-below) — VL's time-scale tick logic honours a plain numeric tickCount as a
+below) — VL's time-scale tick logic honors a plain numeric tickCount as a
 target, unlike the advisory tickCount on quantitative scales. The tests above
 all resolve to VL type "ordinal" (24 months < MAX_ORDINAL_BUCKETS), where
 ticks.count has no meaning (a discrete-domain scale has no "count" concept)

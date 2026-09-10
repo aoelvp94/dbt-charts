@@ -61,6 +61,15 @@ class RenderBox:
     # `facet_bound_position_channels` (`emitters/_cartesian.py`) has the same
     # number both there and in the pre-spec width budget it must agree with.
     facet_unnarrowed_panel_width: float | None = None
+    # How many facet panels each dimension was divided across to get
+    # ``width`` / ``height`` — 1 when nothing was divided. Chrome outside the
+    # plot (title block, view padding) is a whole-chart cost paid once, so a
+    # panel owes only its share of it; ``axis_title_budget`` divides by these.
+    # ``panel_rows`` is 1 even on a row-faceted chart when no height was
+    # authored: VL then falls back to ``config.view.continuousHeight``, which
+    # is already a per-unit height, so nothing was divided.
+    panel_rows: int = 1
+    panel_cols: int = 1
 
 
 @dataclass
@@ -103,7 +112,7 @@ class EndpointLabelData:
     # Dark-companion ink for label text.  When non-empty, translate.py uses this
     # for the label pane color scale instead of color_range so label text carries
     # readable contrast against the background (darker ink) rather than the bright
-    # mark colour.  Empty list → fall back to color_range.
+    # mark color.  Empty list → fall back to color_range.
     # Populated by callers that pre-bake dark companion stops at resolve time
     # (analogous to ResolvedPieChart.dark_companion_stops) — compile.palette is
     # banned from render/chart/ per the import-boundary test.
@@ -177,6 +186,16 @@ class ChartSpec:
     mark: str
     encoding: dict[str, Any] = field(default_factory=dict)
     layers: list[ChartSpec] = field(default_factory=list)
+    # Overlay sub-specs composed BEFORE the main mark, so they render beneath it.
+    # `layers` cannot express this: the translator always emits the main mark at
+    # layer[0], which is right for a fill family (a bar would hide a rule drawn
+    # under it) and wrong for a sparse one — a threshold rule drawn over a
+    # scatter bisects its points, the one on the threshold most of all. Line and
+    # area need no underlay because their strokes already live in `layers`.
+    # Only scatter ever populates this — the invariant every positional index
+    # into `layers` above relies on: nothing that reaches scatter is counted
+    # by `layers[0]`/`layers[-1]`/etc, because scatter's rule lives here instead.
+    underlays: list[ChartSpec] = field(default_factory=list)
     config: dict[str, Any] = field(default_factory=dict)
     mark_props: dict[str, Any] = field(default_factory=dict)
     # Simple string name ("mercator") or full projection dict ({"type": "conic...", "center": [...]}).
@@ -226,7 +245,7 @@ class ChartSpec:
     # Which VL positional channel carries the measure: "y", or "x" on a
     # horizontal bar, whose axes are flipped. Written by FacetFeature and read by
     # the facet wrap, where "independent" must free the measure scale and not the
-    # category one — so like its facet_* neighbours it only says anything about a
+    # category one — so like its facet_* neighbors it only says anything about a
     # faceted spec, and keeps the default on every other one. Heatmap is the one
     # faceted family whose measure is neither positional channel (it rides color)
     # — out of this field's vocabulary, and its independent-scale resolution is
@@ -240,7 +259,7 @@ class ChartSpec:
     # domain across every panel, so without forcing these independent a
     # panel reserves band/axis space for values it never draws. Narrowing
     # costs a real per-panel axis, so it applies only where that width is
-    # affordable — see `facet_bound_position_channels`. Colour scales are
-    # deliberately never added here — cross-panel colour identity stays
+    # affordable — see `facet_bound_position_channels`. Color scales are
+    # deliberately never added here — cross-panel color identity stays
     # shared; only positional band/axis space narrows.
     facet_independent_channels: frozenset[Literal["x", "y"]] = frozenset()

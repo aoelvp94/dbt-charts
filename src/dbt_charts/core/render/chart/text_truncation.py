@@ -1,6 +1,6 @@
 """Render-time capture of user-visible text truncations.
 
-Generalises the axis-title seam to all truncation surfaces. The ContextVar
+Generalizes the axis-title seam to all truncation surfaces. The ContextVar
 sink is opened by ``_collect_render_warnings`` in ``renderer.py`` before the
 spec-generation/render pass; recording functions called from chart renderers
 write into it as a side-effect, then detectors under ``render/warnings/``

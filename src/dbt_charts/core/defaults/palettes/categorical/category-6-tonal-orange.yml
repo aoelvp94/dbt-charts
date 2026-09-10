@@ -17,5 +17,5 @@ colors:
   - "#df9b82"    # 1 — pinkish tan (light tint)
   - "#7b2900"    # 2 — chestnut (dark saturated)
   - "#3c1303"    # 3 — chocolate brown (very dark)
-  - "#a17d6f"    # 4 — reddish grey (extended; form-redundant)
-  - "#e3cbc2"    # 5 — pinkish grey (extended; form-redundant)
+  - "#a17d6f"    # 4 — reddish gray (extended; form-redundant)
+  - "#e3cbc2"    # 5 — pinkish gray (extended; form-redundant)

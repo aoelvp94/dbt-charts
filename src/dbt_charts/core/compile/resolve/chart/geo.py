@@ -98,7 +98,7 @@ def _resolve_geo_format_fields(
     """Return (geo_format_type, resolved_feature, resolved_property) from geo_info.
 
     When geo_info is None (raw-URL source), falls back to topojson/"features"/None
-    — matching the oracle behaviour for unknown sources.
+    — matching the oracle behavior for unknown sources.
     """
     if geo_info is not None:
         fmt_type: str = str(geo_info.get("format", "topojson"))

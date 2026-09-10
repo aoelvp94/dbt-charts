@@ -130,10 +130,29 @@ def get_font_measurer(
     return _load_measurer(get_font_path(font_family, numeric=numeric))
 
 
-def centered_baseline_offset(font_family: str | None, font_size: float) -> float:
-    """How far below a container's vertical centre a centred line's baseline sits.
+def get_weighted_font_measurer(font_family: str | None, weight: int) -> FontMeasurer:
+    """Return the measurer for ``font_family`` instanced at ``weight``.
 
-    Centring a line puts its content box — ``ascent + descent`` — astride the
+    A variable file measured at two weights gives different advances, so a run
+    painted at 600 must be measured at 600 or whatever is positioned against it
+    will overlap. Keyed on path *and* weight for the same reason
+    :func:`measurer_for_face` is — :func:`_load_measurer` keys on path alone.
+    """
+    path = get_font_path(font_family)
+    key = f"{path}|{weight}"
+    cached = _face_measurers.get(key)
+    if cached is not None:
+        return cached
+    measurer = FontMeasurer(path, weight=weight)
+    measurer.measure("A", 14.0)  # Probe for real availability, as _load_measurer does.
+    _face_measurers[key] = measurer
+    return measurer
+
+
+def centered_baseline_offset(font_family: str | None, font_size: float) -> float:
+    """How far below a container's vertical center a centered line's baseline sits.
+
+    Centering a line puts its content box — ``ascent + descent`` — astride the
     middle, so the baseline lands ``(ascent - descent) / 2`` below it. The ratio
     is the face's, not a constant: a face with a deep descender carries its
     baseline higher, and the ``0.35`` this replaced was one family's value spread

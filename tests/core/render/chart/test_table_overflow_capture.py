@@ -25,7 +25,7 @@ _BOARD_RS, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
 
 def _data() -> list[dict[str, Any]]:
-    # A long, unbreakable id column plus several more: their honoured widths sum
+    # A long, unbreakable id column plus several more: their honored widths sum
     # well past a narrow slot, so the table must widen past it — the screenshot.
     return [
         {

@@ -452,7 +452,7 @@ class TestArcWiring:
         """Arc is the one mark family where ``mark.fill`` overrides
         ``encoding.color`` (opposite of bar/line/area). _build_mark_style
         must not set palette[0] on arc/pie or every slice renders the
-        same colour."""
+        same color."""
         spec = _pie_spec_with_theme()
         assert "fill" not in _get_mark(spec)
 

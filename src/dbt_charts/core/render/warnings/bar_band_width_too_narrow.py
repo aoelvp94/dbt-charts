@@ -88,12 +88,12 @@ def _grouped_series_count(
     positives on colors the emitter doesn't group by, false negatives on
     wide-form measures it does).
 
-    Small multiples do NOT get a lower count here: the offset/colour scale is
+    Small multiples do NOT get a lower count here: the offset/color scale is
     never one of the channels ``facet_bound_position_channels``
     (``emitters/_cartesian.py``) can narrow — only a position channel (``x``/
     ``y``) resolves independently, when a panel's own rows carry a proper
-    subset of that channel's domain, and colour stays shared across panels
-    by design (cross-panel colour identity) regardless. So a panel facing
+    subset of that channel's domain, and color stays shared across panels
+    by design (cross-panel color identity) regardless. So a panel facing
     one series value still divides its band across the *global* series
     domain, occupying a single sub-slot — the real render measures
     sub-pixel bars here, not full-width ones. Counting the offset field's

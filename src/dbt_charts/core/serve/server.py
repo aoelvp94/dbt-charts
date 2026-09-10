@@ -270,7 +270,6 @@ def _error_palette_for_theme(theme_name: str | None = None) -> dict[str, str]:
 
     rstyle = resolve_style(get_theme_style(theme_name))
     return {
-        "page_bg": rstyle.page.background,
         "panel_bg": rstyle.background,
         "text": rstyle.font.color,
         "muted": rstyle.muted,

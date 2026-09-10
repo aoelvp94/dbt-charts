@@ -674,7 +674,7 @@ class Executor:
                 if isinstance(stored, QueryError):
                     raise stored
                 stored_code = (
-                    stored.code if isinstance(stored, ExecutionError) else None
+                    stored.code if isinstance(stored, DbtChartsError) else None
                 )
                 raise QueryError(str(stored), query_name, code=stored_code) from stored
 

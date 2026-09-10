@@ -299,7 +299,7 @@ def test_rail_names_series_absent_from_top_row(resolve_horizontal_bar_chart) -> 
 def test_absent_series_anchors_at_its_zero_width_stack_seam(
     resolve_horizontal_bar_chart,
 ) -> None:
-    """The absent series anchors where its segment would start, not at a neighbour."""
+    """The absent series anchors where its segment would start, not at a neighbor."""
     data = _series_missing_from_top_row_data()
     rc = resolve_horizontal_bar_chart(
         data=data, enabled=True, stack="zero", author_asked=True
@@ -398,7 +398,7 @@ def _crowded_long_name_data() -> list[dict[str, Any]]:
     Same shape as a real crowded chart (quirky-length series like
     "extensions_contrib" and "replication_report"): each name is wide enough,
     relative to its own share of the row, that the rail's labels cannot all
-    fit without touching a neighbour on a narrow-enough chart.
+    fit without touching a neighbor on a narrow-enough chart.
     """
     names = [
         "extensions_contrib",
@@ -418,7 +418,7 @@ def test_horizontal_rail_falls_back_to_legend_when_labels_would_collide(
     """Real pixel-width measurement, not a heuristic, disqualifies a crowded rail.
 
     Seven long series names sharing one narrow top row cannot all fit their
-    own label without overlapping a neighbour — the default steers back to a
+    own label without overlapping a neighbor — the default steers back to a
     legend exactly like every other rail disqualifier in this module.
 
     Width is close to the real collision threshold for this data (940px:
@@ -458,7 +458,7 @@ def test_crowded_rail_legend_matches_another_disqualified_shape(
 ):
     """A crowded rail's legend fallback is the same shared placement decision.
 
-    A centre stack is disqualified for an unrelated reason (the rail cannot
+    A center stack is disqualified for an unrelated reason (the rail cannot
     anchor on a diverging domain) but is still a genuine stack — same
     ``is_stacked`` legend-placement branch inside
     ``cartesian_series_naming()`` as the collision disqualifier reaches —
@@ -515,7 +515,7 @@ def test_authored_measure_domain_feeds_the_collision_check(
     assert widened.style.endpoint_labels.visible is False, (
         "an authored domain far wider than the natural stacked total must "
         "compress the rail's real pixel positions and be read by the "
-        "collision check, not ignored in favour of the stacked total"
+        "collision check, not ignored in favor of the stacked total"
     )
 
 
@@ -579,7 +579,7 @@ def test_non_zero_anchored_authored_domain_keeps_its_low_edge(
     """Regression: ``mid / hi`` is wrong once an authored domain's low edge
     isn't 0 — the real rendered position is ``(mid - lo) / (hi - lo)``, so
     the low edge must survive past ``_stacked_measure_domain_span`` rather
-    than being discarded in favour of the high edge alone.
+    than being discarded in favor of the high edge alone.
 
     Spies on the real call ``_horizontal_rail_labels_would_collide`` makes
     during a real resolve, rather than hand-constructing an ``AxisYStyle``
@@ -799,7 +799,7 @@ def test_wrap_disables_pane1_legend(resolve_horizontal_bar_chart):
     """Auto-disable the categorical legend on the chart pane when wrapping.
 
     Mirrors the vertical/hconcat behavior: direct labels and a side legend
-    encode the same series→colour mapping, and the rail is the direct label
+    encode the same series→color mapping, and the rail is the direct label
     here, so the legend is suppressed.
     """
     data = _two_series_two_row_data()
@@ -887,11 +887,11 @@ def test_rail_mark_paints_at_the_resolved_series_label_font(
 
 
 def test_center_stack_never_reaches_the_rail_s_refusal(resolve_horizontal_bar_chart):
-    """The rail cannot anchor a centre stack, so resolve keeps charts away from it.
+    """The rail cannot anchor a center stack, so resolve keeps charts away from it.
 
     The render-layer raise is still the contract for a ``ResolvedChart`` built
     directly with the combination; it is simply unreachable through resolve now
-    that the labelling default disqualifies it.
+    that the labeling default disqualifies it.
     """
     data = _two_series_two_row_data()
     rc = resolve_horizontal_bar_chart(data=data, enabled=True, stack="center")
@@ -905,7 +905,7 @@ def test_center_stack_still_raises_when_the_author_opts_in(
 ):
     """The refusal above is the other half of that contract.
 
-    Resolve steers the default away from a centre stack, but an explicit
+    Resolve steers the default away from a center stack, but an explicit
     ``endpoint_labels.visible: true`` reaches render — and must meet the named
     conflict rather than a rail anchored on an axis the chart does not have.
     """
@@ -925,7 +925,7 @@ def test_negative_values_auto_disable_endpoint_labels_horizontal(
 ):
     """Negative values in the top row break the cumulative-midpoint computation.
 
-    The render layer still raises if it ever sees this combination (defence
+    The render layer still raises if it ever sees this combination (defense
     in depth for a direct, non-default construction), but the resolve-time
     default now steers away from it first — same auto-disable treatment as
     stack: center above, and the chart still renders."""

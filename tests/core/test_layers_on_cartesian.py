@@ -240,8 +240,8 @@ def _default_board_style():
 
 
 def _default_board_style_no_endpoint_labels():
-    """Bar endpoint_labels off — a stacked bar with a series colour channel
-    otherwise suppresses the legend in favour of direct labelling, but this
+    """Bar endpoint_labels off — a stacked bar with a series color channel
+    otherwise suppresses the legend in favor of direct labeling, but this
     low-level emit()+translate_to_vl() path (unlike the full render pipeline)
     never draws the endpoint-label pane that would replace it, leaving
     neither. Legend-scale/paint tests need the legend back."""

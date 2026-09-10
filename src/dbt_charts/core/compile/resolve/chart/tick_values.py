@@ -110,7 +110,7 @@ def stacked_bar_totals(
 ) -> dict[ChartValue, float]:
     """Return each category's positive stacked total, keyed by its ``x_field`` value.
 
-    Sums only positive y values per category, matching VL's behaviour of stacking
+    Sums only positive y values per category, matching VL's behavior of stacking
     positives upward and negatives downward independently.
 
     ``data`` stays the wide ``_RowData`` type, not ``PanelRows``: render's

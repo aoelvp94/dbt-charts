@@ -110,17 +110,17 @@ def test_sentence_single_char() -> None:
         # Small-words list extended with editorial-style lowercase
         # words missing from the library's NYT default — ``per``,
         # ``with``, ``from``, ``into`` etc. otherwise pick up the
-        # default "capitalise every word" treatment.
+        # default "capitalize every word" treatment.
         ("revenue per year", "Revenue per Year"),
         ("growth with discounts", "Growth with Discounts"),
         ("from source to sink", "From Source to Sink"),
         ("queries into the warehouse", "Queries into the Warehouse"),
         ("onto the dashboard", "Onto the Dashboard"),
-        # Edge: first word is always capitalised even when it matches an
+        # Edge: first word is always capitalized even when it matches an
         # extended small-word — same library contract as ``a``/``the``.
         ("per launch", "Per Launch"),
         ("with caveats", "With Caveats"),
-        # Edge: last word is always capitalised too — pins the
+        # Edge: last word is always capitalized too — pins the
         # ``range(1, len(words) - 1)`` upper bound in the post-process.
         ("scaling up", "Scaling Up"),
         ("burnout from launch", "Burnout from Launch"),

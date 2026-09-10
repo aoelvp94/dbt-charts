@@ -1061,7 +1061,7 @@ def _emit_point_mark(point: Any) -> dict[str, Any]:
     if filled is False and (v := _n(point, "fill")) is not None:
         d["fill"] = v
     # Flat ``stroke_width`` (not a nested ``stroke`` block) — point marks
-    # only consume strokeWidth; stroke colour comes from the color encoding
+    # only consume strokeWidth; stroke color comes from the color encoding
     # and cap/join/dasharray don't apply to ring geometry.
     if (v := _n(point, "stroke_width")) is not None:
         d["strokeWidth"] = v

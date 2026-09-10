@@ -4,7 +4,7 @@ Stage: RENDER
 Purpose: Hand a host the JS and CSS that make the *drawn* controls live.
 
 No markup: the server draws every variable control into the board SVG
-(``variables_strip.py``), so a host adds behaviour, never elements. That is what
+(``variables_strip.py``), so a host adds behavior, never elements. That is what
 keeps every interactive surface out of the board's scaled coordinate system —
 the defect this replaced was an HTML layer measured in page pixels sitting over
 a band measured in board units.
@@ -29,7 +29,7 @@ _INTERACTIVE: ContextVar[bool] = ContextVar("dct_interactive_controls", default=
 
 @contextmanager
 def interactive_controls(enabled: bool) -> Generator[None]:
-    """Hang the behaviour payload on the drawn controls, for one render.
+    """Hang the behavior payload on the drawn controls, for one render.
 
     The *drawing* never varies: a picture must not depend on who is looking at
     it, so the same board renders the same chrome live or exported. What varies

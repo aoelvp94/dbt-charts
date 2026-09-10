@@ -280,7 +280,7 @@ def test_stacked_bar_with_tiny_total_gets_carrier_hover_band() -> None:
     x-unified tooltip already shows every series at a given x once ANY mark
     there is hovered) -- what matters is picking exactly ONE carrier row for
     Feb, not one band per series. Two or more overlapping per-series bands at
-    Feb would resurrect the wrong-neighbour hit-test/link bug
+    Feb would resurrect the wrong-neighbor hit-test/link bug
     (test_stacked_bar_excluded_from_hover_band's original regression) that
     stacked exclusion was added to avoid.
 
@@ -305,7 +305,7 @@ def test_stacked_bar_with_tiny_total_gets_carrier_hover_band() -> None:
         f"Jan's total is not tiny -- it must not be an active carrier; got {y2_expr!r}"
     )
     # Exactly one series row must carry the band for Feb, not both -- else
-    # Feb's own two segments would overlap the same wrong-neighbour way the
+    # Feb's own two segments would overlap the same wrong-neighbor way the
     # per-series design did.
     assert ("'A'" in y2_expr) != ("'B'" in y2_expr), (
         f"Exactly one series must be the Feb carrier, not zero or both; got {y2_expr!r}"
@@ -324,7 +324,7 @@ def test_hover_band_has_no_aria_override() -> None:
     Regression: an earlier revision set aria:false so the band would be
     "transparent" to chart_interactivity.js and let its mousemove handler's
     nearestDataMark proximity fallback resolve the real bar underneath. That
-    fallback picks whichever LABELLED mark is geometrically closest to the
+    fallback picks whichever LABELED mark is geometrically closest to the
     cursor -- for a short bar's hover band sitting next to a much taller
     neighbor, the neighbor's edge is often closer than the short bar's own
     far-away mark. Confirmed by direct browser dispatch: hovering a short

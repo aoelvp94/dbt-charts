@@ -4,7 +4,7 @@
 Detection rule:
   ``WarningContext.series_label_truncations`` is non-empty for a chart — the
   endpoint-label feature capped the rail (``measure_label_pane_width`` in
-  ``render/chart/emitters/_endpoint_rail.py``) on a layout that honours that
+  ``render/chart/emitters/_endpoint_rail.py``) on a layout that honors that
   width, so Vega will ellipsize the recorded names.
 
 One ``Diagnostic`` fires per (chart, authored field): a chart with thirty long
@@ -21,7 +21,7 @@ from dbt_charts.core.render.chart.series_label_truncation import SeriesLabelTrun
 from dbt_charts.core.render.warnings.base import WarningContext
 
 # Labels quoted in full before the message falls back to a count. Enough to
-# recognise which values are the problem without pasting a whole column in.
+# recognize which values are the problem without pasting a whole column in.
 _MAX_LISTED = 3
 
 

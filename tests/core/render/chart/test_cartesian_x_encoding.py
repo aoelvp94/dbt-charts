@@ -1,8 +1,8 @@
 """Tests for build_cartesian_x_encoding and y_zero_scale helpers.
 
-These helpers centralise the V1 map_x_encoding / map_y_encoding logic for
+These helpers centralize the V1 map_x_encoding / map_y_encoding logic for
 V2 emitters so that every cartesian emitter (line, area, layered, …) gets
-identical ordinal-time-axis behaviour with a one-liner callsite.
+identical ordinal-time-axis behavior with a one-liner callsite.
 """
 
 from __future__ import annotations
@@ -503,7 +503,7 @@ class TestFineGrainScaffoldBudgetGate:
         dates = _sparse_daily_dates()
         ax = _axis()
         flat = build_cartesian_x_encoding(_rows(dates), "date", ax, {}, "bar")
-        panelled = build_cartesian_x_encoding(
+        paneled = build_cartesian_x_encoding(
             [{"date": d, "panel": "only"} for d in dates],
             "date",
             ax,
@@ -511,7 +511,7 @@ class TestFineGrainScaffoldBudgetGate:
             "bar",
             panel_fields=("panel",),
         )
-        assert (flat[0], flat[2]) == (panelled[0], panelled[2])
+        assert (flat[0], flat[2]) == (paneled[0], paneled[2])
 
     def test_authored_time_unit_is_never_overridden(self) -> None:
         # An explicit time_unit is an instruction, not a guess — the budget

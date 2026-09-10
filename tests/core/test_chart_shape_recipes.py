@@ -501,7 +501,7 @@ def test_bullet_recipe_draws_ranges_a_value_bar_and_a_goal_tick() -> None:
 
     bars = _marks(spec, "bar")
     ranges = [b for b in bars if b["encoding"].get("color", {}).get("field") == "band"]
-    assert ranges, "the qualitative ranges must be a colour-split stacked bar"
+    assert ranges, "the qualitative ranges must be a color-split stacked bar"
     assert _stack_mode(ranges[0]["encoding"]) == "zero"
 
     # The ramp's order IS its meaning: poor, satisfactory, good. Without
@@ -618,7 +618,7 @@ _LONG_DOT_DATA = [
 def _dot_plot(rotated: bool) -> dict[str, Any]:
     """The multi-series recipe, drawn either way round.
 
-    Long-format rows with a colour split, deliberately not `layers:` — a layer
+    Long-format rows with a color split, deliberately not `layers:` — a layer
     carries its measure on its own channel, so a rotated base leaves each layer
     opening its own axis across the category labels.
     """

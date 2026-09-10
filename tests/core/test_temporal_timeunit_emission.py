@@ -11,7 +11,7 @@ Verifies:
 - explicit time_unit override (yearquarter, yearmonth) → bar stays ordinal
 - time_unit: none → temporal continuous (unchanged)
 - datetime.date objects are recognized as date-like
-- sparse-gap behaviour on bar: ordinal collapses the gap (no missing band)
+- sparse-gap behavior on bar: ordinal collapses the gap (no missing band)
 - Q-label / W-label normalization to ISO dates runs on bar and line
 - band_width resizes bars on ordinal scale
 - grouped bar x-offset still works on ordinal scale

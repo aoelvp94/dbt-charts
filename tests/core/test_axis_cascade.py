@@ -67,20 +67,27 @@ def test_axis_grid_color_cascades_to_axis_x():
     assert emitted.grid.color == "#aabbcc"
 
 
-def test_axis_grid_zero_color_cascades_to_measure_axis():
-    """axis_y.grid.zero.color reaches the resolved quantitative y-axis.
+def test_axis_grid_threshold_color_cascades_to_measure_axis():
+    """axis_y.grid.threshold.color reaches the resolved y-axis, isolated
+    from a sibling channel.
 
-    grid.zero is a MeasureGridStyle field (axis_y only — BaseAxisGridStyle
-    for axis and axis_x do not have it). Setting it on axis_y and clearing it
-    from axis_quantitative verifies the axis_y layer provides the value.
-    X-axis always has zero=None (BaseAxisGridStyle — zero is structurally absent).
+    threshold now lives on the shared BaseAxisGridStyle (moved off the
+    deleted y-only MeasureGridStyle), so every axis slot carries it. Setting
+    a distinctive color on axis_y and clearing axis_quantitative's own grid
+    color verifies the axis_y layer — not some other layer — provides it,
+    and that a sibling channel (axis_x) with no channel-level override does
+    not pick up the same distinctive value.
     """
-    from dbt_charts.core.compile.models.style.theme import AxisGridZeroStyle
+    from dbt_charts.core.compile.models.style.theme import AxisGridThresholdStyle
 
     base = get_theme_style("clarity")
-    new_zero = AxisGridZeroStyle(color="#ff0000", width=1)
+    new_threshold = AxisGridThresholdStyle(color="#ff0000", width=1, visible=True)
     axis_y_patch = base.charts.axis_y.model_copy(
-        update={"grid": base.charts.axis_y.grid.model_copy(update={"zero": new_zero})}
+        update={
+            "grid": base.charts.axis_y.grid.model_copy(
+                update={"threshold": new_threshold}
+            )
+        }
     )
     axis_quantitative_patch = base.charts.axis_quantitative.model_copy(
         update={
@@ -103,13 +110,39 @@ def test_axis_grid_zero_color_cascades_to_measure_axis():
     emitted_y = resolved_axis_style(
         resolved, "axis_y", "quantitative", chart_type="", label_authored=False
     )
-    assert emitted_y.grid.zero is not None
-    assert emitted_y.grid.zero.color == "#ff0000"
-    # x-axis has no zero — BaseAxisGridStyle doesn't have the field.
+    assert emitted_y.grid.threshold.color == "#ff0000"
+    # x-axis has no channel-level override, so it inherits the shared `axis`
+    # slot's threshold instead of the y-only distinctive value — no longer
+    # structurally absent the way grid.zero was pre-generalization.
     emitted_x = resolved_axis_style(
         resolved, "axis_x", "quantitative", chart_type="", label_authored=False
     )
-    assert emitted_x.grid.zero is None
+    assert emitted_x.grid.threshold.color != "#ff0000"
+
+
+def test_axis_grid_threshold_visible_false_resolves_on_x_axis():
+    """threshold.visible: false is now authorable on axis_x — a slot that
+    could not carry the block at all before this change — and resolves to visible=False rather
+    than raising or silently ignoring the override.
+    """
+    from dbt_charts.core.compile.models.style.theme import AxisGridThresholdStyle
+
+    base = get_theme_style("clarity")
+    axis_x_patch = base.charts.axis_x.model_copy(
+        update={
+            "grid": base.charts.axis_x.grid.model_copy(
+                update={"threshold": AxisGridThresholdStyle(visible=False)}
+            )
+        }
+    )
+    patched = base.model_copy(
+        update={"charts": base.charts.model_copy(update={"axis_x": axis_x_patch})}
+    )
+    resolved = resolve_chart_style_context(patched)
+    emitted_x = resolved_axis_style(
+        resolved, "axis_x", "ordinal", chart_type="", label_authored=False
+    )
+    assert emitted_x.grid.threshold.visible is False
 
 
 def test_axis_grid_visible_cascades_to_child_axes():
@@ -291,27 +324,29 @@ def test_base_axis_with_null_grid_color_raises():
         )
 
 
-def test_editorial_cream_resolves_without_error():
-    """cream theme resolves cleanly and axis_y emits zero color.
+def test_paper_resolves_without_error():
+    """paper theme resolves cleanly and every axis emits a threshold.
 
-    grid.zero lives on MeasureGridStyle (axis_y only). The cream theme sets
-    axis_y.grid.zero.color; the resolved y-axis carries it through.
-    X-axis has no zero (BaseAxisGridStyle — zero is structurally absent).
+    threshold now lives on the shared BaseAxisGridStyle. paper authors its
+    color once, on the shared ``axis`` slot; axis_y and axis_x both inherit
+    it through the cascade — neither is structurally excluded from the
+    block anymore.
     """
-    resolved = resolve_chart_style_context(get_theme_style("paper"))
-    # axis_y.grid is MeasureGridStyle — zero is available on the raw theme slot.
-    axis_y_zero_color = (
-        resolved.axis_y.grid.zero.color
-        if resolved.axis_y.grid.zero is not None
-        else None
-    )
+    style = get_theme_style("paper")
+    resolved = resolve_chart_style_context(style)
     emitted_y = resolved_axis_style(
         resolved, "axis_y", "quantitative", chart_type="", label_authored=False
     )
-    assert emitted_y.grid.zero is not None
-    assert emitted_y.grid.zero.color == axis_y_zero_color
-    # x-axis has no zero — BaseAxisGridStyle doesn't have the field.
     emitted_x = resolved_axis_style(
         resolved, "axis_x", "quantitative", chart_type="", label_authored=False
     )
-    assert emitted_x.grid.zero is None
+    # Compare against the resolved theme slot itself (charts.axis.grid.threshold
+    # is paper's one authored color; axis_x/axis_y stay sparse overlays that
+    # never carry it directly -- see the module docstring), not emitted_y
+    # against emitted_x: that pairwise comparison would still pass even if
+    # paper's own threshold block were deleted and both axes instead fell
+    # back to some unrelated, merely-equal default.
+    theme_threshold_color = style.charts.axis.grid.threshold.color
+    assert theme_threshold_color is not None
+    assert emitted_y.grid.threshold.color == theme_threshold_color
+    assert emitted_x.grid.threshold.color == theme_threshold_color

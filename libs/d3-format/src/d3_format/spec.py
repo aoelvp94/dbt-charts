@@ -103,7 +103,7 @@ def parse(spec: str) -> FormatSpec:
 
     Returns:
         FormatSpec with parsed fields, exactly as written. Type aliasing
-        (``n`` -> ``,g``, an unrecognised letter -> ``.12~g``) and precision
+        (``n`` -> ``,g``, an unrecognized letter -> ``.12~g``) and precision
         clamping happen in ``format``, mirroring where d3 applies them.
 
     Raises:

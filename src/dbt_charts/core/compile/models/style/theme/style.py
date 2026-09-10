@@ -30,7 +30,6 @@ from dbt_charts.core.compile.models.style.theme.layout import (
 )
 from dbt_charts.core.compile.models.style.theme.page import (
     FooterStyle,
-    PageStyle,
     TimestampStyle,
 )
 from dbt_charts.core.compile.models.style.theme.variables import (
@@ -104,12 +103,9 @@ class Style(BaseModel):
         description="Spacing and arrangement inside the containers (rows, cols, grid, tabs, details)."
     )
     variables: VariablesStyle = Field(description="Variable controls chrome style.")
-    # nested=CHILD: page/footer/timestamp are root-board-only chrome — a
-    # nested board has no page canvas, footer, or timestamp line of its own
-    # to draw, so an ancestor's authored values here have nothing to reach.
-    page: Annotated[PageStyle, Merge(Strategy.DEEP, nested=Strategy.CHILD)] = Field(
-        description="Page-level canvas style (behind the board)."
-    )
+    # nested=CHILD: footer/timestamp are root-board-only chrome — a nested
+    # board has no footer or timestamp line of its own to draw, so an
+    # ancestor's authored values here have nothing to reach.
     footer: Annotated[FooterStyle, Merge(Strategy.DEEP, nested=Strategy.CHILD)] = Field(
         description="Page footer chrome visibility."
     )
@@ -165,12 +161,12 @@ class Style(BaseModel):
             "e.g. ink: chrome.heading"
         ),
     )
-    # padding/margin/gap/color below: none of them are theme-populated (no
-    # shipped theme sets any of the four), matching their own "per-board"
+    # padding/margin/gap below: none of them are theme-populated (no shipped
+    # theme sets any of the three), matching their own "per-board"
     # descriptions. Each carries nested=CHILD so a nested board that authors
     # any style of its own never inherits an ancestor's value for these —
     # the same rows/cols/grid pattern. A nested board authoring no style at
-    # all still inherits everything, these four included, via the
+    # all still inherits everything, these three included, via the
     # compile_board_resolved_style fast path (verbatim reuse of the parent).
     padding: Annotated[
         SpacingValues | None, Merge(Strategy.DEEP, nested=Strategy.CHILD)
@@ -186,9 +182,4 @@ class Style(BaseModel):
     )
     gap: Annotated[float | None, Merge(Strategy.OVERRIDE, nested=Strategy.CHILD)] = (
         Field(default=None, description="Per-board gap between layout items in pixels.")
-    )
-    color: Annotated[
-        str | None, Color(), Merge(Strategy.OVERRIDE, nested=Strategy.CHILD)
-    ] = Field(
-        default=None, description="Per-board text color override as a CSS color string."
     )

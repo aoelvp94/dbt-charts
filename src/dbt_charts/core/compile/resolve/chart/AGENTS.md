@@ -48,12 +48,12 @@ rather than leaving it absent from the parametrization.
 Frame and policy are shared: `plan_cartesian()` / `build_cartesian_axes()` run the
 identical prelude/postlude (channels, axis cascade bake, both `ResolvedAxisStyle`
 builds, tooltip format); `cartesian_series_naming()` owns the
-legend/rail decision. Tick, zero and domain maths stay per-family: bar's stacked
+legend/rail decision. Tick, zero and domain math stay per-family: bar's stacked
 totals, area's log-domain bake and line's multi-metric zero ladder are genuinely
-different maths over the same axis, not the same maths written five times, and are
+different math over the same axis, not the same math written five times, and are
 unified only by the `_CartesianTickResolution` NamedTuple every family returns, so
 the shared postlude can consume any family's result the same way. Do not fold
-tick/zero/domain maths into the shared prelude/postlude to chase more sharing: a
+tick/zero/domain math into the shared prelude/postlude to chase more sharing: a
 config flag hiding that divergence trades a visible skipped call for an invisible
 default.
 
@@ -108,10 +108,14 @@ an unconditional `True` for any bar layer.
 
 Scatter is the one family whose measure can land on either axis: it has no
 `orientation` field, and the dot-plot recipe rotates it by putting the value on
-x and the category on y. Both datum rules gate on `_y_carries_the_measure`,
-which reads the y-axis's own `is_quantitative` — a nominal y carries no
-`scale.continuous`, so a rule would otherwise paint at a position the axis has
-no room for. A rotated scatter draws no zero rule on either axis today.
+x and the category on y. The measure-axis datum rules (`_insert_zero_rule`,
+`_apply_unity`) gate on `_y_carries_the_measure`, which reads the y-axis's own
+`is_quantitative` — a nominal y carries no `scale.continuous`, so a rule would
+otherwise paint at a position the axis has no room for; a rotated scatter
+draws none of those. It still earns its own rule on the quantitative x-axis,
+though: `_apply_x_threshold` gates independently on `axis_x.is_quantitative`
+and fire whenever x itself straddles zero (or reaches 1.0 for a percent-formatted
+x), regardless of what the y-axis carries.
 
 Before adding or removing a bake for a family, verify through the real pipeline
 (resolved `tick_values` against the compiled Vega scale's `domain`) whether a

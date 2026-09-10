@@ -245,7 +245,7 @@ def test_wide_measures_anchor_at_the_last_axis_category(make_chart, model_copy_a
     """A wide ``y: [a, b]`` chart names its measures off the same rail.
 
     Its series come from the wide fold rather than a ``color:`` column, so it
-    reaches the anchor through a branch no colour-series fixture covers.
+    reaches the anchor through a branch no color-series fixture covers.
     """
     data = [
         {"period": "Before", "alpha": 10.0, "bravo": 20.0},

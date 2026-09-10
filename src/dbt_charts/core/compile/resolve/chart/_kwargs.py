@@ -151,7 +151,7 @@ def _base_kwargs(
     layout_padding: pass the caller's already-merged per-family padding (e.g.
     ``bar.padding``) — the same object build_chart_style_context/merge_onto_base
     produced for the rest of that family's style slice.
-    suppress_legend: True when endpoint labels replace the colour legend. Folds
+    suppress_legend: True when endpoint labels replace the color legend. Folds
     visible=False into the legend patch BEFORE the cascade merge so the resolved
     legend is built once with its final visibility — no post-hoc model_copy.
     top_legend: force the legend above the plot, reading left to right like the

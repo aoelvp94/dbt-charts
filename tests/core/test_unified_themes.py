@@ -120,9 +120,6 @@ def test_default_background_self_token_propagates_to_knockout_strokes():
 
     reset_config()
     default = get_theme_style("clarity")
-    # Page and chart/card surfaces agree — a single working surface, not a
-    # card floating on a differently-colored page.
-    assert default.background == default.page.background
     # Self-token cascade: pie.marks.slice stroke is the donut-slice knockout
     # separator; marks.geoshape stroke is the region halo. Both track
     # theme.background at theme-compile time (ADR-015 marks namespace).

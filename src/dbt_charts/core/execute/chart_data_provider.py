@@ -56,7 +56,7 @@ class ChartDataProvider(Protocol):
         ``Executor``'s extra defaulted ``use_cache`` / ``force_refresh`` and its
         wider ``VariableValues | None`` still satisfy this — an implementation may
         accept more than the Protocol promises. Declaring only what the seam uses
-        keeps a provider from modelling cache control it has no concept of.
+        keeps a provider from modeling cache control it has no concept of.
         """
         ...
 

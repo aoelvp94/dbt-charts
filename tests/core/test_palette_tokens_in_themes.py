@@ -66,10 +66,10 @@ class TestScaffoldTokensThroughResolve:
         ctx = resolve_chart_style_context(get_theme_style(), patch)
         assert ctx.view.stroke == resolve_palette_color("dbt-creams.grid-emphasis")
 
-    def test_page_background_token_resolves_to_hex(self):
-        patch = StylePatch.model_validate({"page": {"background": "dbt-grays.canvas"}})
+    def test_background_token_resolves_to_hex(self):
+        patch = StylePatch.model_validate({"background": "dbt-grays.canvas"})
         resolved = resolve_style(get_theme_style(), patch)
-        assert resolved.page.background == resolve_palette_color("dbt-grays.canvas")
+        assert resolved.background == resolve_palette_color("dbt-grays.canvas")
 
 
 class TestCategoryRoleBracketTokens:
@@ -131,7 +131,7 @@ class TestCategoryRoleBracketTokens:
         This cross-theme contract checks direction; the editorial family's
         stronger strict per-slot separation is pinned in its focused tests.
         """
-        canvas = resolve_style(get_theme_style(theme)).page.background
+        canvas = resolve_style(get_theme_style(theme)).background
 
         def stops(role: str) -> list[str]:
             colors: list[str] = []
@@ -425,7 +425,6 @@ class TestNeonChromeFromScaffold:
         compiled = get_theme_style("neon")
         void_hex = resolve_palette_color("dbt-grays.void")
         assert compiled.background == void_hex
-        assert compiled.page.background == void_hex
 
     def test_neon_panel_tier_tracks_ink(self):
         compiled = get_theme_style("neon")
@@ -466,10 +465,10 @@ class TestVividFourTierAnchorsTrackScaffold:
         compiled = get_theme_style("vivid")
         assert compiled.border.color == resolve_palette_color("dbt-grays.grid-emphasis")
 
-    def test_axis_quantitative_zero_tracks_ink(self) -> None:
+    def test_axis_threshold_tracks_ink(self) -> None:
         compiled = get_theme_style("vivid")
-        assert compiled.charts.axis_y.grid.zero is not None
-        assert compiled.charts.axis_y.grid.zero.color == resolve_palette_color(
+        assert compiled.charts.axis.grid.threshold is not None
+        assert compiled.charts.axis.grid.threshold.color == resolve_palette_color(
             "dbt-grays.ink"
         )
 

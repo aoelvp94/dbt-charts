@@ -2,7 +2,7 @@
 
 Stage: RENDER
 Purpose: Draw every variable control as SVG, and mark the band a host runtime
-can bind live behaviour onto.
+can bind live behavior onto.
 
 The server draws the controls because the server is the only party that knows
 the board's coordinate system. A board is one fixed ``viewBox`` stretched to
@@ -127,7 +127,7 @@ def _row_offsets(
     """How far each row shifts to pack against ``align``'s edge, keyed by row y.
 
     The layout engine flows every row from zero; packing right is a whole-row
-    translation, so a control's position relative to its neighbours is decided
+    translation, so a control's position relative to its neighbors is decided
     in exactly one place.
 
     Never negative. A row wider than the strip has nowhere to pack against, and

@@ -25,7 +25,6 @@ from dbt_charts.core.compile.models.board.resolved import (
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.diagnostics.base import DbtChartsError
-from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.chart_resolution import resolve_chart_with_runtime_inputs
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
 
@@ -89,13 +88,13 @@ def _resolve_chart_data_aware(
     dividing by a literal zero.
 
     Raises whatever ``resolve()`` raises — the caller is the one tracking
-    ``resolve_errors``, matching ``_require_resolved``'s single catch.
+    ``resolve_errors``, matching ``_require_resolved``'s single catch. A
+    failed data fetch is one of those raises too: it propagates here rather
+    than degrading to empty data, so the caller's catch records it instead of
+    resolving the chart as if its query had never failed.
     """
     query_name = chart.query_name
-    try:
-        data = executor.execute_query(query_name, variables) if query_name else []
-    except ExecutionError:
-        data = []
+    data = executor.execute_query(query_name, variables) if query_name else []
     return resolve_chart_with_runtime_inputs(
         chart, data, chart_style_context, width, executor, variables
     )

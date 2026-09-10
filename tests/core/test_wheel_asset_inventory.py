@@ -157,9 +157,10 @@ EXPECTED_ASSETS: list[tuple[str, str]] = [
         "dbt_charts/agent_api/_init_templates/dbt_charts.yml",
         "dct init project config template",
     ),
-    ("dbt_charts/agent_api/_init_templates/charts/guide.yaml", "dct init guide board"),
+    ("dbt_charts/agent_api/_init_templates/README.md", "dct init project README"),
+    ("dbt_charts/agent_api/_init_templates/charts/guide.yml", "dct init guide board"),
     (
-        "dbt_charts/agent_api/_init_templates/charts/meta.yaml",
+        "dbt_charts/agent_api/_init_templates/charts/meta.yml",
         "dct init directory-defaults template",
     ),
     (

@@ -288,7 +288,7 @@ class TestLegendRowFitsAxisReserveRegression:
 
 
 class TestCartesianTopLegendEntries:
-    def test_no_layers_and_no_colour_domain_is_empty(self) -> None:
+    def test_no_layers_and_no_color_domain_is_empty(self) -> None:
         assert (
             cartesian_top_legend_entries("revenue", None, [], (), has_color=False) == ()
         )
@@ -315,7 +315,7 @@ class TestCartesianTopLegendEntries:
         )
         assert entries == ("Revenue", "order target")
 
-    def test_colour_domain_values_are_appended(self) -> None:
+    def test_color_domain_values_are_appended(self) -> None:
         entries = cartesian_top_legend_entries(
             "revenue",
             "Revenue",
@@ -325,10 +325,10 @@ class TestCartesianTopLegendEntries:
         )
         assert entries == ("Revenue", "Target", "S1", "S2")
 
-    def test_base_name_dropped_when_base_carries_a_colour_field(self) -> None:
+    def test_base_name_dropped_when_base_carries_a_color_field(self) -> None:
         """Render's own field_color_base fork (_overlay.py) never emits the
         base's y-title as a separate legend entry once the base has its own
-        colour field -- its colour-domain values stand in for it instead.
+        color field -- its color-domain values stand in for it instead.
         Charging the fit predicate for both would over-measure by one entry
         render never draws."""
         entries = cartesian_top_legend_entries(

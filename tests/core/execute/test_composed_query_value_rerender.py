@@ -40,7 +40,7 @@ GLOBALS_PAYLOAD = "{{ cycler.__init__.__globals__.os.popen('id').read() }}"
 # Evaluates to 49 if — and only if — the value is rendered.
 ARITH_PAYLOAD = "{{ 7*7 }}"
 
-# Closes the surrounding literal and appends a tautology. Neutralised by binding
+# Closes the surrounding literal and appends a tautology. Neutralized by binding
 # the value as a parameter, not by escaping it.
 SQLI_PAYLOAD = "active' OR '1'='1"
 

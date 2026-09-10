@@ -637,8 +637,8 @@ class TestFacetChartTypes:
         assert "right" not in _y_axis_orients(spec["spec"])
 
 
-def _colour_series_chart(chart_type: str, multiples: dict[str, Any], **extra: Any):
-    """A faceted cartesian chart whose colour channel is a second dimension —
+def _color_series_chart(chart_type: str, multiples: dict[str, Any], **extra: Any):
+    """A faceted cartesian chart whose color channel is a second dimension —
     the shape that has series needing names once the panels are drawn."""
     cls = {"area": AreaChart, "bar": BarChart, "line": LineChart}[chart_type]
     return cls.model_validate(
@@ -655,16 +655,16 @@ def _colour_series_chart(chart_type: str, multiples: dict[str, Any], **extra: An
     )
 
 
-def _colour_legend(spec: dict[str, Any]) -> dict[str, Any]:
-    """The colour legend from a faceted spec's unit spec."""
+def _color_legend(spec: dict[str, Any]) -> dict[str, Any]:
+    """The color legend from a faceted spec's unit spec."""
     unit = spec["spec"]
     legend = unit["encoding"]["color"].get("legend")
-    assert isinstance(legend, dict), f"no colour legend on the unit spec: {legend!r}"
+    assert isinstance(legend, dict), f"no color legend on the unit spec: {legend!r}"
     return legend
 
 
 _MULTIPLES_AXES = [{"rows": "region"}, {"columns": "region"}]
-_COLOUR_SERIES_FAMILIES = [
+_COLOR_SERIES_FAMILIES = [
     ("area", {}),
     ("bar", {}),
     ("bar", {"style": {"stack": "zero"}}),
@@ -672,7 +672,7 @@ _COLOUR_SERIES_FAMILIES = [
 ]
 
 
-class TestMultiplesColourSeriesTopLegend:
+class TestMultiplesColorSeriesTopLegend:
     """Faceting takes away the endpoint-label rail, so the legend has to name the
     series instead — and it goes above the panels, where one legend reads across
     the whole grid, rather than down a rail beside whichever panel it lands next
@@ -680,30 +680,26 @@ class TestMultiplesColourSeriesTopLegend:
 
     @pytest.mark.parametrize("multiples", _MULTIPLES_AXES, ids=lambda m: str(m))
     @pytest.mark.parametrize(
-        ("chart_type", "extra"), _COLOUR_SERIES_FAMILIES, ids=lambda v: str(v)
+        ("chart_type", "extra"), _COLOR_SERIES_FAMILIES, ids=lambda v: str(v)
     )
-    def test_colour_series_gets_a_top_horizontal_legend(
+    def test_color_series_gets_a_top_horizontal_legend(
         self, chart_type: str, extra: dict[str, Any], multiples: dict[str, Any]
     ) -> None:
-        spec = _v2_vl(
-            _colour_series_chart(chart_type, multiples, **extra), _grid_data()
-        )
-        legend = _colour_legend(spec)
+        spec = _v2_vl(_color_series_chart(chart_type, multiples, **extra), _grid_data())
+        legend = _color_legend(spec)
         assert legend.get("orient") == "top"
         assert legend.get("direction") == "horizontal"
 
     @pytest.mark.parametrize("multiples", _MULTIPLES_AXES, ids=lambda m: str(m))
     @pytest.mark.parametrize(
-        ("chart_type", "extra"), _COLOUR_SERIES_FAMILIES, ids=lambda v: str(v)
+        ("chart_type", "extra"), _COLOR_SERIES_FAMILIES, ids=lambda v: str(v)
     )
-    def test_colour_series_renders_instead_of_refusing(
+    def test_color_series_renders_instead_of_refusing(
         self, chart_type: str, extra: dict[str, Any], multiples: dict[str, Any]
     ) -> None:
         """line and area ship the rail on by default; the default steps aside for
         `multiples:` on every family rather than the composition being refused."""
-        spec = _v2_vl(
-            _colour_series_chart(chart_type, multiples, **extra), _grid_data()
-        )
+        spec = _v2_vl(_color_series_chart(chart_type, multiples, **extra), _grid_data())
         assert isinstance(spec.get("facet"), dict)
 
     @pytest.mark.parametrize("chart_type", ["area", "bar", "line"])
@@ -711,15 +707,15 @@ class TestMultiplesColourSeriesTopLegend:
         """Steering a default is not overriding an author. Someone who wrote the
         rail on for a faceted chart still gets the diagnostic naming both fields,
         not a silently different chart."""
-        chart = _colour_series_chart(
+        chart = _color_series_chart(
             chart_type, {"rows": "region"}, style={"endpoint_labels": {"visible": True}}
         )
         with pytest.raises(ChartDataError, match="endpoint labels"):
             _v2_vl(chart, _grid_data())
 
-    def test_non_series_colour_keeps_the_legend_where_it_was(self) -> None:
+    def test_non_series_color_keeps_the_legend_where_it_was(self) -> None:
         """The top legend replaces the endpoint-label rail, and the rail only
-        ever names a *series* colour channel. A gradient colour (a continuous
+        ever names a *series* color channel. A gradient color (a continuous
         field bound with a scale) has nothing the rail could have named, so
         faceting it must not force a top-horizontal legend either — only
         ``color_ch.mode == "series"`` earns that treatment."""
@@ -741,12 +737,12 @@ class TestMultiplesColourSeriesTopLegend:
         """A folded wide-form area (``y: [measure, measure]``, no ``color:``)
         has a series to name from the fold itself — the measure list *is*
         the series. Faceting one must force the same top-horizontal legend a
-        colour series gets, or a wide area loses its only naming once
-        panelled."""
+        color series gets, or a wide area loses its only naming once
+        paneled."""
         chart = _area({"rows": "region", "columns": "product"}, y=["revenue", "cost"])
         spec = _v2_vl(chart, _grid_data())
         assert isinstance(spec.get("facet"), dict)
-        legend = _colour_legend(spec)
+        legend = _color_legend(spec)
         assert legend.get("orient") == "top"
         assert legend.get("direction") == "horizontal"
 
@@ -769,7 +765,7 @@ class TestMultiplesColourSeriesTopLegend:
         )
         spec = _v2_vl(chart, _grid_data())
         assert isinstance(spec.get("facet"), dict)
-        legend = _colour_legend(spec)
+        legend = _color_legend(spec)
         assert legend.get("orient") == "top"
         assert legend.get("direction") == "horizontal"
 
@@ -921,7 +917,7 @@ class TestFacetLayout:
         """The card boundary always wins: a slot too narrow to hold every panel
         at the legibility floor shrinks panels below it rather than pushing
         painted content past the card's edge (RJ's call, 2026-08-10 — see
-        faceted-charts-overflow-their-box-and-collide-with-neighbours)."""
+        faceted-charts-overflow-their-box-and-collide-with-neighbors)."""
         from dbt_charts.core.render.chart.vega_lite import _apply_facet_layout
 
         vl = _facet_vl(row="region", column="product")
@@ -992,6 +988,43 @@ _BOARD_1D_LONG_Y_3PANEL = (
     "    y: estimated_total_revenue_from_new_customers\n"
     "    multiples: {rows: region}\n"
     "rows: [panel]\n"
+)
+
+
+# One-word axis label on a 7-panel facet, one board per axis: the panel's own
+# share of the chart's chrome is what decides whether the word fits.
+_BOARD_7_YEAR_ROWS_SHORT_Y = (
+    "queries:\n"
+    "  by_hour:\n"
+    "    rows:\n"
+    "      - {hour_utc: 0, year_utc: 2019, commit_cnt: 3}\n"
+    "charts:\n"
+    "  facets:\n"
+    "    type: bar\n"
+    "    query: by_hour\n"
+    "    x: hour_utc\n"
+    "    y: commit_cnt\n"
+    "    y_label: commits\n"
+    "    multiples:\n"
+    "      rows: year_utc\n"
+    "rows: [facets]\n"
+)
+
+_BOARD_7_YEAR_COLUMNS_SHORT_X = (
+    "queries:\n"
+    "  by_hour:\n"
+    "    rows:\n"
+    "      - {hour_utc: 0, year_utc: 2019, commit_cnt: 3}\n"
+    "charts:\n"
+    "  facets:\n"
+    "    type: bar\n"
+    "    query: by_hour\n"
+    "    x: hour_utc\n"
+    "    y: commit_cnt\n"
+    "    x_label: commits\n"
+    "    multiples:\n"
+    "      columns: year_utc\n"
+    "rows: [facets]\n"
 )
 
 
@@ -1156,6 +1189,83 @@ class TestRenderChartBridge:
             f"whole-slot height rather than the panel's: {three!r} vs {one!r}"
         )
 
+    def test_v2_bridge_keeps_a_short_y_label_whole_in_every_panel(
+        self, tmp_path, monkeypatch
+    ):
+        """``y_label: "commits"`` over 7 row panels, through the real bridge.
+
+        Each panel gets 110px of the card's 770px, and its share of the chart's
+        chrome is 10px, so the title has 99px and renders whole. Charging it the
+        whole 72px instead leaves 38px, under the word's own width — which is
+        the input the wrapper must never resolve by breaking the word.
+        """
+        import json
+
+        from dbt_charts import compile
+        from dbt_charts.core.render.chart.vega_lite import render_chart
+
+        reset_config()
+        result = compile(_BOARD_7_YEAR_ROWS_SHORT_Y)
+        assert result.success, result.errors
+        assert result.board is not None
+        data = [
+            {"hour_utc": hour, "year_utc": year, "commit_cnt": year + hour}
+            for year in range(2019, 2026)
+            for hour in (0, 1)
+        ]
+        monkeypatch.setenv("DCT_TRACE_VL", str(tmp_path))
+        board_rs, board_ctx = _board()
+        render_chart(
+            result.board.charts["facets"],
+            board_rs,
+            board_ctx,
+            data,
+            format="svg",
+            width=800,
+            height=770,
+        )
+        traced = json.loads((tmp_path / "facets-v2.json").read_text())
+        assert traced["spec"]["encoding"]["y"]["title"] == "commits"
+
+    def test_v2_bridge_keeps_a_short_x_label_whole_in_every_column_panel(
+        self, tmp_path, monkeypatch
+    ):
+        """The width axis owes its panels the same share of the chrome.
+
+        A column facet draws its own x axis, title included, inside every panel,
+        so the x title measures against the panel width. Under the clarity theme
+        the mirrored y axis takes its gutter first, leaving 85.7px per panel at 7
+        columns: a seventh of the chrome leaves 75px and the title renders whole,
+        the full 72px leaves 13px and cuts it to a bare ellipsis.
+        """
+        import json
+
+        from dbt_charts import compile
+        from dbt_charts.core.render.chart.vega_lite import render_chart
+
+        reset_config()
+        result = compile(_BOARD_7_YEAR_COLUMNS_SHORT_X)
+        assert result.success, result.errors
+        assert result.board is not None
+        data = [
+            {"hour_utc": hour, "year_utc": year, "commit_cnt": year + hour}
+            for year in range(2019, 2026)
+            for hour in (0, 1)
+        ]
+        monkeypatch.setenv("DCT_TRACE_VL", str(tmp_path))
+        board_rs, board_ctx = _board()
+        render_chart(
+            result.board.charts["facets"],
+            board_rs,
+            board_ctx,
+            data,
+            format="svg",
+            width=800,
+            height=400,
+        )
+        traced = json.loads((tmp_path / "facets-v2.json").read_text())
+        assert traced["spec"]["encoding"]["x"]["title"] == "commits"
+
     def test_v2_placeholder_renders_faceted(self, tmp_path, monkeypatch):
         """A faceted chart renders as a placeholder (no query data yet) without
         raising — placeholder data synthesizes the facet columns FacetFeature
@@ -1258,7 +1368,7 @@ class TestFacetFieldDoubleEncoding:
     """A facet panel's rows carry a proper subset of a position channel's
     domain — 17G (heatmap's ``y`` double-encoding the facet field) in the
     chart-case matrix corpus is one instance of this, not the whole rule.
-    The colour scale stays shared across panels; only positional band/axis
+    The color scale stays shared across panels; only positional band/axis
     space narrows to the panel's own subset — a panel must not reserve a
     band slot or an axis row for a value it does not contain.
 
@@ -1529,14 +1639,14 @@ class TestFacetFieldDoubleEncoding:
 
 
 class TestBarColorFacetFieldCharacterization:
-    """Characterizes existing behaviour for 17A (bar's ``color`` double-
+    """Characterizes existing behavior for 17A (bar's ``color`` double-
     encoding the facet field) — NOT exercised by ``facet_bound_position_
     channels``, which only narrows position channels (``x``/``y``). 17A's
     band-width fix predates this task: ``_is_color_1to1_with_x``
-    (``emitters/bar.py``) already suppresses ``xOffset`` whenever a colour
-    channel is 1:1 with x per panel, which a facet-field/colour double-
+    (``emitters/bar.py``) already suppresses ``xOffset`` whenever a color
+    channel is 1:1 with x per panel, which a facet-field/color double-
     encoding always is by construction. These pin that pre-existing
-    behaviour so a future change to either mechanism doesn't silently
+    behavior so a future change to either mechanism doesn't silently
     regress it."""
 
     def test_bar_color_bound_to_facet_field_paints_full_band(self):
@@ -1556,9 +1666,9 @@ class TestBarColorFacetFieldCharacterization:
         assert "xOffset" not in inner.get("encoding", {})
 
     def test_bar_color_scale_stays_shared_across_panels(self):
-        """Cross-panel colour identity: the colour scale stays one shared
+        """Cross-panel color identity: the color scale stays one shared
         domain even though it double-encodes the facet field — a category
-        must read the same colour in every panel. Vacuously true today
+        must read the same color in every panel. Vacuously true today
         (``resolve`` is absent entirely for this chart — bar's ``color``
         never enters ``facet_independent_channels``), so this also pins that
         ``resolve`` stays absent rather than gaining a ``color`` entry."""

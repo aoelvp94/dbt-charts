@@ -28,7 +28,7 @@ def test_editorial_row_stripe_is_one_scaffold_step_off_canvas():
     `canvas` (step 1) — the same relationship cream has to its own canvas."""
     editorial_style = get_theme_style("clarity")
     stripe_color = editorial_style.charts.table.row.stripe.color
-    canvas_color = editorial_style.page.background
+    canvas_color = editorial_style.background
 
     assert stripe_color == resolve_palette_color("dbt-grays.surface-subtle")
     assert stripe_color != canvas_color

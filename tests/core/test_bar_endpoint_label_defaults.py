@@ -1,4 +1,4 @@
-"""What the bar labelling default does, and every case it steps aside for.
+"""What the bar labeling default does, and every case it steps aside for.
 
 A bar names its series directly when it can: a vertical stack labels the last
 column's segment midpoints, a horizontal stack takes the top-row rail. It falls
@@ -109,7 +109,7 @@ def test_vertical_stacked_bar_labels_its_series_directly() -> None:
 
 
 def test_vertical_stacked_bar_drops_the_legend_for_endpoint_labels() -> None:
-    """Direct labelling replaces the colour legend, as it does for line/area."""
+    """Direct labeling replaces the color legend, as it does for line/area."""
     resolved = _resolved("month", _TEMPORAL_DATA)
 
     assert resolved.legend.visible is False
@@ -120,7 +120,7 @@ def test_horizontal_bar_gets_the_same_default() -> None:
 
     The rail places one label per series above the top categorical row. It
     reads cleanly at low series counts and overprints once the labels are
-    wider than their segments — an open question, not settled behaviour, so
+    wider than their segments — an open question, not settled behavior, so
     this pins only that the default reaches both orientations alike.
     """
     resolved = _resolved("region", _DISCRETE_DATA)
@@ -187,7 +187,7 @@ def test_negative_data_bar_keeps_its_legend() -> None:
 def test_horizontal_series_absent_at_anchor_keeps_its_legend() -> None:
     """The horizontal rail has no dodge resolver for a series missing at its
     anchor row (``_every_series_reaches_the_anchor_row``) — its label would
-    land on the zero-width seam and overprint the neighbour. The theme's bar
+    land on the zero-width seam and overprint the neighbor. The theme's bar
     legend override is what keeps this chart from carrying neither rail nor
     legend.
     """
@@ -257,7 +257,7 @@ def test_stacked_bar_keeps_its_rail_when_a_series_misses_the_last_column() -> No
     """A gap in the anchor column is not a reason to change naming mechanism.
 
     The absent series anchors on its zero-height stack seam, so it stays named
-    and the reader still counts as many names as colours. Disqualifying here
+    and the reader still counts as many names as colors. Disqualifying here
     would switch a chart between rail and legend on a data gap alone — and
     series that start late are ordinary in a stack.
     """
@@ -306,7 +306,7 @@ def test_one_point_per_series_falls_back_to_a_legend() -> None:
 
     Nothing stacks, so there are no segments to name and the rail would
     degenerate into a badly-laid-out legend. This is the shape a
-    category-coloured bar takes, and it must not sprout a one-entry label.
+    category-colored bar takes, and it must not sprout a one-entry label.
     """
     resolved = _resolved("month", _ONE_POINT_PER_SERIES)
 
@@ -395,8 +395,8 @@ def test_sorted_vertical_stack_still_labels_directly() -> None:
     assert resolved.style.endpoint_labels.visible is True
 
 
-def test_centre_stacked_horizontal_keeps_its_legend() -> None:
-    """The horizontal rail anchors on the cumulative axis, not centre-stack's."""
+def test_center_stacked_horizontal_keeps_its_legend() -> None:
+    """The horizontal rail anchors on the cumulative axis, not center-stack's."""
     resolved = _horizontal(stack="center")
 
     assert resolved.style.endpoint_labels.visible is False
@@ -407,7 +407,7 @@ def test_horizontal_rail_steps_aside_when_a_series_misses_its_anchor_row() -> No
 
     The vertical rail seats that series on its zero-width seam and lets the
     label cascade push it clear. The horizontal rail has no cascade, so the
-    seam label would overprint its neighbour — a legend is the honest
+    seam label would overprint its neighbor — a legend is the honest
     treatment. Vertical is unaffected: see
     `test_stacked_bar_keeps_its_rail_when_a_series_misses_the_last_column`.
     """
@@ -435,10 +435,10 @@ def test_horizontal_rail_falls_back_to_legend_when_labels_would_collide() -> Non
     """Real pixel-width measurement disqualifies a genuinely crowded rail.
 
     Seven long series names sharing one narrow top row cannot all fit their
-    own label without overlapping a neighbour on a narrow chart — the
+    own label without overlapping a neighbor on a narrow chart — the
     default steers back to a legend even though every disqualifier above
     this one (support table, stack shape, multiples, negative values, sort,
-    centre stack, single-series, anchor row) already passed.
+    center stack, single-series, anchor row) already passed.
     """
     chart = BarChart(
         id="t",
@@ -465,7 +465,7 @@ def test_horizontal_rail_falls_back_to_legend_when_labels_would_collide() -> Non
 
 def test_per_series_support_table_already_names_the_series() -> None:
     """A `support_table` with a `per_series:` entry prints one row per series,
-    labelled in that series' own ink. The rail would name them twice — and it
+    labeled in that series' own ink. The rail would name them twice — and it
     costs the plot both height and the axis side it needs.
     """
     chart = BarChart(
@@ -519,7 +519,7 @@ def test_histogram_never_draws_an_endpoint_label_rail() -> None:
 
 
 def test_sort_by_a_non_numeric_column_keeps_its_legend() -> None:
-    """Both rails reproduce Vega-Lite's domain order by totalling the sort
+    """Both rails reproduce Vega-Lite's domain order by totaling the sort
     column per category. Vega-Lite concatenates strings instead, an order that
     cannot be mirrored — so the default steps aside rather than anchoring the
     rail on a row Vega-Lite does not draw on top.

@@ -420,7 +420,7 @@ class TestColorErrorRemediationsParse:
     All three hints were wrong: two pointed at ``style: color: '#...'`` (a
     string, where the field wants a mapping) and one at ``color: {scale: ...}``
     (``scale`` is not a key — ERR-EXTRA-FIELD). Following the message got you a
-    second error, and each one modelled a hex literal where the language wants a
+    second error, and each one modeled a hex literal where the language wants a
     palette token. This pins the remediations by *parsing them*, so a reworded
     hint that stops working fails here.
     """

@@ -198,7 +198,7 @@ def test_chart_local_pie_slice_labels_partial_override_preserves_global_defaults
     must not discard global line_height.
 
     Regression: build_chart_style_context used to hit merge_onto_base(base=None, patch=...) for
-    pie.marks.slice, serialise the patch with exclude_none=True, then fail to validate
+    pie.marks.slice, serialize the patch with exclude_none=True, then fail to validate
     SliceLabelsStyle because line_height was missing.
     """
     from dbt_charts.core.compile.config import reset_config

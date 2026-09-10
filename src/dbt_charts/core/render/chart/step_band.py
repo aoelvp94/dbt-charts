@@ -89,7 +89,7 @@ def apply_step_band(
     Mutates ``encoding`` in place: adds the ``xOffset`` channel, and (when
     ``connect`` is False) a ``detail`` channel that breaks the path per band,
     with the xOffset range inset so disconnected plateaus don't optically weld
-    into their neighbours. Returns the doubled rows. Callers must only invoke
+    into their neighbors. Returns the doubled rows. Callers must only invoke
     this when ``is_band_step`` is True (band x-axis already confirmed); raises
     ``ChartDataError`` only for a data-driven (multi-series) color encoding,
     which the per-band grouping can't honor.

@@ -208,7 +208,7 @@ def test_role_order_codepoint_inside_a_real_value_does_not_flip_the_gate() -> No
 
 
 def test_continuous_color_legend_is_not_stamped() -> None:
-    """A numeric colour field renders ONE legend-label scenegraph node whose
+    """A numeric color field renders ONE legend-label scenegraph node whose
     ``items`` holds every tick label (a gradient tick strip), not one node
     per series -- there is no per-series text to extract there. Stamping
     must bail for the whole chart rather than mis-stamp a tick label (e.g.

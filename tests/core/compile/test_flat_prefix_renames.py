@@ -15,38 +15,45 @@ from dbt_charts.core.compile.models.style.authored import (
     TableColumnDefaultsConfig,
 )
 from dbt_charts.core.compile.models.style.theme import (
+    BaseAxisGridStyle,
     BaseScaleStyle,
     DetailsArrowFontStyle,
     DetailsArrowStyle,
     DetailsStyle,
-    MeasureGridStyle,
     TableChartStyle,
     TableRowStripeStyle,
     TableRowStyle,
     TableRuleStyle,
 )
 
-# ── BaseAxisGridStyle: zero_color / zero_width → zero: {color, width} ──
+# ── BaseAxisGridStyle: zero_color / zero_width (historical flat) → threshold: {color, width} (current nested) ──
 
 
-def test_axis_grid_zero_nested_parses() -> None:
-    """New nested zero block is accepted by MeasureGridStyle (y-axis grid)."""
-    grid = MeasureGridStyle.model_validate({"zero": {"color": "#ff0000", "width": 2.0}})
-    assert grid.zero is not None
-    assert grid.zero.color == "#ff0000"
-    assert grid.zero.width == 2.0
+def test_axis_grid_threshold_nested_parses() -> None:
+    """New nested threshold block is accepted by BaseAxisGridStyle (every axis slot)."""
+    grid = BaseAxisGridStyle.model_validate(
+        {"threshold": {"color": "#ff0000", "width": 2.0}}
+    )
+    assert grid.threshold is not None
+    assert grid.threshold.color == "#ff0000"
+    assert grid.threshold.width == 2.0
 
 
 def test_axis_grid_zero_color_flat_rejected() -> None:
-    """Old flat zero_color field is rejected (extra='forbid')."""
+    """Old flat zero_color field (the historical pre-nested spelling, from
+    before the threshold sub-block existed at all) is rejected
+    (extra='forbid'). Pins a past-release shape -- not this task's
+    zero -> threshold rename, which is a separate, already-migrated grammar
+    change (see compile/migrations/versions/current.py)."""
     with pytest.raises(ValidationError):
-        MeasureGridStyle.model_validate({"zero_color": "#ff0000"})
+        BaseAxisGridStyle.model_validate({"zero_color": "#ff0000"})
 
 
 def test_axis_grid_zero_width_flat_rejected() -> None:
-    """Old flat zero_width field is rejected (extra='forbid')."""
+    """Old flat zero_width field (the historical pre-nested spelling) is
+    rejected (extra='forbid'). See test_axis_grid_zero_color_flat_rejected."""
     with pytest.raises(ValidationError):
-        MeasureGridStyle.model_validate({"zero_width": 2.0})
+        BaseAxisGridStyle.model_validate({"zero_width": 2.0})
 
 
 # ── TableChartStyle: rule_color → rule: TableRuleStyle {color} ────────────────────

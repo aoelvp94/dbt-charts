@@ -683,7 +683,7 @@ class TestHeaderCenterEqualsNumberCenter:
 class TestEqualDistributionAcrossColumnTypes:
     """All auto-columns receive equal share of available_width.
 
-    Content-aware clustering was removed in favour of equal distribution.
+    Content-aware clustering was removed in favor of equal distribution.
     Tables that need unequal column widths use explicit width: overrides.
     """
 
@@ -1182,7 +1182,7 @@ class TestDateCellsUseLanePositions:
         _header_x, header_anchor = header
         assert header_anchor == "start", (
             "No lane exists once align: left overrides the date verdict — "
-            "the header must not centre on one."
+            "the header must not center on one."
         )
 
     def test_explicit_align_center_on_date_column_centers_header_too(
@@ -1371,7 +1371,7 @@ class TestDateColumnMixedSpellingPerCellBug:
         _header_x, header_anchor = header
         assert header_anchor == "middle", (
             "The column has date-like content and align: right, so it "
-            "earns a lane — the header must centre on it, matching the "
+            "earns a lane — the header must center on it, matching the "
             "cells."
         )
 

@@ -11,7 +11,7 @@ Anchors:
 - charts/dbt_charts.yml collision: DCT_ROOT_MARKERS includes "dbt_charts.yml", so
   find_project_root stops at charts/ when charts/dbt_charts.yml exists,
   treating charts/ as the project root — which has no sources: section, causing
-  every chart to error "Source not found". The scaffold uses guide.yaml instead.
+  every chart to error "Source not found". The scaffold uses guide.yml instead.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ class TestRootShowsListingAfterInit:
         )
         # Directory listing contains links to boards; welcome page does not.
         assert "guide" in response.text.lower(), (
-            "Root listing must mention 'guide' (the guide.yaml guide board). "
+            "Root listing must mention 'guide' (the guide.yml guide board). "
             f"Body: {response.text[:800]}"
         )
 
@@ -137,30 +137,30 @@ class TestProjectRootConfigNotCollided:
     matches the DCT_ROOT_MARKERS sentinel "dbt_charts.yml" in project_roots.py.
     discover_render_context walks up from a board, stops at charts/dbt_charts.yml,
     and treats charts/ as the project root — so every chart errors "Source not found".
-    Fix: scaffold guide.yaml instead; guide.yaml is not a DCT_ROOT_MARKERS match.
+    Fix: scaffold guide.yml instead; guide.yml is not a DCT_ROOT_MARKERS match.
     """
 
     def test_guide_yaml_does_not_collide_with_project_markers(
         self, tmp_path: Path
     ) -> None:
-        """After dct init, guide.yaml must NOT be mistaken for a project root marker.
+        """After dct init, guide.yml must NOT be mistaken for a project root marker.
 
         Verifies that find_project_root finds the real project root (tmp_path,
-        which has dbt_charts.yml) and NOT charts/ (which has only guide.yaml).
+        which has dbt_charts.yml) and NOT charts/ (which has only guide.yml).
         """
         from dbt_charts.core.project_roots import find_project_root
 
-        # Simulate dct init layout: project root has dbt_charts.yml, charts/ has guide.yaml
+        # Simulate dct init layout: project root has dbt_charts.yml, charts/ has guide.yml
         (tmp_path / "dbt_charts.yml").write_text("# project config\n")
         boards_dir = tmp_path / "charts"
         boards_dir.mkdir()
-        (boards_dir / "guide.yaml").write_text("title: Guide\n")
+        (boards_dir / "guide.yml").write_text("title: Guide\n")
 
         project_root = find_project_root(boards_dir, boundary=None)
         assert project_root == tmp_path, (
             f"find_project_root must resolve to the project root ({tmp_path}), "
             f"not the charts/ dir ({boards_dir}). Got: {project_root}. "
-            "charts/guide.yaml must not trigger the dbt_charts.yml DCT_ROOT_MARKERS sentinel."
+            "charts/guide.yml must not trigger the dbt_charts.yml DCT_ROOT_MARKERS sentinel."
         )
 
     def test_boards_dbt_charts_yml_would_collide(self, tmp_path: Path) -> None:

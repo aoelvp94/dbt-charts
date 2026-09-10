@@ -117,7 +117,7 @@ class TestInvalidSpecRaises:
             d3_format(spec)
 
     def test_unknown_type_letter_falls_back(self) -> None:
-        """d3 aliases an unrecognised letter to '.12~g' rather than raising."""
+        """d3 aliases an unrecognized letter to '.12~g' rather than raising."""
         assert d3_format("q")(1234.5678) == d3_format("")(1234.5678)
         assert d3_format(".1q")(1234.5678) == "1e+3"
 

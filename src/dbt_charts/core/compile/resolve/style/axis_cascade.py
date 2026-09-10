@@ -30,7 +30,7 @@ from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedAxisElementStyle,
     ResolvedAxisGridStyle,
-    ResolvedAxisGridZeroStyle,
+    ResolvedAxisGridThresholdStyle,
     ResolvedAxisLabelOverlapConfig,
     ResolvedAxisLineStyle,
     ResolvedAxisStyle,
@@ -358,18 +358,18 @@ def build_resolved_axis(
             )
         return value
 
-    # grid.zero only exists on y-axis (AxisYStyle.grid is MeasureGridStyle, not BaseAxisGridStyle).
-    if isinstance(axis, AxisYStyle):
-        grid_zero: ResolvedAxisGridZeroStyle | None = (
-            ResolvedAxisGridZeroStyle(
-                color=_require(axis.grid.zero.color, "charts.axis_y.grid.zero.color"),
-                width=_require(axis.grid.zero.width, "charts.axis_y.grid.zero.width"),
-            )
-            if axis.grid.zero is not None
-            else None
-        )
-    else:
-        grid_zero = None
+    # threshold lives on every axis's grid.threshold now — a threshold rule is
+    # a property of a quantitative axis, on either channel, not of the
+    # measure (y) axis specifically. Built unconditionally; it is simply
+    # inert wherever the axis never ticks at the threshold. The field itself
+    # stays Optional on the model (a SkipInheritSlots cascade sentinel — see
+    # AxisGridThresholdStyle), so _require it here same as its sub-fields.
+    _threshold = _require(axis.grid.threshold, "charts.axis.grid.threshold")
+    grid_threshold = ResolvedAxisGridThresholdStyle(
+        color=_require(_threshold.color, "charts.axis.grid.threshold.color"),
+        width=_require(_threshold.width, "charts.axis.grid.threshold.width"),
+        visible=_require(_threshold.visible, "charts.axis.grid.threshold.visible"),
+    )
 
     # label passthrough: x-axis adds tilt_increments/values/time_unit/clock from DimensionLabelStyle.
     label_kwargs = {f: getattr(axis.labels, f) for f in _LABEL_PASSTHROUGH}
@@ -385,7 +385,7 @@ def build_resolved_axis(
     # horizontal bar measure) are excluded.
     # Guard: forced end-anchoring triggers the trailing-reservation device
     # (_build_ruler's reserve path) which requires a tabular font.  Boards
-    # with a non-tabular axis label font keep the old start-anchored behaviour
+    # with a non-tabular axis label font keep the old start-anchored behavior
     # to avoid ERR-AXIS-COLUMN-REQUIRES-TABULAR-FONT on previously-working
     # configs.  non-column-forming axes (horizontal bar measure) are exempt:
     # their reserve is always False regardless of start_anchored.
@@ -587,7 +587,7 @@ def build_resolved_axis(
             width=_require(axis.grid.width, "charts.axis.grid.width"),
             color=_require(axis.grid.color, "charts.axis.grid.color"),
             dash=axis.grid.dash,
-            zero=grid_zero,
+            threshold=grid_threshold,
         ),
         line=ResolvedAxisLineStyle(
             visible=_require(axis.line.visible, "charts.axis.line.visible"),
@@ -803,8 +803,8 @@ def _merge_axis_cascade(
     Seeds a channel-typed base (``AxisXStyle``/``AxisYStyle``) from the
     channel-agnostic ``effective.axis`` (``BaseAxisStyle``, a raw passthrough
     — see ``_build_resolved_charts``) so channel-specific fields (fill,
-    mirror, grid.zero, tilt_increments, ...) survive the merge chain and
-    reach ``build_resolved_axis``. ``fill``/``fiscal_year_start_month`` are
+    mirror, tilt_increments, ...) survive the merge chain and reach
+    ``build_resolved_axis``. ``fill``/``fiscal_year_start_month`` are
     required on ``AxisXStyle``, so they're seeded directly from the
     theme-level ``axis_x`` value (always populated — required fields backed
     by ``_base.yaml`` defaults) before any merge runs.

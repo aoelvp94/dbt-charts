@@ -49,7 +49,7 @@ Fired when the board YAML contains a field name that the schema does not recogni
 
 Fired when the configured default theme name is not a recognized built-in theme. Check the available theme names and correct the configuration.
 
-### ERR-META-SCHEMA: meta.yaml contains an unknown or invalid field
+### ERR-META-SCHEMA: meta.yml contains an unknown or invalid field
 
 - **Level:** error
 - **Domain:** compile
@@ -58,10 +58,10 @@ Fired when the configured default theme name is not a recognized built-in theme.
 **Message template:**
 
 ```
-meta.yaml schema error: {message}. Check that all keys are valid board fields.
+meta.yml schema error: {message}. Check that all keys are valid board fields.
 ```
 
-Fired when a meta.yaml file contains a field that is not recognized by the board schema, or a field with an invalid value. Check that all keys match the supported board fields and remove any extras.
+Fired when a meta.yml file contains a field that is not recognized by the board schema, or a field with an invalid value. Check that all keys match the supported board fields and remove any extras.
 
 ### ERR-UNKNOWN-THEME: Theme name is not a built-in theme
 
@@ -313,7 +313,7 @@ Fired when a stacked bar or area chart's data carries a negative measure while i
 **Message template:**
 
 ```
-Chart {chart_id!r}: chart.sort by {sort_by!r} cannot be combined with stacked bar endpoint labels — the label rail reproduces Vega-Lite's domain order by totalling that column per category, and it carries no numeric values. Sort by a measure instead, or set style.endpoint_labels.visible: false on this chart.
+Chart {chart_id!r}: chart.sort by {sort_by!r} cannot be combined with stacked bar endpoint labels — the label rail reproduces Vega-Lite's domain order by totaling that column per category, and it carries no numeric values. Sort by a measure instead, or set style.endpoint_labels.visible: false on this chart.
 ```
 
 Fired when a stacked bar chart authors `sort:` by a column that carries no numeric values while its endpoint-label rail is visible. The rail reproduces Vega-Lite's own domain order by summing the sort field per category (VL's default `sum` aggregation); on a non-numeric column VL concatenates the strings instead, an order the rail cannot reproduce, so it would anchor on a sequence VL never actually draws. Sort by a measure, or turn the rail off with `style.endpoint_labels.visible: false`.
@@ -1684,10 +1684,10 @@ Fired when a query references a source but no source profiles are configured at 
 **Message template:**
 
 ```
-Query {query_name!r}: SQL queries must have a source. Set it on the query (`source: my_db`), or at the board or folder meta.yaml level (`source: my_db`).
+Query {query_name!r}: SQL queries must have a source. Set it on the query (`source: my_db`), or at the board or folder meta.yml level (`source: my_db`).
 ```
 
-Fired when a SQL query has no `source:` set at the query, board, or folder meta.yaml level and no default source is configured. Set `source: my_db` on the query or as a default at a higher level.
+Fired when a SQL query has no `source:` set at the query, board, or folder meta.yml level and no default source is configured. Set `source: my_db` on the query or as a default at a higher level.
 
 ### ERR-SQL-DATE-LITERAL-VARIABLE: Variable quoted as a date/time/timestamp literal will not compile
 
@@ -1750,7 +1750,7 @@ Fired when the cumulative bytes emitted by every templated field (queries, title
 Chart {chart_name!r} references unknown query {query_name!r}. Declare the query under `queries:` or fix the typo in `query:`.
 ```
 
-Fired when a chart's `query:` names a query that is not declared under `queries:` in the board or any included meta.yaml. Check for typos and ensure the query is declared.
+Fired when a chart's `query:` names a query that is not declared under `queries:` in the board or any included meta.yml. Check for typos and ensure the query is declared.
 
 ### ERR-UNPARSEABLE-SQL: SQL could not be parsed for static checks
 
@@ -1766,7 +1766,7 @@ Could not parse this SQL: {cause}
 
 **Fix:** If the warehouse accepts this query, the SQL is fine; the parser just does not model that dialect or macro yet, and only dbt charts' static checks (read-only enforcement, fanout and reaggregation lint) are skipped for it. If the warehouse rejects it too, fix the syntax at the reported position.
 
-Fired when dbt charts' static SQL parser cannot parse a query. The query is still sent to the warehouse; what is lost is the static read-only check and the semantic lint that run on parseable SQL. It is not necessarily an error in the SQL itself; unmodelled dialect syntax and dbt macros land here too.
+Fired when dbt charts' static SQL parser cannot parse a query. The query is still sent to the warehouse; what is lost is the static read-only check and the semantic lint that run on parseable SQL. It is not necessarily an error in the SQL itself; unmodeled dialect syntax and dbt macros land here too.
 
 ### ERR-UNRESOLVED-REFERENCE: Reference points to an unknown name
 

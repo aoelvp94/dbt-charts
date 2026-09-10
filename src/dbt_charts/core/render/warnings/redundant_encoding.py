@@ -98,7 +98,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             channel_list = ", ".join(sorted(channels))
             # The complaint is about the *pair*, so marking one channel alone
             # tells half of it. Anchor the first and carry every other one as a
-            # related location, each labelled with the channel it is.
+            # related location, each labeled with the channel it is.
             first, *rest = sorted(channels)
             warnings.append(
                 Diagnostic.from_code(

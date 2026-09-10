@@ -1,6 +1,6 @@
 """Baseline rule features: zero, top (normalize), unity (ratio-percent).
 
-Rule layers are modelled as real ``ChartSpec(mark="rule", ...)`` overlays — not
+Rule layers are modeled as real ``ChartSpec(mark="rule", ...)`` overlays — not
 sentinel strings.  The translator handles ``"rule"`` as a normal VL mark and folds
 it into a ``layer[]`` spec alongside the main encoding.
 """
@@ -16,9 +16,11 @@ from dbt_charts.core.compile.models.chart.resolved._base import (
 )
 from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
 from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
+from dbt_charts.core.compile.models.chart.resolved.heatmap import ResolvedHeatmapChart
 from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
 from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
 from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.style.resolved import ResolvedAxisStyle
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartRows
 from dbt_charts.core.render.chart.emitters._cartesian import (
     authored_measure_domain,
@@ -42,7 +44,9 @@ def _insert_rule(
     """Insert ``rule`` into ``spec.layers`` at the V1-matching z-position.
 
     - bar/other: append last — rule renders above all fills.
-    - line: prepend first — rule renders below strokes.
+    - line: prepend first — rule renders below the strokes, so a line crosses
+      the threshold without being interrupted by it.
+    - scatter: not a ``spec.layers`` position at all — see the branch below.
     - area: insert after the last ``area`` sub-layer — above fills, below fg stroke.
 
     A chart with ``chart.layers`` (an authored overlay — bar/line/area/scatter
@@ -57,6 +61,11 @@ def _insert_rule(
     chart type. The area-specific under-the-fg-stroke placement only applies
     to a bare area's own internal composition, with no overlay on top of it.
     """
+    if isinstance(chart, ResolvedScatterChart):
+        # Beneath the points — see ChartSpec.underlays. Unconditional: a scatter
+        # with authored `layers:` wants the reference line under the overlay too.
+        spec.underlays.append(rule)
+        return
     if (
         isinstance(chart, (ResolvedBarChart, ResolvedLineChart, ResolvedAreaChart))
         and chart.layers
@@ -92,10 +101,7 @@ def _is_percent_format(fmt: FormatState) -> bool:
 
 
 def _measure_field(
-    chart: ResolvedBarChart
-    | ResolvedLineChart
-    | ResolvedAreaChart
-    | ResolvedScatterChart,
+    chart: _CartesianResolvedChartFields,
     spec: ChartSpec,
     axis: str,
 ) -> str | Literal[False]:
@@ -105,6 +111,32 @@ def _measure_field(
     if isinstance(encoding, dict) and isinstance(encoding.get("field"), str):
         return encoding["field"]
     return False
+
+
+def _is_log_scale(axis: ResolvedAxisStyle) -> bool:
+    """True when *axis*'s continuous scale is log-typed.
+
+    A log domain cannot represent a literal 0, so any rule whose datum is a
+    threshold value (0 or 1) must never fire against a log-typed axis —
+    checked identically in ``_insert_zero_rule``, ``_insert_top_rules``, and
+    ``_apply_x_threshold``. ``_apply_unity`` does not call this guard.
+    """
+    cont = axis.scale.continuous if axis.scale is not None else None
+    return cont is not None and cont.type == "log"
+
+
+def _resolved_percent_format(
+    axis: ResolvedAxisStyle, chart_format: FormatState
+) -> bool:
+    """True when the resolved axis label format or the chart-level format is
+    percent-shaped.
+
+    Both spellings are equivalent authoring surfaces, so every caller must check
+    both: consulting ``chart_format`` alone disagrees with an axis-only percent
+    format and yields a duplicate rule at datum 1.
+    """
+    ax_fmt = axis.labels.format
+    return bool((ax_fmt and "%" in ax_fmt) or _is_percent_format(chart_format))
 
 
 def _zero_in_shared_domain(
@@ -182,17 +214,26 @@ def _y_carries_the_measure(chart: ResolvedChart) -> bool:
 
 
 def _domain_reaches(
-    chart: ResolvedLineChart | ResolvedAreaChart | ResolvedScatterChart,
+    axis: ResolvedAxisStyle,
     data: list[dict[str, Any]],
     field: str,
     value: float,
 ) -> bool:
-    """True when ``value`` lies within the bounds the measure axis pins.
+    """True when ``value`` lies within the bounds *axis* pins.
+
+    Parameterized by axis (not by chart) so the same gate serves the unity
+    rule's measure axis (``axis_y``, or ``axis_x`` for a horizontal bar) and
+    the independent quantitative-x zero rule's ``axis_x``.
 
     Reads ``effective_measure_domain`` — authored domain, else the
     headroom-expanded ``domain_min`` / ``domain_max``, else a zero-anchored
     axis's floor, else the data extent. See that function for why it reads only
     values the emitter really pins and never predicts Vega-Lite's own ``nice``.
+    On an x-axis, ``domain_min``/``domain_max`` and the zero-anchor floor are
+    never baked (resolve only bakes them for y — see
+    ``effective_measure_domain``'s own docstring), so this reduces there to
+    "authored domain, else the data extent" — exactly what Vega-Lite auto-fits
+    an unpinned x-axis to.
 
     Reading the raw data range alone made the gate disagree with the render in
     two ways, each leaving a percent chart with a 100% tick painted and no rule
@@ -212,7 +253,7 @@ def _domain_reaches(
     """
     values = numeric_column_values(data, field)
     bounds = effective_measure_domain(
-        chart.style.axis_y,
+        axis,
         (min(values), max(values)) if values else None,
     )
     if bounds is None:
@@ -236,14 +277,14 @@ class BaselineFeature:
     """
 
     def applies_to(self, chart: ResolvedChart) -> bool:
-        return isinstance(
-            chart,
-            (
-                ResolvedBarChart,
-                ResolvedLineChart,
-                ResolvedAreaChart,
-                ResolvedScatterChart,
-            ),
+        """A cartesian chart with a quantitative position axis.
+
+        Heatmap is the one cartesian family with no quantitative axis at all
+        — both its channels render as bands regardless of the underlying
+        data's type (see ``heatmap.py``).
+        """
+        return isinstance(chart, _CartesianResolvedChartFields) and not isinstance(
+            chart, ResolvedHeatmapChart
         )
 
     def apply(
@@ -275,7 +316,10 @@ class BaselineFeature:
         ) and multiples_scale_independent(chart):
             return spec
         self._apply_zero_or_top(spec, chart, datasets)
-        self._apply_unity(spec, chart, chart_rows(chart, datasets).all_rows())
+        data = chart_rows(chart, datasets).all_rows()
+        self._apply_unity(spec, chart, data)
+        self._apply_x_threshold(spec, chart, data, datum=0, require_percent=False)
+        self._apply_x_threshold(spec, chart, data, datum=1, require_percent=True)
         return spec
 
     def _apply_zero_or_top(
@@ -292,11 +336,16 @@ class BaselineFeature:
             isinstance(chart, (ResolvedBarChart, ResolvedAreaChart))
             and chart.stack == "normalize"
         ):
-            if isinstance(chart, ResolvedAreaChart) and _is_percent_format(
-                chart.format
-            ):
-                return  # unity rule (below) is the sole y=1 reference
-            self._insert_top_rules(spec, chart)
+            # rule_axis vs axis_style cascade-slot distinction: see
+            # _insert_zero_rule.
+            axis_style = chart.style.axis_y
+            # Percent format: `_apply_unity` owns the single datum-1 rule, so
+            # this only emits the datum-0 baseline (never both — that was the
+            # duplicate-unity bug this carve-out exists to dedupe).
+            datums = (
+                (0,) if _resolved_percent_format(axis_style, chart.format) else (0, 1)
+            )
+            self._insert_top_rules(spec, chart, datums=datums)
             return
         if not chart_rows(chart, datasets).all_rows():
             return
@@ -317,7 +366,19 @@ class BaselineFeature:
                 ResolvedScatterChart,
             ),
         )
-        authored = authored_measure_domain(chart.style.axis_y)
+        # rule_axis is the VL CHANNEL the datum paints on — x for a horizontal
+        # bar, y otherwise. axis_style is the cascade SLOT the measure's style
+        # lives in, which is axis_y regardless of orientation — a horizontal
+        # bar's rule paints on x but its measure style still lives here.
+        # Conflating the two makes a horizontal bar read its categorical axis
+        # for the measure's guards.
+        rule_axis = (
+            "x"
+            if isinstance(chart, ResolvedBarChart) and chart.orientation == "horizontal"
+            else "y"
+        )
+        axis_style = chart.style.axis_y
+        authored = authored_measure_domain(axis_style)
 
         # Determine whether the rule should fire. The log-scale, authored-domain,
         # and grid.visible guards live once in build_zero_rule_if_applicable below
@@ -335,7 +396,7 @@ class BaselineFeature:
                 return
             if not _y_carries_the_measure(chart):
                 return
-            scale = chart.style.axis_y.scale
+            scale = axis_style.scale
             _bsl_cont3 = scale.continuous if scale is not None else None
             zero_setting = _bsl_cont3.zero if _bsl_cont3 is not None else None
             should_fire = non_bar_zero_rule_should_fire(
@@ -348,22 +409,18 @@ class BaselineFeature:
                 ),
             )
 
-        # Determine measure_field for synthetic data row.
-        rule_axis = (
-            "x"
-            if isinstance(chart, ResolvedBarChart) and chart.orientation == "horizontal"
-            else "y"
-        )
         measure_field = _measure_field(chart, spec, rule_axis)
-
         if measure_field is False:
             return
-        # Read zero style from the chart's own baked axis cascade (style.axis_y),
-        # not board-level style — a chart-local axis patch has to win.
-        zero_style = chart.style.axis_y.grid.zero
-        assert zero_style is not None, (
-            "zero grid style must be resolved before emitting the baseline rule"
-        )
+        # Read the threshold style from the chart's own baked axis cascade
+        # (style.axis_y), not board-level style — a chart-local axis patch has
+        # to win.
+        threshold_style = chart.style.axis_y.grid.threshold
+        # grid.threshold.visible is the targeted off switch: it silences this
+        # rule without taking the axis's other gridlines with it, which is all
+        # the blanket grid.visible could do before.
+        if not threshold_style.visible:
+            return
         axis_y_scale = chart.style.axis_y.scale
         continuous = axis_y_scale.continuous if axis_y_scale is not None else None
         rule = build_zero_rule_if_applicable(
@@ -372,47 +429,54 @@ class BaselineFeature:
             log_scale=continuous is not None and continuous.type == "log",
             authored_domain=authored,
             grid_visible=chart.style.axis_y.grid.visible,
-            zero_color=zero_style.color,
-            zero_width=zero_style.width,
+            zero_color=threshold_style.color,
+            zero_width=threshold_style.width,
             should_fire=should_fire,
         )
         if rule is None:
             return
         _insert_rule(spec, rule, chart)
 
-    def _insert_top_rules(self, spec: ChartSpec, chart: ResolvedChart) -> None:
-        # Normalize stacks get BOTH the 0% baseline and 100% top reference lines,
-        # fully styled (colour/width from the baked zero grid style) and drawn on
+    def _insert_top_rules(
+        self,
+        spec: ChartSpec,
+        chart: ResolvedChart,
+        datums: tuple[int, ...],
+    ) -> None:
+        # Normalize stacks get the 0% baseline and, unless the caller already
+        # routes datum 1 through `_apply_unity` (the percent-format carve-out
+        # in `_apply_zero_or_top`), the 100% top reference line too — fully
+        # styled (color/width from the baked zero grid style) and drawn on
         # top of the bars — matches V1's two datum rules.
         assert isinstance(chart, (ResolvedBarChart, ResolvedAreaChart))
-        # Same log-domain incompatibility as _insert_zero_rule's datum:0 guard.
-        axis_y_scale = chart.style.axis_y.scale
-        _top_cont = axis_y_scale.continuous if axis_y_scale is not None else None
-        if _top_cont is not None and _top_cont.type == "log":
-            return
         rule_axis = (
             "x"
             if isinstance(chart, ResolvedBarChart) and chart.orientation == "horizontal"
             else "y"
         )
+        axis_style = chart.style.axis_y
+        # Same log-domain incompatibility as _insert_zero_rule's datum:0 guard.
+        if _is_log_scale(axis_style):
+            return
+        # rule_axis vs axis_style cascade-slot distinction: see
+        # _insert_zero_rule.
+        if not chart.style.axis_y.grid.visible or not axis_style.grid.threshold.visible:
+            return
         measure_field = _measure_field(chart, spec, rule_axis)
         if measure_field is False:
             return
-        zero_style = chart.style.axis_y.grid.zero
-        assert zero_style is not None, (
-            "zero grid style must be resolved before emitting top rules"
-        )
+        threshold_style = axis_style.grid.threshold
         # Horizontal bars put the measure on x, so the 0%/100% datum rules anchor
         # on x — not the categorical y axis (mirrors the zero rule).
-        for datum in (0, 1):
+        for datum in datums:
             _insert_rule(
                 spec,
                 full_rule_at(
                     datum,
                     axis=rule_axis,
                     measure_field=measure_field,
-                    color=zero_style.color,
-                    width=zero_style.width,
+                    color=threshold_style.color,
+                    width=threshold_style.width,
                 ),
                 chart,
             )
@@ -424,46 +488,144 @@ class BaselineFeature:
         data: list[dict[str, Any]],
     ) -> None:
         if not isinstance(
-            chart, (ResolvedLineChart, ResolvedAreaChart, ResolvedScatterChart)
+            chart,
+            (
+                ResolvedBarChart,
+                ResolvedLineChart,
+                ResolvedAreaChart,
+                ResolvedScatterChart,
+            ),
         ):
             return
-        # axis_y.labels.format is the D3 spec resolved from the board+theme cascade.
-        # Check it first — it converts dbt charts aliases ("percent_whole") to
-        # their literal D3 form (".0%"), which always contains "%".
-        ax_fmt = chart.style.axis_y.labels.format
-        if not ((ax_fmt and "%" in ax_fmt) or _is_percent_format(chart.format)):
+        # The axis carrying the measure: x for a horizontal bar, y otherwise.
+        # rule_axis vs axis_style cascade-slot distinction: see
+        # _insert_zero_rule.
+        rule_axis = (
+            "x"
+            if isinstance(chart, ResolvedBarChart) and chart.orientation == "horizontal"
+            else "y"
+        )
+        axis_style = chart.style.axis_y
+        if not _resolved_percent_format(axis_style, chart.format):
             return
         # grid.visible=False suppresses the unity rule (mirrors zero-rule gate).
-        if not chart.style.axis_y.grid.visible:
+        # rule_axis vs axis_style cascade-slot distinction: see
+        # _insert_zero_rule.
+        if not chart.style.axis_y.grid.visible or not axis_style.grid.threshold.visible:
             return
-        measure_field = _measure_field(chart, spec, "y")
+        measure_field = _measure_field(chart, spec, rule_axis)
         if measure_field is False:
             return
         if not _y_carries_the_measure(chart):
             return
-        # A normalize-stacked area reroutes its definitional 1.0 ceiling through
-        # this rule (see _apply_zero_or_top); its unity rule always fires. Every
-        # other percent chart fires only when the rendered domain reaches 1.0 —
-        # see _domain_reaches.
-        is_normalize_area = (
-            isinstance(chart, ResolvedAreaChart) and chart.stack == "normalize"
+        # A normalize-stacked bar/area reroutes its definitional 1.0 ceiling
+        # through this rule (see _apply_zero_or_top); its unity rule always
+        # fires. Every other percent chart fires only when the rendered
+        # domain reaches 1.0 — see _domain_reaches.
+        is_normalize_stack = (
+            isinstance(chart, (ResolvedBarChart, ResolvedAreaChart))
+            and chart.stack == "normalize"
         )
-        if not is_normalize_area and not _domain_reaches(
-            chart, data, measure_field, 1.0
+        if not is_normalize_stack and not _domain_reaches(
+            axis_style, data, measure_field, 1.0
         ):
             return
-        zero_style = chart.style.axis_y.grid.zero
-        assert zero_style is not None, (
-            "zero grid style must be resolved before emitting unity rule"
-        )
+        threshold_style = axis_style.grid.threshold
         _insert_rule(
             spec,
             full_rule_at(
                 1,
-                axis="y",
+                axis=rule_axis,
                 measure_field=measure_field,
-                color=zero_style.color,
-                width=zero_style.width,
+                color=threshold_style.color,
+                width=threshold_style.width,
+            ),
+            chart,
+        )
+
+    def _apply_x_threshold(
+        self,
+        spec: ChartSpec,
+        chart: ResolvedChart,
+        data: list[dict[str, Any]],  # type-state: explicit_any — query row dict
+        datum: int,
+        require_percent: bool,
+    ) -> None:
+        """Independent x=0 / x=1 threshold for a quantitative x axis.
+
+        Distinct from the measure-axis zero/unity rules in
+        ``_insert_zero_rule`` / ``_apply_unity``: a chart can have a
+        quantitative x AND a quantitative y — an ordinary x-y scatter
+        straddling zero (or each reaching 1.0 on its own ratio) on both — and
+        each axis earns its own threshold. ``datum=0`` fires unconditionally
+        once the other guards pass (mirrors the y-side zero rule); ``datum=1``
+        additionally requires ``require_percent``, gated on ``axis_x``'s own
+        resolved label format — deliberately NOT ``chart.format``, which is
+        the MEASURE's format (it feeds axis_y) and says nothing about an
+        unrelated quantitative x. Horizontal bar's x is already the measure
+        axis handled above by the y-slot rules (``rule_axis`` is "x" there,
+        but the cascade slot they read is still ``axis_y`` — see
+        ``_insert_zero_rule``'s comment on that distinction); skip it here to
+        avoid a duplicate rule.
+
+        ``data`` is only the base query's own rows (``apply()`` builds it via
+        ``chart_rows(chart, datasets).all_rows()``), unlike the y-side zero
+        rule, which unions every layer's rows through
+        ``_zero_in_shared_domain`` before checking the domain. Nothing here
+        unions an overlay layer's own x values in. The asymmetry is
+        one-directional: this rule can go conservatively missing when only a
+        layer's data would justify it, never misplaced.
+        """
+        if not isinstance(
+            chart,
+            (
+                ResolvedBarChart,
+                ResolvedLineChart,
+                ResolvedAreaChart,
+                ResolvedScatterChart,
+            ),
+        ):
+            return
+        if isinstance(chart, ResolvedBarChart) and chart.orientation == "horizontal":
+            return
+        # Read off ResolvedAxisStyle.is_quantitative on the RESOLVED chart, never
+        # spec.encoding: a chart with authored layers has its encoding hoisted
+        # into the sub-layers, leaving the outer spec's x channel unreliable.
+        # is_quantitative is baked once at resolve time from the same channel
+        # classification that already decides the axis type, so this reads a
+        # fact fixed before the spec exists rather than reverse-engineering it
+        # from how the emitter composed the layers.
+        if not chart.style.axis_x.is_quantitative:
+            return
+        if not data:
+            return
+        axis_x = chart.style.axis_x
+        if _is_log_scale(axis_x):
+            return
+        if require_percent and not _resolved_percent_format(axis_x, None):
+            return
+        # Both switches, and the blanket one is deliberate: a theme that hides
+        # axis_x's gridlines entirely (bar and histogram do, by convention)
+        # leaves the plot with no vertical structure at all, so the rule stays
+        # suppressed there too — a lone heavy rule in that emptiness would read
+        # as a stray mark rather than a threshold, and matching the rest of
+        # the axis wins over drawing it anyway.
+        if not axis_x.grid.visible or not axis_x.grid.threshold.visible:
+            return
+        x_field = chart.x
+        if x_field is None:
+            return
+        if not _domain_reaches(axis_x, data, x_field, float(datum)):
+            return
+        threshold_style = axis_x.grid.threshold
+        _insert_rule(
+            spec,
+            full_rule_at(
+                datum,
+                axis="x",
+                measure_field=x_field,
+                color=threshold_style.color,
+                width=threshold_style.width,
             ),
             chart,
         )

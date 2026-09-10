@@ -235,7 +235,7 @@ def _render_callout_block(
 ) -> tuple[str, float]:
     """Build an inline error SVG block and optionally collect the Diagnostic.
 
-    Single call site for materialising a *render-stage* chart error as SVG —
+    Single call site for materializing a *render-stage* chart error as SVG —
     the streaming task can wrap this as a yield point without hunting across
     multiple files. The Diagnostic's identity fields are stamped by
     ``stamp_chart_diagnostic``, shared with the resolve-stage and data-format
@@ -455,7 +455,7 @@ def _render_chart_item_inner(
     Cache is only used for Vega-family.
     """
     # resolved_style comes from ResolvedBoard in the real render pipeline
-    # (always non-None); the None defaults exist for test convenience only. Synthesise
+    # (always non-None); the None defaults exist for test convenience only. Synthesize
     # here so render_chart_to_svg never receives None.
     if resolved_style is None:
         from dbt_charts.core.compile.resolve.style.board import resolve_style as _rs
@@ -639,7 +639,7 @@ def _wrap_rendered_chart_svg(
         # Width comes from the slot, never from `dims.width`: a table widened by
         # column overflow (table.py) or a spark_bar clamped up to its min width
         # renders past what it was given, and a box drawn from that reaches into
-        # the neighbouring slot. Height is a genuine render-time fact — these
+        # the neighboring slot. Height is a genuine render-time fact — these
         # families size to their content — so it does come from `dims`.
         inner_width = outer_width - inset["left"] - inset["right"]
         boundary = padded_authoring_content(

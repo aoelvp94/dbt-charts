@@ -1,7 +1,7 @@
 """Tests: v2 geoshape resolver and emitter correctness.
 
 Originally written as parity tests against the V1 oracle generate_map_spec (geo.py).
-The V1 oracle is retired; tests now verify V2 behaviour directly.
+The V1 oracle is retired; tests now verify V2 behavior directly.
 
 "fake-geo-source" is not in the config's geo_sources, so _resolve_geo_source falls back
 to using the string as the URL: url="fake-geo-source", format={"type":"topojson","feature":"features"},

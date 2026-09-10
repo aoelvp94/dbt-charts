@@ -8,8 +8,8 @@ annotation verbatim when generating ``BoardPatch``, so the coercion reaches meta
 and extends fragments (validated as ``BoardPatch`` by the merge engine) for free, with
 no mixin involved.
 
-Before a since-superseded shared-mixin fix, ``build_patch_model_ext`` carried over
-``_desugar_theme`` (it lived on the ``_BoardDesugarMixin`` base) but dropped
+Before a since-superseded shared-base fix, ``build_patch_model_ext`` carried over
+theme desugaring (it lived on a base class both models shared) but dropped
 ``_normalize_queries``, an equivalent ``model_validator`` that lived directly on
 ``AuthoredBoard`` at the time. So ``BoardPatch`` read the bare string as a query
 *reference* and raised "Invalid query reference 'SELECT ...'", which in turn forced the

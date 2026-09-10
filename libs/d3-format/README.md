@@ -102,7 +102,7 @@ except D3FormatError as e:
 | `c` | Character data (verbatim) | `c` | 1234.5678 | `1234.5678` |
 
 The empty type is `.12~g`. So is any other ASCII letter: d3 does not reject an
-unrecognised type letter, it falls back, and this port matches that rather than
+unrecognized type letter, it falls back, and this port matches that rather than
 turning a d3 quirk into a parse error.
 
 `b`, `o`, `x` and `X` round to an integer first, so they carry no precision;

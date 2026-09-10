@@ -21,9 +21,9 @@ from dbt_charts.core.compile.models.style.authored import (
     AxisXStylePatch,
     AxisYStylePatch,
     BarChartStylePatch,
+    BaseAxisGridStylePatch,
     ChartStylePatch,
     DimensionLabelStylePatch,
-    MeasureGridStylePatch,
 )
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
@@ -72,7 +72,7 @@ class TestTitlePropertyRegression:
 
     def test_title_overflow_truncate_is_default(self, make_chart):
         """The densified default overflow is ``truncate`` — long titles
-        render as a single ellipsised string, not a list."""
+        render as a single ellipsized string, not a list."""
         chart = make_chart(
             "bar",
             x="month",
@@ -115,7 +115,7 @@ class TestAxisPropertyRegression:
         chart = make_chart(
             "bar",
             style=BarChartStylePatch(
-                axis_y=AxisYStylePatch(grid=MeasureGridStylePatch(color="#cccccc"))
+                axis_y=AxisYStylePatch(grid=BaseAxisGridStylePatch(color="#cccccc"))
             ),
         )
         _rc = resolve(chart, DATA, chart_style_context=_BOARD_STYLE)
@@ -128,7 +128,7 @@ class TestAxisPropertyRegression:
         chart = make_chart(
             "bar",
             style=BarChartStylePatch(
-                axis_y=AxisYStylePatch(grid=MeasureGridStylePatch(visible=False))
+                axis_y=AxisYStylePatch(grid=BaseAxisGridStylePatch(visible=False))
             ),
         )
         _rc = resolve(chart, DATA, chart_style_context=_BOARD_STYLE)
@@ -228,7 +228,7 @@ class TestAxisPropertyRegression:
         chart = make_chart(
             "bar",
             style=BarChartStylePatch(
-                axis_y=AxisYStylePatch(grid=MeasureGridStylePatch(width=2))
+                axis_y=AxisYStylePatch(grid=BaseAxisGridStylePatch(width=2))
             ),
         )
         _rc = resolve(chart, DATA, chart_style_context=_BOARD_STYLE)

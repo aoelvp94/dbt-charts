@@ -375,7 +375,7 @@ class TestGlyphWidthIsReserved:
         """The glyph subtraction must not push a cell out of the wrap cache.
 
         A missing cache entry is painted as one unwrapped, untruncated line —
-        a spill across several neighbours. Nothing fits inside a column this
+        a spill across several neighbors. Nothing fits inside a column this
         narrow, so the guarantee here is the cache entry (one character per
         line, the same shape a glyph-free column of this width produces), not
         containment.
@@ -449,7 +449,7 @@ class TestGlyphWidthIsReserved:
 
         Here the widest token and the only glyph belong to different cells,
         so pairing the two column-wide maxima would reserve a unit nothing
-        renders — width taken straight out of a text neighbour.
+        renders — width taken straight out of a text neighbor.
         """
         from dbt_charts.core.font_measure import get_font_measurer
         from dbt_charts.core.render.chart.table_support import (
@@ -486,7 +486,7 @@ class TestGlyphWidthIsReserved:
         assert floors["split"] == pytest.approx(widest), (
             "Only the 'OK' cell paints a glyph; charging the glyph-free "
             "'UNDETERMINED' cell for it reserves a first-line unit nothing "
-            "renders and takes the width from a text neighbour"
+            "renders and takes the width from a text neighbor"
         )
 
     def test_overflow_check_sees_the_glyph_run(self) -> None:
@@ -587,7 +587,7 @@ class TestGlyphWidthIsReserved:
         cell = cells[0]
         assert cell.lines[0].endswith("…"), (
             "A 70px column cannot hold '○ INSUFFICIENT'; the value must be "
-            f"ellipsised, got {cell.lines!r}"
+            f"ellipsized, got {cell.lines!r}"
         )
         assert cell.text_right <= cell.fill_right, (
             f"{cell.lines[0]!r} ends at {cell.text_right:.1f}, past its fill at "

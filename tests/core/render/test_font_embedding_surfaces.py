@@ -254,7 +254,7 @@ rows: [t]
 """
 
 _TITLE_EMPHASIS_YAML = """\
-title: "Only the *title* is emphasised"
+title: "Only the *title* is emphasized"
 text: |
   Body prose with none at all.
 queries:

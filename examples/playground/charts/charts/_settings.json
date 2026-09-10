@@ -1,4 +1,4 @@
 {
   "default_format": "svg",
-  "description": "Chart-family showcases: maps, all chart types, multi-chart compositions."
+  "description": "Chart families, layers, series handling, and composed shapes — what dbt Charts draws and how little YAML it takes."
 }

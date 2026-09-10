@@ -85,12 +85,6 @@ class TestStylePatchCSSShorthands:
         patch = StylePatch.model_validate({"gap": 12})
         assert patch.gap == 12.0
 
-    def test_color_string(self) -> None:
-        from dbt_charts.core.compile.models.style.authored import StylePatch
-
-        patch = StylePatch.model_validate({"color": "#cc0000"})
-        assert patch.color == "#cc0000"
-
     def test_text_align(self) -> None:
         from dbt_charts.core.compile.models.style.authored import StylePatch
 

@@ -23,7 +23,26 @@ from dbt_charts.core.render.utils import (
     normalize_scalar_for_json,
     ordered_distinct_values,
 )
-from dbt_charts.core.utils import Rows, coerce_numeric_cell, stacked_x_domain_order
+from dbt_charts.core.utils import (
+    Rows,
+    VlSortOp,
+    coerce_numeric_cell,
+    x_domain_order,
+)
+
+
+def vl_sort_op(sort: VLDict | None) -> VlSortOp:
+    """The aggregate Vega-Lite folds a category's rows into before applying
+    ``sort``.
+
+    An encoding whose sort pins ``op`` says which: every dimension axis built
+    through ``dimension_sort_to_vl`` (``emitters/_cartesian.py``) pins ``min``,
+    because a dimension axis orders categories by the sort column's own value
+    and VL's own inference varies with the composed spec. The remaining
+    unpinned field sorts are bar's, where the inference lands on ``sum``: bars
+    stack, and grouped bars use an offset channel rather than ``stack: null``.
+    """
+    return "min" if isinstance(sort, dict) and sort.get("op") == "min" else "sum"
 
 
 def defined_domain_order(values: list[DomainValue]) -> list[DomainValue] | None:
@@ -102,9 +121,9 @@ def rendered_x_domain(
     when it states one, per ``extend_domain_in_base_order`` above.
 
     The overlay reconciler (``_reconcile_x_domain``, ``emitters/_overlay.py``)
-    pins this computed order onto the shared scale whenever one of its own
-    triggers fires, and an explicit ``scale.domain`` then overrides whatever
-    native order Vega-Lite's own field-sort would otherwise have produced.
+    pins this computed order onto every layered chart's shared categorical
+    scale, and an explicit ``scale.domain`` then overrides whatever native
+    order Vega-Lite's own field-sort would otherwise have produced.
     ``_layer_band_anchor`` (also in ``emitters/_overlay.py``) calls this over
     the same encoding, base rows and layer columns the reconciler is about to
     pin, reproducing that same order ahead of it; only ``chart_id`` differs,
@@ -149,11 +168,12 @@ def rendered_x_domain(
         return []
     sort = x_enc.get("sort")
     sort_field = sort.get("field") if isinstance(sort, dict) else None
-    raw_base_domain = stacked_x_domain_order(
+    raw_base_domain = x_domain_order(
         base_data,
         base_field,
         sort_field if isinstance(sort_field, str) else "",
         bool(isinstance(sort, dict) and sort.get("order") == "descending"),
+        op=vl_sort_op(sort),
     )
     base_domain = list(
         dict.fromkeys(normalize_scalar_for_json(value) for value in raw_base_domain)

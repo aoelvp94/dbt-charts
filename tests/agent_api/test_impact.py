@@ -126,7 +126,7 @@ def test_select_star_board_is_reported_indeterminate_never_omitted(
 
 def test_meta_and_inspect_template_files_are_not_boards(tmp_path: Path) -> None:
     project = _project(tmp_path, {"ok.yaml": {"q": "SELECT customer_id FROM orders"}})
-    (tmp_path / "charts" / "meta.yaml").write_text("source: db\n")
+    (tmp_path / "charts" / "meta.yml").write_text("source: db\n")
     tpl = tmp_path / "charts" / "inspect"
     tpl.mkdir()
     (tpl / ".inspect-template-manifest.json").write_text("{}")

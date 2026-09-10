@@ -147,7 +147,7 @@ class CompileResult:
             validate_compiled_queries) uses a ``WarningCode`` constant from
             ``dbt_charts.core.diagnostics``.
         suppressed_warnings: ``Diagnostic`` entries that matched a
-            suppression layer (query-level ``ignore:`` or meta.yaml lint
+            suppression layer (query-level ``ignore:`` or meta.yml lint
             config). Kept separate so consumers can surface "would have
             warned" without re-running validation.
         diagnostics: Structured query diagnostics from validate_compiled_queries.
@@ -309,7 +309,7 @@ def compile_authored_board(
     # Default source comes from board/meta source: inheritance (normalize/dispatch.py).
     # The project-level sources.default config key has been removed; a host that
     # compiles composed/standalone content (e.g. the playground scratch endpoint,
-    # which has no charts/meta.yaml to inherit) may supply host_default_source as
+    # which has no charts/meta.yml to inherit) may supply host_default_source as
     # the fallback default for that context.
     default_source = authored.get_default_source() or host_default_source
 
@@ -595,7 +595,7 @@ def _sql_parse_warnings(
 ) -> list[Diagnostic]:
     """WARN-PARSE-ERROR for every authored query the guard could not parse.
 
-    ``normalize_query`` already ran the guard (skeletonising Jinja, using the
+    ``normalize_query`` already ran the guard (skeletonizing Jinja, using the
     source's own dialect) and stashed the finding on the query — this is the
     harvest, not a second parse. It only sees failures the guard judged
     specific enough to report; the vaguer ones stay deferred and silent.
@@ -647,7 +647,7 @@ def _collect_suppressed_codes(
     result: CompileResult,
     meta_lint: MetaLintConfig | None = None,
 ) -> dict[str, set[str]]:
-    """Build per-query suppression sets from query ignore + meta.yaml lint config.
+    """Build per-query suppression sets from query ignore + meta.yml lint config.
 
     Returns a dict mapping query_name → set of suppressed diagnostic codes.
     """
@@ -689,7 +689,7 @@ def validate_compiled_queries(
     Honors diagnostic suppressions from:
     - SQL-inline ``-- dct:ignore`` comments (handled by validate_query)
     - Per-query ``ignore`` field
-    - meta.yaml ``lint`` config
+    - meta.yml ``lint`` config
 
     Args:
         result: CompileResult to enrich.
@@ -764,16 +764,16 @@ def compile_file(
     *,
     markdown_metadata_table: bool = False,
 ) -> CompileResult:
-    """Compile a board's content to a Board, applying the meta.yaml cascade.
+    """Compile a board's content to a Board, applying the meta.yml cascade.
 
     Args:
         board: BoardFile binding the raw content to its ProjectPath location. The
-            location anchors the meta.yaml cascade, relative refs, and error
+            location anchors the meta.yml cascade, relative refs, and error
             paths; the content is compiled directly (no read), so an unsaved
             buffer compiles the same as a stored blob. Requires ``board.path``
             to be set — ``compile_file`` is the cascade entry, which only
             makes sense for a located board.
-        apply_meta: If True, resolve and apply meta.yaml chain (default: True)
+        apply_meta: If True, resolve and apply meta.yml chain (default: True)
         markdown_metadata_table: When True and the board is a .md, prepend
             non-board frontmatter keys as a metadata table before the body.
 
@@ -845,7 +845,9 @@ def compile_file(
         board_data = prepare_board_mapping(board_data)
         if apply_meta:
             from dbt_charts.core.compile.merge import merged_patch
-            from dbt_charts.core.compile.models.board.patch import BoardPatch
+            from dbt_charts.core.compile.models.board.patch import (
+                BOARD_PATCH_ADAPTER,
+            )
 
             # --- Lint extraction (dict-level walk of meta files) ---
             meta_lint = resolve_meta_lint(board_path, project.directory("."))
@@ -857,7 +859,7 @@ def compile_file(
             #     meta (root→leaf) < board extends chain < board own fields
             # Merge strategy per field comes from each Merge(...) marker via
             # merge_patches — the single source of truth, no dict-level duplicate.
-            board_node = BoardPatch.model_validate(board_data)
+            board_node = BOARD_PATCH_ADAPTER.validate_python(board_data)
             theme_sink: list[str] = []
             merged = merged_patch(
                 board_node, board_path, project.directory("."), theme_sink
@@ -898,8 +900,8 @@ def compile_file(
             CompileResult(errors=[e.to_diagnostic(file=relpath)]), yaml_content, relpath
         )
     except PydanticValidationError as e:
-        # Catches desugar-mixin errors (e.g. theme: + extends: conflict) raised
-        # during routing-field validation before parse_mapping runs.
+        # Catches errors from the BeforeValidator that desugars theme: -> extends:
+        # (e.g. theme: + extends: conflict), raised before parse_mapping runs.
         return _stamp_compile_result(
             CompileResult(errors=format_validation_errors_structured(e, yaml_content)),
             yaml_content,

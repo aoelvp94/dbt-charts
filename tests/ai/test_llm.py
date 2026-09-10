@@ -514,7 +514,7 @@ class TestClassifyTurnFailure:
 
     It reads the provider exception preserved on ``__cause__`` — its
     machine-readable ``code`` and HTTP status — never the prose of the message.
-    A message is not an API: it is localised, reworded between SDK releases, and
+    A message is not an API: it is localized, reworded between SDK releases, and
     would make the metric label depend on vendor copy.
     """
 
@@ -587,7 +587,7 @@ class TestClassifyTurnFailure:
         bare.__cause__ = cause
         assert classify(bare) is AITurnFailure.USAGE_LIMIT_EXCEEDED
 
-    def test_an_unrecognised_provider_fault_is_provider_error(self) -> None:
+    def test_an_unrecognized_provider_fault_is_provider_error(self) -> None:
         """Still a provider fault — it came through LLMClientError — just not
         one we have a narrower name for. `internal` would blame our own code."""
         assert classify(LLMClientError("something new from the vendor")) is (

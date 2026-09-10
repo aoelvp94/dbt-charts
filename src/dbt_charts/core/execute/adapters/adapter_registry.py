@@ -136,8 +136,8 @@ def build_adapter_registry(
         allow_external_access_in_readonly: Security opt-in; passed through to
             SqlAdapter. See SqlAdapter docstring for full semantics. Default False
             preserves existing behavior. Approved callsites passing True are listed
-            on LOCAL_AUTHORING_REGISTRY_KWARGS in this module (playground,
-            MCP, the embedded preview, evals).
+            on LOCAL_AUTHORING_REGISTRY_KWARGS in this module (local `dct
+            playground`, MCP, the embedded preview, evals).
         max_workers: Width of the SqlAdapter per-source connection pool (warm
             warehouse worker threads). None falls back to the execution-config
             default. Serve passes its resolved max_workers so the persisted
@@ -649,7 +649,7 @@ class AdapterRegistry:
         itself, same as the render path.
 
         Applies the same ``query.limit`` / ``execution.max_rows`` contract
-        ``SqlAdapter``/``DuckDBAdapter`` honour, but not the same mechanism:
+        ``SqlAdapter``/``DuckDBAdapter`` honor, but not the same mechanism:
         those bound the driver cursor itself, so an over-the-ceiling result
         is never fully fetched. ``materialize_and_run`` has no cursor to
         bound — it returns every row the materialized cache holds, and this

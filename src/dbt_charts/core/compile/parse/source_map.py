@@ -75,7 +75,17 @@ def build_source_index(yaml_content: str, file: str) -> SourceIndex:
         return SourceIndex({}, {}, frozenset())
     if root is None:
         return SourceIndex({}, {}, frozenset())
+    return build_source_index_from_node(root, yaml_content, file)
 
+
+def build_source_index_from_node(
+    root: yaml.Node, yaml_content: str, file: str
+) -> SourceIndex:
+    """The three source products off a tree a caller has already composed.
+
+    ``yaml_content`` is the text ``root`` was composed from — the marks index
+    into its lines.
+    """
     lines = yaml_content.splitlines()
     source_map: dict[str, SourceRange] = {}
     _walk_node(root, [], file, lines, source_map)

@@ -5,7 +5,7 @@ reserves slot height for the rows it expects to draw, ``_largest_safe_page_rows`
 decides how many the slot actually fits, and when they disagree the paginator
 wins in silence. These tests render real tables and assert the sink reflects the
 render — a 4-row table in a slot that fits one row records the squeeze, a slot
-that fits every row records nothing, and an authored page size the slot honours
+that fits every row records nothing, and an authored page size the slot honors
 records nothing either.
 """
 
@@ -83,7 +83,7 @@ def test_slot_that_fits_every_row_records_nothing() -> None:
     assert _render(4, _ROOMY_HEIGHT) == {}
 
 
-def test_honoured_authored_page_size_records_nothing() -> None:
+def test_honored_authored_page_size_records_nothing() -> None:
     """``page_rows: 2`` over 8 rows in a slot that fits 2 is pagination, not a squeeze."""
     assert _render(8, _ROOMY_HEIGHT, page_rows=2) == {}
 

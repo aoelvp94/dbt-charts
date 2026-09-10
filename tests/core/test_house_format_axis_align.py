@@ -382,7 +382,7 @@ def test_compile_time_diagnostic_does_not_fire_without_explicit_right_position()
 
     An axis without an explicit position='right' may resolve to the left side at
     render time, in which case the house-format force never fires and the authored
-    align is honoured.
+    align is honored.
     """
     from dbt_charts.core.compile.compiler import compile as _compile
     from dbt_charts.core.diagnostics import WARN_AXIS_ALIGN_DISCARDED
@@ -509,7 +509,7 @@ def test_diagnostic_does_not_fire_for_non_tabular_chart_font():
 
     _force_right requires tabular_figures=True when column_forming=True. If the
     chart-local axis font is non-tabular (e.g. Arial), the force never fires and
-    the authored align is honoured, so the diagnostic must not fire.
+    the authored align is honored, so the diagnostic must not fire.
     """
     from dbt_charts.core.compile.compiler import compile as _compile
     from dbt_charts.core.diagnostics import WARN_AXIS_ALIGN_DISCARDED

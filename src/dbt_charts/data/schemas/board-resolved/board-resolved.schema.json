@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.6.1.dev64",
+  "version": "0.6.1.dev80",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -1147,10 +1147,23 @@
       "title": "AuthoredValuesQuery",
       "type": "object"
     },
-    "AxisGridZeroStylePatch": {
+    "AxisGridThresholdStylePatch": {
       "additionalProperties": false,
-      "description": "Authored overlay for AxisGridZeroStyle. Zero-baseline gridline color and width overrides.\n\nNested sub-object under BaseAxisGridStyle.zero. Quantitative axes only \u2014\nband axes never tick at value=0.",
+      "description": "Authored overlay for AxisGridThresholdStyle. Threshold-rule color, width, and visibility overrides.\n\nStyles the heavy rule drawn at a quantitative axis's meaningful crossing\npoint \u2014 zero on most quantitative axes, 1.0 on a ratio/percent axis \u2014 the\nrule shared by the zero-anchor line, the unity (100%) line, and the\nnormalize-stack top lines.",
       "properties": {
+        "visible": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Show the threshold rule; None inherits from parent axis.",
+          "title": "Visible"
+        },
         "color": {
           "anyOf": [
             {
@@ -1161,7 +1174,7 @@
             }
           ],
           "default": null,
-          "description": "Color of the zero-baseline grid line; None inherits from parent axis.",
+          "description": "Color of the threshold rule; None inherits from parent axis.",
           "title": "Color"
         },
         "width": {
@@ -1174,11 +1187,11 @@
             }
           ],
           "default": null,
-          "description": "Width of the zero-baseline grid line in pixels; None inherits from parent axis.",
+          "description": "Width of the threshold rule in pixels; None inherits from parent axis.",
           "title": "Width"
         }
       },
-      "title": "AxisGridZeroStylePatch",
+      "title": "AxisGridThresholdStylePatch",
       "type": "object"
     },
     "AxisLabelOverlapConfigPatch": {
@@ -1599,7 +1612,7 @@
             }
           ],
           "default": null,
-          "description": "Target number of axis ticks: a target everywhere, never an exact count. On the measure axis (axis_y) the renderer computes an explicit round-numbered ladder of at most this many ticks. On axis_x it passes through as VL's axis.tickCount: a temporal scale honours it closely, a quantitative one rounds to a nearby round-numbered ladder. To name the interval instead of the count, author ticks.step on a quantitative axis_x. An ordinal axis_x has no tick-count concept and ignores this.",
+          "description": "Target number of axis ticks: a target everywhere, never an exact count. On the measure axis (axis_y) the renderer computes an explicit round-numbered ladder of at most this many ticks. On axis_x it passes through as VL's axis.tickCount: a temporal scale honors it closely, a quantitative one rounds to a nearby round-numbered ladder. To name the interval instead of the count, author ticks.step on a quantitative axis_x. An ordinal axis_x has no tick-count concept and ignores this.",
           "title": "Count"
         },
         "step": {
@@ -1877,19 +1890,19 @@
     },
     "AxisYStylePatch": {
       "additionalProperties": false,
-      "description": "Authored overlay for AxisYStyle. Measure axis style. Theme slot: axis_y.\n\nAdds measure-only fields: mirror; overrides grid with MeasureGridStyle\n(adds grid.zero). x-axis-only fields (fill, time_unit, type,\ntilt_increments, labels.values) are structurally absent so the model\nrejects them at validation time.\n\nNo ``categorical_orient`` (deleted 2026-08 trim) \u2014 ``position`` (below)\nnow serves the \"which side does this axis's orient read as\" role for\nevery consumer, dimension-swap-into-VL-y included.",
+      "description": "Authored overlay for AxisYStyle. Measure axis style. Theme slot: axis_y.\n\nAdds measure-only fields: mirror. Grid style is the shared\nBaseAxisGridStyle inherited from BaseAxisStyle \u2014 its ``threshold``\nsub-block is not y-only, see that class's docstring. x-axis-only fields\n(fill, time_unit, type, tilt_increments, labels.values) are structurally\nabsent so the model rejects them at validation time.\n\nNo ``categorical_orient`` (deleted 2026-08 trim) \u2014 ``position`` (below)\nnow serves the \"which side does this axis's orient read as\" role for\nevery consumer, dimension-swap-into-VL-y included.",
       "properties": {
         "grid": {
           "anyOf": [
             {
-              "$ref": "#/$defs/MeasureGridStylePatch"
+              "$ref": "#/$defs/BaseAxisGridStylePatch"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Measure axis grid style (includes zero-baseline override)."
+          "description": "Grid line style for this axis."
         },
         "line": {
           "anyOf": [
@@ -2748,7 +2761,7 @@
     },
     "BaseAxisGridStylePatch": {
       "additionalProperties": false,
-      "description": "Authored overlay for BaseAxisGridStyle. Grid line style for all axis variants.\n\nNo zero field \u2014 that lives only on MeasureGridStyle (AxisYStyle.grid). A\nzero-baseline gridline only makes sense on the measure (y) axis; putting it\non the shared base would allow authoring it on x-axes where it is silent.",
+      "description": "Authored overlay for BaseAxisGridStyle. Grid line style for all axis variants.\n\n``threshold`` styles the heavy rule at a quantitative axis's meaningful\ncrossing point \u2014 zero on most quantitative axes, 1.0 on a ratio/percent\naxis. It applies to any quantitative axis and has no visible effect on a\ncategorical or band axis.",
       "properties": {
         "visible": {
           "anyOf": [
@@ -2817,6 +2830,18 @@
           "default": null,
           "description": "Dash pattern for grid lines; None renders a solid line.",
           "title": "Dash"
+        },
+        "threshold": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AxisGridThresholdStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Threshold-rule gridline style; None inherits from parent axis."
         }
       },
       "title": "BaseAxisGridStylePatch",
@@ -4826,7 +4851,7 @@
             }
           ],
           "default": null,
-          "description": "Target number of axis ticks: a target everywhere, never an exact count. On the measure axis (axis_y) the renderer computes an explicit round-numbered ladder of at most this many ticks. On axis_x it passes through as VL's axis.tickCount: a temporal scale honours it closely, a quantitative one rounds to a nearby round-numbered ladder. To name the interval instead of the count, author ticks.step on a quantitative axis_x. An ordinal axis_x has no tick-count concept and ignores this.",
+          "description": "Target number of axis ticks: a target everywhere, never an exact count. On the measure axis (axis_y) the renderer computes an explicit round-numbered ladder of at most this many ticks. On axis_x it passes through as VL's axis.tickCount: a temporal scale honors it closely, a quantitative one rounds to a nearby round-numbered ladder. To name the interval instead of the count, author ticks.step on a quantitative axis_x. An ordinal axis_x has no tick-count concept and ignores this.",
           "title": "Count"
         },
         "step": {
@@ -5168,7 +5193,7 @@
           "type": "boolean"
         },
         "text": {
-          "description": "Attribution text shown in the footer. The first 'dbt charts' in it is drawn as the dbt charts wordmark, in the same ink as the text.",
+          "description": "Attribution text shown in the footer.",
           "title": "Text",
           "type": "string"
         },
@@ -5182,7 +5207,7 @@
             }
           ],
           "default": null,
-          "description": "URL the footer's dbt charts wordmark links to; null renders it plain.",
+          "description": "URL the footer brand phrase 'dbt charts' links to; null renders plain text.",
           "title": "Link"
         },
         "font": {
@@ -5294,11 +5319,11 @@
             }
           ],
           "default": null,
-          "description": "Exact board width in pixels. Set it, on a board, a template it extends, or a project's meta.yaml, and the board is exactly this wide; the layout distributes it. Leave it unset and the board sizes itself to its content, bounded by max_width. Rendered as an on-screen pixel size everywhere except the dct HTML page (dct serve, dct render --format html), which scales the board to its container.",
+          "description": "Exact board width in pixels. Set it, on a board, a template it extends, or a project's meta.yml, and the board is exactly this wide; the layout distributes it. Leave it unset and the board sizes itself to its content, bounded by max_width. Rendered as an on-screen pixel size everywhere except the dct HTML page (dct serve, dct render --format html), which scales the board to its container.",
           "title": "Width"
         },
         "max_width": {
-          "description": "Widest a board without an exact width may grow, in pixels. A board with no width of its own measures its charts' preferred widths and hugs them up to this bound: a single small chart stays a small card. Ignored when width is set. Themes supply the default; a project's meta.yaml can lower or raise it.",
+          "description": "Widest a board without an exact width may grow, in pixels. A board with no width of its own measures its charts' preferred widths and hugs them up to this bound: a single small chart stays a small card. Ignored when width is set. Themes supply the default; a project's meta.yml can lower or raise it.",
           "exclusiveMinimum": 0,
           "title": "Max Width",
           "type": "number"
@@ -7640,94 +7665,6 @@
       "title": "LineMarkStyle",
       "type": "object"
     },
-    "MeasureGridStylePatch": {
-      "additionalProperties": false,
-      "description": "Authored overlay for MeasureGridStyle. BaseAxisGridStyle + zero-baseline override for the measure (y) axis.\n\nUsed only by AxisYStyle.grid. The zero sub-block is structurally absent on\nall other axis variants so the model rejects it at validation time.",
-      "properties": {
-        "visible": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Show grid lines; None inherits from parent axis.",
-          "title": "Visible"
-        },
-        "opacity": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "default": null,
-          "description": "Grid line opacity; None uses Vega-Lite's default.",
-          "title": "Opacity"
-        },
-        "width": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "default": null,
-          "description": "Grid line width in pixels; None uses Vega-Lite's default.",
-          "title": "Width"
-        },
-        "color": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "Grid line color; None uses Vega-Lite's default.",
-          "title": "Color"
-        },
-        "dash": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "number"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Dash pattern for grid lines; None renders a solid line.",
-          "title": "Dash"
-        },
-        "zero": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AxisGridZeroStylePatch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Zero-baseline gridline style; None inherits from parent axis."
-        }
-      },
-      "title": "MeasureGridStylePatch",
-      "type": "object"
-    },
     "MultiplesConfig": {
       "additionalProperties": false,
       "description": "Small-multiples partition, keyed by layout direction.\n\n``rows`` stacks one panel per value vertically; ``columns`` lays them out\nside by side. Both are optional and either or both may be set \u2014 rows-only is\na row stack, columns-only a horizontal strip, both a grid \u2014 but at least one\nis required. Naming the direction makes the authored surface self-describing\n(no positional list to document) and lets a single dimension pick its axis.",
@@ -7866,25 +7803,9 @@
       "title": "PaddingStylePatch",
       "type": "object"
     },
-    "PageStyle": {
-      "additionalProperties": false,
-      "description": "Page-level (outer HTML canvas) styling.\n\nDistinct from the top-level `background` which is the working-surface color\n(board/card fills). `page.background` is the off-white canvas behind the board.",
-      "properties": {
-        "background": {
-          "description": "Page canvas background color (behind the board).",
-          "title": "Background",
-          "type": "string"
-        }
-      },
-      "required": [
-        "background"
-      ],
-      "title": "PageStyle",
-      "type": "object"
-    },
     "PaginationConfig": {
       "additionalProperties": false,
-      "description": "Table pagination configuration.\n\nControls client-side row paging for table charts. This is a presentation\nconcern (how many rows to show per page), distinct from query-level ``limit``\nwhich controls how many rows are *fetched*.\n\nShorthand forms are normalised by a ``field_validator`` on the containing\nstyle model:\n- ``pagination: 25``   \u2192 PaginationConfig(enabled=True, page_rows=25)\n- ``pagination: true``  \u2192 PaginationConfig(enabled=True)\n- ``pagination: false`` \u2192 PaginationConfig(enabled=False)",
+      "description": "Table pagination configuration.\n\nControls client-side row paging for table charts. This is a presentation\nconcern (how many rows to show per page), distinct from query-level ``limit``\nwhich controls how many rows are *fetched*.\n\nShorthand forms are normalized by a ``field_validator`` on the containing\nstyle model:\n- ``pagination: 25``   \u2192 PaginationConfig(enabled=True, page_rows=25)\n- ``pagination: true``  \u2192 PaginationConfig(enabled=True)\n- ``pagination: false`` \u2192 PaginationConfig(enabled=False)",
       "properties": {
         "enabled": {
           "default": true,
@@ -7911,7 +7832,7 @@
     },
     "PaginatorStyle": {
       "additionalProperties": false,
-      "description": "Visual style for the paginator control (chevrons + page numbers).\n\nDistinct from PaginationConfig which controls *behaviour* (enabled,\npage_rows). PaginatorStyle owns the look: color ramp across the three\nitem states (active, inactive, disabled), font sizing, weight contrast\nbetween the current page and its neighbours, and the slot width that\ndrives the hit target.",
+      "description": "Visual style for the paginator control (chevrons + page numbers).\n\nDistinct from PaginationConfig which controls *behavior* (enabled,\npage_rows). PaginatorStyle owns the look: color ramp across the three\nitem states (active, inactive, disabled), font sizing, weight contrast\nbetween the current page and its neighbors, and the slot width that\ndrives the hit target.",
       "properties": {
         "color_active": {
           "description": "Current page and live chevron color (theme body ink).",
@@ -9786,29 +9707,22 @@
           ],
           "title": "Dash"
         },
-        "zero": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ResolvedAxisGridZeroStyle"
-            },
-            {
-              "type": "null"
-            }
-          ]
+        "threshold": {
+          "$ref": "#/$defs/ResolvedAxisGridThresholdStyle"
         }
       },
       "required": [
         "color",
         "dash",
         "opacity",
+        "threshold",
         "visible",
-        "width",
-        "zero"
+        "width"
       ],
       "title": "ResolvedAxisGridStyle",
       "type": "object"
     },
-    "ResolvedAxisGridZeroStyle": {
+    "ResolvedAxisGridThresholdStyle": {
       "properties": {
         "color": {
           "title": "Color",
@@ -9817,13 +9731,18 @@
         "width": {
           "title": "Width",
           "type": "number"
+        },
+        "visible": {
+          "title": "Visible",
+          "type": "boolean"
         }
       },
       "required": [
         "color",
+        "visible",
         "width"
       ],
-      "title": "ResolvedAxisGridZeroStyle",
+      "title": "ResolvedAxisGridThresholdStyle",
       "type": "object"
     },
     "ResolvedAxisLabelOverlapConfig": {
@@ -14804,7 +14723,7 @@
             }
           ],
           "default": null,
-          "description": "Total-value annotation for donut centre."
+          "description": "Total-value annotation for donut center."
         },
         "format": {
           "anyOf": [
@@ -17168,9 +17087,6 @@
         "variables": {
           "$ref": "#/$defs/VariablesStyle"
         },
-        "page": {
-          "$ref": "#/$defs/PageStyle"
-        },
         "footer": {
           "$ref": "#/$defs/FooterStyle"
         },
@@ -17208,17 +17124,6 @@
           ],
           "title": "Gap"
         },
-        "color": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "title": "Color"
-        },
         "emoji_mode": {
           "enum": [
             "disabled",
@@ -17243,7 +17148,6 @@
         "border",
         "box_shadow",
         "chart_defaults",
-        "color",
         "emoji_mode",
         "font",
         "footer",
@@ -17254,7 +17158,6 @@
         "muted",
         "opacity",
         "padding",
-        "page",
         "placeholder",
         "text",
         "timestamp",
@@ -21127,7 +21030,7 @@
           "type": "number"
         },
         "title_subtitle_gap": {
-          "description": "Pure whitespace between the title's descent and the subtitle's ascent, in pixels, not a baseline-to-baseline distance. Combined with the title and subtitle font sizes to reproduce Vega-Lite's title->subtitle spacing at any font size, not one calibrated pair. Font size and colour for the subtitle itself come from style.title.subtitle (the same source chart-family titles use), not a table-local constant.",
+          "description": "Pure whitespace between the title's descent and the subtitle's ascent, in pixels, not a baseline-to-baseline distance. Combined with the title and subtitle font sizes to reproduce Vega-Lite's title->subtitle spacing at any font size, not one calibrated pair. Font size and color for the subtitle itself come from style.title.subtitle (the same source chart-family titles use), not a table-local constant.",
           "title": "Title Subtitle Gap",
           "type": "number"
         }
@@ -22815,7 +22718,7 @@
         },
         "swatch": {
           "$ref": "#/$defs/TooltipSwatchStyle",
-          "description": "Series colour swatch size/shape; theme always provides this."
+          "description": "Series color swatch size/shape; theme always provides this."
         },
         "active_marker": {
           "description": "How the hovered row is marked in a multi-row (x-unified) tooltip: 'fill' tints the row background (default); 'triangle' draws an edge-flush wedge in the box's left padding instead. Theme always provides this.",
@@ -22844,7 +22747,7 @@
     },
     "TooltipSwatchStyle": {
       "additionalProperties": false,
-      "description": "Series colour swatch in the tooltip: the mark-coloured chip next to each\nseries row. All fields required; theme YAML supplies defaults.",
+      "description": "Series color swatch in the tooltip: the mark-colored chip next to each\nseries row. All fields required; theme YAML supplies defaults.",
       "properties": {
         "size": {
           "description": "Swatch edge length in pixels (square).",

@@ -1,6 +1,6 @@
 """Shared SQL type classification for the inspect module.
 
-Provides a single source of truth for categorising database column types
+Provides a single source of truth for categorizing database column types
 as numeric, string, temporal, or complex.  Used by query_builder,
 quality_detector, semantic_detector, and inspector.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 
 # ---------------------------------------------------------------------------
-# Base-type normaliser
+# Base-type normalizer
 # ---------------------------------------------------------------------------
 
 # Postgres-specific aliases → standard SQL type names
@@ -141,7 +141,7 @@ COMPLEX_TYPES: frozenset[str] = frozenset(
     }
 )
 
-# Prefixes that indicate a complex parameterised type (e.g. ARRAY<INT64>)
+# Prefixes that indicate a complex parameterized type (e.g. ARRAY<INT64>)
 COMPLEX_PREFIXES: tuple[str, ...] = ("ARRAY<", "STRUCT<", "RECORD<", "MAP<")
 
 

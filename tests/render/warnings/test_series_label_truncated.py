@@ -1,7 +1,7 @@
 """Tests for the WARN_SERIES_LABEL_TRUNCATED render-warning detector.
 
 Detection rule: fires when the endpoint-label feature capped the rail on a
-layout that honours that width, so Vega will ellipsize the recorded names. The
+layout that honors that width, so Vega will ellipsize the recorded names. The
 truncation fact is recorded by the feature at the site that commits the layout;
 the detector reads the sink, never the spec.
 

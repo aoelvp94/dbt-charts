@@ -79,6 +79,13 @@ _ALLOWLIST: dict[Path, str] = {
     (_RENDER / "font_selection.py").resolve(): (
         "reads emitted markup (a <style> matcher, not authored HTML)"
     ),
+    # WHY: _dedupe_repeated_style_rules matches an SVG <style> block mdsvg already
+    # emitted and re-wraps a subset of its own lines in the same literal tags — it
+    # never composes new markup, only drops already-rendered CSS lines. Same SVG
+    # <style> category as table.py/font_selection.py above, applied post-render.
+    (_RENDER / "boards.py").resolve(): (
+        "SVG <style> element dedup (reads + re-wraps already-rendered CSS, not authored HTML)"
+    ),
 }
 
 # ── String-literal extractor ─────────────────────────────────────────────────

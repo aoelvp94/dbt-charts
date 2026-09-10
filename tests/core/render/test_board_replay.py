@@ -13,6 +13,7 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -595,3 +596,41 @@ def test_render_board_from_artifact_reproduces_a_paginated_table_page(
     assert "row_6" in replay_svg
     assert not re.search(r"\brow_1\b", replay_svg)
     assert _normalize(replay_svg) == _normalize(live_svg)
+
+
+def test_render_board_from_artifact_dedupes_repeated_callout_css() -> None:
+    """render_board_from_artifact goes through the same render_board_svg the
+    live path uses, so two same-tone callouts dedupe there too -- with no
+    board_replay-specific code, since deduplication is a property of
+    render_board_svg's own post-pass over the fully assembled SVG, not of
+    anything this module does. A board with no queries needs no adapter
+    registry or real Executor."""
+    yaml_src = """
+title: Callout Replay Dedup
+charts:
+  c1:
+    type: callout
+    message: First message
+  c2:
+    type: callout
+    message: Second message
+cols: [c1, c2]
+"""
+    result = compile_board(yaml_src)
+    assert result.success, result.errors
+    assert result.board is not None
+
+    executor = MagicMock(spec=Executor)
+    executor.execute_chart.return_value = []
+    executor.cache_hit_ats = []
+    variables: dict[str, object] = {}
+    resolved, _render_cache = build_resolved_board(result.board, executor, variables)
+    recording = record_board(resolved, executor, variables)
+
+    reloaded = load_board_artifact(dump_board_artifact(resolved))
+    replay_svg = render_board_from_artifact(reloaded, recording, recording.variables)
+
+    assert "First message" in replay_svg
+    assert "Second message" in replay_svg
+    charts_svg = replay_svg.split('id="chart-c1"', 1)[1]
+    assert charts_svg.count("<style>") == 1

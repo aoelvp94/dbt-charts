@@ -256,8 +256,8 @@ def _cadence_token_width(
     A tick that carries the stacked year-context row (``_year_row_width``)
     paints that row as a SEPARATE text line, one row below this one, sharing
     only the flush edge's x position — never a wider block folded into this
-    return via ``max()``. Row 1 can only ever collide with a neighbour's row
-    1; the year row only with a neighbour's year row. See ``_pair_clears``,
+    return via ``max()``. Row 1 can only ever collide with a neighbor's row
+    1; the year row only with a neighbor's year row. See ``_pair_clears``,
     which checks the two rows as two independent clearances.
     """
     if format_tu == "year":
@@ -370,8 +370,8 @@ def _pair_clears(
     A tick that carries the year row renders it as a SEPARATE text line
     (``_year_row_width``), one row below the tick's own text
     (``_cadence_token_width``) — not a wider block reserved for both. Row 1
-    of one tick can only ever collide with row 1 of its neighbour; the year
-    row only with a neighbour's year row, and only when the neighbour
+    of one tick can only ever collide with row 1 of its neighbor; the year
+    row only with a neighbor's year row, and only when the neighbor
     renders one too (nothing paints there otherwise, so there is nothing to
     collide with). The two rows are therefore two independent clearances,
     not one max()'d width.
@@ -682,7 +682,7 @@ def detect_time_unit(values: list[Any]) -> str | None:
     # for 20 actual data points. The median gap gate rejects those cases and
     # returns None (continuous temporal) rather than falling through to
     # yearmonthdate, which would be worse (daily-bucket enumeration of the
-    # same sparse span). Threshold ≤ 14 preserves the existing behaviour for
+    # same sparse span). Threshold ≤ 14 preserves the existing behavior for
     # weekly series with occasional holiday skips (max gap 14 days, median 14).
     if len({d.weekday() for d in dates}) == 1:
         sorted_dates = sorted(dates)

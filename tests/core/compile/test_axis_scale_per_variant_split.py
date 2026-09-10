@@ -70,49 +70,63 @@ class TestAxisXRejectsYOnlyFields:
             AxisXStyle.model_validate({"fill": "null", "categorical_orient": "left"})
 
 
-class TestAxisGridZeroOnlyOnAxisY:
-    """grid.zero must only exist on AxisYStyle (via MeasureGridStyle)."""
+class TestAxisGridThresholdOnEveryAxis:
+    """grid.threshold is accepted on every axis variant — a
+    threshold rule is a property of a quantitative axis, on either channel,
+    not of the measure (y) axis specifically. It is inert (never rejected)
+    on a band axis; the model cannot reject it statically there."""
 
-    def test_base_axis_grid_has_no_zero(self):
+    def test_base_axis_grid_accepts_threshold(self):
         from dbt_charts.core.compile.models.style.theme.axis import BaseAxisGridStyle
 
-        with pytest.raises(ValidationError):
-            BaseAxisGridStyle.model_validate({"zero": {"color": "#000", "width": 2}})
+        g = BaseAxisGridStyle.model_validate(
+            {"threshold": {"color": "#000", "width": 2}}
+        )
+        assert g.threshold is not None
+        assert g.threshold.color == "#000"
 
-    def test_axis_x_grid_rejects_zero(self):
+    def test_axis_x_grid_accepts_threshold(self):
         from dbt_charts.core.compile.models.style.theme.axis import AxisXStyle
 
-        with pytest.raises(ValidationError):
-            AxisXStyle.model_validate(
-                {"fill": "null", "grid": {"zero": {"color": "#000", "width": 2}}}
-            )
+        ax = AxisXStyle.model_validate(
+            {
+                "fill": "null",
+                "fiscal_year_start_month": 1,
+                "grid": {"threshold": {"color": "#000", "width": 2}},
+            }
+        )
+        assert ax.grid.threshold is not None
+        assert ax.grid.threshold.color == "#000"
 
-    def test_axis_quantitative_grid_rejects_zero(self):
+    def test_axis_quantitative_grid_accepts_threshold(self):
         from dbt_charts.core.compile.models.style.theme.axis import (
             QuantitativeAxisStyle,
         )
 
-        with pytest.raises(ValidationError):
-            QuantitativeAxisStyle.model_validate(
-                {"grid": {"zero": {"color": "#000", "width": 2}}}
-            )
+        aq = QuantitativeAxisStyle.model_validate(
+            {"grid": {"threshold": {"color": "#000", "width": 2}}}
+        )
+        assert aq.grid.threshold is not None
+        assert aq.grid.threshold.color == "#000"
 
-    def test_axis_band_grid_rejects_zero(self):
+    def test_axis_band_grid_accepts_threshold(self):
+        """Authorable but inert — a band axis never ticks at the threshold."""
         from dbt_charts.core.compile.models.style.theme.axis import BandAxisStyle
 
-        with pytest.raises(ValidationError):
-            BandAxisStyle.model_validate(
-                {"grid": {"zero": {"color": "#000", "width": 2}}}
-            )
+        ab = BandAxisStyle.model_validate(
+            {"grid": {"threshold": {"color": "#000", "width": 2}}}
+        )
+        assert ab.grid.threshold is not None
+        assert ab.grid.threshold.color == "#000"
 
-    def test_axis_y_grid_accepts_zero(self):
+    def test_axis_y_grid_accepts_threshold(self):
         from dbt_charts.core.compile.models.style.theme.axis import AxisYStyle
 
         ay = AxisYStyle.model_validate(
-            {"grid": {"zero": {"color": "#000", "width": 2}}}
+            {"grid": {"threshold": {"color": "#000", "width": 2}}}
         )
-        assert ay.grid.zero is not None
-        assert ay.grid.zero.color == "#000"
+        assert ay.grid.threshold is not None
+        assert ay.grid.threshold.color == "#000"
 
 
 # ── Scale variant tests ──────────────────────────────────────────────────────

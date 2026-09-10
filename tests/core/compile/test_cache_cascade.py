@@ -245,7 +245,7 @@ def test_project_empty_cache_block_authors_nothing(
 
 
 def test_project_cache_true_is_rejected(tmp_path: Any, local_project: Any) -> None:
-    """`cache: true` is the one scalar the project root cannot honour.
+    """`cache: true` is the one scalar the project root cannot honor.
 
     Everywhere else it means "on, keeping the ttl from above"; the root has
     nothing above it, and a scalar replaces the shipped block wholesale, so it
@@ -574,7 +574,7 @@ def _compile_board(
     boards = tmp_path / "charts"
     boards.mkdir(exist_ok=True)
     if meta_yaml is not None:
-        (boards / "meta.yaml").write_text(dedent(meta_yaml))
+        (boards / "meta.yml").write_text(dedent(meta_yaml))
     (boards / "board.yml").write_text(dedent(board_yaml))
     project = FilesystemProject(tmp_path)
     result = compile_file(project.path("charts/board.yml").read_board())
@@ -750,7 +750,7 @@ def test_every_query_type_carries_the_cascaded_policy(tmp_path: Path) -> None:
         assert query.cache.ttl == "37m"
 
 
-def test_schema_query_honours_the_source_scope() -> None:
+def test_schema_query_honors_the_source_scope() -> None:
     """A source-level opt-out is the strongest "always live" signal there is.
 
     `SchemaQuery` carries a populated `source` and runs through the same
@@ -768,7 +768,7 @@ def test_schema_query_honours_the_source_scope() -> None:
 
 
 def test_board_cache_in_meta_yaml_reaches_the_query(tmp_path: Path) -> None:
-    """A directory-wide default: `cache:` in `charts/meta.yaml`.
+    """A directory-wide default: `cache:` in `charts/meta.yml`.
 
     This is the layer the string-compile helper cannot reach at all, and the
     one an author would use to say "this whole folder is hourly".

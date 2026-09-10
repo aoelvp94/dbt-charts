@@ -1,8 +1,8 @@
 """``frame.width`` binds exactly; ``frame.max_width`` bounds the content hug.
 
 Two keys, two contracts. ``width`` authored anywhere in the cascade (board,
-extends template, even meta.yaml) is the board's exact width — the layout
-distributes it. ``max_width`` (the theme's, or a project meta.yaml's) only
+extends template, even meta.yml) is the board's exact width — the layout
+distributes it. ``max_width`` (the theme's, or a project meta.yml's) only
 bounds the content hug: with no ``width`` the board measures its charts'
 preferred widths and hugs them, so a lone KPI does not sit in a 1200px card.
 Before the split, one key played both roles by provenance and an authored
@@ -49,12 +49,12 @@ def _container(style: str, body: str) -> float:
     return board_container_width(result.board)
 
 
-def test_authored_width_wider_than_content_is_honoured() -> None:
+def test_authored_width_wider_than_content_is_honored() -> None:
     """The regression: two default bars measure 1292, but 1800 was authored."""
     assert _container("style:\n  frame:\n    width: 1800\n", _TWO_BARS) == 1800.0
 
 
-def test_root_width_shorthand_is_honoured() -> None:
+def test_root_width_shorthand_is_honored() -> None:
     """Root-board ``width:`` normalizes to style.frame.width and binds the same."""
     assert _container("width: 1800\n", _TWO_BARS) == 1800.0
 
@@ -96,7 +96,7 @@ def _container_under_meta(
         Path(f"/tmp/test-width-{slug}"),
         {
             "charts/board.yml": f"title: T\n{_QUERY}{board_body}",
-            "charts/meta.yaml": meta,
+            "charts/meta.yml": meta,
         },
     )
     result = compile_file(project.path("charts/board.yml").read_board())

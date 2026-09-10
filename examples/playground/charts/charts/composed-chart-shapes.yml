@@ -3,7 +3,7 @@
 # Deliberately NOT in `playground-experimental/charts/matrix/`. The case matrix is
 # defaults-only by its own rubric; every chart here is an intentional multi-field
 # composition, which would contaminate that corpus. It lives beside
-# `all-chart-types.yml` instead: that board shows the shapes you can name with a
+# `chart-families.yml` instead: that board shows the shapes you can name with a
 # `type:`, this one shows the shapes you compose. The recipes here are the ones
 # `_CHART_SHAPE_RECIPES` hands an author who asks for one of these by name.
 #

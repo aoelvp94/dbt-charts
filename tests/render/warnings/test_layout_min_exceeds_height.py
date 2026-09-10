@@ -155,7 +155,7 @@ def test_grid_facet_falls_back_to_the_full_domain_when_narrowing_is_unaffordable
     subset (2-3 of 5) WOULD be a real domain-subset candidate, but the real
     renderer declined it as unaffordable. The floor must use the
     whole-domain count (5), not the narrower per-panel one (3) — passing
-    `None` (the pre-fix behaviour) skips the affordability check entirely
+    `None` (the pre-fix behavior) skips the affordability check entirely
     and would wrongly narrow anyway, under-computing the floor and
     under-warning the author."""
     # Explicit mirror: False — a columns/grid facet auto-defaults mirror on

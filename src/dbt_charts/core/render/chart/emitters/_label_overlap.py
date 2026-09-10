@@ -516,7 +516,7 @@ def resolve_axis_x_overlap(
     extend it past the base series (``overlay_x_domain_values``). Crowding
     must be measured against the bands that actually render — measuring the
     base's own rows on a layered chart under-counts them and picks a flatter
-    angle or finer cadence than the rendered axis has room for. Honoured on
+    angle or finer cadence than the rendered axis has room for. Honored on
     both the temporal and the ordinal/nominal branch: the tilt angle below is
     picked from the same ``widths``/``usable_width`` the flat-fit gate just
     measured, never re-derived from ``data`` alone.

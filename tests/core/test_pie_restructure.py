@@ -5,7 +5,7 @@ Covers:
 - style.arc stale-key hint
 - style.inner_radius flat field (pie-only; rejected on bar)
 - chart-root inner_radius moved to style
-- type:donut alias normalises to style.inner_radius
+- type:donut alias normalizes to style.inner_radius
 - total copy vs paint split
 - total.format theme-alias resolution
 - total.format FormatConfig acceptance
@@ -247,7 +247,7 @@ class TestChartRootInnerRadius:
 
 
 class TestDonutAlias:
-    """type:donut normalises to type:pie with style.inner_radius=0.6."""
+    """type:donut normalizes to type:pie with style.inner_radius=0.6."""
 
     def test_donut_compiles_successfully(self):
         result = _compile_yaml(
@@ -269,7 +269,7 @@ rows:
         )
         assert result.success, result.errors
 
-    def test_donut_normalises_to_pie_type(self):
+    def test_donut_normalizes_to_pie_type(self):
         result = _compile_yaml(
             """
 queries:
@@ -289,7 +289,7 @@ rows:
         assert result.success
         assert result.board.charts["c"].type == "pie"
 
-    def test_donut_normalises_style_inner_radius_to_default(self):
+    def test_donut_normalizes_style_inner_radius_to_default(self):
         """Donut alias lands inner_radius at style.inner_radius, not chart root."""
         from dbt_charts.core.compile.resolve.style.board import (
             resolve_chart_style_context,
@@ -512,7 +512,7 @@ class TestTotalFormatResolution:
         $0.67 painted "$670m" (d3's SI milli prefix colliding case-only with
         the house million grammar) before resolve_format_for_values voted
         the whole slot (theta values + their sum) to the plain-digit
-        fallback. Centre total and slice tooltip must agree -- they vote on
+        fallback. Center total and slice tooltip must agree -- they vote on
         the same set.
         """
         from dbt_charts.core.compile.config import get_theme_style
@@ -544,7 +544,7 @@ class TestTotalFormatResolution:
         rc = resolve(chart, data, chart_style_context=ctx)
         assert isinstance(rc, ResolvedPieChart)
 
-        # Centre total: baked spec must be the plain-digit fallback.
+        # Center total: baked spec must be the plain-digit fallback.
         mapped = PieEmitter().emit(rc, _DEFAULT_BOX, regroup((), data))
         value_layer = mapped.layers[1]
         assert (

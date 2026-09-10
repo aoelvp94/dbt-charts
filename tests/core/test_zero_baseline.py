@@ -30,13 +30,14 @@ from dbt_charts.core.compile.models.chart.normalized import BarChart, Chart
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import (
     AreaChartStylePatch,
+    AxisLabelStylePatch,
     AxisXStylePatch,
     AxisYStylePatch,
     BarChartStylePatch,
+    BaseAxisGridStylePatch,
     BaseScaleStylePatch,
     ChartStylePatch,
     LineChartStylePatch,
-    MeasureGridStylePatch,
     ScaleContinuousStylePatch,
     ScatterChartStylePatch,
 )
@@ -267,6 +268,75 @@ def test_bar_horizontal_emits_vertical_rule_at_x_zero():
     assert enc.get("y2") == {"value": "height"}
 
 
+# ── Horizontal bar: measure guards read axis_y (the cascade slot), never
+#    axis_x -- the VL channel (x) and the cascade slot (axis_y) are different
+#    things for a horizontal bar. See BaselineFeature._insert_zero_rule /
+#    _apply_unity docstrings. ──────────────────────────────────────────────
+
+
+def test_horizontal_bar_authored_axis_y_domain_excluding_zero_skips_rule():
+    """A horizontal bar's measure lives on x, but the cascade slot for that
+    measure is still axis_y -- an authored axis_y domain excluding 0 must
+    suppress the rule exactly as it does for a vertical bar."""
+    style = BarChartStylePatch(
+        orientation="horizontal",
+        axis_y=AxisYStylePatch(
+            scale=BaseScaleStylePatch(
+                continuous=ScaleContinuousStylePatch(domain=[100, 200])
+            )
+        ),
+    )
+    spec = _spec("bar", _POSITIVE_DATA, style=style)
+    assert _zero_rule_layer(spec) is None
+
+
+def test_horizontal_bar_axis_y_threshold_visible_false_skips_rule():
+    """axis_y.grid.threshold.visible=false is the granular off-switch for the
+    measure-axis zero rule on a horizontal bar -- axis_y is still the measure
+    slot even though the rule paints on the x channel."""
+    style = BarChartStylePatch(
+        orientation="horizontal",
+        axis_y=AxisYStylePatch(
+            grid=BaseAxisGridStylePatch(threshold={"visible": False}),
+        ),
+    )
+    spec = _spec("bar", _POSITIVE_DATA, style=style)
+    assert _zero_rule_layer(spec) is None
+
+
+def test_horizontal_bar_axis_x_threshold_visible_false_does_not_skip_rule():
+    """axis_x is the categorical slot on a horizontal bar -- its
+    grid.threshold.visible off-switch must NOT suppress the measure-axis
+    zero rule (that would suppress it on the wrong axis)."""
+    style = BarChartStylePatch(
+        orientation="horizontal",
+        axis_x=AxisXStylePatch(
+            grid=BaseAxisGridStylePatch(threshold={"visible": False}),
+        ),
+    )
+    spec = _spec("bar", _POSITIVE_DATA, style=style)
+    assert _zero_rule_layer(spec) is not None
+
+
+def test_horizontal_bar_axis_y_percent_format_earns_unity_rule():
+    """axis_y.labels.format=.0% is the measure axis's percent format on a
+    horizontal bar -- it must earn a unity (datum:1) rule on x, the channel
+    the measure actually renders on."""
+    style = BarChartStylePatch(
+        orientation="horizontal",
+        axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format=".0%")),
+    )
+    data = [{"x": "a", "y": 0.5}, {"x": "b", "y": 0.9}, {"x": "c", "y": 1.05}]
+    spec = _spec("bar", data, style=style)
+    unity_rules = [
+        layer
+        for layer in _main_pane(spec).get("layer", [])
+        if layer.get("mark", {}).get("type") == "rule"
+        and layer.get("encoding", {}).get("x", {}).get("datum") == 1
+    ]
+    assert len(unity_rules) == 1
+
+
 def test_line_chart_with_positive_only_data_skips_rule():
     """Line charts with all-positive data do NOT get the zero-baseline rule.
 
@@ -449,7 +519,7 @@ def test_explicit_scale_domain_excluding_zero_skips_rule_bar():
             scale=BaseScaleStylePatch(
                 continuous=ScaleContinuousStylePatch(domain=[100, 200])
             )
-        )
+        ),
     )
     spec = _spec("bar", _POSITIVE_DATA, style=style)
     assert _zero_rule_layer(spec) is None
@@ -500,7 +570,20 @@ def test_grid_not_visible_skips_rule():
     """grid.visible=False suppresses the zero rule (same gate as regular gridlines)."""
     style = AreaChartStylePatch(
         axis_y=AxisYStylePatch(
-            grid=MeasureGridStylePatch(visible=False),
+            grid=BaseAxisGridStylePatch(visible=False),
+        ),
+    )
+    spec = _spec("area", _POSITIVE_DATA, style=style)
+    assert _zero_rule_layer(spec) is None
+
+
+def test_grid_threshold_visible_false_on_axis_y_skips_zero_rule():
+    """axis_y.grid.threshold.visible=false is the granular off-switch for the
+    measure-axis zero rule -- distinct from the blanket grid.visible gate
+    above."""
+    style = AreaChartStylePatch(
+        axis_y=AxisYStylePatch(
+            grid=BaseAxisGridStylePatch(threshold={"visible": False}),
         ),
     )
     spec = _spec("area", _POSITIVE_DATA, style=style)
@@ -640,7 +723,7 @@ def test_zero_rule_is_below_area_stroke_layers():
 
 
 def test_zero_rule_uses_theme_zero_color_and_width():
-    """Rule color/width come from the theme's axis_quantitative.grid.zero.*."""
+    """Rule color/width come from the theme's axis_y.grid.threshold.*."""
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.resolve.style.axis_cascade import resolved_axis_style
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
@@ -649,9 +732,8 @@ def test_zero_rule_uses_theme_zero_color_and_width():
     axis_y = resolved_axis_style(
         resolved, "axis_y", "quantitative", chart_type="", label_authored=False
     )
-    assert axis_y.grid.zero is not None
-    expected_color = axis_y.grid.zero.color
-    expected_width = axis_y.grid.zero.width
+    expected_color = axis_y.grid.threshold.color
+    expected_width = axis_y.grid.threshold.width
     spec = _spec("bar", _POSITIVE_DATA)
     rule = _zero_rule_layer(spec)
     assert rule is not None
@@ -1529,3 +1611,55 @@ def test_dual_axis_base_scale_zero_false_without_straddle_suppresses_its_rule():
         chart_style_context=_BOARD_CTX,
     )
     assert _nested_zero_rule_fields_by_index(spec) == {1: {"y2"}}
+
+
+def test_dual_axis_threshold_visible_false_suppresses_rules_and_keeps_labels():
+    """`grid.threshold.visible: false` silences the per-scale dual-axis rules
+    and nothing else.
+
+    The layer's own value-label specs are built AFTER its rule block in the
+    same loop iteration (`_overlay.py`'s `_build_layer_label_specs` call), so
+    a gate that skips the rest of the iteration rather than just the rule
+    deletes that layer's labels along with the threshold — silently, since no
+    rule assertion would notice. Pins both halves: no rules, labels intact.
+    """
+    chart_dict = _dual_axis_bar_line_chart({"position": "right"})
+    # Labels authored on the LAYER's own mark style — that is what
+    # `_build_layer_label_specs` reads, and what the buggy gate deleted.
+    chart_dict["layers"] = [
+        {
+            "type": "line",
+            "y": "y2",
+            "axis_y": {"position": "right"},
+            "style": {"marks": {"line": {"labels": {"visible": True}}}},
+        }
+    ]
+    chart_dict["style"] = {"axis_y": {"grid": {"threshold": {"visible": False}}}}
+    chart = TypeAdapter(Chart).validate_python(chart_dict)
+    spec = generate_vega_lite_spec(
+        chart,
+        _DUAL_AXIS_STRADDLE_DATA,
+        width=400,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CTX,
+    )
+    assert _nested_zero_rule_fields_by_index(spec) == {}
+
+    def _text_marks(node: object) -> int:
+        if isinstance(node, dict):
+            mark = node.get("mark")
+            hit = 1 if isinstance(mark, dict) and mark.get("type") == "text" else 0
+            return hit + sum(_text_marks(v) for v in node.values())
+        if isinstance(node, list):
+            return sum(_text_marks(v) for v in node)
+        return 0
+
+    on = TypeAdapter(Chart).validate_python({**chart_dict, "style": {}})
+    baseline_spec = generate_vega_lite_spec(
+        on,
+        _DUAL_AXIS_STRADDLE_DATA,
+        width=400,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CTX,
+    )
+    assert _text_marks(spec) == _text_marks(baseline_spec)

@@ -164,7 +164,7 @@ def test_no_notation_emits_plain_format_call_no_replace_chain() -> None:
     Callers that want house notation pass it explicitly (notation="analytic" /
     notation="narrative"). The default must be no post-process so that inline d3
     specs produce native d3 output in Vega, matching format_d3's own no-notation
-    behaviour.
+    behavior.
     """
     expr = numeral_vega_expr("datum.value", _SI_SPEC)
     assert "replace" not in expr, (

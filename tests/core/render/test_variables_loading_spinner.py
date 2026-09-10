@@ -1,6 +1,6 @@
 """What jsdom cannot check about the per-chart loading state.
 
-Behaviour (which groups are marked, what the glyph is built from, that the
+Behavior (which groups are marked, what the glyph is built from, that the
 state ends only when the host says so) is covered in
 ``libs/playground/tests/js/variables-loading-state.test.js``. jsdom has no
 layout and no cascade, so two things stay pinned here: the CSS transform
@@ -21,7 +21,7 @@ def _artifact_styles() -> str:
     ).read_text(encoding="utf-8")
 
 
-def test_glyph_rotates_about_its_own_centre() -> None:
+def test_glyph_rotates_about_its_own_center() -> None:
     from dbt_charts.core.render.controls import controls_runtime_source
 
     source = controls_runtime_source()

@@ -1,4 +1,4 @@
-"""Regression: colour scales and conditional formatting silently did nothing on
+"""Regression: color scales and conditional formatting silently did nothing on
 decimal.Decimal columns (BigQuery NUMERIC/BIGNUMERIC, Postgres numeric,
 Snowflake NUMBER).
 

@@ -1501,7 +1501,7 @@ _SOURCE_TYPE_MAP: dict[str, type[SourceConfig]] = {
 
 VALID_SOURCE_TYPES: frozenset[str] = frozenset(_SOURCE_TYPE_MAP)
 
-# The type names a host can recognise as a file source from raw YAML alone,
+# The type names a host can recognize as a file source from raw YAML alone,
 # before anything is parsed — for a host that must decide "does this entry
 # need a connection?" while reading a committed dbt_charts.yml (Cloud does).
 # Derived from the union, so a new file variant is never a list to update.

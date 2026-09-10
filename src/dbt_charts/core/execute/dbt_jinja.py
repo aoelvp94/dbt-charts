@@ -31,7 +31,7 @@ first), versioned `ref('orders', v=2)`, and any macro-computed argument.
 
 import re
 
-# Jinja's `-` whitespace-trim marker is matched but not honoured: substitution
+# Jinja's `-` whitespace-trim marker is matched but not honored: substitution
 # replaces the call in place and leaves surrounding whitespace alone. Trimming
 # it the way Jinja would could weld the relation onto the previous token
 # ("FROM" + "analytics.orders"); in SQL the spacing is what keeps them separate.

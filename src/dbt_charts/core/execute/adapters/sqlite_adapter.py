@@ -131,7 +131,7 @@ class SqliteAdapter(BaseAdapter):
                 error="SQLite source_config missing required 'path' field.",
             )
 
-        # Resolve relative paths via data_dir (mirrors DuckDB's behaviour). Without
+        # Resolve relative paths via data_dir (mirrors DuckDB's behavior). Without
         # this, a relative path like ./data/bird.sqlite resolves against the
         # process cwd, which breaks when dct is run from a different directory.
         if not is_absolute_any_os(str(db_path_str)):

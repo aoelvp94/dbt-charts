@@ -3,7 +3,7 @@
 # theme cascade: every other built-in theme transitively extends this file
 # (`clarity` extends `stark`; `paper` via `clarity`; `vivid`/`neon` directly).
 #
-# Best for: the mono-colour palette, once pattern fills exist to carry series
+# Best for: the mono-color palette, once pattern fills exist to carry series
 # distinction without hue. Stark's own single-series ink is pure black today
 # (`dbt-grays.black`), which is what a hue-free palette needs.
 
@@ -59,15 +59,13 @@ style:
         color: *color_ink
       grid:
         color: *color_ink
+        threshold:
+          color: *color_ink
       labels:
         font:
           color: *color_ink
       title:
         font:
-          color: *color_ink
-    axis_y:
-      grid:
-        zero:
           color: *color_ink
 
     legend:
@@ -255,9 +253,6 @@ style:
       color: *color_ink
     border:
       color: *color_ink
-
-  page:
-    background: dbt-grays.white
 
   placeholder:
     overlay:

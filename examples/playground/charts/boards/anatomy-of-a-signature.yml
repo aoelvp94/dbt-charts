@@ -1,0 +1,596 @@
+# Anatomy of a Signature
+# ======================
+# Showcases the breadth of dbt charts primitives (KPIs, bars, lines, area,
+# donut, scatter, heatmap, table, section headers, variable filters) on the
+# Dundersign demo dataset in a compact layout. No style-override
+# contamination — what renders is the theme.
+#
+# Compactness budget: at most two tiles >= 50% wide (the daily-flow hero and
+# the top-accounts table). Everything else lives in thirds or quarters.
+
+title: Anatomy of a Signature
+notes: How Dundersign's documents move from sent to signed
+theme: vivid
+source: dundersign_db
+
+style:
+  frame:
+    width: 1440
+
+variables:
+  date_range:
+    input: daterange
+  plan:
+    placeholder: All plans
+    options:
+      query: plan_options
+      column: plan
+  country:
+    placeholder: All countries
+    options:
+      query: country_options
+      column: country
+
+queries:
+
+  plan_options:
+    sql: SELECT DISTINCT plan FROM users WHERE NOT is_junk ORDER BY 1
+
+  country_options:
+    sql: |
+      SELECT country, COUNT(*) AS n
+      FROM sessions
+      WHERE country IS NOT NULL
+      GROUP BY 1
+      ORDER BY n DESC
+      LIMIT 12
+
+  # ── KPI rollup: last 90 days vs prior 90 days ──────────────────────────
+  kpi_data:
+    sql: |
+      WITH bounds AS (
+        SELECT MAX(created_at)::date AS today FROM documents
+      ),
+      fu AS (
+        SELECT * FROM users
+        WHERE NOT is_junk
+          AND {{ filter('plan', plan) }}
+      ),
+      scoped_docs AS (
+        SELECT d.* FROM documents d
+        JOIN fu ON d.owner_user_id = fu.id
+      ),
+      recent_docs AS (
+        SELECT d.* FROM scoped_docs d, bounds
+        WHERE d.created_at >= bounds.today - INTERVAL 90 DAY
+      ),
+      prior_docs AS (
+        SELECT d.* FROM scoped_docs d, bounds
+        WHERE d.created_at >= bounds.today - INTERVAL 180 DAY
+          AND d.created_at <  bounds.today - INTERVAL 90 DAY
+      ),
+      recent_sigs AS (
+        SELECT s.* FROM signatures s
+        JOIN recent_docs d ON s.document_id = d.id
+      ),
+      prior_sigs AS (
+        SELECT s.* FROM signatures s
+        JOIN prior_docs d ON s.document_id = d.id
+      ),
+      sign_time AS (
+        SELECT
+          EXTRACT(EPOCH FROM (completed_at - sent_at)) / 3600.0 AS hours
+        FROM recent_docs
+        WHERE status = 'completed'
+          AND sent_at IS NOT NULL
+          AND completed_at IS NOT NULL
+      )
+      SELECT
+        (SELECT COUNT(*) FROM recent_docs)                                          AS documents_sent,
+        (SELECT COUNT(*) FROM recent_docs)::float
+          / NULLIF((SELECT COUNT(*) FROM prior_docs), 0) - 1                        AS documents_growth,
+        (SELECT COUNT(*) FROM recent_sigs)                                          AS signatures_collected,
+        (SELECT COUNT(*) FROM recent_sigs)::float
+          / NULLIF((SELECT COUNT(*) FROM prior_sigs), 0) - 1                        AS signatures_growth,
+        (SELECT MEDIAN(hours) FROM sign_time)                                       AS median_hours_to_sign,
+        (SELECT COUNT(*) FILTER (WHERE status = 'completed') FROM recent_docs)::float
+          / NULLIF((SELECT COUNT(*) FROM recent_docs), 0)                           AS completion_rate
+
+  # ── Hero: daily documents sent vs completed ────────────────────────────
+  daily_flow:
+    sql: |
+      WITH fu AS (
+        SELECT * FROM users
+        WHERE NOT is_junk
+          AND {{ filter('plan', plan) }}
+      ),
+      base AS (
+        SELECT
+          DATE(d.sent_at)     AS day,
+          d.id                AS doc_id,
+          d.completed_at
+        FROM documents d
+        JOIN fu ON d.owner_user_id = fu.id
+        WHERE d.sent_at IS NOT NULL
+          AND {{ filter_date_range('d.sent_at', date_range) }}
+      )
+      SELECT day, 'Sent'      AS metric, COUNT(*) AS value
+      FROM base
+      GROUP BY 1
+      UNION ALL
+      SELECT DATE(completed_at) AS day, 'Completed' AS metric, COUNT(*) AS value
+      FROM base
+      WHERE completed_at IS NOT NULL
+        AND {{ filter_date_range('completed_at', date_range) }}
+      GROUP BY 1
+      ORDER BY day, metric
+
+  # ── Composition row ────────────────────────────────────────────────────
+  recipient_status:
+    sql: |
+      SELECT status AS recipient_status, COUNT(*) AS recipients
+      FROM document_recipients
+      WHERE {{ filter_date_range('sent_at', date_range) }}
+      GROUP BY 1
+      ORDER BY recipients DESC
+
+  field_type_mix:
+    sql: |
+      SELECT field_type, COUNT(*) AS fields
+      FROM signatures
+      WHERE {{ filter_date_range('signed_at', date_range) }}
+      GROUP BY 1
+      ORDER BY fields DESC
+
+  signups_by_source:
+    sql: |
+      WITH fu AS (
+        SELECT * FROM users
+        WHERE NOT is_junk
+          AND {{ filter('plan', plan) }}
+          AND {{ filter_date_range('created_at', date_range) }}
+      )
+      SELECT signup_source, COUNT(*) AS signups
+      FROM fu
+      GROUP BY 1
+      ORDER BY signups DESC
+
+  # ── When-and-where row ─────────────────────────────────────────────────
+  signing_by_hour:
+    sql: |
+      SELECT
+        EXTRACT(HOUR FROM signed_at)::int AS hour_of_day,
+        COUNT(*) AS signatures
+      FROM signatures
+      WHERE {{ filter_date_range('signed_at', date_range) }}
+      GROUP BY 1
+      ORDER BY 1
+
+  signing_heatmap:
+    sql: |
+      SELECT
+        CASE EXTRACT(DOW FROM signed_at)::int
+          WHEN 0 THEN 'Sun' WHEN 1 THEN 'Mon' WHEN 2 THEN 'Tue'
+          WHEN 3 THEN 'Wed' WHEN 4 THEN 'Thu' WHEN 5 THEN 'Fri'
+          WHEN 6 THEN 'Sat'
+        END AS day_of_week,
+        EXTRACT(HOUR FROM signed_at)::int AS hour_of_day,
+        COUNT(*) AS signatures
+      FROM signatures
+      WHERE {{ filter_date_range('signed_at', date_range) }}
+      GROUP BY 1, 2
+      ORDER BY 2, 1
+
+  sessions_by_country:
+    sql: |
+      SELECT country, COUNT(*) AS sessions
+      FROM sessions
+      WHERE country IS NOT NULL
+        AND {{ filter('country', country) }}
+        AND {{ filter_date_range('started_at', date_range) }}
+      GROUP BY 1
+      ORDER BY sessions DESC
+      LIMIT 10
+
+  sessions_by_device:
+    sql: |
+      SELECT device_type, COUNT(*) AS sessions
+      FROM sessions
+      WHERE {{ filter('country', country) }}
+        AND {{ filter_date_range('started_at', date_range) }}
+      GROUP BY 1
+      ORDER BY sessions DESC
+
+  # ── Commercial row ─────────────────────────────────────────────────────
+  pipeline_by_source:
+    sql: |
+      SELECT lead_source, SUM(amount) AS pipeline_amount
+      FROM opportunities
+      WHERE {{ filter_date_range('created_at', date_range) }}
+      GROUP BY 1
+      ORDER BY pipeline_amount DESC
+
+  won_lost_split:
+    sql: |
+      SELECT
+        CASE WHEN is_won THEN 'Won' ELSE 'Lost' END AS outcome,
+        SUM(amount) AS amount
+      FROM opportunities
+      WHERE is_closed
+        AND {{ filter_date_range('close_at', date_range) }}
+      GROUP BY 1
+      ORDER BY amount DESC
+
+  plan_mix:
+    sql: |
+      SELECT plan, COUNT(*) AS users
+      FROM users
+      WHERE NOT is_junk
+      GROUP BY 1
+      ORDER BY users DESC
+
+  tickets_by_channel:
+    sql: |
+      SELECT via_channel AS channel, COUNT(*) AS tickets
+      FROM tickets
+      WHERE {{ filter_date_range('created_at', date_range) }}
+      GROUP BY 1
+      ORDER BY tickets DESC
+
+  # ── Pipeline-shape row ─────────────────────────────────────────────────
+  opp_amount_vs_prob:
+    sql: |
+      SELECT
+        probability,
+        amount,
+        lead_source,
+        CASE WHEN is_won THEN 'Won' WHEN is_closed THEN 'Lost' ELSE 'Open' END AS outcome
+      FROM opportunities
+      WHERE amount IS NOT NULL
+        AND {{ filter_date_range('created_at', date_range) }}
+
+  cumulative_won:
+    sql: |
+      WITH weekly AS (
+        SELECT
+          DATE_TRUNC('week', close_at)::date AS week,
+          SUM(amount) FILTER (WHERE is_won) AS won_amount
+        FROM opportunities
+        WHERE is_closed
+          AND {{ filter_date_range('close_at', date_range) }}
+        GROUP BY 1
+      )
+      SELECT
+        week,
+        SUM(won_amount) OVER (ORDER BY week ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative_won
+      FROM weekly
+      ORDER BY week
+
+  top_templates:
+    sql: |
+      SELECT name AS template, SUM(usage_count) AS uses
+      FROM templates
+      WHERE is_active
+      GROUP BY 1
+      ORDER BY uses DESC
+      LIMIT 12
+
+  # ── Hero table: top customer accounts ──────────────────────────────────
+  top_customers:
+    sql: |
+      WITH fu AS (
+        SELECT * FROM users
+        WHERE NOT is_junk
+          AND company_name <> 'Unknown'
+          AND {{ filter('plan', plan) }}
+      ),
+      scoped_docs AS (
+        SELECT d.* FROM documents d
+        WHERE {{ filter_date_range('d.created_at', date_range) }}
+      ),
+      base AS (
+        SELECT
+          fu.company_name,
+          COUNT(DISTINCT fu.id)                                          AS users,
+          COUNT(d.id)                                                    AS documents,
+          COUNT(d.id) FILTER (WHERE d.status = 'completed')              AS docs_completed,
+          AVG(d.page_count)                                              AS avg_pages,
+          MODE() WITHIN GROUP (ORDER BY fu.plan)                         AS top_plan
+        FROM fu
+        LEFT JOIN scoped_docs d ON d.owner_user_id = fu.id
+        GROUP BY fu.company_name
+      )
+      SELECT
+        company_name,
+        users,
+        documents,
+        docs_completed::float / NULLIF(documents, 0)  AS completion_rate,
+        ROUND(avg_pages, 1)                           AS avg_pages,
+        top_plan
+      FROM base
+      WHERE documents > 0
+      ORDER BY documents DESC
+      LIMIT 15
+
+charts:
+
+  # ── KPIs ───────────────────────────────────────────────────────────────
+  kpi_documents:
+    type: kpi
+    query: kpi_data
+    label: Documents sent (last 90d)
+    value: documents_sent
+    style:
+      value:
+        format: integer
+    support:
+      value: documents_growth
+      label: vs prior 90 days
+      format: percent_delta
+
+  kpi_signatures:
+    type: kpi
+    query: kpi_data
+    label: Signatures collected (last 90d)
+    value: signatures_collected
+    style:
+      value:
+        format: integer
+    support:
+      value: signatures_growth
+      label: vs prior 90 days
+      format: percent_delta
+
+  kpi_speed:
+    type: kpi
+    query: kpi_data
+    label: Median time to sign
+    value: median_hours_to_sign
+    style:
+      value:
+        format: number_full
+    support:
+      label: hours, sent → completed
+
+  kpi_completion:
+    type: kpi
+    query: kpi_data
+    label: Completion rate (last 90d)
+    value: completion_rate
+    style:
+      value:
+        format: percent
+
+  # ── Hero: daily flow ───────────────────────────────────────────────────
+  daily_flow:
+    title: Documents sent vs completed, by day
+    query: daily_flow
+    type: line
+    x: day
+    y: value
+    color: metric
+
+  # ── Composition row ────────────────────────────────────────────────────
+  recipient_status_bar:
+    title: Recipient status
+    query: recipient_status
+    type: bar
+    x: recipient_status
+    y: recipients
+
+  field_type_bar:
+    title: Field types collected
+    query: field_type_mix
+    type: bar
+    x: field_type
+    y: fields
+
+  signups_bar:
+    title: New signups by source
+    query: signups_by_source
+    type: bar
+    x: signup_source
+    y: signups
+
+  # ── When and where ─────────────────────────────────────────────────────
+  signing_by_hour:
+    title: Signatures by hour of day
+    query: signing_by_hour
+    type: bar
+    x: hour_of_day
+    y: signatures
+
+  signing_heatmap:
+    title: Signing activity, day × hour
+    query: signing_heatmap
+    type: heatmap
+    x: hour_of_day
+    y: day_of_week
+    color: signatures
+
+  sessions_device:
+    style:
+      marks:
+        slice:
+          labels:
+            template: "{{ '{:.0%}'.format(percent) }} {{ device_type }}"
+    title: Sessions by device
+    query: sessions_by_device
+    type: donut
+    theta: sessions
+    color: device_type
+
+  # ── Commercial pulse ───────────────────────────────────────────────────
+  pipeline_source_bar:
+    title: Pipeline $ by lead source
+    query: pipeline_by_source
+    type: bar
+    x: lead_source
+    y: pipeline_amount
+    style:
+      axis_y:
+        labels:
+          format: "$~s"
+
+  won_lost_bar:
+    title: Won vs Lost amount
+    query: won_lost_split
+    type: bar
+    x: outcome
+    y: amount
+
+  plan_mix_bar:
+    title: Users by plan
+    query: plan_mix
+    type: bar
+    x: plan
+    y: users
+
+  tickets_channel_bar:
+    title: Tickets by channel
+    query: tickets_by_channel
+    type: bar
+    x: channel
+    y: tickets
+
+  # ── Pipeline shape ─────────────────────────────────────────────────────
+  opp_scatter:
+    title: Opportunity amount vs probability
+    query: opp_amount_vs_prob
+    type: scatter
+    x: probability
+    y: amount
+    color: outcome
+
+  cumulative_revenue:
+    title: Cumulative closed-won revenue
+    query: cumulative_won
+    type: area
+    x: week
+    y: cumulative_won
+
+  top_templates_bar:
+    title: Most-used templates
+    query: top_templates
+    type: bar
+    x: template
+    y: uses
+
+  # ── Hero table: top accounts ───────────────────────────────────────────
+  customers_table:
+    type: table
+    query: top_customers
+    title: Top customer accounts
+    conditional_formatting:
+      completion_rate:
+        when:
+          - lt: 0.50
+            glyph: "⚠"
+            glyph_color: "#d97706"
+    style:
+      pagination:
+        enabled: false
+      columns:
+        company_name:
+          label: Company
+          width: 200
+        users:
+          label: Users
+          format: integer
+          align: right
+        documents:
+          label: Documents
+          format: integer
+          align: right
+          spark:
+            type: bar
+        completion_rate:
+          label: Completion
+          format: percent
+          align: right
+          spark:
+            type: bar-normalize
+            # Semantic: completion_rate is a rate, definitionally bounded at 1 (100%).
+            max: 1
+        avg_pages:
+          label: Avg pages
+          format: number_full
+          align: right
+        top_plan:
+          label: Top plan
+          width: 160
+
+rows:
+
+  # 1. Section title — a single text band introduces the dashboard.
+  - cols:
+      - text: |
+          ## Anatomy of a Signature
+          *How Dundersign's 91,495 documents move from sent to signed.*
+
+  # 2. KPI rail — four equal cells.
+  - height: 120
+    cols:
+      - kpi_documents
+      - kpi_signatures
+      - kpi_speed
+      - kpi_completion
+
+  # 3. Section header for the hero.
+  - cols:
+      - text: "### How the signing pipeline moves"
+
+  # 4. Hero — the one wide time-series (full width).
+  - cols:
+      - daily_flow
+
+  # 5. Composition mix — 3 cells at 1/3 each.
+  - cols:
+      - recipient_status_bar
+      - field_type_bar
+      - signups_bar
+
+  # 6. Section header.
+  - cols:
+      - text: "### When and where signing happens"
+
+  # 7. Temporal + device — 3 cells at 1/3 each.
+  - cols:
+      - signing_by_hour
+      - signing_heatmap
+      - sessions_device
+
+  # 8. Section header.
+  - cols:
+      - text: "### Commercial pulse"
+
+  # 9. Commercial — 4 cells at 1/4 each.
+  - cols:
+      - pipeline_source_bar
+      - won_lost_bar
+      - plan_mix_bar
+      - tickets_channel_bar
+
+  # 10. Section header.
+  - cols:
+      - text: "### Pipeline shape and templates"
+
+  # 11. Pipeline-shape — 3 cells at 1/3 each.
+  - cols:
+      - opp_scatter
+      - cumulative_revenue
+      - top_templates_bar
+
+  # 12. Section header.
+  - cols:
+      - text: "### Top accounts"
+
+  # 13. Hero #2 — the customers table (full width, only other ≥50% tile).
+  - cols:
+      - customers_table
+
+  # 14. Footer.
+  - cols:
+      - text: |
+          *Source: Dundersign demo workspace. Window controlled by the date-range
+          filter; KPIs compare the last 90 days against the prior 90.*

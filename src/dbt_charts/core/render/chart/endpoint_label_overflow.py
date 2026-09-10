@@ -1,4 +1,4 @@
-"""Render-time capture of endpoint-label rails that could not honour their
+"""Render-time capture of endpoint-label rails that could not honor their
 intended gap.
 
 ``recascade_endpoint_labels`` (``features/endpoint_labels.py``) distributes

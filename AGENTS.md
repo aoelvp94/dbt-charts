@@ -94,6 +94,19 @@ Comments in this package are about this library only — never about how it is h
 
 **New author-surface fields are reviewed, not free.** Boards, charts, and themes are a public contract — the JSON Schema, docs, and highlight manifest all derive from it, and removing a field later breaks every board that authored it. Before adding a field, try hard to reuse or slightly reshape an existing field's semantics instead (see the accepted/rejected chart-field table in `src/dbt_charts/core/AGENTS.md`). A diff touching `src/dbt_charts/agent_api/docs/yaml-reference.md` should carry a stated reason an existing field couldn't cover the need — question new entries there in review, don't wave them through.
 
+**A change under `src/dbt_charts/core/render/` never also edits
+`libs/chart-svg/`.** *(Monorepo-only — the paths below don't exist in the
+exported OSS repo.)* The Rust port measures itself against this package —
+production is its differential *oracle*, not a consumer — so a render change
+moves the port's target by definition. Reconciling that is
+`chart-svg-sweep-nightly.yml`'s job, not yours: it ratchets the sweep nightly
+and, when one regresses, opens its own `chart-svg:` PR or files an issue. Do not mirror a semantic
+into the Rust, do not refresh `libs/chart-svg/sweep/` baselines, and do not
+refresh the production-source citations the Rust comments carry — and reviewers must
+not ask for any of it. A render diff that also touches `libs/chart-svg/` is
+wrong on that ground alone; split it. (Repo-wide changes that legitimately span
+both trees — CI config, a lint sweep — are not render changes and are fine.)
+
 **No internal decision identifiers in shipped artifacts.** Design-doc section labels (`C7`, `S3`, `D12`, etc.) are internal planning shorthand — they must not appear in code, tests, docstrings, AGENTS.md files, or any artifact that ships in the package or is visible to contributors. Use a plain description instead.
 
 ### agent_api thin-wrapper rule

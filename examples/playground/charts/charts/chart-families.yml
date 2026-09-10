@@ -1,0 +1,268 @@
+title: Chart families
+style:
+  frame:
+    width: 1872
+queries:
+  product_revenue:
+    source: examples_db
+    sql: |
+      SELECT product, SUM(revenue) AS revenue
+      FROM ecommerce_orders
+      GROUP BY product
+      ORDER BY revenue DESC
+  region_category_revenue:
+    source: examples_db
+    sql: |
+      SELECT region, category, SUM(revenue) AS revenue
+      FROM ecommerce_orders
+      GROUP BY region, category
+      ORDER BY region, category
+  region_category_category_share:
+    source: examples_db
+    sql: |
+      SELECT region, category, SUM(revenue) AS category_share
+      FROM ecommerce_orders
+      GROUP BY region, category
+      ORDER BY region, category
+  company_growth:
+    source: examples_db
+    sql: |
+      SELECT company, growth_rate
+      FROM company_revenue
+      ORDER BY growth_rate DESC
+  monthly_active_users:
+    source: db
+    sql: |
+      SELECT month, active_users
+      FROM dundersign_serving.monthly_metrics
+      WHERE month > (SELECT MIN(month) FROM dundersign_serving.monthly_metrics)
+        AND month < (SELECT MAX(month) FROM dundersign_serving.monthly_metrics)
+      ORDER BY month
+  daily_revenue_by_category:
+    source: examples_db
+    sql: |
+      SELECT date, category, SUM(revenue) AS revenue
+      FROM ecommerce_orders
+      GROUP BY date, category
+      ORDER BY date, category
+  order_scatter:
+    source: examples_db
+    sql: |
+      SELECT category, units_sold, revenue
+      FROM ecommerce_orders
+  company_growth_margin:
+    source: examples_db
+    sql: |
+      SELECT company, region, growth_rate, margin, headcount
+      FROM company_revenue
+  category_revenue:
+    source: examples_db
+    sql: |
+      SELECT category, SUM(revenue) AS revenue
+      FROM ecommerce_orders
+      GROUP BY category
+      ORDER BY revenue DESC
+  document_status:
+    source: dundersign_db
+    sql: |
+      SELECT status, COUNT(*) AS document_count
+      FROM documents
+      GROUP BY status
+      ORDER BY document_count DESC
+  region_product_revenue:
+    source: examples_db
+    sql: |
+      SELECT region, product, SUM(revenue) AS revenue
+      FROM ecommerce_orders
+      GROUP BY region, product
+      ORDER BY region, product
+  monthly_revenue:
+    source: db
+    sql: |
+      SELECT month, strftime(month, '%b %Y') AS month_label, revenue
+      FROM dundersign_serving.monthly_metrics
+      WHERE month > (SELECT MIN(month) FROM dundersign_serving.monthly_metrics)
+        AND month < (SELECT MAX(month) FROM dundersign_serving.monthly_metrics)
+      ORDER BY month
+charts:
+  vertical_bar:
+    query: monthly_revenue
+    type: bar
+    title: Monthly revenue
+    subtitle: "type: bar draws vertical columns for a date-based x axis"
+    x: month
+    y: revenue
+    style:
+      orientation: vertical
+      number_format: currency_whole
+  horizontal_bar:
+    query: product_revenue
+    type: bar
+    title: Top products by revenue
+    subtitle: "style.orientation: horizontal ranks long category labels"
+    x: product
+    y: revenue
+    sort:
+      by: revenue
+      order: desc
+    style:
+      orientation: horizontal
+      number_format: currency_whole
+  grouped_bar:
+    query: region_category_revenue
+    type: bar
+    title: Revenue by region and category
+    subtitle: "a color field with no style.stack groups bars side by side"
+    x: region
+    y: revenue
+    color: category
+    style:
+      number_format: currency_whole
+  stacked_bar:
+    query: region_category_revenue
+    type: bar
+    title: Revenue by region, stacked by category
+    subtitle: "style.stack: zero stacks bars from one shared baseline"
+    x: region
+    y: revenue
+    color: category
+    style:
+      stack: zero
+      number_format: currency_whole
+  stacked_bar_normalized:
+    query: region_category_category_share
+    type: bar
+    title: Category mix of revenue by region
+    subtitle: "style.stack: normalize shows each category's share of the total"
+    x: region
+    y: category_share
+    color: category
+    style:
+      stack: normalize
+      number_format: percent_whole
+  mirror_bar:
+    query: company_growth
+    type: bar
+    title: Quarterly revenue growth by company
+    subtitle: "bars run either side of zero once a value turns negative"
+    x: company
+    y: growth_rate
+    sort:
+      by: growth_rate
+      order: desc
+    style:
+      orientation: horizontal
+      number_format: percent_delta
+  line_single:
+    query: monthly_active_users
+    type: line
+    title: Active users over time
+    subtitle: "type: line traces one series across a date-based x axis"
+    x: month
+    y: active_users
+  line_multi:
+    query: daily_revenue_by_category
+    type: line
+    title: Daily revenue by category
+    subtitle: "color: draws one line per category, each named on the chart"
+    x: date
+    y: revenue
+    color: category
+    style:
+      number_format: currency_whole
+  area_stacked:
+    query: daily_revenue_by_category
+    type: area
+    title: Composition of daily revenue
+    subtitle: "style.stack: zero shows changing composition over time"
+    x: date
+    y: revenue
+    color: category
+    style:
+      stack: zero
+      number_format: currency_whole
+  scatter_basic:
+    query: order_scatter
+    type: scatter
+    title: Revenue vs. units sold
+    subtitle: "type: scatter plots two measures against each other"
+    x: units_sold
+    y: revenue
+    color: category
+    x_label: Units Sold
+    y_label: Revenue
+    style:
+      number_format: currency_whole
+  bubble_scatter:
+    query: company_growth_margin
+    type: scatter
+    title: Growth, margin, and headcount by company
+    subtitle: "size: maps a third measure to point area"
+    x: growth_rate
+    y: margin
+    size: headcount
+    color: region
+    x_label: Growth rate
+    y_label: Margin
+    style:
+      number_format: percent_whole
+      axis_x:
+        labels:
+          format: percent_whole
+  pie_basic:
+    query: category_revenue
+    type: pie
+    title: Revenue share by category
+    subtitle: "type: pie divides a whole into angular slices"
+    theta: revenue
+    color: category
+  donut_basic:
+    query: document_status
+    type: donut
+    title: Documents by status
+    subtitle: "type: donut is a pie with a hole in the middle"
+    theta: document_count
+    color: status
+  heatmap_basic:
+    query: region_product_revenue
+    type: heatmap
+    title: Revenue by region and product
+    subtitle: "color: encodes the value as a shaded cell instead of a bar"
+    x: region
+    y: product
+    color: revenue
+    style:
+      number_format: currency_whole
+  spark_revenue:
+    query: monthly_revenue
+    type: spark_bar
+    title: Revenue trend
+    subtitle: "type: spark_bar is a compact inline trend, no axes"
+    x: revenue
+    y: month_label
+rows:
+- text: |
+    dbt Charts draws every chart family below from the same small set of
+    typed fields — `x`, `y`, `color`, `theta`, and a typed `style` block.
+    Each chart here shows the family in a natural business use, from ranked
+    bars to part-to-whole shapes.
+- cols:
+  - vertical_bar
+  - horizontal_bar
+  - grouped_bar
+- cols:
+  - stacked_bar
+  - stacked_bar_normalized
+  - mirror_bar
+- cols:
+  - line_single
+  - line_multi
+  - area_stacked
+- cols:
+  - scatter_basic
+  - bubble_scatter
+  - pie_basic
+- cols:
+  - donut_basic
+  - heatmap_basic
+  - spark_revenue

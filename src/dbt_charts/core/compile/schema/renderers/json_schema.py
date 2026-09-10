@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import dataclasses
 from collections import defaultdict
-from typing import Any, get_args
+from typing import Any
 
 from pydantic_core import PydanticUndefined
 
-from dbt_charts.core.compile.models.schema_names import ThemeName
 from dbt_charts.core.compile.schema.introspection import (
     AuthorableSchema,
     SchemaField,
@@ -397,23 +396,6 @@ def _model_to_def(model_name: str, ir: AuthorableSchema) -> dict[str, Any]:
     return defn
 
 
-def _theme_property_schema() -> dict[str, str | list[str]]:
-    """Schema for the ``theme:`` authoring-sugar key.
-
-    ``theme:`` has no backing Pydantic field — ``_desugar_theme`` rewrites it
-    into ``extends:`` before validation runs, so introspection never sees it
-    as a model field and this property must be hand-assembled here rather
-    than derived from a field annotation. It reads the same generated
-    ``ThemeName`` list the ``extends`` field's enum arm reads, so the two can
-    never drift apart.
-    """
-    return {
-        "type": "string",
-        "enum": sorted(get_args(ThemeName)),
-        "description": "Built-in theme name — shorthand for `extends: <name>`.",
-    }
-
-
 def render_yaml_schema(schema: AuthorableSchema) -> dict[str, Any]:
     """Render the strict draft-07 dbt charts YAML schema.
 
@@ -436,10 +418,7 @@ def render_yaml_schema(schema: AuthorableSchema) -> dict[str, Any]:
     if root.get("description"):
         result["description"] = root["description"]
     result["type"] = "object"
-    result["properties"] = {
-        **root.get("properties", {}),
-        "theme": _theme_property_schema(),
-    }
+    result["properties"] = root["properties"]
     result["additionalProperties"] = root["additionalProperties"]
     if root.get("required"):
         result["required"] = root["required"]

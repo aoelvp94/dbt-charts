@@ -58,7 +58,7 @@ def validate_color_series(
     # that can carry a null series is the authored dimension it crosses with.
     # That dimension is categorical by construction whatever its dtype — every
     # value becomes a discrete composite series — so the type gate below,
-    # which lets a quantitative series colour through as continuous, does not
+    # which lets a quantitative series color through as continuous, does not
     # apply to it.
     color_field = chart.color if chart.wide_measures else color_ch.data_field
     if color_field is None:

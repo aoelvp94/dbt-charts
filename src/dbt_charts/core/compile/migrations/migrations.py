@@ -534,7 +534,7 @@ def prepare_board_mapping(
     against the current schema, so migration can be skipped? Defaults to
     ``AuthoredBoard`` for a real, standalone board. Callers handling a
     patch-shaped fragment (a theme YAML's ``style:``-only content, a
-    meta.yaml override, an extends target) must pass ``BoardPatch`` —
+    meta.yml override, an extends target) must pass ``BoardPatch`` —
     ``AuthoredBoard`` carries a "must have layout/chart/text/title/notes"
     invariant that no patch can ever satisfy, which would make every current
     patch look like a migration candidate.
@@ -827,7 +827,7 @@ def migrate_mapping(
         return copy.deepcopy(dict(mapping))
     # The latest frozen schema is always transparently migratable — it is the
     # most recent released grammar, and the support window exists to discourage
-    # accumulating decades of silent upgrades, not to penalise the newest format.
+    # accumulating decades of silent upgrades, not to penalize the newest format.
     if not allow_expired and identifier != catalog.latest.version:
         _enforce_support_window(identifier, catalog, today=today)
 
@@ -2724,7 +2724,7 @@ def _delete_tail_in_yaml_text(yaml_text: str, deletion: Deletion) -> str:
             # strictly greater than leaf_indent; every line up to and
             # including that boundary (blank or not) belongs to this block.
             # For a scalar leaf block_end stays at i, so the range is empty
-            # and the scalar-deletion behaviour is unchanged.
+            # and the scalar-deletion behavior is unchanged.
             block_end = i
             k = i + 1
             while k < len(lines):

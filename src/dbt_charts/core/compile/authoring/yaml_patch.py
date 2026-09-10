@@ -129,7 +129,7 @@ def _sequence_item_span(
     """Line span of the `index`-th `- ` item of the sequence at `indent`.
 
     Raises rather than clamping: an out-of-range index means the caller is
-    addressing an item that is not there, and writing to a neighbour would be a
+    addressing an item that is not there, and writing to a neighbor would be a
     silent wrong edit.
     """
     starts = [
@@ -448,7 +448,7 @@ def _apply_update(lines: list[str], path: str, value: ScalarLeaf | None) -> list
                 # No sequence was found here, so the only thing left to do
                 # would be to invent a mapping key named after the index --
                 # which turns a list into a mapping, or writes a second
-                # structure beside a sequence the walk failed to recognise.
+                # structure beside a sequence the walk failed to recognize.
                 # Both parse as something else entirely; refuse instead.
                 raise ValueError(
                     f"Cannot set {path!r}: {segment!r} addresses a sequence "
@@ -602,10 +602,10 @@ def set_board_values(yaml_text: str, updates: dict[str, ScalarLeaf | None]) -> s
     """Set or delete scalar leaves in board YAML, preserving everything else.
 
     This function edits only the *leading top-level mapping region* of the
-    file -- the contiguous block of recognisable `key: value` lines (plus
+    file -- the contiguous block of recognizable `key: value` lines (plus
     blank/comment lines and a `---` marker) that starts at line 0. The first
     line that cannot be parsed as a mapping key, blank, comment, or `---`
-    marker ends the recognised region. Everything after that line is passed
+    marker ends the recognized region. Everything after that line is passed
     through byte-identical and is never inspected or modified. This lets
     Cloud markdown boards (which store freeform prose after the YAML front
     matter) be edited safely: `yaml.safe_load("title: X\\n\\nProse.")` would

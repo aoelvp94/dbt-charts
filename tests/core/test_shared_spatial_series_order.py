@@ -48,7 +48,7 @@ from .conftest import chart_pane
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
 # Legend entry order still has a contract wherever a legend is drawn; stacked
-# bars only draw one when direct labelling is off, so pin the order there.
+# bars only draw one when direct labeling is off, so pin the order there.
 _BOARD_STYLE_NO_ENDPOINT_LABELS, _BOARD_CTX_NO_ENDPOINT_LABELS = (
     resolve_style_and_context(
         get_theme_style().model_copy(

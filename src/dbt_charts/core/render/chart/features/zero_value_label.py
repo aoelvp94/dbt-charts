@@ -83,7 +83,7 @@ class ZeroValueLabelFeature:
     """Appends a direct "0" label for a genuine-zero bar row.
 
     Fires only for the plain single-series bar shape, and only where
-    ``ValueLabelFeature`` isn't already labelling every row (see
+    ``ValueLabelFeature`` isn't already labeling every row (see
     ``_zero_label_scope``). Grouped/stacked zero segments need a position
     decision (mid-stack? mid-group?) this feature doesn't make.
     """

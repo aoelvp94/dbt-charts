@@ -47,7 +47,7 @@ class PaginationConfig(BaseModel):
     concern (how many rows to show per page), distinct from query-level ``limit``
     which controls how many rows are *fetched*.
 
-    Shorthand forms are normalised by a ``field_validator`` on the containing
+    Shorthand forms are normalized by a ``field_validator`` on the containing
     style model:
     - ``pagination: 25``   → PaginationConfig(enabled=True, page_rows=25)
     - ``pagination: true``  → PaginationConfig(enabled=True)

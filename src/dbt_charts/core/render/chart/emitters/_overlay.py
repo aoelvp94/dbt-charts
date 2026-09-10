@@ -213,38 +213,35 @@ def _reconcile_x_domain(
     base_data: list[_Row],
     layer_x_columns: list[tuple[str, list[_Row]]],
     chart_id: str,
-    force: bool = False,
 ) -> None:
-    """Set an explicit ordered-union domain on the shared categorical x scale
-    when a layer's rows genuinely diverge from the base's, or when ``force``
-    is True (an overlay layer's own label sublayer carries a calculate
-    transform — house-register formatting or a position transform like
-    ``middle``/``middle_aligned``/``bottom``).
+    """Pin an explicit ordered-union domain on a layered chart's shared
+    categorical x scale.
 
-    Vega-Lite's default domain union across sub-layers sharing an x scale is
-    unordered (alphabetical), so a layer whose rows diverge from the base's
-    needs an explicit domain to guarantee its categories — which may not be
-    a subset of the base's own — aren't dropped from the shared scale.
-    ``rendered_x_domain`` decides the pinned order, including how an
-    authored sort on the base x encoding and a layer-only category interact
-    (see its own docstring); this function only fires the pin and writes
-    its result.
+    Unconditional on purpose. Vega-Lite's native sort-by-field does resolve
+    across a *plain* layer array, but reverts the shared categorical scale to
+    alphabetical the moment anything forks the dataflow feeding it: a
+    ``transform:`` pipeline on the shared data (a ``color:`` channel's own
+    series-order ``calculate``, a label sublayer's house-register
+    ``calculate``, a support_table cell layer) or a base mark split into
+    sign-filtered sub-layers (``pin_categorical_domain_order``,
+    ``emitters/_layers.py``). None of those are legible here, and none of them
+    show up in ``layer_x_columns`` — a layer authoring neither its own ``x:``
+    nor its own ``query:`` contributes nothing to it while still forking the
+    dataflow — so an empty ``layer_x_columns`` is no evidence the domain is
+    safe.
 
-    The pin fires whenever a trigger is present, sort or no sort: a base
-    bar mark split into sign-filtered sub-layers
-    (``pin_categorical_domain_order``, ``emitters/_layers.py``) may have
-    already pinned a domain computed from the base's own rows alone, and
-    that narrower domain must be overwritten with the full union or any
-    layer-only category is silently dropped from the shared scale.
+    ``rendered_x_domain`` decides the pinned order, including how an authored
+    sort on the base x encoding and a layer-only category interact (see its own
+    docstring); this function only writes its result. That result also has to
+    overwrite the narrower domain the base may already have pinned from its own
+    rows alone (``pin_categorical_domain_order``, ``pin_sorted_x_domain``), or
+    a layer-only category is silently dropped from the shared scale.
 
-    No-op when the base x scale isn't categorical (nominal/ordinal) or when
-    neither trigger fires. Every layer's own x type has already been
-    resolved against the base's (see _resolve_layer_x_encoding) by the time
-    this runs — this function only unions and orders values, it never
-    classifies or raises.
+    No-op when the base x scale isn't categorical (nominal/ordinal). Every
+    layer's own x type has already been resolved against the base's (see
+    _resolve_layer_x_encoding) by the time this runs — this function only
+    unions and orders values, it never classifies or raises.
     """
-    if not layer_x_columns and not force:
-        return
     if x_enc.get("type") not in _CATEGORICAL_X_TYPES:
         return
     if not isinstance(x_enc.get("field"), str):
@@ -343,7 +340,7 @@ def _same_x_vocabulary(base_values: list[Any], layer_values: list[Any]) -> bool:
     must match **in both directions**: a plain-label column of strings passes
     the type gate but is not a bucket of the base's calendar grain, and merging
     either way round makes grain detection raise. Asking only "is the BASE a
-    calendar column" let a base this module failed to recognise fall through to
+    calendar column" let a base this module failed to recognize fall through to
     the bare type comparison and admit a plain-label layer.
 
     Membership is decided by the same parser the downstream consumers use, not
@@ -407,7 +404,7 @@ def overlay_x_domain_values(
     running past the base (a forward goal ramp against actuals, say) grows the
     band scale beyond the base's own rows. The axis tick values and the label
     overlap measurement must both be derived from THAT domain — deriving
-    either from the base's rows alone leaves the extra bands unlabelled and
+    either from the base's rows alone leaves the extra bands unlabeled and
     measures crowding against a band count that isn't the one being rendered.
 
     A layer contributes only when its column speaks the base's own vocabulary
@@ -1025,8 +1022,8 @@ def render_cartesian_overlay(
     same reason. Only the dual-axis title restore below reads it, and only to
     split two cases the resolved axis alone cannot tell apart: an axis with no
     label is suppressed by the theme's blanket default, and dual-axis overrides
-    that (both sides need labelling to tell the scales apart), whereas a
-    labelled axis can only be suppressed by the author saying so — the Layer 5
+    that (both sides need labeling to tell the scales apart), whereas a
+    labeled axis can only be suppressed by the author saying so — the Layer 5
     default would otherwise have forced it visible — so that one is honored and
     left alone. The caller computes it rather than this function deriving it
     from ``axis_y``, because only the caller knows whether its own family
@@ -1101,7 +1098,7 @@ def render_cartesian_overlay(
                 base_y["axis"].pop("labelAlign", None)
                 base_y["axis"].pop("labelPadding", None)
             # Single bar/line charts suppress the y-axis title (axis.title=null);
-            # a dual-axis chart needs both sides labelled to tell the scales
+            # a dual-axis chart needs both sides labeled to tell the scales
             # apart, so restore the base title from its encoding title —
             # unless the author explicitly suppressed the title of the
             # axis that actually lands here (see
@@ -1215,17 +1212,17 @@ def render_cartesian_overlay(
         and not base_stack_normalize
         and not base_stack_center
         and data
+        # grid.threshold.visible governs the per-scale dual-axis rules the same
+        # way it governs the shared-scale one BaselineFeature emits — the off
+        # switch is a property of the axis, not of which path builds the rule.
+        and axis_y.grid.threshold.visible
     ):
         base_field = y_enc_base.get("field")
         if isinstance(base_field, str):
             base_continuous = (
                 axis_y.scale.continuous if axis_y.scale is not None else None
             )
-            base_zero_style = axis_y.grid.zero
-            assert base_zero_style is not None, (
-                "zero grid style must be resolved before emitting a "
-                "dual-axis baseline rule"
-            )
+            base_zero_style = axis_y.grid.threshold
             base_zero_setting = (
                 base_continuous.zero if base_continuous is not None else None
             )
@@ -1380,12 +1377,6 @@ def render_cartesian_overlay(
         and (layer.x is not None or layer.query_name != base_query_name)
         and field is not None
     ]
-    # True when any layer's label sublayer carries a calculate transform (house
-    # register OR a position transform like middle/middle_aligned/bottom) — any
-    # of these forks the sublayer's dataflow, so it has no x encoding of its
-    # own and VL's native sort-by-field breaks across the shared scale.
-    # Used to force x-domain pinning so VL preserves the base's query sort order.
-    any_label_transform = False
     # Any sibling in the outer `layer:` array added an xOffset scale — this
     # base spec's own curve counts too (a base area/line applying step-band to
     # itself puts xOffset on base_spec.encoding, and a bar OVERLAY layer is
@@ -1828,6 +1819,10 @@ def render_cartesian_overlay(
             and layer_orients is not None
             and layer_orients[layer_idx] != base_side
             and rows_for_layer
+            # Gate the RULE only. This block is followed by the layer's own
+            # value-label specs, so an early `continue` here would silence the
+            # threshold and delete that layer's labels with it.
+            and axis_y.grid.threshold.visible
         ):
             layer_domain = numeric_domain_bounds(
                 layer_axis_y.scale.domain if layer_axis_y.scale is not None else None
@@ -1838,11 +1833,7 @@ def render_cartesian_overlay(
                 and layer_axis_y.grid.visible is not None
                 else axis_y.grid.visible
             )
-            layer_zero_style = axis_y.grid.zero
-            assert layer_zero_style is not None, (
-                "zero grid style must be resolved before emitting a "
-                "dual-axis baseline rule"
-            )
+            layer_zero_style = axis_y.grid.threshold
             # A layer carries no `scale.continuous.zero` field to check at
             # all (`LayerAxisYScale` has only `domain`), so bar/area's
             # own-mark-default always-fire is the only unconditional case;
@@ -1875,8 +1866,6 @@ def render_cartesian_overlay(
         ):
             if own_data is not None:
                 label_spec.data = own_data
-            if label_spec.transforms:
-                any_label_transform = True
             if layer_shares_normalize_domain:
                 _clip_layer_marks(label_spec)
             vl_layers.append(label_spec)
@@ -1897,13 +1886,7 @@ def render_cartesian_overlay(
             _fix_bar_band_width(vl_spec, x_is_banded)
 
     if isinstance(x_enc, dict):
-        _reconcile_x_domain(
-            x_enc,
-            data,
-            layer_x_columns,
-            chart_id,
-            force=any_label_transform,
-        )
+        _reconcile_x_domain(x_enc, data, layer_x_columns, chart_id)
 
     # Give the single-series base its own legend entry via the shared scale, so
     # a bar+line combo shows both series (not just the overlay). Its glyph is the

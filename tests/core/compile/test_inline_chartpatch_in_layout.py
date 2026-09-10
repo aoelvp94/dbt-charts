@@ -33,7 +33,7 @@ def test_chartpatch_in_layout_omitted_title_stays_empty() -> None:
 
 
 def test_chartpatch_in_layout_respects_explicit_title() -> None:
-    """An explicit title on BarChart is honoured."""
+    """An explicit title on BarChart is honored."""
     patch = BarChart(type="bar", x="month", y="revenue", title="My Revenue Chart")
     result = _resolve_single_item(
         item=patch,

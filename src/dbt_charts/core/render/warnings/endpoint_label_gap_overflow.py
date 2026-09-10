@@ -6,7 +6,7 @@ Detection rule:
   ``WarningContext.endpoint_label_gap_overflows`` is non-empty for a chart —
   ``recascade_endpoint_labels`` (``render/chart/features/endpoint_labels.py``),
   called from the post-probe correction pass in
-  ``render/converters/chart.py``, could not honour the intended pixel gap and
+  ``render/converters/chart.py``, could not honor the intended pixel gap and
   either distributed labels evenly, or (``rail_overflow``) dropped the labels
   that would not fit, instead.
 

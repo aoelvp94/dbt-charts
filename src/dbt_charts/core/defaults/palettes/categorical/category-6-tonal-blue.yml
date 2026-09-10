@@ -18,5 +18,5 @@ colors:
   - "#81b3e5"    # 1 — carolina blue (light tint)
   - "#004a7f"    # 2 — prussian blue (dark saturated)
   - "#002341"    # 3 — marine (very dark)
-  - "#6f89a3"    # 4 — blue/grey (extended; form-redundant)
-  - "#c2d3e4"    # 5 — light blue grey (extended; form-redundant)
+  - "#6f89a3"    # 4 — blue/gray (extended; form-redundant)
+  - "#c2d3e4"    # 5 — light blue gray (extended; form-redundant)

@@ -64,7 +64,7 @@ class TestRenderPromptPydanticNoise:
         )
         assert "strict=" not in result, "Pydantic Strict metadata leaked into prompt"
 
-    def test_synthesised_patch_doc_in_output(self) -> None:
+    def test_synthesized_patch_doc_in_output(self) -> None:
         result = render_prompt(introspect())
         # BarChartStylePatch → display name "BarChartStyle"
         section = re.search(r"## BarChartStyle\n([^\n]*)", result)

@@ -14,7 +14,6 @@ Dependencies:
     - .themes (for theme colors)
 """
 
-import hashlib
 import html
 import re
 from datetime import datetime, timezone
@@ -36,7 +35,10 @@ from dbt_charts.core.compile.models.style.resolved import (
 )
 from dbt_charts.core.compile.resolve.style.typography import board_is_prose
 from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
-from dbt_charts.core.font_measure import get_font_measurer
+from dbt_charts.core.font_measure import (
+    get_font_measurer,
+    get_weighted_font_measurer,
+)
 from dbt_charts.core.render.board_variables import board_variables
 from dbt_charts.core.render.chart_interactivity import (
     generate_svg_chart_interactivity_script,
@@ -52,7 +54,6 @@ from dbt_charts.core.render.svg_utils import (
     padded_authoring_content,
     px,
 )
-from dbt_charts.core.render.template_loader import render_template
 from dbt_charts.core.render.variables_resolve import resolve_controls
 from dbt_charts.core.render.variables_strip import (
     StripAlign,
@@ -60,13 +61,9 @@ from dbt_charts.core.render.variables_strip import (
 )
 from dbt_charts.core.text.format_d3 import portable_strftime
 
-# Named constant for SVG ID hash length
-SVG_ID_HASH_LENGTH = 8
-
 __all__ = [
     "render_board_svg",
     "render_nested_board",
-    "SVG_ID_HASH_LENGTH",
 ]
 
 # -----------------------------------------------------------------------------
@@ -74,14 +71,8 @@ __all__ = [
 # -----------------------------------------------------------------------------
 
 
-# The brand phrase in the footer attribution (case-insensitive, whole-word);
-# its first occurrence is drawn as the dbt charts wordmark and carries the link.
+# The brand phrase linked in the footer watermark (case-insensitive, whole-word).
 _FOOTER_BRAND_WORD_RE = re.compile(r"\bdbt charts\b", re.IGNORECASE)
-
-# Intrinsic geometry of templates/svg/footer_wordmark.svg: its box, and the
-# baseline the letters sit on inside it.
-_WORDMARK_BOX = (997.0, 190.0)
-_WORDMARK_BASELINE = 148.5
 
 
 def _footer_attribution_svg(
@@ -89,63 +80,69 @@ def _footer_attribution_svg(
 ) -> tuple[str, float]:
     """Footer attribution ending at (x, y), and its total width.
 
-    The brand phrase is not set in type: it is replaced by the dbt charts
-    wordmark, filled with the footer text color and sitting on the text's
-    baseline. The words around it are emitted as right-anchored runs on either
-    side. The wordmark links to ``footer.link`` when set (an anchor classed
-    .dbt-footer-link); with ``link`` null it is plain. Without the brand phrase
-    the text renders plain. The width lets a footer-right timestamp clear the
-    whole lockup.
+    The brand phrase is set in type, one weight heavier than the words around
+    it, and carries the link when ``footer.link`` is set. The words on either
+    side are emitted as separate right-anchored runs.
+
+    Separate runs rather than one <text> with <tspan> children: rasterizers
+    disagree about mixed content. Both cairosvg and resvg drop the space before
+    a child element and ignore ``text-anchor="end"`` for the child's advance, so
+    a single-<text> version renders "made withdbt Charts", overflowing its
+    anchor. Positioning each run from a measured width is renderer-independent.
+
+    The brand run is measured at its own weight — a variable font face instanced at
+    600 has wider advances than at 400, and measuring with the regular instance
+    would let the words behind it overlap.
     """
     # FooterStyle._require_font_size_and_color guarantees both non-None.
     assert footer.font.size is not None and footer.font.color is not None
     size = float(footer.font.size)
+    brand_weight = get_chart_rendering().frame.footer_brand_weight
     measure = get_font_measurer(font_family).measure
+    brand_measure = get_weighted_font_measurer(font_family, brand_weight).measure
 
-    def run(end_x: float, content: str) -> str:
+    def run(end_x: float, content: str, *, brand: bool = False) -> str:
+        weight = f' font-weight="{brand_weight}"' if brand else ""
+        # Snapped (svg_utils.px) for two reasons: a run on a fractional
+        # pixel is split across two columns by the rasterizer, and the Rust
+        # port interpolates the 600-weight advances ~0.004px away from this
+        # one — an integer position is what makes the board sweep's exact
+        # chrome-byte comparison hold.
         return (
-            f'<text x="{format_svg_numeric(end_x)}" y="{format_svg_numeric(y)}" '
+            f'<text x="{format_svg_numeric(px(end_x))}" y="{format_svg_numeric(y)}" '
             f'text-anchor="end" font-size="{format_svg_numeric(size)}" '
-            f'fill="{footer.font.color}" font-family="{font_family}">'
+            f'fill="{footer.font.color}" font-family="{font_family}"{weight}>'
             f"{html.escape(content)}</text>"
         )
 
     match = _FOOTER_BRAND_WORD_RE.search(footer.text)
     if match is None:
         return run(x, footer.text), measure(footer.text, size)
-    frame = get_chart_rendering().frame
-    scale = size * frame.footer_wordmark_height_em / _WORDMARK_BOX[1]
-    gap = size * frame.footer_wordmark_gap_em
+
     prefix = footer.text[: match.start()].rstrip()
+    brand_word = match.group(0)
     suffix = footer.text[match.end() :].lstrip()
+    gap = measure(" ", size)
+
     parts: list[str] = []
     right = x
-    width = 0.0
     if suffix:
-        parts.append(run(x, suffix))
+        parts.append(run(right, suffix))
         right -= measure(suffix, size) + gap
-        width += measure(suffix, size) + gap
-    lockup_w = _WORDMARK_BOX[0] * scale
-    # Snapped like every other translate, so the lockup lands on whole pixels.
-    lockup_x = px(right - lockup_w)
-    lockup = render_template(
-        "svg/footer_wordmark.svg",
-        x=format_svg_numeric(lockup_x),
-        y=format_svg_numeric(px(y - _WORDMARK_BASELINE * scale)),
-        scale=format_svg_numeric(scale),
-        color=footer.font.color,
-    ).strip()
+
+    brand_run = run(right, brand_word, brand=True)
     if footer.link:
-        lockup = (
+        brand_run = (
             f'<a class="dbt-footer-link" href="{html.escape(footer.link, quote=True)}" '
-            f'target="_blank" rel="noopener noreferrer">{lockup}</a>'
+            f'target="_blank" rel="noopener noreferrer">{brand_run}</a>'
         )
-    parts.insert(0, lockup)
-    width = x - lockup_x
+    parts.insert(0, brand_run)
+    right -= brand_measure(brand_word, size)
+
     if prefix:
-        parts.insert(0, run(lockup_x - gap, prefix))
-        width += gap + measure(prefix, size)
-    return "".join(parts), width
+        parts.insert(0, run(right - gap, prefix))
+        right -= gap + measure(prefix, size)
+    return "".join(parts), x - right
 
 
 def _resolve_jinja(template: str, variables: VariableValues) -> str:
@@ -252,14 +249,14 @@ def _prose_authoring_padding(
     Horizontal is real on both sides in the common case: ``_build_board_content_items``
     insets title and text to ``x_offset + card_padding`` so they align with chart
     content, and that inset is the block's to claim on both edges. The title-inline
-    band is the exception — its right neighbour is the variables column, not the
+    band is the exception — its right neighbor is the variables column, not the
     card edge, so its caller passes a narrower ``pad_right`` there instead.
 
     ``top`` is that same inset on the other axis, and only the block that opens
     a band gets it — ``compute_board_content_box`` allocates it once, before the
     first element. Blocks after it stack flush (a deliberate 0 gap — the
     after-heading rhythm lives in the heading's own margin), so a second block
-    claiming ``card_padding`` would reach past where its neighbour's glyphs
+    claiming ``card_padding`` would reach past where its neighbor's glyphs
     begin and the two selection marks would overlap.
 
     Bottom stays zero: the gaps below a band separate it from what follows, and
@@ -290,10 +287,10 @@ def _tagged_authoring_block(
     they are free to stop cancelling.
 
     ``pad_left``/``pad_right`` are separate, not one ``card_padding`` for both
-    sides, because a block's neighbours can differ: the two stacked call sites
+    sides, because a block's neighbors can differ: the two stacked call sites
     (a standalone title/text/header) have the card edge on both sides and pass
     the same value twice, but the title-inline band's title column has the
-    variables strip for a right neighbour and must claim no more than the gap
+    variables strip for a right neighbor and must claim no more than the gap
     to it — passing the same padding on both sides there would let the box
     reach past where the strip begins.
 
@@ -542,7 +539,7 @@ def _render_title_variables_inline_band(
             title_w,
             title_h,
             card_pad,
-            # The band's right neighbour is the variables column, not the card
+            # The band's right neighbor is the variables column, not the card
             # edge — claiming card_pad on the right would reach past col_gap
             # into the column's own space. min() also covers the (unusual)
             # case where col_gap exceeds card_pad, where card_pad is still the
@@ -903,6 +900,70 @@ def _render_layout(
     return result
 
 
+_STYLE_BLOCK_RE = re.compile(r"(\n?)  <style>\n(.*?)\n  </style>", re.DOTALL)
+_SVG_TAG_RE = re.compile(r"<svg\b|</svg>")
+# mdsvg's own class-scoping (SVGRenderer._scoped_class): every `.md-*` rule any
+# renderer (callout, prose, table) emits is named `md-<hash>-<selector>`, the
+# hash a pure function of that renderer's own style. Two renderers with
+# byte-identical style always produce byte-identical class names and rule
+# text -- that identity is what makes a duplicate *line* safe to drop here.
+_DEDUPE_ELIGIBLE_RULE_RE = re.compile(r"^\s*\.md-[0-9a-f]+-[a-z]+\s*\{")
+
+
+def _enclosing_svg_key(svg: str, pos: int) -> int:
+    """A stable id for the ``<svg>`` element that most tightly encloses `pos`.
+
+    The offset of that element's own opening tag -- two positions get the same
+    key only when they sit inside the exact same ``<svg>`` element, never
+    merely a shared ancestor. A per-chart "download as SVG/PNG/PDF" feature
+    (`apps/cloud/static_src/js/dashboard/init.js`) walks up from a chart's own
+    `<g>` to its *nearest* ancestor `<svg>` and treats that subtree as a
+    standalone document, copying only the `<style>` nodes found within it --
+    so a rule kept in a sibling or ancestor `<svg>` is invisible to it even
+    though the browser's own cascade would see it fine. Scoping dedup to "same
+    nearest-enclosing `<svg>`" preserves the guarantee that mechanism depends
+    on: every extractable `<svg>` subtree stays self-sufficient on its own.
+    """
+    stack: list[int] = []
+    for m in _SVG_TAG_RE.finditer(svg, 0, pos):
+        if m.group(0) == "<svg":
+            stack.append(m.start())
+        elif stack:
+            stack.pop()
+    return stack[-1] if stack else -1
+
+
+def _dedupe_repeated_style_rules(svg: str) -> str:
+    """Collapse byte-identical CSS rule lines repeated across ``<style>`` blocks
+    that sit inside the same ``<svg>`` element, in a fully assembled board SVG.
+
+    Applied only once every chart has already rendered its own complete,
+    self-sufficient CSS, so this can only ever remove a line already provably
+    present elsewhere in the same scope — see ``_enclosing_svg_key`` for why
+    that scope is "the same enclosing ``<svg>``", not "the whole document".
+    """
+    seen: set[tuple[int, str]] = set()
+
+    def dedupe_block(match: re.Match[str]) -> str:
+        leading_newline, body = match.group(1), match.group(2)
+        scope = _enclosing_svg_key(svg, match.start())
+        kept = []
+        for line in body.split("\n"):
+            if _DEDUPE_ELIGIBLE_RULE_RE.match(line):
+                key = (scope, line)
+                if key in seen:
+                    continue
+                seen.add(key)
+            kept.append(line)
+        if not kept:
+            # Consumes the leading newline too, so a fully-emptied block
+            # leaves no blank line behind at its old position.
+            return ""
+        return f"{leading_newline}  <style>\n" + "\n".join(kept) + "\n  </style>"
+
+    return _STYLE_BLOCK_RE.sub(dedupe_block, svg)
+
+
 def render_board_svg(
     board: ResolvedBoard,
     executor: ChartDataProvider,
@@ -964,9 +1025,8 @@ def render_board_svg(
         else "dbt Charts"
     )
     font_family = resolved_style.font.family
-    page_background = resolved_style.page.background
     assert font_family is not None, "cascade should populate style.font.family"
-    assert page_background is not None, "cascade should populate style.page.background"
+    board_background = resolved_style.background
     # Board config is baked into ResolvedBoard, so no config lookup here. These are
     # None only on nested boards, which render through render_nested_board; on the
     # root path build_resolved_board sets all three unconditionally. Falling back
@@ -1224,39 +1284,23 @@ def render_board_svg(
         ),
     )
 
-    svg_id_hash = hashlib.md5(f"{total_width}x{total_height}".encode()).hexdigest()[
-        :SVG_ID_HASH_LENGTH
-    ]
-    svg_id = f"dbt-charts-svg-{svg_id_hash}"
-
     render_time_utc = datetime.now(timezone.utc)
     render_timestamp_iso = render_time_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
     footer_x = total_width - page_padding
     footer_y = total_height - footer_style.y_offset
 
-    footer_element = ""
-    footer_width = 0.0
-    if footer_style.visible:
-        attribution, footer_width = _footer_attribution_svg(
-            footer_style, board.style.font.family, footer_x, footer_y
-        )
-        footer_parts = []
-        if footer_style.rule is not None:
-            assert footer_style.font.size is not None
-            rule_y = (
-                footer_y
-                - float(footer_style.font.size)
-                - get_chart_rendering().frame.footer_rule_gap_px
-            )
-            footer_parts.append(
-                f'<line x1="{format_svg_numeric(page_padding)}" y1="{format_svg_numeric(rule_y)}" '
-                f'x2="{format_svg_numeric(footer_x)}" y2="{format_svg_numeric(rule_y)}" '
-                f'stroke="{footer_style.rule.color}" stroke-width="{format_svg_numeric(footer_style.rule.stroke_width)}"/>'
-            )
-        footer_parts.append(attribution)
-        footer_element = "\n".join(footer_parts)
-
     timestamp_element = ""
+    # Painted ahead of the timestamp block, which positions itself against this
+    # width. Measuring it a second time there would use the regular-weight
+    # advances and quietly deliver a narrower gap than footer_timestamp_gap_px
+    # configures, because the brand run is painted heavier than the rest.
+    attribution_svg = ""
+    attribution_width = 0.0
+    if footer_style.visible:
+        attribution_svg, attribution_width = _footer_attribution_svg(
+            footer_style, str(board.style.font.family), footer_x, footer_y
+        )
+
     timestamp_style = board.style.timestamp
     if timestamp_style.visible:
         # All timestamp values come from the style cascade.
@@ -1286,7 +1330,7 @@ def render_board_svg(
             if timestamp_style.position == "footer" and footer_style.visible:
                 timestamp_x = (
                     footer_x
-                    - footer_width
+                    - attribution_width
                     - get_chart_rendering().frame.footer_timestamp_gap_px
                 )
         timestamp_element = (
@@ -1296,7 +1340,34 @@ def render_board_svg(
             f"{html.escape(display_timestamp)}</text>"
         )
 
-    return f"""<svg id="{svg_id}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {total_width} {total_height}" width="{format_svg_numeric(total_width)}" height="{format_svg_numeric(total_height)}" preserveAspectRatio="xMinYMin meet" style="display: block;" data-rendered-at="{render_timestamp_iso}" data-dbt-page-title="{html.escape(page_title, quote=True)}" data-dbt-font-family="{html.escape(str(font_family), quote=True)}" data-dbt-page-background="{html.escape(str(page_background), quote=True)}" aria-label="{html.escape(page_title, quote=True)}">
+    footer_element = ""
+    # All footer values come from board.style.footer (style cascade).
+    if footer_style.visible:
+        # FooterStyle._require_font_size_and_color guarantees both non-None.
+        assert footer_style.font.size is not None
+        assert footer_style.font.color is not None
+        footer_parts = []
+        if footer_style.rule is not None:
+            rule_y = (
+                footer_y
+                - float(footer_style.font.size)
+                - get_chart_rendering().frame.footer_rule_gap_px
+            )
+            footer_parts.append(
+                f'<line x1="{format_svg_numeric(page_padding)}" y1="{format_svg_numeric(rule_y)}" '
+                f'x2="{format_svg_numeric(footer_x)}" y2="{format_svg_numeric(rule_y)}" '
+                f'stroke="{footer_style.rule.color}" stroke-width="{format_svg_numeric(footer_style.rule.stroke_width)}"/>'
+            )
+        footer_parts.append(attribution_svg)
+        footer_element = "\n".join(footer_parts)
+
+    # data-dbt-page-background keeps its pre-deletion name even though its
+    # value now comes from style.background, not the deleted style.page: it
+    # is a pure transport attribute to_html() reads back, never seen by a
+    # user, and already-persisted Cloud renders carry this exact name --
+    # renaming it would 500 on every one of them for no benefit.
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {total_width} {total_height}" width="{format_svg_numeric(total_width)}" height="{format_svg_numeric(total_height)}" preserveAspectRatio="xMinYMin meet" style="display: block;" data-rendered-at="{render_timestamp_iso}" data-dbt-page-title="{html.escape(page_title, quote=True)}" data-dbt-font-family="{html.escape(str(font_family), quote=True)}" data-dbt-page-background="{html.escape(str(board_background), quote=True)}" aria-label="{html.escape(page_title, quote=True)}">
+
 <defs>
 {grid_defs}
 {svg_styles}
@@ -1308,6 +1379,7 @@ def render_board_svg(
 {footer_element}
 {chart_interactivity_script}
 </svg>"""
+    return _dedupe_repeated_style_rules(svg)
 
 
 def render_nested_board(
@@ -1452,12 +1524,9 @@ def render_nested_board(
         error_collector=error_collector,
     )
 
-    # Apply board-level title color overrides before building items. Same
-    # precedence as the inline-band path: `style.title.font.color` first
-    # (the canonical "board title color" knob), `style.color` as a board-wide
-    # ink fallback. Painting happens AFTER mdsvg renders so the override
-    # wins over mdsvg's CSS-baked class fill regardless of upstream cascade
-    # quirks in get_compact_style.
+    # Apply board-level title color overrides before building items. Painting
+    # happens AFTER mdsvg renders so the override wins over mdsvg's CSS-baked
+    # class fill regardless of upstream cascade quirks in get_compact_style.
     title_color = resolved_style.title.font.color
     if title_color and title_svg:
         title_svg = _paint_title_svg_fill(title_svg, str(title_color))

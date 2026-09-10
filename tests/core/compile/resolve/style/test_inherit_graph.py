@@ -191,7 +191,8 @@ def test_inherit_slot_exclude_unknown_field_raises():
         font: Annotated[
             BadFontFixture,
             InheritSlot(
-                from_path="BadRootFixture.charts.font", exclude=frozenset({"colour"})
+                from_path="BadRootFixture.charts.font",
+                exclude=frozenset({"not_a_field"}),
             ),
         ]
 
@@ -204,7 +205,7 @@ def test_inherit_slot_exclude_unknown_field_raises():
         model_config = ConfigDict(extra="forbid", frozen=True)
         charts: BadChartsFixture
 
-    with pytest.raises(ValueError, match="colour"):
+    with pytest.raises(ValueError, match="not_a_field"):
         build_inherit_graph(BadRootFixture)
 
 

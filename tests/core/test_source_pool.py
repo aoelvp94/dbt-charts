@@ -122,8 +122,8 @@ class TestSourceConfigHash:
 
     def test_attribution_does_not_change_hash(self) -> None:
         """Attribution is cost metadata, not connection identity."""
-        labelled = {**_POSTGRES_SOURCE, "attribution": {"team": "analytics"}}
-        assert _source_config_hash(labelled) == _source_config_hash(_POSTGRES_SOURCE)
+        labeled = {**_POSTGRES_SOURCE, "attribution": {"team": "analytics"}}
+        assert _source_config_hash(labeled) == _source_config_hash(_POSTGRES_SOURCE)
 
     def test_editing_attribution_does_not_change_hash(self) -> None:
         a = {**_POSTGRES_SOURCE, "attribution": {"team": "analytics"}}
@@ -595,7 +595,7 @@ class TestBigQueryDefaultDataset:
     ) -> None:
         """Opening a BigQuery pool connection sets default_query_job_config.default_dataset.
 
-        This is the connection-level analogue of the DuckDB SET search_path path:
+        This is the connection-level analog of the DuckDB SET search_path path:
         unqualified table names in inline SQL resolve against the source dataset.
         """
         sa = _make_sql_adapter(tmp_path, local_project)

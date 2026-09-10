@@ -188,10 +188,14 @@ def _prepend_filter(layer: VLDict, expr: str) -> None:
     A ``transform`` array on a VL sublayer is not free: ``features/
     zero_value_label.py`` records a reproduced vl-convert defect where one
     makes the shared categorical axis discard its ``sort`` and fall back to
-    alphabetical. Band anchoring is safe from it, but only incidentally — the
-    overlay path's own filters trip ``any_label_transform``, which pins an
-    already-sorted domain, and a base line/area never emits ``x.sort`` at all.
-    A future position that needs a filter here must re-check that.
+    alphabetical. Band anchoring survives it because the order is not carried
+    by ``sort`` alone: the overlay path pins an already-sorted domain on every
+    layered categorical x (``_reconcile_x_domain``, ``emitters/_overlay.py``),
+    and an unlayered sorted line/area pins its own (``pin_sorted_x_domain``,
+    ``emitters/_cartesian.py``) — a discarded ``sort`` cannot undo an explicit
+    domain (``test_value_labels_keep_a_sorted_x_axis``). The bar segment-label
+    path hoists its transforms out instead (``_hoist_sort_field_calculate``
+    below). A future position that needs a filter here must re-check that.
 
     Not ``.get("transform", [])`` — the type-state gate
     (``scripts/type_state_counter.py``) counts a 2-arg
@@ -497,7 +501,7 @@ def _build_bar_text_layer(
             # The bar's own offset, not a hardcoded "zero": `normalize` lays the
             # bars out on a pinned [0, 1] domain and `center` straddles the
             # baseline, so stacking the labels from zero puts them off-axis or
-            # inside the neighbouring segment.
+            # inside the neighboring segment.
             "offset": stack_offset,
             "as": [start_field, end_field],
         }

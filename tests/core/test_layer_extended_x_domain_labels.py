@@ -182,10 +182,10 @@ def test_cadence_thins_to_openers_across_the_whole_union_domain() -> None:
 
     A label time unit coarser than the encoding grain filters the tick values
     to that period's calendar openers (``label_opener_values``). With months
-    encoded and years labelled, that is one tick per January. Those openers
+    encoded and years labeled, that is one tick per January. Those openers
     must be picked out of the union domain: the base stops in 2024, so a
     base-derived list yields two openers and the overlay's 2025/2026 stretch
-    goes unlabelled.
+    goes unlabeled.
 
     (Width-driven visibility thinning is a different mechanism — it blanks
     labels through ``labelExpr`` and deliberately leaves the tick values at
@@ -332,7 +332,7 @@ def test_heterogeneous_base_column_does_not_crash_when_a_layer_is_added() -> Non
     assert vl["encoding"]["x"]["field"] == "bucket"
 
 
-def test_vocabulary_gate_recognises_timezone_aware_calendar_columns() -> None:
+def test_vocabulary_gate_recognizes_timezone_aware_calendar_columns() -> None:
     """The gate decides whether a layer's column may widen the tick domain.
 
     A timezone-aware x column normalizes to an offset-suffixed ISO string, a

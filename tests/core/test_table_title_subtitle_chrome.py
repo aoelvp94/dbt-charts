@@ -3,7 +3,7 @@
 Every chart family except table draws its title/subtitle through Vega-Lite's own
 title component, styled from ``style.title`` (``ResolvedChartsStyle.title``).
 Table draws its title block by hand in ``render/chart/table.py`` and, until this
-fix, read a second, table-only copy of the subtitle font size/colour instead of
+fix, read a second, table-only copy of the subtitle font size/color instead of
 the same ``style.title.subtitle`` the chart families use.
 
 These tests run the full ``compile()`` → ``render()`` pipeline and assert on the
@@ -470,7 +470,7 @@ def test_chrome_matches_per_tile_width_not_board_width(
 
     This is the card-grid case — a wide tile and a narrow tile on the same
     board resolve to different title sizes, and each table has to follow its
-    own neighbour rather than a board-level constant.
+    own neighbor rather than a board-level constant.
     """
     svg = _render_svg(
         _MIXED_WIDTH_GRID.format(theme=theme, query=_VALUES_QUERY), local_project

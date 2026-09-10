@@ -4,11 +4,38 @@ compile from the composed PyYAML node tree (not the old regex line-finder).
 
 from __future__ import annotations
 
-from dbt_charts.core.compile.parse.source_map import LiteralBlock
+import yaml
+
+from dbt_charts.core.compile.parse.source_map import (
+    LiteralBlock,
+    build_source_index,
+    build_source_index_from_node,
+)
 from dbt_charts.core.diagnostics.diagnostic import ColumnSpan, Diagnostic, SourceRange
 
 
 class TestSourceMap:
+    def test_the_node_form_is_what_the_string_form_builds(self) -> None:
+        """A caller that already composed the board (the design target) hands
+        the node over instead of paying a second scan, and gets the same index."""
+        yaml_content = "\n".join(
+            [
+                "title: t",
+                "queries:",
+                "  q: |",
+                "    select 1",
+                "charts:",
+                "  c1: {type: line, query: q}",
+                "rows:",
+                "  - c1",
+            ]
+        )
+        node = yaml.compose(yaml_content, Loader=yaml.SafeLoader)
+        assert node is not None
+        assert build_source_index_from_node(
+            node, yaml_content, "f.yaml"
+        ) == build_source_index(yaml_content, "f.yaml")
+
     def test_top_level_scalar_key_resolves_to_its_line_and_columns(self) -> None:
         from dbt_charts.core.compile.parse.source_map import build_source_index
 
@@ -829,7 +856,7 @@ class TestStampDiagnosticsCollapsesContainerRanges:
         assert d.range == source_map["queries.q1.sql"]
         assert d.range.end_line > d.range.start_line
 
-    def test_omitting_container_paths_preserves_the_old_behaviour(self) -> None:
+    def test_omitting_container_paths_preserves_the_old_behavior(self) -> None:
         from dbt_charts.core.compile.parse.source_map import stamp_diagnostics
         from dbt_charts.core.diagnostics.codes_compile import WARN_UNREFERENCED_CHART
 

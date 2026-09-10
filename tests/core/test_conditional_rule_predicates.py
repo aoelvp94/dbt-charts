@@ -606,7 +606,7 @@ class TestMatchPredicateCsvStringCoercion:
 
     def test_inf_and_nan_strings_never_match_numeric_predicates(self) -> None:
         # Guards the isfinite filter in coerce_numeric_cell: "inf"/"nan" must
-        # not route around the fix and re-enable the domain-poisoning behaviour.
+        # not route around the fix and re-enable the domain-poisoning behavior.
         from dbt_charts.core.compile.models.chart.authored import (
             ConditionalRule,
             match_predicate,

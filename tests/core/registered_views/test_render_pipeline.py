@@ -7,7 +7,7 @@ Covers the extracted render_registered_view function:
 - Links in rendered HTML carry the url_prefix when link_context is supplied.
 
 These tests drive through the real registered-view expansion pipeline using a
-DuckDB source. They confirm the same behaviour as the serve integration tests
+DuckDB source. They confirm the same behavior as the serve integration tests
 but at the core-API level — no HTTP layer involved.
 """
 

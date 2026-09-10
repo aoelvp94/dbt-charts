@@ -77,7 +77,7 @@ def has_literal_escaped_newlines(sql: str, *, dialect: str | None) -> bool:
     Args:
         sql: Raw SQL string after YAML parsing.
         dialect: dbt charts dialect name (e.g. "duckdb", "sqlserver"), or None for the default.
-            Normalised to the sqlglot equivalent via sqlglot_dialect().
+            Normalized to the sqlglot equivalent via sqlglot_dialect().
 
     Returns:
         True if the literal-\\n authoring error is detected, False otherwise.

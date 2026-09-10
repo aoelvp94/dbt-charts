@@ -29,7 +29,7 @@ def validate_suppression_codes(
     lookup — it silently suppresses no warnings, and the author believes the
     warning is off. Call this at every point suppression codes come in from
     YAML (per-chart ``warnings_ignore:``, project ``dbt_charts.yml
-    warnings.ignore``, per-query ``ignore:``, meta.yaml ``lint.ignore`` /
+    warnings.ignore``, per-query ``ignore:``, meta.yml ``lint.ignore`` /
     ``lint.ignore_queries``) so the typo is a loud compile error instead.
 
     ``forbid_domains`` catches a second, quieter trap (FR-79): a code that is

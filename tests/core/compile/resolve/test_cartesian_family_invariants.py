@@ -182,7 +182,7 @@ def _family_params(exemptions: dict[str, str]) -> list[Any]:
 
 
 # month/month_index: dimension, usable as either family's x. category: a second
-# nominal field so heatmap's y differs from its x. series: the colour channel
+# nominal field so heatmap's y differs from its x. series: the color channel
 # (bare field name -> mode="series", never a gradient). facet: the multiples
 # partition, kept distinct from every other role so no family double-purposes
 # a column between its own axes and the panel split.
@@ -222,13 +222,13 @@ _SERIES_DATA: list[dict[str, Any]] = [
 ]
 
 
-class TestMultiplesWithColourSeriesGetsTopLegend:
-    """Invariant 1: multiples + a colour series -> resolved legend is top and visible."""
+class TestMultiplesWithColorSeriesGetsTopLegend:
+    """Invariant 1: multiples + a color series -> resolved legend is top and visible."""
 
     @pytest.mark.parametrize(
         "family", _family_params({"histogram": _HISTOGRAM_NO_SERIES_LEGEND})
     )
-    def test_multiples_with_colour_series_gets_top_legend(self, family: str) -> None:
+    def test_multiples_with_color_series_gets_top_legend(self, family: str) -> None:
         # stack="zero" for bar: at the theme default stack="none", bar's own
         # unconditional (non-stacked) top-legend trigger short-circuits the
         # "row" branch in _axes.py before _multiples_wants_top_legend is ever
@@ -243,11 +243,11 @@ class TestMultiplesWithColourSeriesGetsTopLegend:
         )
         resolved = resolve(chart, _SERIES_DATA, _board())
         assert resolved.legend.position == "top", (
-            f"{family}: faceted colour-series chart did not get a top legend "
+            f"{family}: faceted color-series chart did not get a top legend "
             f"(position={resolved.legend.position!r})"
         )
         assert resolved.legend.visible is True, (
-            f"{family}: faceted colour-series chart's top legend is not visible"
+            f"{family}: faceted color-series chart's top legend is not visible"
         )
 
 
@@ -364,7 +364,7 @@ class TestLogMeasureAxisWithNonPositiveDataRaises:
 
 def _assert_compact_top_legend(resolved: ResolvedChart, family: str) -> None:
     assert resolved.legend.position == "top", (
-        f"{family}: tiny-width colour-series chart did not fall back to a top "
+        f"{family}: tiny-width color-series chart did not fall back to a top "
         f"legend (position={resolved.legend.position!r})"
     )
     assert resolved.legend.columns != 0, (
@@ -376,7 +376,7 @@ def _assert_compact_top_legend(resolved: ResolvedChart, family: str) -> None:
     # "no rail" is their whole story, there is nothing to fall back from.
     if isinstance(resolved, ResolvedBarChart | ResolvedLineChart | ResolvedAreaChart):
         assert resolved.style.endpoint_labels.visible is False, (
-            f"{family}: tiny-width colour-series chart kept the endpoint-label "
+            f"{family}: tiny-width color-series chart kept the endpoint-label "
             f"rail instead of falling back to the compact top legend"
         )
 
@@ -466,7 +466,7 @@ class TestAuthoredLegendPositionSurvivesTopLegendRoutes:
         )
         resolved = resolve(chart, _SERIES_DATA, _board())
         assert resolved.legend.position == "bottom", (
-            f"{family}: multiples + colour series overrode the authored legend "
+            f"{family}: multiples + color series overrode the authored legend "
             f"position (position={resolved.legend.position!r})"
         )
         assert resolved.legend.visible is True
@@ -489,7 +489,7 @@ class TestAuthoredLegendPositionSurvivesTopLegendRoutes:
                 ),
                 "heatmap": (
                     "HeatmapChart carries no `layers` field at all, and its "
-                    "colour channel is always a gradient legend -- a different "
+                    "color channel is always a gradient legend -- a different "
                     "shape the top-legend fit rule does not apply to."
                 ),
                 "histogram": _HISTOGRAM_NO_SERIES_LEGEND,
@@ -684,7 +684,7 @@ class TestTopLegendFitRule:
         )
         assert resolved.legend.visible is True, (
             f"{family}: a chart whose legend fell back to the right-hand "
-            f"position is not visible -- its layer/colour series is now "
+            f"position is not visible -- its layer/color series is now "
             f"named nowhere"
         )
 
@@ -737,17 +737,17 @@ class TestTopLegendFitRule:
 
     def test_bare_scatter_is_unchanged(self) -> None:
         """RJ's standing constraint: a bare (unlayered) scatter with a
-        categorical colour legend keeps its right-hand vertical legend --
+        categorical color legend keeps its right-hand vertical legend --
         this policy must never touch that case."""
         chart = _scatter(color="series")
         resolved = resolve(chart, _SERIES_DATA, _board(), width=_FIT_WIDTH)
         assert resolved.legend.position == "right"
         assert resolved.legend.direction == "vertical"
 
-    def test_bar_grouped_by_a_real_colour_field_also_respects_fit(self) -> None:
+    def test_bar_grouped_by_a_real_color_field_also_respects_fit(self) -> None:
         """Bar's own long-standing unconditional (non-stacked) trigger now
         goes through the same fit check as the layered case, using the
-        chart's real, executed colour-domain values (not a guess) --
+        chart's real, executed color-domain values (not a guess) --
         previously this route ignored width entirely. At the narrow width,
         the 5-entry row overflows but wraps within the row budget (rung 2 of
         the fallback ladder, RJ 2026-08-27), so it stays top rather than
@@ -765,7 +765,7 @@ class TestTopLegendFitRule:
         chart = _bar(color="region")
         wide = resolve(chart, long_domain_data, _board(), width=900.0)
         assert wide.legend.position == "top", (
-            f"a grouped bar whose real colour-domain legend row fits the "
+            f"a grouped bar whose real color-domain legend row fits the "
             f"card did not get a top legend (position={wide.legend.position!r})"
         )
         assert wide.legend.columns == 0, (
@@ -775,7 +775,7 @@ class TestTopLegendFitRule:
         )
         narrow = resolve(chart, long_domain_data, _board(), width=_OVERFLOW_WIDTH)
         assert narrow.legend.position == "top", (
-            f"a grouped bar whose real colour-domain legend row overflows "
+            f"a grouped bar whose real color-domain legend row overflows "
             f"but whose wrapped legend fits the row budget did not stay top "
             f"(position={narrow.legend.position!r})"
         )
@@ -785,7 +785,7 @@ class TestTopLegendFitRule:
         )
 
     @pytest.mark.parametrize("family", ["area", "line"])
-    def test_layered_chart_with_real_colour_domain_also_respects_fit(
+    def test_layered_chart_with_real_color_domain_also_respects_fit(
         self, family: str
     ) -> None:
         """Line and area used to hardcode color_domain_values=() even when
@@ -794,7 +794,7 @@ class TestTopLegendFitRule:
         this exact combination ("bar and area") as in scope. 900px is chosen
         so the old, domain-blind measurement (base + layer label only) says
         the row fits, while the real 5-region domain the base actually
-        colours by does not -- the width where the bug silently overflowed a
+        colors by does not -- the width where the bug silently overflowed a
         top legend it should have fallen back from. The 6-entry wrapped
         legend still fits the row budget (rung 2, RJ 2026-08-27), so it
         stays top rather than falling all the way to the right."""
@@ -812,24 +812,24 @@ class TestTopLegendFitRule:
         chart = _layered_chart(family, color="region")
         wide = resolve(chart, color_layer_data, _board(), width=1200.0)
         assert wide.legend.position == "top", (
-            f"{family}: a layered, coloured chart whose real colour-domain "
+            f"{family}: a layered, colored chart whose real color-domain "
             f"legend row fits the card did not get a top legend "
             f"(position={wide.legend.position!r})"
         )
         assert wide.legend.columns == 0, (
-            f"{family}: a layered, coloured chart whose legend row fits the "
+            f"{family}: a layered, colored chart whose legend row fits the "
             f"card landed on rung 2 (wrapped, compact-columns) instead of "
             f"rung 1 (columns={wide.legend.columns!r})"
         )
         narrow = resolve(chart, color_layer_data, _board(), width=900.0)
         assert narrow.legend.position == "top", (
-            f"{family}: a layered, coloured chart whose real colour-domain "
+            f"{family}: a layered, colored chart whose real color-domain "
             f"legend row overflows but whose wrapped legend fits the row "
             f"budget did not stay top (position={narrow.legend.position!r}) "
-            f"-- the fit rule is inert for coloured line/area charts"
+            f"-- the fit rule is inert for colored line/area charts"
         )
         assert narrow.legend.columns != 0, (
-            f"{family}: a layered, coloured chart whose legend wrapped to "
+            f"{family}: a layered, colored chart whose legend wrapped to "
             f"the top is not in compact-columns layout"
         )
 
@@ -891,7 +891,7 @@ class TestTopLegendFitRule:
         )
         resolved_horizontal = resolve(horizontal, data, _board(), width=width)
         assert resolved_horizontal.legend.position == "top", (
-            f"a horizontal bar's coloured legend row did not land top at all "
+            f"a horizontal bar's colored legend row did not land top at all "
             f"(position={resolved_horizontal.legend.position!r})"
         )
         assert resolved_horizontal.legend.columns != 0, (
@@ -906,11 +906,11 @@ class TestTopLegendFitRule:
         )
         resolved_vertical = resolve(vertical, data, _board(), width=width)
         assert resolved_vertical.legend.position == "top", (
-            f"a vertical bar's coloured legend row did not land top at all "
+            f"a vertical bar's colored legend row did not land top at all "
             f"(position={resolved_vertical.legend.position!r})"
         )
         assert resolved_vertical.legend.columns == 0, (
-            "a vertical bar's coloured legend row -- whose measure axis "
+            "a vertical bar's colored legend row -- whose measure axis "
             "defaults to the right, reserving nothing real on the left -- "
             "was wrongly wrapped at the identical width and entries as the "
             "horizontal case; the reserve must be gated on orientation, not "
@@ -918,11 +918,11 @@ class TestTopLegendFitRule:
         )
 
     @pytest.mark.parametrize("family", ["bar", "line", "area"])
-    def test_gradient_coloured_chart_never_routes_to_top(self, family: str) -> None:
-        """A gradient colour channel (chart.style.color.gradient, authorable
+    def test_gradient_colored_chart_never_routes_to_top(self, family: str) -> None:
+        """A gradient color channel (chart.style.color.gradient, authorable
         on bar/line/area alike via the shared ``ColorStyle``) is a continuous
         ramp, not a row of discrete series -- it must never drive this
-        ladder, the same way heatmap.py's own always-gradient colour channel
+        ladder, the same way heatmap.py's own always-gradient color channel
         never does. Scoped to widths above the tiny tier: below _TINY_MAX
         (352.5px) ``tiny_top_legend`` short-circuits ahead of both rungs and
         a gradient chart does still land top, which is deliberate
@@ -943,7 +943,7 @@ class TestTopLegendFitRule:
         Also asserts ``visible`` at every width -- the earlier gradient fix
         reassigned ``top_legend_series`` to ``None`` to keep it off the
         ladder, which also killed ``wants_top_legend_shape``'s "this shape
-        has entries to name" signal, silencing a gradient-coloured line/area
+        has entries to name" signal, silencing a gradient-colored line/area
         legend entirely on editorial (which hides line/area legends by
         default). The fix must exclude the gradient from the two rungs that
         measure rows without touching that signal, and this is the
@@ -973,7 +973,7 @@ class TestTopLegendFitRule:
             for width, resolved in resolved_by_width.items()
         }
         assert set(positions.values()) == {"right"}, (
-            f"{family}: a gradient-coloured chart's legend placement must "
+            f"{family}: a gradient-colored chart's legend placement must "
             f"not vary across the widths above the tiny tier -- got "
             f"{positions!r}. Below _TINY_MAX (352.5px) `tiny_top_legend` "
             f"short-circuits ahead of both rungs and a gradient chart still "
@@ -982,7 +982,7 @@ class TestTopLegendFitRule:
         )
         for width, resolved in resolved_by_width.items():
             assert resolved.legend.visible is True, (
-                f"{family}: a gradient-coloured, layered chart's legend is "
-                f"not visible at width={width} -- its layer/colour series is "
+                f"{family}: a gradient-colored, layered chart's legend is "
+                f"not visible at width={width} -- its layer/color series is "
                 f"now named nowhere"
             )

@@ -57,3 +57,11 @@ def test_project_read_yaml_rejects_duplicate_key(
     project = local_project(tmp_path)
     with pytest.raises(yaml.YAMLError, match="duplicate key"):
         project.read_yaml("charts/bad.yaml")
+
+
+@pytest.mark.parametrize(
+    "document", ["", "# only a comment\n", "null\n", "~\n", "---\n"]
+)
+def test_a_document_with_no_content_is_reported_as_empty(document: str) -> None:
+    with pytest.raises(ParseError, match="Empty YAML document"):
+        load_yaml_mapping(document)

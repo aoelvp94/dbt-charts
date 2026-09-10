@@ -201,7 +201,7 @@ def test_wide_rail_thins_labels_the_card_width_alone_would_not(
     covered two of the five.
 
     The ``-wide`` shapes matter on their own: a list ``y:`` gets a synthetic
-    series-colour channel injected unconditionally (``_wide_fields.py``), so
+    series-color channel injected unconditionally (``_wide_fields.py``), so
     it carries an endpoint-label rail with no authored opt-in at all, and the
     theme switches the rail on by default regardless.
 
@@ -253,7 +253,7 @@ def _strip_text_layers(spec: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def test_endpoint_rail_and_support_table_strip_agree_on_visible_labels() -> None:
-    """A ``support_table`` strip attached to an endpoint-labelled chart must
+    """A ``support_table`` strip attached to an endpoint-labeled chart must
     mirror the axis's own label-period thinning, not the card's full width.
 
     ``_label_period_filter_expr`` (support_table_attachment.py) reads

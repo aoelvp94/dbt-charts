@@ -276,7 +276,7 @@ def test_explicit_domain_first_override() -> None:
 
 
 def test_invalid_mode_raises_not_silently_falls_back() -> None:
-    """An unrecognised mode string must raise, not silently become 'hybrid'.
+    """An unrecognized mode string must raise, not silently become 'hybrid'.
 
     Regression: the original type-narrowing rewrite coerced any unknown string
     to 'hybrid'; validate-and-error-fast requires an explicit ValueError instead.

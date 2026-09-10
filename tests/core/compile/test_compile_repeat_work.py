@@ -161,12 +161,12 @@ class TestBoardCascadeIsMemoizedPerCompile:
             under_root = compile_board_resolved_style(
                 patch, root_resolved, root_context
             )
-            recoloured_patch = StylePatch.model_validate({"muted": "#123456"})
-            under_recoloured = compile_board_resolved_style(
-                patch, root_resolved, root_context, recoloured_patch
+            recolored_patch = StylePatch.model_validate({"muted": "#123456"})
+            under_recolored = compile_board_resolved_style(
+                patch, root_resolved, root_context, recolored_patch
             )
 
-        assert under_root[0].muted != under_recoloured[0].muted
+        assert under_root[0].muted != under_recolored[0].muted
 
     def test_a_non_finite_value_is_not_confused_with_an_unset_one(self) -> None:
         """A cache key must not lose information the merge still acts on.

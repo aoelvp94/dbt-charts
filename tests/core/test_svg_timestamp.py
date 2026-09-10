@@ -9,7 +9,8 @@ from datetime import datetime
 from xml.etree import ElementTree
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.config import get_chart_rendering, get_theme_style
+from dbt_charts.core.font_measure import get_font_measurer
 
 from ._svg_render import render_board_to_svg as _render_svg
 
@@ -34,6 +35,32 @@ def _footer_text_element(svg: str) -> ElementTree.Element:
     ]
     assert matches
     return matches[-1]
+
+
+def _footer_prefix_element(svg: str) -> ElementTree.Element:
+    """The leftmost painted run on the footer's own baseline.
+
+    Scoped to the footer's ``y`` — the attribution is several runs now, and the
+    leftmost <text> on the page is a chart label, not the footer.
+    """
+    root = ElementTree.fromstring(svg)
+    baseline = _footer_text_element(svg).attrib["y"]
+    runs = [
+        el
+        for el in root.iter("{http://www.w3.org/2000/svg}text")
+        if el.attrib.get("data-role") != "render-timestamp"
+        and el.text
+        and el.attrib.get("y") == baseline
+    ]
+    assert runs, "no footer run found on the attribution baseline"
+    return min(runs, key=lambda el: float(el.attrib["x"]))
+
+
+def _text_width(element: ElementTree.Element) -> float:
+    """Painted width of a right-anchored run, at its own emitted size."""
+    return get_font_measurer(element.attrib.get("font-family")).measure(
+        element.text or "", float(element.attrib["font-size"])
+    )
 
 
 class TestSVGRenderTimestamp:
@@ -320,13 +347,8 @@ style:
         from pathlib import Path
 
         from dbt_charts.core.compile import compile
-        from dbt_charts.core.compile.config import (
-            get_chart_rendering,
-            get_default_theme_name,
-        )
         from dbt_charts.core.execute import Executor
         from dbt_charts.core.execute.adapters import build_adapter_registry
-        from dbt_charts.core.font_measure import get_font_measurer
         from dbt_charts.core.render import render
 
         result = compile(yaml)
@@ -341,24 +363,28 @@ style:
         )
         assert isinstance(rendered.output, str)
         timestamp = _render_timestamp_element(rendered.output)
-        # The footer's last <text> is the run before the wordmark ("made with");
-        # the timestamp must end the configured gap before that run's left edge.
         footer = _footer_text_element(rendered.output)
-        footer_style = get_theme_style(get_default_theme_name()).footer
-        assert footer_style.font.size is not None
-        assert footer.text
-        prefix_width = get_font_measurer().measure(
-            footer.text,
-            float(footer_style.font.size),
-        )
+        prefix = _footer_prefix_element(rendered.output)
 
+        # Asserted against the leftmost *painted* run, not against a re-derived
+        # copy of the production width expression: a test that recomputes the
+        # formula moves with it and can never catch it drifting.
         assert timestamp.attrib["y"] == footer.attrib["y"]
         assert timestamp.attrib["text-anchor"] == "end"
-        assert float(timestamp.attrib["x"]) <= (
-            float(footer.attrib["x"])
-            - prefix_width
-            - get_chart_rendering().frame.footer_timestamp_gap_px
-        )
+
+        # The gap the config asks for is the gap that gets painted. Asserting
+        # only "left of the prefix" would pass with any shortfall — the brand
+        # run is painted heavier than the rest, so a width re-derived at the
+        # regular weight lands short (1.41px at the shipped size) and silently
+        # narrows this.
+        #
+        # Tolerance is half a pixel because the run's x is snapped to whole
+        # pixels (svg_utils.px) while the timestamp is placed from the
+        # unsnapped width; anything wider than that is a real drift, and the
+        # regression this guards is nearly 3x the tolerance.
+        left_edge = float(prefix.attrib["x"]) - _text_width(prefix)
+        gap = get_chart_rendering().frame.footer_timestamp_gap_px
+        assert abs(left_edge - float(timestamp.attrib["x"]) - gap) <= 0.5
 
     def test_svg_timestamp_footer_right_flushes_when_footer_hidden(
         self, local_project: Callable[..., FilesystemProject]

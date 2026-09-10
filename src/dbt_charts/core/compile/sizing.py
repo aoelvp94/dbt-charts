@@ -230,7 +230,7 @@ def measure_preferred_layout_width(
 def board_container_width(board: Board) -> float:
     """Final board container width: ``frame.width`` exactly, else the hug.
 
-    ``width`` set anywhere in the cascade (board, extends template, meta.yaml
+    ``width`` set anywhere in the cascade (board, extends template, meta.yml
     — root ``width:`` sugar lands in the same slot) is the board's exact
     width; the layout distributes it. Without one, the board hugs whatever
     its charts prefer, bounded by ``frame.max_width``, so a lone KPI does not
@@ -306,7 +306,7 @@ def rows_item_width(item: LayoutItem, available_width: float) -> float:
 
     An authored ``width:`` — on the layout item or on the chart itself
     (cartesian/pie/geo families, the same authored field
-    ``preferred_chart_width`` reads) — is honoured directly: an absolute
+    ``preferred_chart_width`` reads) — is honored directly: an absolute
     width is a fixed footprint, and a percentage is a fraction of the row,
     the same meaning it has in cols. Percentages are excluded from the
     content-hug measurement (see ``measure_preferred_layout_width``) so the

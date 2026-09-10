@@ -10,7 +10,7 @@ LayoutType for board layout variants.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from pydantic import (
     BaseModel,
@@ -19,6 +19,7 @@ from pydantic import (
     Discriminator,
     Field,
     Tag,
+    TypeAdapter,
     field_validator,
     model_validator,
 )
@@ -32,6 +33,7 @@ from dbt_charts.core.compile.models.markers import (
     Extends,
     Markdown,
     Merge,
+    SchemaSugar,
     Strategy,
 )
 from dbt_charts.core.compile.models.primitives import (
@@ -181,7 +183,7 @@ class GridItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     item: Annotated[
-        str | AuthoredBoard | AuthoredChart | dict[str, AuthoredChart],
+        str | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart],
         BeforeValidator(_check_layout_item),
     ] = Field(
         description="Chart name or inline chart/board definition to place in this grid cell."
@@ -256,11 +258,13 @@ class TabItem(BaseModel):
 
     # Layout fields (tab can contain nested layouts)
     rows: Annotated[
-        list[str | AuthoredBoard | AuthoredChart | dict[str, AuthoredChart]] | None,
+        list[str | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart]]
+        | None,
         BeforeValidator(_check_layout_list),
     ] = Field(default=None, description="Vertical stack layout for this tab's content.")
     cols: Annotated[
-        list[str | AuthoredBoard | AuthoredChart | dict[str, AuthoredChart]] | None,
+        list[str | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart]]
+        | None,
         BeforeValidator(_check_layout_list),
     ] = Field(default=None, description="Horizontal layout for this tab's content.")
     grid: GridLayout | None = Field(
@@ -342,23 +346,21 @@ def _coerce_details(v: Any) -> Any:
     return v
 
 
-class _BoardDesugarMixin(BaseModel):
-    """Shared authoring-input mixin: desugar ``theme:``.
+def desugar_theme(
+    data: Any,  # type-state: explicit_any — mode="before" validator input; raw YAML value
+) -> Any:  # type-state: explicit_any — passthrough of the same boundary value
+    """Desugar ``theme: X`` → ``extends: X`` (single-write: theme removed).
 
-    Inherited by both ``AuthoredBoard`` and ``BoardPatch`` so that meta files and
-    extends fragments (validated as ``BoardPatch`` by the merge engine) accept the
-    exact same authored input the canonical model does. Every desugaring
-    validator that turns valid authored YAML into the model's field shape belongs
-    here — not on ``AuthoredBoard`` alone — because ``build_patch_model_ext`` only
-    carries over validators that live on the patch model's base class.
+    ``theme:`` is authoring sugar for ``extends:``. Having both is an error.
 
-    Query-shorthand normalization (``queries: {q: "SELECT ..."}``) is NOT here:
-    it lives on ``QueryOrRef``'s own ``BeforeValidator`` (`normalize_query_value`,
-    above), which `build_patch_model_ext` forwards to ``BoardPatch`` for free by
-    copying the field's annotation — no mixin needed for a per-field coercion.
+    Sugar at *parse* time, which is downstream of schema migration — so
+    ``theme:`` is a key the migration recognizer sees like any other, not a
+    spelling of ``extends:`` that it can look through.
 
-    Single-write: ``_desugar_theme`` strips ``theme`` and sets ``extends``.
-    ``AuthoredBoard`` does NOT override ``_desugar_theme``.
+    Declared on the model's own ``Annotated`` input wrapper (``AuthoredBoardInput``,
+    below; ``BoardPatchInput`` in ``patch.py``). Both wrappers share this one
+    function so the two input surfaces (a whole board, a board fragment) can
+    never desugar ``theme:`` differently.
 
     Note: ``normalized.Board`` still carries a ``theme`` field + ``set_theme``
     method — a live parallel theme-name channel that re-cascades
@@ -367,37 +369,23 @@ class _BoardDesugarMixin(BaseModel):
     Phase-3 cutover to ``resolve_board`` deletes the ``theme`` field, folding it
     into the single ``extends`` path.
     """
-
-    model_config = ConfigDict(extra="forbid")
-
-    @model_validator(mode="before")
-    @classmethod
-    def _desugar_theme(cls, data: Any) -> Any:
-        """Desugar ``theme: X`` → ``extends: X`` (single-write: theme removed).
-
-        ``theme:`` is authoring sugar for ``extends:``. Having both is an error.
-
-        Sugar at *parse* time, which is downstream of schema migration — so
-        ``theme:`` is a key the migration recognizer sees like any other, not a
-        spelling of ``extends:`` that it can look through.
-        """
-        if not isinstance(data, dict) or "theme" not in data:
-            return data
-        theme_val = data.get("theme")
-        extends_val = data.get("extends")
-        if extends_val is not None and theme_val is not None:
-            raise ValueError(
-                "Cannot specify both 'theme:' and 'extends:'. "
-                "'theme:' is sugar for 'extends:' — use one or the other."
-            )
-        data = dict(data)
-        if theme_val is not None:
-            data["extends"] = theme_val
-        del data["theme"]  # always strip theme: (even null — it is not a field)
+    if not isinstance(data, dict) or "theme" not in data:
         return data
+    theme_val = data.get("theme")
+    extends_val = data.get("extends")
+    if extends_val is not None and theme_val is not None:
+        raise ValueError(
+            "Cannot specify both 'theme:' and 'extends:'. "
+            "'theme:' is sugar for 'extends:'; use one or the other."
+        )
+    data = dict(data)
+    if theme_val is not None:
+        data["extends"] = theme_val
+    del data["theme"]  # always strip theme: (even null — it is not a field)
+    return data
 
 
-class AuthoredBoard(_BoardDesugarMixin):
+class AuthoredBoard(BaseModel):
     """AuthoredBoard definition from YAML.
 
     This is the top-level input type representing a complete board.
@@ -436,7 +424,7 @@ class AuthoredBoard(_BoardDesugarMixin):
 
     Source:
         Optional source shorthand: ``source: my_db`` sets the default connection
-        for all queries. Inheritable via meta.yaml cascade.
+        for all queries. Inheritable via meta.yml cascade.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -497,13 +485,13 @@ class AuthoredBoard(_BoardDesugarMixin):
         ),
     )
 
-    # Default source name for all queries; inheritable via meta.yaml cascade.
+    # Default source name for all queries; inheritable via meta.yml cascade.
     source: Annotated[
         str | None,
         Merge(Strategy.OVERRIDE),
     ] = Field(
         default=None,
-        description="Default source name for all queries in this board. Inheritable via meta.yaml cascade.",
+        description="Default source name for all queries in this board. Inheritable via meta.yml cascade.",
     )
 
     # The dashboard's own cache layer, between source and query in the cascade:
@@ -513,7 +501,7 @@ class AuthoredBoard(_BoardDesugarMixin):
     # of the same thing (cascade placeholder, per models/AGENTS.md).
     #
     # No Merge marker: DEEP by type inference, matching `merge_cache_layers`
-    # field-for-field. Overriding the meta.yaml block whole would make
+    # field-for-field. Overriding the meta.yml block whole would make
     # `cache: true` — the one spelling that sets nothing but the switch — drop
     # the directory's ttl for the project root's.
     cache: CachePatch = Field(
@@ -521,7 +509,7 @@ class AuthoredBoard(_BoardDesugarMixin):
         description=(
             "Cache policy for every query in this dashboard, e.g. cache: 1h: "
             "queries inherit it and may refine it; cache: false opts the whole "
-            "dashboard out. Inheritable via the meta.yaml cascade."
+            "dashboard out. Inheritable via the meta.yml cascade."
         ),
     )
     incremental: Annotated[IncrementalValue, Merge(Strategy.OVERRIDE)] = Field(
@@ -561,7 +549,8 @@ class AuthoredBoard(_BoardDesugarMixin):
 
     # Layout (exactly one should be present)
     rows: Annotated[
-        list[str | AuthoredBoard | AuthoredChart | dict[str, AuthoredChart]] | None,
+        list[str | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart]]
+        | None,
         BeforeValidator(_check_layout_list),
         Merge(Strategy.APPEND, nested=Strategy.CHILD),
         Content(),
@@ -570,7 +559,8 @@ class AuthoredBoard(_BoardDesugarMixin):
         description="Vertical stack layout: list of chart names or inline chart/board definitions.",
     )
     cols: Annotated[
-        list[str | AuthoredBoard | AuthoredChart | dict[str, AuthoredChart]] | None,
+        list[str | AuthoredBoardInput | AuthoredChart | dict[str, AuthoredChart]]
+        | None,
         BeforeValidator(_check_layout_list),
         Merge(Strategy.APPEND, nested=Strategy.CHILD),
         Content(),
@@ -624,7 +614,7 @@ class AuthoredBoard(_BoardDesugarMixin):
     )
     style: Annotated[StylePatch | None, Merge(Strategy.DEEP)] = Field(
         default=None,
-        description="Appearance overrides for this board (background, border, and more). Most fields this board or an ancestor board explicitly authors cascade to nested child boards. Per-board fields (frame, layout, gap, margin, padding, color): a nested board that authors any style of its own resolves these against its own theme, never an ancestor's. Root-board-only fields (page, footer, timestamp): a nested board never draws its own page canvas, footer, or timestamp line, so these never reach it either.",
+        description="Appearance overrides for this board (background, border, and more). Most fields this board or an ancestor board explicitly authors cascade to nested child boards. Per-board fields (frame, layout, gap, margin, padding): a nested board that authors any style of its own resolves these against its own theme, never an ancestor's. Root-board-only fields (footer, timestamp): a nested board never draws its own footer or timestamp line, so these never reach it either.",
     )
     width: Annotated[str | int | None, Merge(Strategy.OVERRIDE)] = Field(
         default=None,
@@ -732,6 +722,32 @@ class AuthoredBoard(_BoardDesugarMixin):
     def get_default_source(self) -> str | None:
         """Return the default source name, or None."""
         return self.source
+
+
+# The authoring-input entry point for AuthoredBoard: desugars theme: -> extends:
+# ahead of validation and declares the sugar key's shape for schema
+# introspection (SchemaSugar; see its docstring in markers.py). Must be defined
+# here -- after the AuthoredBoard class body, before its model_rebuild() call
+# below -- rather than near the VariableOrRef/QueryOrRef/ChartOrRef block
+# earlier in this file: `AuthoredBoardInput = Annotated[AuthoredBoard, ...]` is
+# a runtime name lookup (unlike those aliases, which wrap types already
+# defined), so it would NameError if written before `class AuthoredBoard`
+# exists. The 5 recursive field annotations above (GridItem.item,
+# TabItem.rows/cols, AuthoredBoard.rows/cols) reference AuthoredBoardInput
+# even though they're written earlier in the file -- `from __future__ import
+# annotations` makes them lazy strings, resolved only when model_rebuild()
+# runs, by which point this name exists.
+AuthoredBoardInput = Annotated[
+    AuthoredBoard,
+    BeforeValidator(desugar_theme),
+    SchemaSugar(
+        name="theme",
+        type_repr="str",
+        enum_values=tuple(sorted(get_args(ThemeName))),
+        description="Built-in theme name; shorthand for `extends: <name>`.",
+    ),
+]
+AUTHORED_BOARD_ADAPTER: TypeAdapter[AuthoredBoard] = TypeAdapter(AuthoredBoardInput)
 
 
 # Resolve forward references (GridItem.item and TabItem.rows/cols reference types

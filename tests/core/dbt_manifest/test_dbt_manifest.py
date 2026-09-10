@@ -2,7 +2,7 @@
 
 Covers: candidate order, file_version-keyed memo (hit / invalidation / FIFO
 eviction), the unreadable-manifest error paths, manifests that are missing
-dbt-internal top-level keys or carry an unrecognised schema version, nodes
+dbt-internal top-level keys or carry an unrecognized schema version, nodes
 whose shape has drifted, and both real manifest fixtures.
 """
 
@@ -290,13 +290,13 @@ class TestMemo:
 class TestSchemaVersion:
     """The schema version is not gated — the raw-dict read is version-agnostic."""
 
-    def test_unrecognised_schema_version_loads(
+    def test_unrecognized_schema_version_loads(
         self,
         in_memory_project: Callable[..., Project],
         tmp_path: Path,
     ) -> None:
         """A manifest whose version the installed dbt-core would reject still
-        loads: nothing on the runtime path deserialises through dbt's typed
+        loads: nothing on the runtime path deserializes through dbt's typed
         contract, so the version string is metadata we do not read."""
         project = in_memory_project(
             tmp_path, {"target/manifest.json": _FUTURE_VERSION_MANIFEST}

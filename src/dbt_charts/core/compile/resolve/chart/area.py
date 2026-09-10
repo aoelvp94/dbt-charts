@@ -456,7 +456,7 @@ def _resolve_area(
     elif resolved_stack not in (None, "none") and x_field_area and _log_y_fields:
         # Stacked area ladders against the cumulative column total, not the raw
         # per-series range. Without this a chart whose columns sum to 154 labels
-        # an axis that stops at 70, leaving two thirds of the plot unlabelled —
+        # an axis that stops at 70, leaving two thirds of the plot unlabeled —
         # the marks were always right, only the ladder was wrong.
         #
         # Mirrors bar's stacked path; _resolve_stacked_bar_ticks is data-shape

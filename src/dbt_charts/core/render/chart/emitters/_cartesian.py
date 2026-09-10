@@ -85,13 +85,24 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     bake_tick_ladder,
     emit_resolved_scale_vl,
 )
+from dbt_charts.core.render.chart.x_domain import vl_sort_op
+from dbt_charts.core.render.utils import normalize_scalar_for_json
 from dbt_charts.core.text.case import default_axis_title
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_SPECS,
     PredefinedNumberFormat,
 )
-from dbt_charts.core.utils import DEFAULT_VL_LABEL_LIMIT, Rows, numeric_column_values
-from mdsvg.fonts import wrap_text_precise
+from dbt_charts.core.utils import (
+    DEFAULT_VL_LABEL_LIMIT,
+    Rows,
+    numeric_column_values,
+    x_domain_order,
+)
+from mdsvg.fonts import (
+    measure_text_precise,
+    truncate_text_precise,
+    wrap_text_precise,
+)
 
 # dbt charts ChartSort.order ("asc"/"desc") → Vega-Lite sort.order. VL silently
 # falls back to ascending on the raw dbt charts form, so translate at emit (mirrors
@@ -212,6 +223,80 @@ def chart_sort_to_vl(sort: ChartSort | None) -> VLDict | None:
     if sort is None:
         return None
     return {"field": sort.by, "order": _SORT_ORDER_VL[sort.order]}
+
+
+def dimension_sort_to_vl(sort: ChartSort | None) -> VLDict | None:
+    """``chart_sort_to_vl`` for a dimension axis, with VL's aggregate pinned.
+
+    A dimension axis orders its categories by the sort column's own value, so
+    the aggregate over a category's rows is ``min`` — never ``sum``, which is a
+    stacking total rather than the category's value. Pinned rather than left to
+    VL's inference: that default varies with the composed spec (mark, stack,
+    sub-layer split), and ``render/chart/x_domain.py`` has to reproduce the
+    rendered order exactly.
+    """
+    vl_sort = chart_sort_to_vl(sort)
+    return None if vl_sort is None else {**vl_sort, "op": "min"}
+
+
+# The families that build a dimension x through these helpers — narrower than
+# ``ResolvedChart`` (which the facet-narrowing predicate takes) but concrete,
+# where ``_CartesianResolvedChartFields`` is the shared field protocol.
+ResolvedCartesianChart = (
+    ResolvedAreaChart | ResolvedLineChart | ResolvedHeatmapChart | ResolvedBarChart
+)
+
+_CATEGORICAL_X_TYPES = ("nominal", "ordinal")
+
+
+def pin_sorted_x_domain(
+    x_enc: VLDict, data: ChartRenderData, chart: ResolvedCartesianChart
+) -> None:
+    """Pin the authored sort's category order as an explicit ``scale.domain``,
+    in place. No-op on an unsorted or continuous x.
+
+    Vega-Lite applies a field sort AFTER the transforms an emitter puts on the
+    sub-layers: a stacked area's ``impute`` injects a 0 for every series a
+    category is missing, and that injected value becomes the category's
+    aggregate. On a ragged grid — a series starting mid-period, the ordinary
+    case — VL therefore orders by numbers that are not in the query, and no
+    aggregate over the raw rows reproduces it.
+
+    Every read-back consumer trusts ``x_domain.rendered_x_domain`` to say what
+    VL drew (the endpoint rail, band value labels, the overlay reconciler that
+    pins the union). Stating the domain removes the inference from the loop:
+    an explicit domain outranks ``sort`` in Vega-Lite, so VL draws the order
+    ``x_domain_order`` computed, and the prediction is the drawing.
+
+    A small-multiples x resolved per panel is the exception: narrowing trims
+    each panel's scale to its own rows, and one explicit domain applies to
+    every independent scale, so pinning would paint back the empty category
+    slots narrowing exists to remove.
+    """
+    sort = x_enc.get("sort")
+    if not isinstance(sort, dict) or x_enc.get("type") not in _CATEGORICAL_X_TYPES:
+        return
+    field = x_enc.get("field")
+    if not isinstance(field, str):
+        return
+    if chart.multiples is not None and "x" in _domain_subset_narrowing_candidates(
+        chart, chart.multiples, data
+    ):
+        return
+    domain = x_domain_order(
+        data,
+        field,
+        sort["field"],
+        sort["order"] == "descending",
+        op=vl_sort_op(sort),
+    )
+    if domain:
+        # Domain values land in the spec without passing through
+        # `normalize_data_types`, so a raw date/Decimal would reach
+        # vl_convert's JSON serialization unconverted (`render/utils.py`).
+        x_enc.setdefault("scale", {})["domain"] = [
+            normalize_scalar_for_json(value) for value in domain
+        ]
 
 
 def build_palette_config(palette: tuple[str, ...] | None) -> VLDict:
@@ -439,19 +524,23 @@ class XYTitles(NamedTuple):
     y_plain: str | None
 
 
-def axis_title_budget(extent: float) -> int:
+def axis_title_budget(extent: float, panels: int = 1) -> int:
     """Pixels an axis title may occupy along the axis it labels.
 
     ``extent`` is the chart's size in the title's own direction: height for a
     left/right axis (whose title renders rotated), width for top/bottom. The
     layout chrome outside the plot is subtracted so the title competes for the
     space it can actually have.
+
+    ``panels`` is how many facet panels that direction was divided across, so
+    each panel owes its share of a chrome the whole chart pays once. Charging a
+    110px panel of a 770px card the full 72px leaves it 38px it never lost.
     """
-    return max(int(extent - _LAYOUT_CHROME_PX), 1)
+    return max(int(extent - _LAYOUT_CHROME_PX / panels), 1)
 
 
 def wrap_axis_title(
-    text: str, extent: float, font: ResolvedFontStyle
+    text: str, extent: float, font: ResolvedFontStyle, panels: int = 1
 ) -> tuple[str | list[str], bool]:
     """Wrap an axis title to at most two lines that fit ``extent``.
 
@@ -467,12 +556,26 @@ def wrap_axis_title(
     correctly today are unaffected. That string is whitespace-normalized by
     the wrapper (runs of spaces collapse), not byte-identical to the input.
     """
-    budget = axis_title_budget(extent)
+    budget = axis_title_budget(extent, panels)
+    measurer = get_font_measurer(font.family)
+    # mdsvg's wrapper splits an over-wide token before wrapping — right for a
+    # URL or an identifier in prose, wrong for an axis title, where a broken
+    # word is simply wrong output. Ellipsize such a word here so the wrapper
+    # never meets one it has to break. This also has to be its own truncation
+    # signal: a split word still fits in ``max_lines``, so line count alone
+    # reports nothing.
+    authored_words = text.split()
+    words = [
+        word
+        if measure_text_precise(word, font.size, measurer) <= budget
+        else truncate_text_precise(word, budget, font.size, measurer, ellipsis=True)
+        for word in authored_words
+    ]
     lines, truncated = wrap_text_precise(
-        text,
+        " ".join(words),
         budget,
         font.size,
-        get_font_measurer(font.family),
+        measurer,
         max_lines=2,
         ellipsis=True,
     )
@@ -482,7 +585,7 @@ def wrap_axis_title(
     # title stays blank, as it rendered before any wrapping existed.
     if not lines:
         return text, False
-    return (lines if len(lines) > 1 else lines[0]), truncated
+    return (lines if len(lines) > 1 else lines[0]), truncated or words != authored_words
 
 
 def wide_measures_title(measures: tuple[str, ...]) -> str:
@@ -542,13 +645,17 @@ def resolve_xy_titles(
     x_title: AxisTitle
     y_title: AxisTitle
     if x_text:
-        x_title, x_truncated = wrap_axis_title(x_text, box.width, ax.title.font)
+        x_title, x_truncated = wrap_axis_title(
+            x_text, box.width, ax.title.font, box.panel_cols
+        )
         if x_truncated and chart_id:
             record_text_truncation(chart_id, "axis_title", x_text, x_authored_field)
     else:
         x_title = x_text
     if y_text:
-        y_title, y_truncated = wrap_axis_title(y_text, box.height, ay.title.font)
+        y_title, y_truncated = wrap_axis_title(
+            y_text, box.height, ay.title.font, box.panel_rows
+        )
         if y_truncated and chart_id:
             record_text_truncation(chart_id, "axis_title", y_text, y_authored_field)
     else:
@@ -563,20 +670,27 @@ def build_x_enc(
     ax_vl: VLDict,
     x_scale: VLDict,
     time_unit: str | None = None,
+    *,
+    sort: VLDict | None,
 ) -> VLDict:
     """Build the VL x encoding dict for a cartesian time/nominal x field.
 
-    ``sort: None`` disables VL's default alphabetical ordering so the query's
-    row order is preserved — matching the oracle. Scale is omitted when empty.
-    ``time_unit`` is the utc-prefixed VL timeUnit for temporal escape-hatch
-    (e.g. "utcyearmonth") — omitted when None.
+    ``sort`` is ``dimension_sort_to_vl(chart.sort)`` — ``None`` when
+    unauthored, which disables VL's default alphabetical ordering so the
+    query's row order is preserved. An authored sort outranks the chronological
+    row order ``canonicalize_and_sort_ordinal_x`` imposes on a bucketed-time x:
+    that order is the default for an unauthored axis, not an override of one,
+    and VL reads a discrete scale's domain off this key rather than off row
+    order. Scale is omitted when empty. ``time_unit`` is the utc-prefixed VL
+    timeUnit for temporal escape-hatch (e.g. "utcyearmonth") — omitted when
+    None.
     """
     enc: VLDict = {
         "field": x_field,
         "type": vl_type,
         "title": x_title,
         "axis": ax_vl,
-        "sort": None,
+        "sort": sort,
     }
     if time_unit:
         enc["timeUnit"] = time_unit
@@ -743,13 +857,13 @@ def _domain_subset_narrowing_candidates(
     per panel does not fix it either: measured on a real board, it forces
     panels to shrink past zero rather than merely under-reserve. Refusing
     to narrow a mirrored "y" is the only option that cannot overflow, so it
-    is the deliberate, permanent behaviour here — not a narrower budget to
+    is the deliberate, permanent behavior here — not a narrower budget to
     grow into later. "x" has no mirror field to check (`AxisYStyle.mirror`
     is the only shipped mirror flag), so this guard is "y"-only by
     construction.
 
     `color`/`theta`/`size` are never included: only positional band/axis
-    space narrows, not the shared colour identity.
+    space narrows, not the shared color identity.
 
     Never narrows for a chart carrying an authored ``layers:`` overlay
     (bar/line/area/scatter — see ``LayeredResolvedChart``). The overlay
@@ -1126,13 +1240,13 @@ def authored_measure_domain(ay: ResolvedAxisStyle) -> tuple[float, float] | None
 
 
 def effective_measure_domain(
-    ay: ResolvedAxisStyle, data_extent: tuple[float, float] | None
+    axis: ResolvedAxisStyle, data_extent: tuple[float, float] | None
 ) -> tuple[float, float] | None:
     """The ``(lo, hi)`` this measure axis actually renders.
 
-    Mirrors ``resolve_measure_y_scale``'s branches in the same order, so the
-    gate that reads this and the emitter that builds the scale cannot disagree
-    about where the axis starts and ends:
+    On a y-axis this mirrors ``resolve_measure_y_scale``'s branches in the
+    same order, so the gate that reads this and the emitter that builds the
+    y scale cannot disagree about where the axis starts and ends:
 
     1. **Authored domain** wins outright, and suppresses everything below it by
        design — resolve leaves the baked bounds None whenever one is set.
@@ -1145,6 +1259,15 @@ def effective_measure_domain(
        ``zero_anchor_domain_floor`` for the same reason the emitter filters it —
        an authored ``scale.values`` list may not source a domain bound.
     4. **The data extent**, which is what Vega-Lite auto-fits from.
+
+    On an unauthored x-axis, branches 2 and 3 never fire: resolve has no
+    ``resolve_measure_x_scale`` and its smart-zero heuristic only ever runs
+    against the y column, so ``domain_min``/``domain_max``/the zero anchor
+    stay unbaked for x. The function therefore reduces there to "authored
+    domain, else the data extent" — exactly what Vega-Lite auto-fits an
+    unpinned x-axis to. That reduction holds only because of what resolve
+    does NOT bake for x today; an x-side headroom bake added later would
+    start populating those fields and invalidate it.
 
     **Every value here is one the emitter actually pins, or the extent VL fits
     to — never a prediction of where VL's ``nice`` will land.** An earlier
@@ -1168,17 +1291,17 @@ def effective_measure_domain(
     that is absent from unfolded rows, where resolve may still have baked real
     bounds. Returns None when nothing pins the axis at all.
     """
-    authored = authored_measure_domain(ay)
+    authored = authored_measure_domain(axis)
     if authored is not None:
         return min(authored), max(authored)
 
     if data_extent is None:
         return None
     data_lo, data_hi = data_extent
-    hi = ay.domain_max if ay.domain_max is not None else data_hi
-    if ay.domain_min is not None:
-        lo = ay.domain_min
-    elif is_zero_anchored(ay.scale):
+    hi = axis.domain_max if axis.domain_max is not None else data_hi
+    if axis.domain_min is not None:
+        lo = axis.domain_min
+    elif is_zero_anchored(axis.scale):
         # Exactly what y_zero_scale pins as domainMin for this axis — a value
         # the emitter really writes, not a guess at where VL will land.
         # Today's sole caller cannot tell ladder[0] from 0.0: it asks about
@@ -1187,8 +1310,8 @@ def effective_measure_domain(
         # emitter really does pin a domainMin below 0, and collapsing this to a
         # literal would make the stated parity false on that shape.
         ladder = zero_anchor_domain_floor(
-            ay.scale.values if ay.scale is not None else None,
-            list(ay.tick_values) if ay.tick_values else [],
+            axis.scale.values if axis.scale is not None else None,
+            list(axis.tick_values) if axis.tick_values else [],
         )
         lo = zero_anchor_floor(ladder)
     else:
@@ -1627,6 +1750,8 @@ __all__ = [
     "build_x_enc",
     "cartesian_x_scale_domain",
     "chart_sort_to_vl",
+    "dimension_sort_to_vl",
+    "pin_sorted_x_domain",
     "companion_color_for_fill",
     "emitted_categorical_color_scale",
     "distinct_series_values",

@@ -27,7 +27,7 @@ from dbt_charts.core.compile.resolve.style.category_colors import (
     categorical_channel_fields,
     plan_category_colors,
 )
-from dbt_charts.core.diagnostics.execution import ExecutionError
+from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.utils import is_date_like
 
 if TYPE_CHECKING:
@@ -119,7 +119,7 @@ def plan_board_category_colors(
             continue
         try:
             rows = executor.execute_query(chart.query_name, variables)
-        except ExecutionError:
+        except DbtChartsError:
             continue
         observed, disqualified_fields = _observe(chart, rows)
         poisoned.update(disqualified_fields)

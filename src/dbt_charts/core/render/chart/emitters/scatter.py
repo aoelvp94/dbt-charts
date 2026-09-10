@@ -14,7 +14,7 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
     apply_domain_headroom_bounds,
     build_palette_config,
     canonicalize_cartesian_x_data,
-    chart_sort_to_vl,
+    dimension_sort_to_vl,
     distinct_series_values,
     multiples_scale_independent,
     resolve_cartesian_x,
@@ -226,11 +226,11 @@ class ScatterEmitter:
                 y_enc["axis"] = y_axis
             if y_scale:
                 y_enc["scale"] = y_scale
-            # A categorical y (dot plot) honours an authored chart.sort to order
+            # A categorical y (dot plot) honors an authored chart.sort to order
             # its band domain — mirrors the bar categorical-axis path. A numeric y
             # is a continuous scale where sort does not apply.
             if y_type in ("nominal", "ordinal"):
-                y_sort = chart_sort_to_vl(chart.sort)
+                y_sort = dimension_sort_to_vl(chart.sort)
                 if y_sort is not None:
                     y_enc["sort"] = y_sort
 

@@ -1,7 +1,7 @@
 """A table squeezed by its slot degrades quietly; the sink must see each rung.
 
 The ladder runs shrink font -> wrap headers -> squeeze columns -> paginate ->
-ellipsise. WARN-TABLE-CRAMPED owns the width rung — columns divided into less
+ellipsize. WARN-TABLE-CRAMPED owns the width rung — columns divided into less
 than their demand, read out as wrapped headers; the rows-per-page rung belongs
 to WARN-TABLE-PAGE-SQUEEZED, recorded where the paginator overrides the height
 the sizer reserved. These tests pin both rungs from authored boards, and the
@@ -24,7 +24,7 @@ _WIDE_COLUMNS: list[tuple[str, str]] = [
     ("product_line", "Ingestion Cloud"),
     ("customer_segment", "Mid-Market"),
     ("order_channel", "Partner Reseller"),
-    ("fulfilment_status", "Partially Shipped"),
+    ("fulfillment_status", "Partially Shipped"),
     ("net_revenue", "2,013,880"),
     ("gross_margin", "51.2%"),
     ("units_shipped", "24,553"),

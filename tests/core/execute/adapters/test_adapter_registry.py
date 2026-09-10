@@ -872,7 +872,7 @@ class TestFileSourceDispatch:
         assert limited.truncated_reason is None
 
         # No author limit, ceiling below the source's row count: truncates at
-        # the ceiling and flags it — the same contract SqlAdapter honours.
+        # the ceiling and flags it — the same contract SqlAdapter honors.
         monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "3")
         unbounded = registry.execute(
             SqlQuery(sql="SELECT * FROM orders", source="marts")

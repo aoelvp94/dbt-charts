@@ -98,7 +98,7 @@ const normalValues = [
   { label: '2500', value: 2500 },
   { label: '25000', value: 25000 },
   { label: '250000', value: 250000 },
-  // Radix-flavoured values: hex digit letters (grouping must not treat 'e' as an
+  // Radix-flavored values: hex digit letters (grouping must not treat 'e' as an
   // exponent), byte/word boundaries, and a width wider than the pad target.
   { label: '255', value: 255 },
   { label: '4095', value: 4095 },

@@ -113,6 +113,7 @@ from dbt_charts.core.render.chart.type_inference import (
     temporal_edge_labels_flushed,
 )
 from dbt_charts.core.render.chart.vl_field_maps import _apply_decimal_pad
+from dbt_charts.core.render.chart.x_domain import vl_sort_op
 from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.format_utils import format_value
 from dbt_charts.core.render.utils import font_style_to_mark
@@ -129,7 +130,11 @@ from dbt_charts.core.text.numeral_scale import (
     tier_distance,
 )
 from dbt_charts.core.text.predefined_formats import PREDEFINED_NUMBER_NAMES
-from dbt_charts.core.utils import sorted_series_by_stack_order, stacked_x_domain_order
+from dbt_charts.core.utils import (
+    VlSortOp,
+    sorted_series_by_stack_order,
+    x_domain_order,
+)
 
 # Map authoring-surface aggregate names to Vega-Lite aggregate ops.
 # Authoring names stay exact; the compiler is free to translate to VL ops.
@@ -567,7 +572,7 @@ class StripNumerals:
     Split from the entry's format once, by ``strip_numerals_for_values``,
     rather than re-parsed at emission — the same bake-once shape
     ``ResolvedRulerAxis`` uses, for the same reason: the text a cell paints and
-    the width the band-centring dx is measured against must come from one
+    the width the band-centering dx is measured against must come from one
     computation, not two.
 
     Two spellings, because only one family needs the author's spec rewritten:
@@ -637,7 +642,7 @@ class StripNumerals:
         Used only for width measurement so the band budget accounts for the
         widest *painted* cell, not just the bare one. Temporal anchors may
         land on band 2+ (when the first period is zero), so the band must be
-        at least as wide as the anchor to prevent overlap with its neighbour.
+        at least as wide as the anchor to prevent overlap with its neighbor.
         """
         if not (self.prefix or self.suffix):
             return self.bare_text(value)
@@ -1080,11 +1085,11 @@ def _shared_x_encoding(
     never has two conflicting answers to reconcile.
 
     bandPosition rules — the cell must ride the same x position as the base mark:
-      - ordinal / nominal → 0.5 (band-centre anchor; marks render at the band
-        centre either way — bars add dx to centre the number column, line/area
+      - ordinal / nominal → 0.5 (band-center anchor; marks render at the band
+        center either way — bars add dx to center the number column, line/area
         lean toward the row label via align).
       - temporal + timeUnit → 0.5 only for a BAR: a bar spans the whole time
-        band, so its number column centres on the band. A line/area point sits
+        band, so its number column centers on the band. A line/area point sits
         on its exact date (the grid tick), so its cell must ride that same
         per-point position — NO bandPosition. Anchoring a line/area cell to the
         band would both offset it half a band off the point AND pull the band's
@@ -1118,12 +1123,12 @@ def _text_mark_props(
     `align` mirrors the label side so values lean toward their row labels:
     axis_y orient left (labels on the left) → "left"; orient right → "right".
 
-    `dx`, when set (bar charts only), centres the number column on the band
-    midpoint.  Sign convention: align=right → +dx (right edge at band_centre +
-    max_w/2); align=left → -dx (left edge at band_centre - max_w/2).
+    `dx`, when set (bar charts only), centers the number column on the band
+    midpoint.  Sign convention: align=right → +dx (right edge at band_center +
+    max_w/2); align=left → -dx (left edge at band_center - max_w/2).
 
     For line/area charts dx is None: the aligned edge sits straight on the
-    mark's x position (bandPosition pins the anchor to the band centre).
+    mark's x position (bandPosition pins the anchor to the band center).
 
     `font_family_override`, when set, wins over `style.font.family` for the
     mark's own font — the column block's forced-tabular digit typeface (see
@@ -1276,7 +1281,7 @@ def _per_series_row_layers(
         color_field: column name backing the color channel. Required for
             normal mode; may be None when ``entry.by_measure`` is True.
         series_order: Ordered series names.
-        dark_fills: dark-companion label-ink colour for each series in
+        dark_fills: dark-companion label-ink color for each series in
             series_order (already resolved by the caller). When None, label
             fill is omitted.
         style: Resolved SupportTableStyle.
@@ -1701,14 +1706,14 @@ def attach_support_table(
             quantitative x axes that exceed ``chart_rendering.support_table.chart_support_table_max_x_ticks``.
         entry_dx: Per-entry dx half-widths (pixels) for band-centering on bar
             charts. When set, entry_dx[i] is applied as the VL mark ``dx``
-            offset, centring the number column on the band midpoint. None (the
+            offset, centering the number column on the band midpoint. None (the
             default) means no dx — aligned edge sits straight on the mark.
         series_order: For per_series entries — ordered list of series names
             in the chart's stack/scale order. Required when any entry is a
             ChartSupportTablePerSeries. Callers resolve this from the parent
             chart's color encoding domain.
         dark_fills: For per_series entries — the already-resolved dark
-            companion label-ink colour for each series in series_order.
+            companion label-ink color for each series in series_order.
             When None, label fill is omitted.
         label_period_filter_expr: Vega filter expression that restricts strip
             cells to label-period openers. When set, each text-mark layer
@@ -2170,7 +2175,7 @@ def _entry_values(
 
     The single place that answers "what does this row actually show" —
     per-series ``(x, color)`` aggregate, aggregate per x, or the raw source
-    column. Cell widths, the shared magnitude, and the band-centring dx all
+    column. Cell widths, the shared magnitude, and the band-centering dx all
     read this one list, so a row cannot be measured against different numbers
     than it is scaled by.
     """
@@ -2309,7 +2314,7 @@ def _entry_cell_widths(
 ) -> list[float]:
     """Max pixel width of each entry's rendered cells (one per entry).
 
-    Single measurement path shared by the band-centring dx
+    Single measurement path shared by the band-centering dx
     (``_compute_support_table_entry_dx``), the row strip's width-aware
     thinning budget (``max(...)`` at the post-pass), and the column block's
     own width reservation (``_entry_column_widths``).
@@ -2326,8 +2331,8 @@ def _entry_cell_widths(
     column has no such free gutter: every column's cells align right, so any
     affix always overhangs left, and every column but the first has another
     column's own cells sitting there. Sizing to the bare cell would let the
-    anchor's affix bleed into the neighbouring column — a value painted so
-    it visually merges with its neighbour is exactly the "clipped-looking"
+    anchor's affix bleed into the neighboring column — a value painted so
+    it visually merges with its neighbor is exactly the "clipped-looking"
     value this measurement must never produce, so the column path measures
     every cell as if it could be the anchor.
     """
@@ -2367,11 +2372,11 @@ def _compute_support_table_entry_dx(
     values_per_entry: Sequence[Sequence[float]],
     x_type: str | None = None,
 ) -> list[float] | None:
-    """Compute per-entry dx offsets for band-centred number lanes.
+    """Compute per-entry dx offsets for band-centered number lanes.
 
     Returns None when no offset is needed.  dx is only meaningful on band-scale
     axes (ordinal/nominal) where bandPosition:0.5 pins the text anchor to the
-    band centre.  For continuous axes (temporal without timeUnit, quantitative)
+    band center.  For continuous axes (temporal without timeUnit, quantitative)
     there are no bands — a non-zero dx would shift the text away from the data
     point rather than centering it.
 
@@ -2383,10 +2388,10 @@ def _compute_support_table_entry_dx(
     before measuring widths so the dx reflects the actual rendered values
     (aggregates are typically wider than any individual raw row).
 
-    Mirrors the centre-on-midpoint invariant of _compute_lane_positions
-    (table.py): the number lane is centred; decimals still align within it.
+    Mirrors the center-on-midpoint invariant of _compute_lane_positions
+    (table.py): the number lane is centered; decimals still align within it.
     """
-    # dx centres the number column on the band midpoint (paired with the strip's
+    # dx centers the number column on the band midpoint (paired with the strip's
     # bandPosition:0.5 anchor). Applies to banded scales only: ordinal/nominal,
     # or temporal bucketed by timeUnit. Continuous axes (temporal without
     # timeUnit, quantitative) have no bands — a non-zero dx would shift text off
@@ -2395,7 +2400,7 @@ def _compute_support_table_entry_dx(
         return None
 
     # dx = max_formatted_width / 2 so right-aligned text's right edge sits at
-    # band_center + max_w/2, centring the column over the bar. Same measurement
+    # band_center + max_w/2, centering the column over the bar. Same measurement
     # the thinning budget uses (per-series (x,color) aggregate, aggregate per x,
     # or raw source).
     entry_dx = [
@@ -2803,8 +2808,8 @@ def _shared_y_band_encoding(
     support_table's own layers join the same scale. The gate restricts the
     column path to a vertical category axis, which today is reachable only
     via a horizontal bar's ordinal/nominal band scale on y, so
-    bandPosition:0.5 (band-centre anchor) always applies — mirroring how a
-    bar's own mark centres on its band.
+    bandPosition:0.5 (band-center anchor) always applies — mirroring how a
+    bar's own mark centers on its band.
     """
     enc: dict[str, Any] = {}  # type-state: explicit_any — VL fragment
     enc["field"] = parent_y_enc["field"]
@@ -2827,7 +2832,7 @@ def _column_block_plot_gutter(
     running the full plot height: an axis label is one short string with
     white space above and below it, while the column block sits flush against
     the marks for its entire span, so it needs the same additional standoff a
-    neighbouring axis label would get. The gutter is therefore the column's
+    neighboring axis label would get. The gutter is therefore the column's
     own reserved padding *plus* the resolved axis's own label padding
     (``resolved_chart.style.axis_y.labels.padding``) — composed from the two
     existing theme tokens rather than a new constant, so a theme that tunes
@@ -2983,13 +2988,13 @@ def _column_cell_layer(
     ``yOffset`` defaults to nulled out — the same opt-out already used for
     ``color`` above. A grouped bar's parent spec carries a shared ``yOffset``
     channel (one sub-band per series) that a layer would otherwise inherit;
-    nulling it centres the cell on the category's own band, the transpose of
+    nulling it centers the cell on the category's own band, the transpose of
     a per_series row, which reads across as one table row, not a diagonal
     staircase. A grouped bar's single-column per_series entry is the one
     caller that opts back IN, passing the parent's own ``yOffset`` encoding
     verbatim so each series' cell lands on that series' own sub-band —
     vertically aligned with the bar it describes — instead of the category
-    band centre.
+    band center.
 
     The column block always paints digits in a tabular typeface — a column of
     numbers needs vertical digit alignment the way the row strip never does
@@ -3213,7 +3218,7 @@ def _widen_first_layer_y_axis_padding(
     axis keeps its unwidened gutter and the support_table column block
     collides with the category labels it was supposed to make room for.
     Only patches ``layer[0]`` -- the base layer is the one whose category
-    encoding VL actually reads; a colour-split ``layers:`` overlay's own
+    encoding VL actually reads; a color-split ``layers:`` overlay's own
     layer(s) carry their own (irrelevant to this axis) encoding.
     """
     layers = spec.get("layer")
@@ -3525,7 +3530,7 @@ def attach_support_table_columns(
                 # cell's offset scale resolves against the same domain the
                 # bar mark itself uses. A color field the bar chose not to
                 # offset (e.g. 1:1 with x) carries no yOffset at all, and the
-                # cells then simply share the category band centre, same as
+                # cells then simply share the category band center, same as
                 # the bar's own marks in that case.
                 _left, right = edges[visual_idx]
                 raw_yoffset = top_encoding.get("yOffset")
@@ -3622,6 +3627,7 @@ def _sorted_category_domain(
     sort: ChartSort | None,
     category_field: str,
     data: list[dict[str, Any]],  # type-state: explicit_any — VL fragment
+    op: VlSortOp,
 ) -> list[Any] | None:  # type-state: explicit_any — a domain value, any JSON scalar
     """The category domain in Vega-Lite's own rendered order for an
     EXPLICITLY authored ``chart.sort``, or ``None`` when none was authored
@@ -3639,22 +3645,28 @@ def _sorted_category_domain(
     ``chart_sort_to_vl`` returns ``None`` for that unauthored case, which is
     exactly the signal this function needs.
 
-    Delegates the actual ordering to ``stacked_x_domain_order``
+    Delegates the actual ordering to ``x_domain_order``
     (``core/utils.py``) rather than reimplementing it: that helper already
     owns "a categorical x domain in Vega-Lite's rendered order" for
     ``rendered_x_domain`` and the resolve-time stacked-label predicate, and
     gets the two things a bespoke reimplementation here got wrong --
-    ``EncodingSortField.op``'s ``sum`` aggregate (not first-occurrence;
+    ``EncodingSortField.op``'s aggregate (not first-occurrence;
     ``support_table``'s own ``aggregate:``/``per_series:`` entries permit
     multiple rows per category, e.g. board 26's stacked cells), and a
     category with no value for the sort field keeping its place at the END
     of the domain (where VL puts it) rather than being dropped entirely.
+    ``op`` comes from the chart's own already-emitted category encoding, so
+    the domain pinned here reproduces the order that encoding renders in.
     """
     vl_sort = chart_sort_to_vl(sort)
     if vl_sort is None:
         return None
-    domain = stacked_x_domain_order(
-        data, category_field, vl_sort["field"], vl_sort["order"] == "descending"
+    domain = x_domain_order(
+        data,
+        category_field,
+        vl_sort["field"],
+        vl_sort["order"] == "descending",
+        op=op,
     )
     return domain or None
 
@@ -3680,11 +3692,11 @@ def _pin_sorted_category_domain(
     ``transform:`` pipeline -- exactly what every support_table cell/header
     layer carries (their value-producing ``calculate`` transform). This is
     the same failure mode ``emitters/_overlay.py``'s ``_reconcile_x_domain``
-    already documents and works around for its own ``force=True`` trigger (a
-    label sublayer's calculate transform); support_table hits the identical
-    Vega-Lite limitation from its own, later post-pass, so it needs the same
-    class of fix -- an explicit, pre-sorted domain always wins over ``sort``
-    in Vega-Lite, sidestepping the native per-layer merge entirely.
+    already documents and works around for every layered chart; support_table
+    hits the identical Vega-Lite limitation from its own, later post-pass, so
+    it needs the same class of fix -- an explicit, pre-sorted domain always
+    wins over ``sort`` in Vega-Lite, sidestepping the native per-layer merge
+    entirely.
 
     Pinning only the TOP-LEVEL shared encoding is sufficient (confirmed
     empirically against a real layered spec): unlike the axis-label-gutter
@@ -3732,7 +3744,9 @@ def _pin_sorted_category_domain(
         return spec
     if cat_enc.get("type") not in ("nominal", "ordinal"):
         return spec
-    domain = _sorted_category_domain(sort, category_field, data)
+    domain = _sorted_category_domain(
+        sort, category_field, data, vl_sort_op(cat_enc.get("sort"))
+    )
     if domain is None or not _is_json_scalar_domain(domain):
         return spec
     existing_scale = cat_enc.get("scale")
@@ -3957,7 +3971,7 @@ def _apply_support_table_columns_post_pass(
     # own headers — a side legend showing the same names is redundant ink,
     # same rationale as the row strip's label-gutter suppression. A grouped
     # bar's single column has no per-series header (see
-    # _per_series_column_header), so its series are named and coloured the
+    # _per_series_column_header), so its series are named and colored the
     # way an ordinary grouped bar's legend already does — never suppressed.
     legend_shows_series = color_field is not None and resolved_chart.legend.visible
     if has_per_series and legend_shows_series and is_stacked_bar:
@@ -4163,7 +4177,7 @@ def apply_chart_support_table_post_pass(
     # color_field drives the series_order/palette resolution below.
     color_field = effective_color_field(resolved_chart)
     # How each row spells its numbers, resolved once from the values it will
-    # render. Read three times below -- the width budget, the band-centring dx,
+    # render. Read three times below -- the width budget, the band-centering dx,
     # and the cells themselves -- so a row cannot be measured against different
     # numbers than it paints.
     # Declaring the unit once requires knowing which cell is painted leftmost.
@@ -4411,7 +4425,7 @@ def apply_chart_support_table_post_pass(
     # legend.  Suppress the side legend to avoid redundant ink.  Endpoint labels
     # are orthogonal — both the label strip and the endpoint pane may be visible.
     suppress_legend = has_per_series and legend_shows_series
-    # Bar charts: centre the value column on the band (dx = max formatted width / 2).
+    # Bar charts: center the value column on the band (dx = max formatted width / 2).
     # Line/area charts: anchor the aligned edge straight on the mark — no dx.
     has_time_unit = bool(spec.get("encoding", {}).get("x", {}).get("timeUnit"))
     entry_dx = (

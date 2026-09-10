@@ -49,7 +49,7 @@ def test_get_export_config_falls_back_to_global_default_when_no_project(
     """Without a project, get_export_config falls back to the global config default."""
     reset_config()
     result = get_export_config(None)
-    # Default config has public_url == "" (root-relative behaviour).
+    # Default config has public_url == "" (root-relative behavior).
     assert result.public_url == ""
 
 

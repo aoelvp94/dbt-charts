@@ -96,34 +96,36 @@ def test_build_patch_model_optional_nested_basemodel_recurses() -> None:
     assert partial_inner.inner.size is None
 
 
-def test_axis_grid_style_patch_zero_field_is_patch_variant() -> None:
-    """MeasureGridStylePatch.zero must be AxisGridZeroStylePatch | None, not compiled | None.
+def test_axis_grid_style_patch_threshold_field_is_patch_variant() -> None:
+    """BaseAxisGridStylePatch.threshold must be AxisGridThresholdStylePatch | None,
+    not compiled | None.
 
     This is the real-world case from PR #2868 that triggered the regression:
-    MeasureGridStyle.zero: AxisGridZeroStyle | None produced a patch with the
-    compiled AxisGridZeroStyle (required fields) instead of its patch variant.
-    ``zero`` lives on MeasureGridStyle (y-axis only), not on BaseAxisGridStyle.
+    a nested compiled type in a field annotation produced a patch with the
+    compiled type (required fields) instead of its patch variant. ``threshold``
+    lives on the shared BaseAxisGridStyle, reachable from every axis slot.
     """
     from dbt_charts.core.compile.models.style.theme import (
-        AxisGridZeroStyle,
-        MeasureGridStyle,
+        AxisGridThresholdStyle,
+        BaseAxisGridStyle,
     )
 
-    AxisGridStylePatch = build_patch_model(MeasureGridStyle)
-    AxisGridZeroStylePatch = build_patch_model(AxisGridZeroStyle)
+    AxisGridStylePatch = build_patch_model(BaseAxisGridStyle)
+    AxisGridThresholdStylePatch = build_patch_model(AxisGridThresholdStyle)
 
-    # zero field annotation should be AxisGridZeroStylePatch | None, not AxisGridZeroStyle | None.
-    # We verify by accepting a partial zero dict with no fields (all-Optional patch).
-    patch = AxisGridStylePatch(zero={})
-    assert patch.zero is not None
+    # threshold field annotation should be AxisGridThresholdStylePatch | None,
+    # not AxisGridThresholdStyle | None. We verify by accepting a partial
+    # threshold dict with no fields (all-Optional patch).
+    patch = AxisGridStylePatch(threshold={})
+    assert patch.threshold is not None
     # Patch fields default to None.
-    assert patch.zero.color is None
-    assert patch.zero.width is None
+    assert patch.threshold.color is None
+    assert patch.threshold.width is None
 
     # With an actual value it should round-trip.
-    patch2 = AxisGridStylePatch(zero={"color": "#ff0000"})
-    assert patch2.zero is not None
-    assert patch2.zero.color == "#ff0000"
+    patch2 = AxisGridStylePatch(threshold={"color": "#ff0000"})
+    assert patch2.threshold is not None
+    assert patch2.threshold.color == "#ff0000"
 
-    # The zero field's model must be the patch class, not the compiled class.
-    assert type(patch.zero) is AxisGridZeroStylePatch
+    # The threshold field's model must be the patch class, not the compiled class.
+    assert type(patch.threshold) is AxisGridThresholdStylePatch

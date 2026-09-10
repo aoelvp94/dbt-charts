@@ -228,7 +228,7 @@ def _sanitize_html(raw: str) -> str:
 # WHY: SVG text positioning uses baseline coordinates; glyphs extend up to
 # cap height above and down to descender depth below the baseline. Using the
 # full em-square (font_size) for the chip top wastes ~28% above cap height.
-# These ratios centre the chip on the glyph's visual body (cap/x-height region)
+# These ratios center the chip on the glyph's visual body (cap/x-height region)
 # at typical proportions for common serif and sans-serif fonts (measured against
 # Georgia, Source Serif 4, Inter, and system sans).
 _CHIP_CAP_HEIGHT_RATIO = 0.72  # cap height / em — top of glyph body above baseline
@@ -1304,7 +1304,7 @@ class SVGRenderer:
 
         A heading opening its document is line boxes + ``margin_bottom``: the top
         margin collapsed against the top of the box, the bottom one did not, so
-        the block is not centred on the text it holds and anything drawn on the
+        the block is not centered on the text it holds and anything drawn on the
         block sits low by that difference. This is the part of it that is text.
 
         ``block_height`` is the height this renderer reported for the block, so a
@@ -1756,10 +1756,10 @@ class SVGRenderer:
             bullet_radius = 1.5
             bullet_gap = 6.5
             bullet_x = ctx.x + bullet_indent - bullet_gap - bullet_radius
-            # Half a line box down is also the centre of the line's text: the
+            # Half a line box down is also the center of the line's text: the
             # half-leading above the ascent and below the descent are equal, so
             # the two midpoints coincide. Pinned by
-            # test_a_bullet_is_centred_on_its_item_s_text.
+            # test_a_bullet_is_centered_on_its_item_s_text.
             bullet_y = (
                 ctx.y
                 + current_y
@@ -2309,7 +2309,7 @@ class SVGRenderer:
         chip_radius = self.style.inline_code_border_radius
         code_font_size = self._inline_code_size(font_size)
         # Chip spans cap-height above baseline to descender below, plus padding on
-        # each side.  This centres the box on the glyph's visual body rather than
+        # each side.  This centers the box on the glyph's visual body rather than
         # the full em-square, which over-shoots the cap top by ~28% of font_size.
         chip_height = (
             _CHIP_CAP_HEIGHT_RATIO + _CHIP_DESCENDER_RATIO

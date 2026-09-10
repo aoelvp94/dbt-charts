@@ -93,7 +93,7 @@ def test_no_fire_when_labels_fit() -> None:
 
 
 def test_fires_regardless_of_position() -> None:
-    """'above' (outside the bar) still collides with neighbouring labels."""
+    """'above' (outside the bar) still collides with neighboring labels."""
     board = _board("bar", {"position": "above", "format": ",.5f"})
     assert len(detector.detect(_ctx(_bar(), _rows(30), board))) == 1
 

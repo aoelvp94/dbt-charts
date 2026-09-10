@@ -1133,7 +1133,7 @@ class TestDecimalWatermarkThroughRealCache:
     coerced Decimal -> float on write, so a prior row's key came back as
     `101.2` (float) while the freshly-queried tail row's key stayed
     `Decimal('101.20')` — `Decimal('101.20') == 101.2` is False, so the
-    dedup in `_merge_incremental_rows` never recognised the boundary row as
+    dedup in `_merge_incremental_rows` never recognized the boundary row as
     restated and it duplicated on every warm render, unbounded."""
 
     def test_four_renders_do_not_duplicate_the_boundary_row(self, tmp_path) -> None:

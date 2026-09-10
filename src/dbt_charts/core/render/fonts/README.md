@@ -147,7 +147,7 @@ Included assets:
     ASCII digit as its base character, which would claim U+0030-0039 for this
     face — the same range the text/Latin face serves — and the canonical
     spelling every emoji picker emits (`digit + U+FE0F + U+20E3`) is painted by
-    the OS colour font regardless (see the VS16 note below), so the claim never
+    the OS color font regardless (see the VS16 note below), so the claim never
     even fired. Adding or removing a codepoint means editing that constant,
     then running `just rebuild-noto-emoji-chart-set` to resubset both files and
     `just gen-font-face-css` to regenerate the stylesheet — the set, the
@@ -194,7 +194,7 @@ Included assets:
     codepoint had a group left to compose, so both were dropped too.
   - **U+FE0F defeats this font in a browser, but the subset keeps it anyway.**
     Variation selector-16 requests emoji *presentation*, and browsers answer
-    that with a colour font in preference to a text-presentation face — so
+    that with a color font in preference to a text-presentation face — so
     `digit + U+FE0F + U+20E3` (the canonical keycap every emoji picker emitted)
     was painted by the OS at 1.00 em, while the bare form painted from here at
     1.27 em. The same split hits any curated codepoint with a VS16 spelling:
@@ -206,7 +206,7 @@ Included assets:
     spelling, so U+FE0F lands in `EMOJI_CODEPOINTS` as a side effect of keeping
     those glyphs; it was kept deliberately rather than stripped back out,
     because vl-convert/resvg static exports (PNG/SVG) have no such
-    colour-font-preference override — only the browser path is defeated.
+    color-font-preference override — only the browser path is defeated.
     Don't test or document composition against a VS16 spelling, or against a
     sequence this font doesn't carry both halves of.
 
@@ -292,7 +292,7 @@ outlines and therefore survive any renderer. The same reasoning is why
 `dbt Sans Tabular` bakes `tnum` across its masters instead of asking for the feature.
 `render/chart/table.py` still emits `font-feature-settings: 'tnum'` beside its tabular
 family, which is fine: the family is doing the work and the declaration is inert
-decoration for renderers that would honour it.
+decoration for renderers that would honor it.
 
 The same defect, same fix, applies to **font weight**. resvg does not interpolate a
 variable font's `wght` axis from a numeric `font-weight` request either: below its

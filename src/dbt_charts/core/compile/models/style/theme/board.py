@@ -158,7 +158,7 @@ class FrameStyle(BaseModel):
         gt=0,
         description=(
             "Exact board width in pixels. Set it, on a board, a template it "
-            "extends, or a project's meta.yaml, and the board is exactly "
+            "extends, or a project's meta.yml, and the board is exactly "
             "this wide; the layout distributes it. Leave it unset and the "
             "board sizes itself to its content, bounded by max_width. "
             "Rendered as an on-screen pixel size everywhere except the dct "
@@ -173,7 +173,7 @@ class FrameStyle(BaseModel):
             "board with no width of its own measures its charts' preferred "
             "widths and hugs them up to this bound: a single small chart "
             "stays a small card. Ignored when width is set. Themes supply "
-            "the default; a project's meta.yaml can lower or raise it."
+            "the default; a project's meta.yml can lower or raise it."
         ),
     )
     min_height: float = Field(description="Minimum board height in pixels.")

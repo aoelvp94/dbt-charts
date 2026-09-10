@@ -442,7 +442,7 @@ ERR_UNPARSEABLE_SQL = REGISTRY.register(
             "Fired when dbt charts' static SQL parser cannot parse a query. The "
             "query is still sent to the warehouse; what is lost is the static "
             "read-only check and the semantic lint that run on parseable SQL. "
-            "It is not necessarily an error in the SQL itself; unmodelled "
+            "It is not necessarily an error in the SQL itself; unmodeled "
             "dialect syntax and dbt macros land here too."
         ),
         docs_topic="queries",

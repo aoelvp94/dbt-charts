@@ -2,7 +2,7 @@
 
 Chooses where a sequence of lines breaks across columns. The model is TeX's
 page breaker rather than a set of rules: every candidate break carries a cost,
-and the assignment minimising total cost wins.
+and the assignment minimizing total cost wins.
 
 Rules-with-precedence and penalties differ in an important way. Rules need an
 explicit conflict order, and when no break satisfies all of them they have no
@@ -198,7 +198,7 @@ def _break_penalty(units: list[PackUnit], i: int) -> float:
 
 
 def pack_columns(units: list[PackUnit], columns: int) -> list[int]:
-    """Assign each unit to a column index, minimising total cost.
+    """Assign each unit to a column index, minimizing total cost.
 
     Returns a list parallel to ``units``. Assignments are non-decreasing: a
     column never contains a unit that precedes one in an earlier column.
@@ -235,9 +235,9 @@ def pack_columns(units: list[PackUnit], columns: int) -> list[int]:
                     continue
                 height = prefix[i] - prefix[j]
                 deviation = height - target
-                normaliser = target * target
+                normalizer = target * target
                 cost = prior + brk
-                if normaliser > 0.0:
+                if normalizer > 0.0:
                     earliness = columns - k + 1
                     lopsided = (
                         1.0 + _BALANCE_UNDERSHOOT * earliness
@@ -245,7 +245,7 @@ def pack_columns(units: list[PackUnit], columns: int) -> list[int]:
                         else 1.0
                     )
                     cost += (
-                        lopsided * _BALANCE_SCALE * (deviation * deviation) / normaliser
+                        lopsided * _BALANCE_SCALE * (deviation * deviation) / normalizer
                     )
                 if cost < best[k][i]:
                     best[k][i] = cost

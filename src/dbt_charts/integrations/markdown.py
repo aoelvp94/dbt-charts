@@ -244,7 +244,7 @@ def _render_with_fallback(
         registry = build_adapter_registry(project, read_only=True)
         try:
             # Fence-rendered YAML has no on-disk leaf — a pathless in-memory
-            # board (no charts/meta.yaml cascade). Relative extends/import refs
+            # board (no charts/meta.yml cascade). Relative extends/import refs
             # in a fenced board therefore anchor at charts/, not the doc's own
             # directory; docs fences use named sources / charts-root refs.
             board = InMemoryBoard(yaml_content, path=None)

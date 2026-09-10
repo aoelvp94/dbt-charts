@@ -22,7 +22,7 @@ never-auto-expire (see ``ProjectCacheConfig``).
 Unset fields always inherit from the parent *scope* (``exclude_unset``
 semantics, mirroring the style ``*Patch`` overlay discipline), so
 ``cache: 5m`` on a query refines an inherited policy rather than replacing it.
-Between *files* — a ``charts/meta.yaml`` and the board beneath it — the same
+Between *files* — a ``charts/meta.yml`` and the board beneath it — the same
 field-by-field rule applies, which is why ``cache: true`` on a board keeps the
 directory's ttl instead of jumping to the project root's. The block form
 (``cache: {ttl: 5m}``) means exactly the same thing as the scalar and is what

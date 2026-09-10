@@ -68,7 +68,7 @@ def test_stops_palette_name_holds_only_names_that_resolve_to_stops():
     ERR-PALETTE-UNKNOWN. Offering them was a completion whose every use breaks
     the board — and the design panel turns a completion into a control.
 
-    `PaletteName` keeps the whole index: `style.palettes` binds roles to colour
+    `PaletteName` keeps the whole index: `style.palettes` binds roles to color
     sources, and `_base.yaml` binds `info: info`.
     """
     from dbt_charts.core.compile.models.schema_names import (

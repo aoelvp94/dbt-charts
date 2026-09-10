@@ -125,7 +125,7 @@ class TestHeaderWrap:
         """No header label is cut short with an ellipsis at this width.
 
         The theme ships ``charts.table.header.overflow: wrap-two``; the renderer
-        must honour it rather than inheriting the board title's ``truncate``.
+        must honor it rather than inheriting the board title's ``truncate``.
         """
         svg = _render(make_chart)
         truncated = [el for el in _header_elements(svg) if "…" in el]
@@ -145,7 +145,7 @@ class TestHeaderWrap:
         )
 
     def test_headers_never_break_mid_word(self, make_chart):
-        """Column widths honour the min-word floor, so no line ends mid-token.
+        """Column widths honor the min-word floor, so no line ends mid-token.
 
         Without the floor a narrow numeric column renders ``Conver`` / ``ted in…``
         — a break no overflow mode can undo, unlike a word-boundary wrap.
@@ -223,7 +223,7 @@ class TestColumnBudget:
         header width let the floored column claw width back out of the columns
         that pass had just raised — `b`'s 150px floor is funded proportionally
         from every donor, dropping `a` from 150.7px to ~105px, under its 110px
-        header. Folding the floor into the demand means one allocation honours
+        header. Folding the floor into the demand means one allocation honors
         both constraints and nothing is undone afterwards.
         """
         from dbt_charts.core.render.chart.table_support import calculate_column_layout
@@ -237,7 +237,7 @@ class TestColumnBudget:
             header_demands={"a": 110.0, "b": 40.0, "c": 74.0, "d": 68.0},
             word_floors={"a": 45.0, "b": 150.0, "c": 40.0, "d": 38.0},
         )
-        assert widths["b"] >= 150.0, f"Outsized floor not honoured: {widths}"
+        assert widths["b"] >= 150.0, f"Outsized floor not honored: {widths}"
         assert total == pytest.approx(400.0)
 
         # This budget cannot cover every header (129px of gap, 127px of

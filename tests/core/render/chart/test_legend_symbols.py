@@ -253,8 +253,8 @@ def test_line_base_field_series_get_stroke_not_square() -> None:
     layer = LineLayer(type="line", y="target")
     # Line chart with field-based color → base spec carries a field-legend.
     # endpoint_labels defaults to visible for multi-series lines (stark theme),
-    # which suppresses the colour legend entirely — disable it so this test
-    # can pin the legend-glyph behaviour it's actually about.
+    # which suppresses the color legend entirely — disable it so this test
+    # can pin the legend-glyph behavior it's actually about.
     style = LineChartStylePatch.model_validate({"endpoint_labels": {"visible": False}})
     vl = _render_line_with_layers([layer], color="cat", style=style)
 

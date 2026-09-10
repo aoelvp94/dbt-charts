@@ -267,7 +267,7 @@ def test_wheel_metadata_no_local_label(wheel_metadata: str) -> None:
     """`hatch-vcs` strips the `+g<sha>` PEP 440 local label.
 
     PyPI rejects uploads whose version carries a local label, so an unstripped
-    suffix would block release. The check pins the empirical behaviour of
+    suffix would block release. The check pins the empirical behavior of
     `local_scheme = "no-local-version"` against an untagged commit.
     """
     version_lines = [

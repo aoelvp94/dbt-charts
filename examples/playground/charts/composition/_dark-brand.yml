@@ -2,7 +2,7 @@
 #
 # The underscore prefix makes this board non-listable — it will not appear
 # in board listings or search results, but visible boards can extend it.
-# It sets the dark theme and a brand accent colour.
+# It sets the dark theme and a brand accent color.
 
 title: Dark Brand (hidden base)
 notes: >

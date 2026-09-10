@@ -144,7 +144,7 @@ def test_resolved_axis_offset_reflects_authored_x_label() -> None:
     than silently under-reserving the axis title's height.
 
     The third case is the reclaimed-space outcome: suppressing the title on
-    a labelled chart must hand the pixels back, not merely hide the glyphs
+    a labeled chart must hand the pixels back, not merely hide the glyphs
     (the whole point of preferring this over ``title.font.size: 0``). It also
     pins ordering on the v1 cascade route that ``axis_offset`` takes
     (``axis_overrides=None``), which the spec-side tests cannot reach — they

@@ -11,7 +11,7 @@ History: the cache used to bulk-load via a pyarrow table, which auto-inferred
 original fix mapped a ``Decimal`` column to ``DOUBLE`` (15 significant digits —
 lossy, but the crash was gone). That lossy coercion turned out to be a second
 bug: an incremental watermark column of restated NUMERIC values duplicated on every
-warm render, because a float-coerced prior key (``101.2``) never equalled the
+warm render, because a float-coerced prior key (``101.2``) never equaled the
 freshly-queried ``Decimal('101.20')`` tail key. The cache now stores a
 uniformly-Decimal column (every non-None value in the column is exactly
 ``Decimal`` — see ``_uniform_decimal_columns``) as VARCHAR text

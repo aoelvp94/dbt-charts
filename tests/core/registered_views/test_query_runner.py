@@ -691,7 +691,7 @@ class TestRunRegistryQueriesCache:
         )
 
     def test_no_cache_runs_adapter_every_time(self) -> None:
-        """When cache=None the adapter executes on every call (existing behaviour)."""
+        """When cache=None the adapter executes on every call (existing behavior)."""
         rows = [{"name": "id", "type": "BIGINT"}]
         view = _schema_view()
         path_params = {"source": "snowflake", "schema": "raw", "table": "events"}

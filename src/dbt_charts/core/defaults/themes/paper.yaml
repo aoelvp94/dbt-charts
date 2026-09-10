@@ -9,10 +9,6 @@ style:
   palettes:
     sequence: dbt-seq-brown
   background: dbt-creams.canvas
-  # Outer page canvas behind the board — match the board background so the cream
-  # tone reads as a single surface instead of a card on a gray page.
-  page:
-    background: dbt-creams.canvas
   muted: dbt-creams.muted
   font:
     color: dbt-creams.ink
@@ -77,6 +73,8 @@ style:
     axis:
       grid:
         color: dbt-creams.grid
+        threshold:
+          color: dbt-creams.subtitle
       ticks:
         color: dbt-creams.grid
       line:
@@ -93,8 +91,6 @@ style:
     axis_y:
       grid:
         color: dbt-creams.grid-emphasis  # softer grid for the value axis (overrides default gray)
-        zero:
-          color: dbt-creams.subtitle
       ticks:
         color: dbt-creams.grid-emphasis
     axis_quantitative:
@@ -140,7 +136,7 @@ style:
           color: dbt-creams.surface-subtle
       paginator:
         # Cream-scaffold variant of the default gray ramp — same three-tier
-        # contrast, warm-canvas colours.
+        # contrast, warm-canvas colors.
         color_active: dbt-creams.ink
         color_inactive: dbt-creams.inactive
         color_disabled: dbt-creams.disabled

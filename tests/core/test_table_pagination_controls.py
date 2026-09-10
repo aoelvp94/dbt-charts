@@ -5,7 +5,7 @@ Proves:
 2. render_table_svg emits a right-aligned paginator <g> when data overflows
    the page_rows or the height budget.
 3. The paginator uses chevrons + a windowed sequence of page numbers, with
-   the active page emphasised and disabled chevrons shown in a muted tone.
+   the active page emphasized and disabled chevrons shown in a muted tone.
 4. The chart's page variable name is used in the click handlers.
 5. No paginator when all data fits or pagination is disabled.
 6. Page number extracted from variables dict drives which rows render.
@@ -598,7 +598,7 @@ class TestPaginationControlsInSvg:
 
     def test_first_page_prev_chevron_is_disabled(self, make_chart) -> None:
         """On page 1 the prev chevron renders in the disabled tone with no
-        click handler — disabled state is signalled by colour, not opacity."""
+        click handler — disabled state is signaled by color, not opacity."""
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
@@ -1419,7 +1419,7 @@ class TestStaticMultiPagePagination:
             m = re.search(r'<svg[^>]+height="([\d.]+)"', svg)
             assert m, svg
             assert float(m.group(1)) == explicit_height, (
-                f"explicit height={explicit_height} must be honoured exactly "
+                f"explicit height={explicit_height} must be honored exactly "
                 f"even when the table is static-export-capped; got "
                 f"{m.group(1)}"
             )
@@ -1577,7 +1577,7 @@ class TestStripPaginationChrome:
 class TestPaginatorRowRangeLabel:
     """The paginator states what it pages: "Rows N–M of T" left of the chevrons.
 
-    An unlabelled ``‹ 1 2 … 37 ›`` reads as "37 pages of dashboards I
+    An unlabeled ``‹ 1 2 … 37 ›`` reads as "37 pages of dashboards I
     apparently created", not "this table has 37 pages of rows".
     """
 

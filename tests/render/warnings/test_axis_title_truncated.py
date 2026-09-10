@@ -1,8 +1,9 @@
 """Tests for the WARN_AXIS_TITLE_TRUNCATED render-warning detector.
 
 Detection rule: fires when an axis title is pre-wrapped to ≤2 lines and the
-text had to be cut with an ellipsis — i.e. the authored title was longer than
-two wrapped lines at the given extent. The truncation fact is recorded by the
+text had to be cut with an ellipsis — either because the authored title ran
+past two wrapped lines at the given extent, or because a single word was wider
+than the budget and got cut to fit. The truncation fact is recorded by the
 single wrap site (`wrap_axis_title` via `resolve_xy_titles`); no re-measurement
 occurs downstream.
 
@@ -436,3 +437,41 @@ rows:
     )
     clean_codes = {w.code for w in clean_result.warnings}
     assert WARN_AXIS_TITLE_TRUNCATED.code not in clean_codes
+
+
+def test_wrap_site_records_truncation_for_a_single_over_wide_word() -> None:
+    """A lone word wider than its budget is cut, so the warning must fire.
+
+    The line count alone cannot carry this signal: a word cut to fit still
+    occupies one line, which is not *more* than ``max_lines``.
+    """
+    ax, ay = _axes()
+    with collect_text_truncations() as sinks:
+        resolve_xy_titles(
+            "month",
+            "observed",
+            None,
+            "commits",
+            ax,
+            ay,
+            RenderBox(width=500, height=110),
+            "chart3",
+        )
+    assert sinks["chart3"][0].authored_text == "commits"
+
+
+def test_wrap_site_stays_silent_when_the_panel_budget_is_honest() -> None:
+    """The same title in a 7-row facet panel fits, so no warning is recorded."""
+    ax, ay = _axes()
+    with collect_text_truncations() as sinks:
+        resolve_xy_titles(
+            "month",
+            "observed",
+            None,
+            "commits",
+            ax,
+            ay,
+            RenderBox(width=500, height=110, panel_rows=7),
+            "chart4",
+        )
+    assert "chart4" not in sinks

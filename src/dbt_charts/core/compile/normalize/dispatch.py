@@ -189,15 +189,14 @@ def compile_board_resolved_style(
 
     When this board authors its own ``style:`` (``board_style is not None``),
     merge order is:
-    1. ``board_style`` merged over ``parent_patch`` via the nested-board
        relation (``scope_patch(parent_patch, board_style)``, which merges via
        ``merge_patches(..., nested=True)``). Each style field's own
        ``Merge`` marker settles it: most default to the ancestor's authored
        value crossing in when this board leaves them unset; a field marked
        ``Merge(nested=Strategy.CHILD)`` — a per-board structural or
-       root-only concern (spacing, frame, page chrome), not thematic
-       identity — always takes this board's own value instead, even when
-       that value is unset.
+       root-only concern (spacing/frame, footer/timestamp chrome), not
+       thematic identity — always takes this board's own value instead,
+       even when that value is unset.
     2. Theme defaults (theme_name → compiled theme → resolve_style) fill
        whatever the merged patch left unset.
 

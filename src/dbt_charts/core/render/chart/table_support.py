@@ -158,11 +158,11 @@ def _format_temporal_value(
 
     if isinstance(value, str):
         # Parse ISO string to a date object so strftime works uniformly.
-        # fromisoformat() on 3.10 doesn't handle the "Z" suffix — normalise it first.
-        # Space-separated Postgres timestamps ("YYYY-MM-DD HH:MM:SS") are normalised
+        # fromisoformat() on 3.10 doesn't handle the "Z" suffix — normalize it first.
+        # Space-separated Postgres timestamps ("YYYY-MM-DD HH:MM:SS") are normalized
         # to ISO T-separator before parsing.
         stripped = value.strip().replace("Z", "+00:00")
-        # Normalise space-separated timestamp to T-separator for fromisoformat().
+        # Normalize space-separated timestamp to T-separator for fromisoformat().
         if len(stripped) > 10 and stripped[10] == " ":
             stripped = stripped[:10] + "T" + stripped[11:]
         if "T" in stripped:

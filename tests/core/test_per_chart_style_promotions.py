@@ -299,7 +299,7 @@ class TestLineStylePromotion:
         # Halo is wider than foreground by exactly halo_multiplier
         assert halo["strokeWidth"] == pytest.approx(2.0 * 3.0)
         assert fg["strokeWidth"] == pytest.approx(2.0)
-        # Halo is knockout-coloured to the chart background
+        # Halo is knockout-colored to the chart background
         assert halo["stroke"] == spec["background"]
 
     def test_halo_with_points_emits_four_layers(self, make_chart):
@@ -1263,7 +1263,7 @@ class TestDiscriminatingRegressionIntraFamilyInherit:
         )
         result = build_chart_style_context(board, chart)
 
-        # Explicit value must NOT be overwritten even though it equalled old parent
+        # Explicit value must NOT be overwritten even though it equaled old parent
         assert result.kpi.value.font.weight == inherited_weight, (
             f"kpi.value.font.weight was explicitly set to {inherited_weight!r} but "
             f"was overwritten to {result.kpi.value.font.weight!r} — the heuristic "

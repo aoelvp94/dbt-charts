@@ -364,7 +364,7 @@ class TestMutatingSqlCodePropagation:
 class TestTokenizerFailureDeferral:
     """Pin what a tokenizer failure does at compile time.
 
-    Widening `_parse` to catch TokenError changed this caller's behaviour: an
+    Widening `_parse` to catch TokenError changed this caller's behavior: an
     unterminated string literal used to escape both `except` clauses uncaught,
     and now arrives as UnparseableSqlError and is deferred like any other
     undetermined skeleton. Since a tokenizer failure carries no position by

@@ -9,7 +9,7 @@ resolve, consumed as-is by render.
 
 Three-way resolution contract (see predefined_formats.py's module docstring):
 
-| source         | behaviour                                               |
+| source         | behavior                                               |
 |----------------|---------------------------------------------------------|
 | enum member    | house rules: engine spec + round-aware trim             |
 | style.formats  | native d3: literal spec, no trim, no post-process       |
@@ -142,7 +142,7 @@ def resolve_format_for_values(
 
     Per-set semantics: **any** value in ``values`` that falls in the sub-$1
     band pulls the *whole* slot to the plain-digit fallback, even members
-    that are >= $1 — a donut's centre total and its slice tooltips vote on
+    that are >= $1 — a donut's center total and its slice tooltips vote on
     one set (pass both) so they never disagree about the same 67 cents. A
     mixed set ($0.42 next to $3.00) paints every value in the two-decimal
     register rather than misreading the sub-$1 member as SI milli.

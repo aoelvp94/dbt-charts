@@ -2026,7 +2026,7 @@ class TestBaselinePlacement:
                 f"y={ys[1]}"
             )
 
-    def test_a_bullet_is_centred_on_its_item_s_text(self) -> None:
+    def test_a_bullet_is_centered_on_its_item_s_text(self) -> None:
         """A bullet sits at the middle of its item's text.
 
         It gets there via the line box's middle, which is the same point: the

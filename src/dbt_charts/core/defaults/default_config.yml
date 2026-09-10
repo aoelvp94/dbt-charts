@@ -5,8 +5,8 @@
 #   [everything here] Engine internals — not per-board authorable
 #
 # All visual/authorable config (style, theme, board layout) belongs in the
-# Board cascade via charts/meta.yaml — NOT here. A stray style:/theme: key
-# in dbt_charts.yml raises a ValidationError pointing at charts/meta.yaml.
+# Board cascade via charts/meta.yml — NOT here. A stray style:/theme: key
+# in dbt_charts.yml raises a ValidationError pointing at charts/meta.yml.
 # See: themes/stark.yaml for the structural root style; themes/clarity.yaml
 # is the shipped default.
 
@@ -328,12 +328,11 @@ chart_rendering:
     # Horizontal gap between footer-baseline timestamp and footer attribution
     # text.
     footer_timestamp_gap_px: 12
-    # The dbt charts wordmark that stands in for the footer's brand phrase: the
-    # height of its box, and the clearance between it and the words on either
-    # side, as multiples of the footer font size. At 1.15 the lockup's letters
-    # match the ascender height of the footer type beside them.
-    footer_wordmark_height_em: 1.15
-    footer_wordmark_gap_em: 0.3
+    # Weight of the footer's brand phrase, set against the lighter words
+    # around it. Only 500 and 600 have a static font face for vl-convert to
+    # swap in, so a higher value renders heavier in a browser and flat in
+    # every PNG/PDF export.
+    footer_brand_weight: 600
   support_table:
     # Vertical gap between divider rule and first row of the attached
     # support table strip.

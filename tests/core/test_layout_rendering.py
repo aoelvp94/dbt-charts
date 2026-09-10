@@ -494,7 +494,7 @@ rows:
 
 
 class TestCardPaddingRendering:
-    """Card padding (16px inset) behaviour differs by renderer family.
+    """Card padding (16px inset) behavior differs by renderer family.
 
     SVG-family charts (kpi/table/spark_bar) still receive an outer SVG
     translate wrapper.  Vega-family charts (bar/line/etc.) receive card_pad

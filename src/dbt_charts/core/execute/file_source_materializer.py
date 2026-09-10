@@ -304,7 +304,7 @@ class FileSourceMaterializer:
                 ):
                     rows: list[_JsonRow] = []
                     arrow: pa.Table | None = None
-                    # The file folded into `arrow` most recently — the neighbour
+                    # The file folded into `arrow` most recently — the neighbor
                     # a schema conflict is actually against, which for a long
                     # glob is more useful than always blaming the first shard.
                     previous_relpath = ""
@@ -363,7 +363,7 @@ class FileSourceMaterializer:
                     if union_by_name and rows:
                         # Union of column names in first-seen insertion order so
                         # the created table's column order is deterministic across
-                        # processes (a set would vary under hash randomisation).
+                        # processes (a set would vary under hash randomization).
                         all_keys = dict.fromkeys(k for row in rows for k in row)
                         for row in rows:
                             for k in all_keys:

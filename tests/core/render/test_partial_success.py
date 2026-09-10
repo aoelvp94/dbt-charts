@@ -1175,14 +1175,8 @@ def test_warning_detector_tolerates_chart_missing_from_resolved_board() -> None:
 
 
 def test_query_execution_failure_still_isolates_through_the_real_pipeline() -> None:
-    """A broken query isolates via the render walk, as it already did.
-
-    ``_require_resolved`` swallows an ExecutionError into empty data, so this
-    shape never reached the resolve-stage catch at all — the real diagnostic
-    comes from the render walk re-executing the query for real. Pinned here so
-    the new resolve-stage handling can't quietly take this path over and
-    change which stage reports it.
-    """
+    """A broken query isolates to its own tile — the board still renders and
+    the healthy chart survives, regardless of which stage reports it."""
     board = _compile_board(_HEALTHY_PLUS_BAR_YAML)
     executor = _resolve_stage_executor({"q_good": [{"value": 42}]})
 
@@ -1202,6 +1196,249 @@ def test_query_execution_failure_still_isolates_through_the_real_pipeline() -> N
     assert result.board_error is None
     assert len(result.chart_errors) == 1
     assert 'data-chart-id="good"' in result.output
+
+
+# ---------------------------------------------------------------------------
+# A query failure must isolate to its own chart on every path that consults
+# it: the resolve stage, the inactive-tab fallback, and board-wide
+# category-color planning. Real Executor throughout.
+# ---------------------------------------------------------------------------
+
+
+def _write_duckdb_project(root: Path) -> None:
+    """Scaffold a real on-disk project with an empty local DuckDB source."""
+    import duckdb
+
+    (root / "charts").mkdir(parents=True)
+    (root / "dbt_charts.yml").write_text(
+        "sources:\n  db:\n    type: duckdb\n    path: local.duckdb\n"
+    )
+    duckdb.connect(str(root / "local.duckdb")).close()
+
+
+_TWO_QUERY_FAILURE_YAML = """
+title: Two Queries, One Failing
+queries:
+  q_good:
+    source: db
+    sql: "SELECT 42 AS value"
+  q_bad:
+    source: db
+    sql: "SELECT 1 AS value"
+charts:
+  good:
+    type: kpi
+    query: q_good
+    value: value
+  bad:
+    type: bar
+    query: q_bad
+    x: value
+    y: value
+cols:
+  - good
+  - bad
+"""
+
+_TABS_QUERY_FAILURE_YAML = """
+title: Inactive Tab Query Failure
+queries:
+  q_good:
+    source: db
+    sql: "SELECT 42 AS value"
+  q_bad:
+    source: db
+    sql: "SELECT 1 AS value"
+charts:
+  active_chart:
+    type: kpi
+    query: q_good
+    value: value
+  hidden_chart:
+    type: bar
+    query: q_bad
+    x: value
+    y: value
+tabs:
+  id: t
+  default: Active
+  items:
+    - title: Active
+      rows: [active_chart]
+    - title: Hidden
+      rows: [hidden_chart]
+"""
+
+
+def _real_executor_with_failing_query(
+    tmp_path: Path,
+    make_error: Callable[[], Exception],
+    yaml_text: str = _TWO_QUERY_FAILURE_YAML,
+):
+    """A real Executor and adapters, on disk — 'q_bad' fails via ``make_error()``.
+
+    Patches ``resolve_query_references`` (the SQL-composition step inside
+    ``execute_query``, Step 4) to raise for 'q_bad' and delegate to the real
+    implementation for every other query. Returns ``(board, executor,
+    patch_fn)`` — apply ``patch_fn`` via ``patch.object`` at each call site so
+    every ``execute_query`` invocation, across threads, sees the same failure.
+    """
+    from dbt_charts.cli.filesystem_project import FilesystemProject
+    from dbt_charts.core.execute import executor as _executor_mod
+    from dbt_charts.core.execute.adapters import build_adapter_registry
+
+    _write_duckdb_project(tmp_path)
+    board_path = tmp_path / "charts" / "board.yml"
+    board_path.write_text(yaml_text)
+
+    project = FilesystemProject(tmp_path)
+    result = compile(board_path.read_text(), base_dir=project.directory())
+    assert result.success, result.errors
+    assert result.board is not None
+
+    executor = Executor(
+        result.board,
+        adapter_registry=build_adapter_registry(project),
+        query_registry=result.query_registry,
+    )
+
+    real_resolve_refs = _executor_mod.resolve_query_references
+
+    def _boom(query, *, all_queries, query_name=None):
+        if query_name == "q_bad":
+            raise make_error()
+        return real_resolve_refs(query, all_queries=all_queries, query_name=query_name)
+
+    return result.board, executor, _boom
+
+
+def test_query_execution_failure_is_recorded_at_resolve_not_swallowed(
+    tmp_path: Path,
+) -> None:
+    """A stored query failure surfaces as a chart resolve failure, not an
+    empty-data resolve.
+
+    Runs the real parallel pre-pass so ``executor._query_errors['q_bad']``
+    holds the failure (both queries are cache misses, submitted together via
+    ``execute_queries_parallel``, as production does), then calls
+    ``build_resolved_board`` directly — the same call
+    ``agent_api.board_artifact.emit_board_artifact`` makes, with no render
+    walk downstream to redundantly re-execute the query.
+    """
+    from dbt_charts.core.compile.models.board.resolved import ChartResolveFailure
+    from dbt_charts.core.execute import executor as _executor_mod
+    from dbt_charts.core.execute.collect import collect_all_query_names
+    from dbt_charts.core.execute.parallel import execute_queries_parallel
+
+    board, executor, _boom = _real_executor_with_failing_query(
+        tmp_path, lambda: JinjaError("simulated bad template", "{{ boom }}")
+    )
+
+    query_names = collect_all_query_names(board)
+    with patch.object(_executor_mod, "resolve_query_references", side_effect=_boom):
+        execute_queries_parallel(executor, query_names, {}, 8)
+
+    assert "q_bad" in executor._query_errors
+    assert isinstance(executor._query_errors["q_bad"], JinjaError)
+
+    resolve_errors: dict[str, ChartResolveFailure] = {}
+    with patch.object(_executor_mod, "resolve_query_references", side_effect=_boom):
+        resolved, _cache = build_resolved_board(
+            board, executor, {}, resolve_errors=resolve_errors
+        )
+
+    assert "bad" in resolve_errors
+    assert resolve_errors["bad"].diagnostic.code == "ERR-JINJA-ERROR"
+    assert "bad" not in resolved.charts
+    assert "good" in resolved.charts
+
+
+def test_inactive_tab_query_failure_is_recorded_not_swallowed(tmp_path: Path) -> None:
+    """The same guarantee on the inactive-tab fallback path.
+
+    The sizing pass only walks the active tab, so an inactive tab's chart
+    resolves through ``_resolve_chart_data_aware`` instead of
+    ``_require_resolved`` — a separate function with its own catch.
+    """
+    from dbt_charts.core.compile.models.board.resolved import ChartResolveFailure
+    from dbt_charts.core.execute import executor as _executor_mod
+
+    board, executor, _boom = _real_executor_with_failing_query(
+        tmp_path,
+        lambda: QueryError("simulated query failure", "q_bad"),
+        yaml_text=_TABS_QUERY_FAILURE_YAML,
+    )
+
+    resolve_errors: dict[str, ChartResolveFailure] = {}
+    with patch.object(_executor_mod, "resolve_query_references", side_effect=_boom):
+        resolved, _cache = build_resolved_board(
+            board, executor, {}, resolve_errors=resolve_errors
+        )
+
+    assert "hidden_chart" in resolve_errors
+    assert "hidden_chart" not in resolved.charts
+    assert "active_chart" in resolved.charts
+
+
+def test_category_color_planning_isolates_a_fresh_non_execution_error(
+    tmp_path: Path,
+) -> None:
+    """``plan_board_category_colors`` runs first, before any query has been
+    attempted — the cold path ``emit_board_artifact`` takes, with no parallel
+    pre-pass. A non-ExecutionError DbtChartsError raised there must isolate
+    to its own chart rather than abort the whole board resolution.
+    """
+    from dbt_charts.core.compile.models.board.resolved import ChartResolveFailure
+    from dbt_charts.core.execute import executor as _executor_mod
+
+    board, executor, _boom = _real_executor_with_failing_query(
+        tmp_path, lambda: JinjaError("simulated bad template", "{{ boom }}")
+    )
+
+    resolve_errors: dict[str, ChartResolveFailure] = {}
+    with patch.object(_executor_mod, "resolve_query_references", side_effect=_boom):
+        resolved, _cache = build_resolved_board(
+            board, executor, {}, resolve_errors=resolve_errors
+        )
+
+    assert "bad" in resolve_errors
+    assert resolve_errors["bad"].diagnostic.fields["chart_id"] == "bad"
+    assert "good" in resolved.charts
+
+
+def test_emit_board_artifact_reports_failure_for_a_query_error(
+    tmp_path: Path,
+) -> None:
+    """The agent-facing artifact verb — no render walk at all — must isolate
+    a broken chart to a clean ``success=False``, not crash or silently
+    publish an artifact with an empty-data chart.
+    """
+    from dbt_charts.agent_api.board_artifact import emit_board_artifact
+    from dbt_charts.cli.filesystem_project import FilesystemProject
+    from dbt_charts.core.execute import executor as _executor_mod
+    from dbt_charts.core.execute.adapters import build_adapter_registry
+
+    def _make_error() -> QueryError:
+        err = QueryError("simulated query failure", "q_bad")
+        err.code = ERR_FILE_NOT_FOUND
+        return err
+
+    _board, _executor, _boom = _real_executor_with_failing_query(tmp_path, _make_error)
+    project = FilesystemProject(tmp_path)
+
+    with patch.object(_executor_mod, "resolve_query_references", side_effect=_boom):
+        result = emit_board_artifact(
+            tmp_path / "charts" / "board.yml",
+            tmp_path / "out" / "board.artifact.json",
+            tmp_path / "out" / "board.recording.json",
+            project=project,
+            adapter_registry=build_adapter_registry(project),
+        )
+
+    assert result.success is False
+    assert len(result.errors) == 1
+    assert result.errors[0].code == ERR_FILE_NOT_FOUND.code
+    assert result.errors[0].fields.get("chart_id") == "bad"
 
 
 # ---------------------------------------------------------------------------
@@ -1390,13 +1627,7 @@ def test_draw_board_error_takes_priority_over_walk_board_error() -> None:
 
 def _write_resolve_error_project(root: Path) -> Path:
     """A real on-disk project whose pie chart has a NULL in its theta column."""
-    import duckdb
-
-    (root / "charts").mkdir(parents=True)
-    (root / "dbt_charts.yml").write_text(
-        "sources:\n  db:\n    type: duckdb\n    path: local.duckdb\n"
-    )
-    duckdb.connect(str(root / "local.duckdb")).close()
+    _write_duckdb_project(root)
     board_path = root / "charts" / "board.yml"
     board_path.write_text(
         """

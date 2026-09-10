@@ -73,7 +73,7 @@ def _render(chart, data, width):
 
 
 # ---------------------------------------------------------------------------
-# Core wrap behaviour: wrap produces data-row tspans with text fragments
+# Core wrap behavior: wrap produces data-row tspans with text fragments
 # ---------------------------------------------------------------------------
 
 
@@ -200,7 +200,7 @@ class TestPaginatedAndHeightConstrained:
             board_style=resolve_style(get_theme_style()),
         )
 
-        # SVG height must honour the requested 200px.
+        # SVG height must honor the requested 200px.
         assert _table_height(svg) == 200
 
         # Data-row tspan y-coords (inside wrapped <text> groups whose content

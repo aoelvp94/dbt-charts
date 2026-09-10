@@ -20,13 +20,16 @@ from pydantic import BaseModel, StringConstraints, Tag, ValidationError
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined, PydanticUndefinedType
 
-from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+from dbt_charts.core.compile.models.board.authored import (
+    AuthoredBoard,
+    AuthoredBoardInput,
+)
 from dbt_charts.core.compile.models.chart.authored import (
     AUTHORED_CHART_VARIANTS,
     AuthoredChart,
 )
 from dbt_charts.core.compile.models.factories import _PatchBase
-from dbt_charts.core.compile.models.markers import Facet
+from dbt_charts.core.compile.models.markers import Facet, SchemaSugar
 from dbt_charts.core.compile.models.query.authored import (
     AuthoredCompactValuesQuery,
     AuthoredHttpQuery,
@@ -531,7 +534,7 @@ def _extra_union_types(annotation: Any) -> list[str]:
     # item type's primitive arms belong inside that container's items, handled
     # by _container_list_models, not as a bare sibling of the outer field. A
     # scalar-only container sibling (`ThemeName | str | list[str]`) keeps the
-    # existing recurse-and-flatten behaviour — that one has no separate
+    # existing recurse-and-flatten behavior — that one has no separate
     # container-model mechanism to hand it off to.
     non_none_args = [a for a in args if a is not type(None)]
     skip_containers = len(non_none_args) > 1
@@ -913,6 +916,28 @@ def introspect() -> AuthorableSchema:
     """
     collected: dict[str, AuthorableModel] = {}
     _collect_models(AuthoredBoard, collected)
+    # AuthoredBoardInput's SchemaSugar metadata declares authoring-sugar keys
+    # (theme:) that have no backing Pydantic field -- a BeforeValidator on the
+    # wrapper folds them into a real field ahead of validation, so
+    # _collect_models never sees them walking AuthoredBoard.model_fields.
+    # Append a synthetic SchemaField per marker so the sugar key still reaches
+    # every IR-consuming renderer (JSON Schema, docs, highlight manifest).
+    for meta in get_args(AuthoredBoardInput)[1:]:
+        if isinstance(meta, SchemaSugar):
+            collected["AuthoredBoard"].fields.append(
+                SchemaField(
+                    name=meta.name,
+                    description=meta.description,
+                    type_repr=meta.type_repr,
+                    required=False,
+                    default=None,
+                    default_repr=None,
+                    enum_values=list(meta.enum_values)
+                    if meta.enum_values is not None
+                    else None,
+                    nested_models=[],
+                )
+            )
     # Walk extra roots: some (chart/query family classes) already arrived via
     # _UNION_ALIAS_VARIANTS expansion above and are no-ops here (_collect_models
     # returns immediately for a name already in `collected`); others — source

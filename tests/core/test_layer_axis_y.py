@@ -557,7 +557,7 @@ def _render_dual_axis_with_label() -> dict:  # type: ignore[no-untyped-def]
     )
 
 
-def test_dual_axis_labelled_not_suppressed_shows_title() -> None:
+def test_dual_axis_labeled_not_suppressed_shows_title() -> None:
     """A y_label authored with no explicit title.visible:false must still show
     the base axis title on a dual-axis overlay (the flag=True-but-not-suppressed
     case the suppression gate must not treat as suppressed)."""

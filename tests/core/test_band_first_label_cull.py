@@ -6,7 +6,7 @@ at one width, gone half a pixel later, present again half a pixel after that.
 Because it is width-dependent it does not survive a resize, so an author who
 notices the gap and drags the window watches it come back.
 
-Characterised against vl_convert 1.9.0 over thousands of half-pixel widths:
+Characterized against vl_convert 1.9.0 over thousands of half-pixel widths:
 
 * it is always the FIRST band and never any other;
 * it fires for any ``values`` list containing that band — a full-domain list
@@ -170,7 +170,7 @@ def test_first_label_renders_at_reported_widths(
     assert label.startswith("Jan")
 
 
-# Two-pixel steps across the neighbourhood. On the unfixed emitter the
+# Two-pixel steps across the neighborhood. On the unfixed emitter the
 # leading label vanishes at 27 of the 100 half-pixel widths here, scattered
 # rather than banded, so a single spot check cannot hold this — but every
 # width costs a vega→scenegraph round trip, and sampling 25 of them still

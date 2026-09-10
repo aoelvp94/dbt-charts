@@ -805,13 +805,13 @@ class TestKpiGeometryRefinements:
 
     def test_empty_label_renders_no_text_but_height_consistent(self):
         """``label: ""`` on a KPI must skip the label ``<text>`` element
-        while keeping the card height equal to the labelled version — the
+        while keeping the card height equal to the labeled version — the
         slot is reserved so multi-up rows of mixed-label KPIs stay aligned.
         """
-        labelled, lab_data = _resolved_kpi(value="revenue", label="Quarterly revenue")
+        labeled, lab_data = _resolved_kpi(value="revenue", label="Quarterly revenue")
         empty, emp_data = _resolved_kpi(value="revenue", label="")
-        svg_labelled = render_kpi_svg(
-            labelled,
+        svg_labeled = render_kpi_svg(
+            labeled,
             lab_data,
             width=300,
             height=200,
@@ -825,27 +825,27 @@ class TestKpiGeometryRefinements:
             board_style=resolve_style(get_theme_style()),
         )
 
-        root_l = ET.fromstring(svg_labelled)
+        root_l = ET.fromstring(svg_labeled)
         root_e = ET.fromstring(svg_empty)
 
         # Heights match — slot reservation independent of label content.
         assert root_l.attrib["height"] == root_e.attrib["height"], (
             f"Empty-label SVG height {root_e.attrib['height']!r} does not "
-            f"match labelled SVG height {root_l.attrib['height']!r} — "
+            f"match labeled SVG height {root_l.attrib['height']!r} — "
             f"empty-label slot reservation regressed."
         )
 
         # The empty-label SVG has one fewer <text> element (no label text).
-        n_text_labelled = len(root_l.findall("svg:text", _NS))
+        n_text_labeled = len(root_l.findall("svg:text", _NS))
         n_text_empty = len(root_e.findall("svg:text", _NS))
-        assert n_text_empty == n_text_labelled - 1, (
+        assert n_text_empty == n_text_labeled - 1, (
             f"Expected empty-label SVG to omit the label <text>, "
-            f"got {n_text_empty} text elements vs {n_text_labelled} labelled."
+            f"got {n_text_empty} text elements vs {n_text_labeled} labeled."
         )
 
         # And no <text> sits at the label baseline in the empty SVG.
-        labelled_label = root_l.findall("svg:text", _NS)[1]
-        label_y = labelled_label.attrib["y"]
+        labeled_label = root_l.findall("svg:text", _NS)[1]
+        label_y = labeled_label.attrib["y"]
         empty_ys = {t.attrib.get("y") for t in root_e.findall("svg:text", _NS)}
         assert label_y not in empty_ys, (
             f"Empty-label SVG still has a <text> at the label baseline "

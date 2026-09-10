@@ -1,6 +1,6 @@
 """TDD: area gap-fill densification for axis_x.fill: linear (and other modes).
 
-V1 materialises missing time-bucket rows via complete_ordinal_time_series before
+V1 materializes missing time-bucket rows via complete_ordinal_time_series before
 encoding. V2 AreaEmitter must do the same so the rendered data is dense.
 """
 

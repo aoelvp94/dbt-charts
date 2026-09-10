@@ -2,13 +2,13 @@
 
 Regression coverage for: endpoint labels cannot be authored when there is no
 color encoding. Before this fix, `EndpointLabelFeature.applies_to()` required
-a base-level colour channel
+a base-level color channel
 in "series" mode — a layered chart with no `color:` (e.g. a bar base +
 a line overlay, each single-series) could never reach the endpoint-label
 rail, even with `endpoint_labels.visible: true` authored.
 
 The fix treats each layer (the base series plus every overlay layer) as its
-own labelled endpoint on the SAME right_pane rail multi-series charts already
+own labeled endpoint on the SAME right_pane rail multi-series charts already
 use — anchored on the base chart's own y-domain (single shared scale only;
 a layer that pins its own axis_y.position is a genuine dual-axis chart and
 is refused, see test_dual_axis_layer_raises below).
@@ -53,7 +53,7 @@ def _labels_in_pane(spec: dict) -> dict[str, float]:
 
 
 def _shared_scale_domain(spec: dict) -> list[str] | None:
-    """The legend's shared colour-scale domain, or None when the legend is
+    """The legend's shared color-scale domain, or None when the legend is
     suppressed (every layer's own ``color.legend`` is None).
 
     ``suppress_legend`` is a single board-wide toggle (``_base_kwargs`` in
@@ -63,8 +63,8 @@ def _shared_scale_domain(spec: dict) -> list[str] | None:
     so this never needs to merge across layers.
     """
     chart_pane = spec["hconcat"][0] if "hconcat" in spec else spec
-    # A chart with no colour-driven overlay wrapping (no `layers:`, or one
-    # wrapped only by BaselineFeature's zero-rule) carries its colour
+    # A chart with no color-driven overlay wrapping (no `layers:`, or one
+    # wrapped only by BaselineFeature's zero-rule) carries its color
     # encoding at the chart pane's own top level; a real overlay
     # (emitters/_overlay.py) carries it per sub-`layer` instead — check both.
     candidates = [chart_pane, *chart_pane.get("layer", [])]
@@ -79,16 +79,16 @@ def _shared_scale_domain(spec: dict) -> list[str] | None:
 
 
 def _legend_visible(spec: dict) -> bool:
-    """Whether the chart pane's colour legend is not suppressed.
+    """Whether the chart pane's color legend is not suppressed.
 
     Unlike ``_shared_scale_domain``, this doesn't need an explicit
-    ``scale.domain`` in the spec — a plain (non-overlay) series-mode colour
+    ``scale.domain`` in the spec — a plain (non-overlay) series-mode color
     encoding carries no baked domain at all (VL infers it from data; the
     palette lives in ``spec.config.range.category`` instead), so this is the
     right check for shapes with no ``chart.layers`` at all.
 
     The horizontal stacked-bar top_rail wraps the real chart pane in
-    ``vconcat[1]`` (``vconcat[0]`` is the rail row itself, whose own colour
+    ``vconcat[1]`` (``vconcat[0]`` is the rail row itself, whose own color
     encoding always carries ``legend: null`` — that's the rail's private
     painting scale, not the chart's) — check that pane, not the rail's.
     """
@@ -129,7 +129,7 @@ def _resolve_and_render(chart, data, *, width=400.0, chart_style_context=None):
 
 
 # --------------------------------------------------------------------------
-# One layer, no colour encoding — the worksheet's motivating case.
+# One layer, no color encoding — the worksheet's motivating case.
 # --------------------------------------------------------------------------
 
 
@@ -150,7 +150,7 @@ class TestSingleLayerNoColor:
 
     def test_label_font_style_reaches_mark(self, make_chart):
         """font.style authored on charts.series_label.font reaches the
-        layered (chart.layers, no colour channel) endpoint-label mark as VL's
+        layered (chart.layers, no color channel) endpoint-label mark as VL's
         fontStyle — the second endpoint_labels.py call site, distinct from
         the multi-series right_pane path covered in test_render_features.py."""
         compiled = get_theme_style()
@@ -196,7 +196,7 @@ class TestSingleLayerNoColor:
 
 
 # --------------------------------------------------------------------------
-# Several layers, no colour encoding.
+# Several layers, no color encoding.
 # --------------------------------------------------------------------------
 
 
@@ -243,7 +243,7 @@ def test_layered_chart_without_opt_in_stays_unlabeled(make_chart):
 
 
 # --------------------------------------------------------------------------
-# With a genuine base colour-series channel, the existing rail path still
+# With a genuine base color-series channel, the existing rail path still
 # fires (base series only) — regression guard, unaffected by this fix.
 # --------------------------------------------------------------------------
 
@@ -365,7 +365,7 @@ def test_layered_endpoint_labels_suppress_legend(make_chart):
         for layer in chart_pane.get("layer", [])
         if isinstance(layer.get("encoding", {}).get("color"), dict)
     ]
-    assert color_legends, "expected at least one colour-encoded layer in the pane"
+    assert color_legends, "expected at least one color-encoded layer in the pane"
     assert all(legend is None for legend in color_legends), (
         f"legend not suppressed while the endpoint-label rail fires: "
         f"{color_legends!r} — every series is named twice."
@@ -376,7 +376,7 @@ def test_layered_endpoint_label_ink_matches_authored_mark_color(make_chart):
     """The rail's ink for a layer must match what that layer actually paints.
 
     An authored ``style.marks.line.stroke.color`` is not a palette slot — the
-    rail must read the emitter's own shared colour scale rather than
+    rail must read the emitter's own shared color scale rather than
     re-derive a positional palette slice that can only drift from it.
     """
     chart = make_chart(
@@ -400,7 +400,7 @@ def test_layered_endpoint_label_ink_matches_authored_mark_color(make_chart):
     rail_ink = dict(zip(pane_scale["domain"], pane_scale["range"], strict=True))
     assert rail_ink["Cumulative"] == "#ff0000", (
         f"rail painted 'Cumulative' {rail_ink['Cumulative']!r}, expected the "
-        f"authored mark colour '#ff0000' — the rail's ink must match what "
+        f"authored mark color '#ff0000' — the rail's ink must match what "
         f"the line layer actually renders, not a positional palette slot."
     )
 
@@ -503,14 +503,14 @@ def test_layered_endpoint_labels_cascade_uses_zero_anchored_domain(make_chart):
 
 
 # --------------------------------------------------------------------------
-# Review round 2 regressions: colour-channel crash, over-suppressed legend,
+# Review round 2 regressions: color-channel crash, over-suppressed legend,
 # duplicate-label collapse.
 # --------------------------------------------------------------------------
 
 
 class TestNonSeriesColorChannelDoesNotCrash:
-    """CRITICAL: a layered chart whose base colour channel is NOT a nominal/
-    ordinal series (gradient) has no shared colour scale for the layered
+    """CRITICAL: a layered chart whose base color channel is NOT a nominal/
+    ordinal series (gradient) has no shared color scale for the layered
     rail to read — it must decline the rail, not raise.
     """
 
@@ -532,7 +532,7 @@ class TestNonSeriesColorChannelDoesNotCrash:
         )
         spec = _resolve_and_render(chart, data)
         assert "hconcat" not in spec, (
-            "a gradient colour channel has no shared colour scale to paint "
+            "a gradient color channel has no shared color scale to paint "
             "the layered rail from — the rail must decline, not fire (and "
             "must not raise ChartDataError)."
         )
@@ -545,7 +545,7 @@ class TestLegendNotOverSuppressed:
     """
 
     def test_base_color_series_with_layer_keeps_layer_named(self, make_chart):
-        """A genuine base colour-series channel routes apply() into the
+        """A genuine base color-series channel routes apply() into the
         multi-series branch, which never looks at chart.layers at all — so
         an overlay layer's own series is never in the rail. The legend must
         stay on to name it.
@@ -573,7 +573,7 @@ class TestLegendNotOverSuppressed:
     def test_layer_with_own_color_field_keeps_subseries_named(self, make_chart):
         """A layer authoring its own ``color:`` splits into several
         sub-series with no single endpoint for the rail to anchor. Rather
-        than naming the base + colourless layers on the rail and leaving
+        than naming the base + colorless layers on the rail and leaving
         that one sub-series to the legend (which named the base a second
         time — round-2's double-naming regression), the whole rail falls
         back to legend-only: nothing fires, and the legend alone names
@@ -596,7 +596,7 @@ class TestLegendNotOverSuppressed:
         )
         spec = _resolve_and_render(chart, data)
         assert "hconcat" not in spec, (
-            "a layer with its own colour field can't be named on the rail — "
+            "a layer with its own color field can't be named on the rail — "
             "the whole layered rail must decline, not partially fire."
         )
         domain = _shared_scale_domain(spec)
@@ -612,7 +612,7 @@ class TestLegendNotOverSuppressed:
         """A horizontal bar's rail only ever fires when stacked
         (``EndpointLabelFeature.applies_to()``'s horizontal branch) — a
         grouped (``stack: none``) horizontal bar never gets a rail even with
-        a colour series and an explicit opt-in, so the legend must stay on.
+        a color series and an explicit opt-in, so the legend must stay on.
         """
         data = [
             {"cat": "A", "value": 10.0, "series": "X"},
@@ -638,12 +638,12 @@ class TestLegendNotOverSuppressed:
         assert _legend_visible(spec), "no rail fired — the legend must stay on"
 
     def test_horizontal_stacked_bar_with_layer_keeps_overlay_named(self, make_chart):
-        """A horizontal stacked bar's colour-series rail (top_rail) only ever
-        names the colour series, never a ``chart.layers`` overlay —
+        """A horizontal stacked bar's color-series rail (top_rail) only ever
+        names the color series, never a ``chart.layers`` overlay —
         ``endpoint_label_has_layers`` is zeroed for horizontal (the layered
         rail has no horizontal path), but that same zeroed flag must not be
         read as "no layer exists" by the legend-suppression guard, or the
-        overlay layer's own colour renders with no legend and no rail entry:
+        overlay layer's own color renders with no legend and no rail entry:
         completely anonymous.
         """
         data = [
@@ -665,9 +665,9 @@ class TestLegendNotOverSuppressed:
             },
         )
         spec = _resolve_and_render(chart, data)
-        assert "vconcat" in spec, "the colour-series top_rail must still fire"
+        assert "vconcat" in spec, "the color-series top_rail must still fire"
         assert _legend_visible(spec), (
-            "the top_rail only names the colour series, never the overlay — "
+            "the top_rail only names the color series, never the overlay — "
             "the legend must stay on to name 'Overlay', or it is unnamed "
             "anywhere on the chart."
         )
@@ -685,8 +685,8 @@ class TestLegendNotOverSuppressed:
     ids=["one_layer", "several_layers"],
 )
 def test_every_series_named_exactly_once(make_chart, layers):
-    """The core shape this task adds — no base colour channel, every layer
-    colourless — must name every series exactly once: not zero (the round-2
+    """The core shape this task adds — no base color channel, every layer
+    colorless — must name every series exactly once: not zero (the round-2
     crash/over-suppression regressions), not twice (round 1's double-naming
     finding). This is the single assertion that pins both directions.
     """
@@ -732,7 +732,7 @@ def test_every_series_named_exactly_once(make_chart, layers):
 
 
 def test_duplicate_layer_label_raises(make_chart):
-    """Two entries in the shared colour scale sharing the same label collide
+    """Two entries in the shared color scale sharing the same label collide
     silently otherwise: the rail's label-keyed anchor dict collapses one
     entry's position, and the legend gets a scale with a duplicated domain
     value. Must raise at emit time instead — validate and error fast.
@@ -775,8 +775,8 @@ def test_layer_label_matching_base_y_title_renders_without_endpoint_labels(make_
 
 def test_layers_sharing_a_label_render_without_endpoint_labels(make_chart):
     """Two layers authoring the same label (e.g. a line with point markers,
-    both labelled "Target") must not raise when endpoint labels are never
-    opted in — the shared colour scale just reuses one legend slot for both.
+    both labeled "Target") must not raise when endpoint labels are never
+    opted in — the shared color scale just reuses one legend slot for both.
     """
     chart = make_chart(
         "bar",

@@ -347,10 +347,10 @@ class TableRowNumbersStyle(BaseModel):
 class PaginatorStyle(BaseModel):
     """Visual style for the paginator control (chevrons + page numbers).
 
-    Distinct from PaginationConfig which controls *behaviour* (enabled,
+    Distinct from PaginationConfig which controls *behavior* (enabled,
     page_rows). PaginatorStyle owns the look: color ramp across the three
     item states (active, inactive, disabled), font sizing, weight contrast
-    between the current page and its neighbours, and the slot width that
+    between the current page and its neighbors, and the slot width that
     drives the hit target.
     """
 
@@ -522,7 +522,7 @@ class TableChartStyle(_ChartCardStyleMixinAllOptional, _ChartStyleBaseAllOptiona
             "with the title and subtitle font sizes to reproduce Vega-Lite's "
             "title->subtitle spacing at any font size, not one calibrated "
             "pair. Font size and "
-            "colour for the subtitle itself come from style.title.subtitle "
+            "color for the subtitle itself come from style.title.subtitle "
             "(the same source chart-family titles use), not a table-local "
             "constant."
         )

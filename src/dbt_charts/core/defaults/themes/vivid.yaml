@@ -18,8 +18,6 @@ style:
   palettes:
     sequence: dbt-seq-blue
   background: dbt-grays.white
-  page:
-    background: dbt-grays.white
   accent: &high dbt-grays.heading   # grayscale accent (no hue)
   muted: &mid dbt-grays.muted
   font:
@@ -52,6 +50,8 @@ style:
         # closer to the canvas than the measure grid on axis_y below.
         color: dbt-grays.grid
         width: 1
+        threshold:
+          color: &value dbt-grays.ink  # baseline anchors at max contrast
       ticks:
         # A tick and its gridline mark the same value; they read as one mark
         # crossing the axis line, so the tick takes the grid's rung above.
@@ -65,8 +65,6 @@ style:
     axis_y:
       grid:
         color: *faint              # measure grid reads above the vertical one
-        zero:
-          color: &value dbt-grays.ink  # baseline anchors at max contrast
       ticks:
         color: *faint              # tracks the measure grid above
         width: 1                   # the hairline this theme's grid is drawn at

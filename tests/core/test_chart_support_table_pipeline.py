@@ -33,6 +33,7 @@ from dbt_charts.core.render.chart.support_table_attachment import (
     DRAWN_INDEX_FIELD,
     StripAnchor,
     _entry_numerals,
+    _pin_sorted_category_domain,
     resolved_pad_font_family,
 )
 from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec, render_chart
@@ -578,17 +579,20 @@ def test_layered_horizontal_bar_support_table_honors_chart_sort(monkeypatch):
     )
 
 
-def test_layered_horizontal_bar_support_table_with_no_chart_sort_keeps_query_order(
+def test_layered_horizontal_bar_support_table_with_no_chart_sort_keeps_engine_order(
     monkeypatch,
 ):
-    """With NO `chart.sort` authored, an attached support_table must NOT
-    reorder the category domain -- even though a horizontal bar with no
-    color channel gets an ENGINE DEFAULT sort on its compiled encoding
-    (`{"field": measure, "order": "descending"}`, see `emitters/bar.py`'s
-    largest-measure-first default). Only an explicit, author-written
-    `chart.sort` may reorder the board; the domain-pinning fix must read
-    `resolved_chart.sort`, not the compiled encoding's `sort` key, to tell
-    the two apart.
+    """With NO `chart.sort` authored, an attached support_table must not
+    reorder the category domain away from the order the engine default
+    already renders -- a horizontal bar with no color channel compiles an
+    ENGINE DEFAULT sort onto its encoding (`{"field": measure, "order":
+    "descending"}`, see `emitters/bar.py`), and `A, B, C` is that order, not
+    the query's own `C, A, B`.
+
+    The domain is pinned (the chart is layered, so `_reconcile_x_domain`
+    fires); what this pins is its VALUE. `rendered_x_domain` reads the
+    compiled encoding's sort, so a change that stopped it doing so would
+    fall through to base row order and flip the axis to `C, A, B`.
     """
     data = [
         {"region": "C", "revenue": 10.0, "target": 50.0},
@@ -610,11 +614,42 @@ def test_layered_horizontal_bar_support_table_with_no_chart_sort_keeps_query_ord
     )
     spec = _render_v2_spec(chart, data, width=400, height=200, monkeypatch=monkeypatch)
 
-    # The engine default sort is still present on the compiled encoding...
     assert spec["encoding"]["y"]["sort"] == {"field": "revenue", "order": "descending"}
-    # ...but no domain gets pinned, so the scale stays unset (Vega-Lite's own
-    # data-order fallback governs, same as before support_table ever attached).
-    assert "domain" not in spec["encoding"]["y"].get("scale", {})
+    assert spec["encoding"]["y"]["scale"]["domain"] == ["A", "B", "C"]
+
+
+def test_support_table_pin_no_ops_without_an_authored_chart_sort():
+    """With NO `chart.sort` authored, the support_table pin must leave the
+    category domain alone -- even though a horizontal bar with no color
+    channel gets an ENGINE DEFAULT sort on its compiled encoding
+    (`{"field": measure, "order": "descending"}`, see `emitters/bar.py`'s
+    largest-measure-first default). Only an explicit, author-written
+    `chart.sort` may reorder the board, so the pin reads the resolved
+    chart's own `sort` field rather than the compiled encoding's `sort` key.
+
+    Asserted against the pin itself, not a rendered spec: a layered chart's
+    shared categorical domain is pinned by `_reconcile_x_domain`
+    (`emitters/_overlay.py`) before this post-pass ever runs, so the
+    presence of a `scale.domain` on the finished spec says nothing about
+    whether this gate held.
+    """
+    data = [
+        {"region": "C", "revenue": 10.0, "target": 50.0},
+        {"region": "A", "revenue": 30.0, "target": 10.0},
+        {"region": "B", "revenue": 20.0, "target": 30.0},
+    ]
+    spec = {
+        "encoding": {
+            "y": {
+                "field": "region",
+                "type": "nominal",
+                "sort": {"field": "revenue", "order": "descending"},
+            }
+        }
+    }
+
+    pinned = _pin_sorted_category_domain(spec, "y", "region", data, None)
+    assert "domain" not in pinned["encoding"]["y"].get("scale", {})
 
 
 def test_temporal_x_line_chart_support_table_with_sort_does_not_crash(monkeypatch):
@@ -4067,7 +4102,7 @@ def test_pipeline_column_declares_its_unit_once(monkeypatch):
 
     Regression: the column path never inserted the row strip's drawn-index
     window, so the declare-once anchor test could never fire — every cell
-    fell through to the bare (divided, unlabelled) spelling. A $120,588,000
+    fell through to the bare (divided, unlabeled) spelling. A $120,588,000
     total painted "120" with no "mn" anywhere on the column.
 
     A `color:` channel is required to reach `sort: null` on the category
@@ -4222,7 +4257,7 @@ def test_render_bar_horizontal_stacked_per_series_still_expands_multiple_columns
 
 def test_render_bar_horizontal_grouped_per_series_does_not_suppress_legend():
     """A grouped bar's single column has no per-series header, so its
-    series stay named and coloured by the chart's own legend -- never
+    series stay named and colored by the chart's own legend -- never
     suppressed, unlike the stacked (multi-column) case.
     """
     chart = _compiled_bar_horizontal_with_support_table([{"per_series": "revenue"}])

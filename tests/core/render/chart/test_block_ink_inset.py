@@ -2,10 +2,10 @@
 
 Block boxes are laid out correctly — what drifts is the gap between a block's
 box and its first painted ink. A chart carrying a ``color:`` series wraps into
-an ``hconcat`` for the endpoint-label rail, and Vega-Lite only honours
+an ``hconcat`` for the endpoint-label rail, and Vega-Lite only honors
 ``padding`` at a spec's root: on a concat it is dropped and Vega falls back to
 its own default, so the multi-series chart's ink sat 11px higher in its cell
-than its single-series neighbour's.
+than its single-series neighbor's.
 """
 
 from __future__ import annotations

@@ -1075,10 +1075,10 @@ def compute_title_variables_inline_baseline_layout(
 
     Both baselines are derived, not measured-and-frozen. ``title_baseline`` comes
     from the renderer that draws the title (``title_baseline_offset``), and the
-    label's comes from its own font: a control label is vertically centred in its
-    flex row, so its content box straddles the centre and the baseline falls half
+    label's comes from its own font: a control label is vertically centered in its
+    flex row, so its content box straddles the center and the baseline falls half
     an ascent above the middle and half a descent below — ``(ascent - descent)/2``
-    past the centre. A ratio fitted to one font at one size is wrong for every
+    past the center. A ratio fitted to one font at one size is wrong for every
     other, which is what a band drifting out of alignment across font tiers was.
 
     Both columns are then shifted so the deeper baseline becomes the shared

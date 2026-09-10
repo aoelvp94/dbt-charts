@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 CaseValue = Literal["none", "sentence", "title", "upper", "lower", "slug", "camel"]
 
 # Editorial-style small words the NYT default list misses. Without this set
-# the titlecase library's default would capitalise ``per``, ``with``,
+# the titlecase library's default would capitalize ``per``, ``with``,
 # ``from``, etc. as ordinary words — wrong for editorial title
 # case ("Revenue Per Region" should be "Revenue per Region").
 _EXTRA_SMALL_WORDS: frozenset[str] = frozenset(
@@ -72,7 +72,7 @@ def _acronym_callback(word: str, **_kwargs: object) -> str | None:
     Extended small-words (``per``, ``with``, ``from``, etc.) are handled
     by a POST-process in ``apply_case`` rather than this callback,
     because callback return values are marked Immutable and bypass the
-    library's first/last-word capitalisation pass (so returning
+    library's first/last-word capitalization pass (so returning
     ``"per"`` for a first-word ``Per`` would wrongly leave it
     lowercase).
     """
@@ -117,7 +117,7 @@ def apply_case(text: str, case: CaseValue) -> str:
         The transformed string.
 
     Raises:
-        ValueError: If *case* is not a recognised value.
+        ValueError: If *case* is not a recognized value.
     """
     if case == "none":
         return text
@@ -137,7 +137,7 @@ def apply_case(text: str, case: CaseValue) -> str:
         # explicitly (#172).
         if text and text.isupper() and " " not in text and text.isalpha():
             return text
-        # Library handles built-in small words + first/last capitalisation.
+        # Library handles built-in small words + first/last capitalization.
         # Callback covers embedded-acronym preservation (#172). Post-process
         # extends the small-words list with the editorial set the NYT
         # default list misses (#7d).

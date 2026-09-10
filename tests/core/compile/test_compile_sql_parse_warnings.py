@@ -95,7 +95,7 @@ def test_valid_sql_emits_no_parse_warning() -> None:
 
 def test_jinja_heavy_but_valid_sql_emits_no_parse_warning() -> None:
     """`{{ ref() }}` and `{% if %}` are normal authoring. The guard
-    skeletonises them before parsing; anything that still trips the parser
+    skeletonizes them before parsing; anything that still trips the parser
     here would be pure noise."""
     sql = (
         "SELECT {{ column }} AS c, SUM(revenue) AS r\n"

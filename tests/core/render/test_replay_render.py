@@ -37,7 +37,7 @@ _CLIP_ID = re.compile(r"clip\d+")
 # differ here for reasons that have nothing to do with the artifact.
 _RENDER_TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 # The "data as of" stamp. Replay deliberately reports the *recording* time rather
-# than render time, so it legitimately differs — that behaviour is pinned by
+# than render time, so it legitimately differs — that behavior is pinned by
 # test_replayed_board_stamps_the_recording_time rather than normalized blindly.
 _DATA_AS_OF = re.compile(r"Data as of [^<]+")
 

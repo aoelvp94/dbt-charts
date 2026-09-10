@@ -140,7 +140,7 @@ class TestDftServeDiagnostics:
     ) -> None:
         """dbt_charts.yml: theme: is no longer a valid key — raises pydantic validation error.
 
-        `theme:` must live in charts/meta.yaml: extends: <name>, not dbt_charts.yml.
+        `theme:` must live in charts/meta.yml: extends: <name>, not dbt_charts.yml.
         Serve exits 1 with a ValidationError message.
         """
         monkeypatch.delenv("DCT_DEFAULT_THEME", raising=False)

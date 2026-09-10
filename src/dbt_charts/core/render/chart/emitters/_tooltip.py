@@ -1,7 +1,7 @@
 """Chart-axes LUT + structured tooltip builder for render-v2.
 
 The chart-axes LUT maps each in-scope chart family to its tooltip ROLES —
-identity (header), dependent (value), and whether a colour dimension can be
+identity (header), dependent (value), and whether a color dimension can be
 promoted to a series row — never a VL screen axis. Orientation is resolved
 downstream by each family's own emitter (see bar.py's vertical/horizontal
 split); this table only ever reads authored semantic channels (``chart.x``/
@@ -54,7 +54,7 @@ from dbt_charts.core.render.chart.type_inference import infer_vega_type_from_dat
 # just without a redundant field-name prefix on the header/series rows.
 # chart_interactivity.js mirrors these exact codepoints; keep the two in sync.
 ROLE_HEADER = "⁡"  # FUNCTION APPLICATION
-ROLE_HEADER_SWATCHED = "⁤"  # INVISIBLE PLUS -- header IS the colour dim (pie)
+ROLE_HEADER_SWATCHED = "⁤"  # INVISIBLE PLUS -- header IS the color dim (pie)
 ROLE_SERIES = "⁢"  # INVISIBLE TIMES
 ROLE_TOTAL = "⁣"  # INVISIBLE SEPARATOR
 # A precomputed display-order rank for this mark's series -- the SAME order
@@ -65,8 +65,8 @@ ROLE_TOTAL = "⁣"  # INVISIBLE SEPARATOR
 # legend, the common default) -- see features/structured_tooltip.py.
 ROLE_ORDER = "‌"  # ZERO WIDTH NON-JOINER
 # Emphasis modifier, orthogonal to the role markers above: a value/total row
-# prefixed with this renders its value at the low-contrast label colour rather
-# than the loud value colour. Used where a percent is the row's lead and the
+# prefixed with this renders its value at the low-contrast label color rather
+# than the loud value color. Used where a percent is the row's lead and the
 # raw number is only its companion context -- on a pie/donut the share % leads,
 # so the raw slice count and the grand total are context. Composes with a role
 # marker (a muted total is MUTED + ROLE_TOTAL). chart_interactivity.js mirrors it.
@@ -91,8 +91,8 @@ class TooltipField:
     # unset convention as `format` above). Only meaningful when
     # kind == "temporal" — selects the header's date-format vocabulary.
     time_unit: str = ""
-    # When True this row's VALUE renders at the low-contrast label colour, not
-    # the loud value colour — a companion/context number beside a percent lead
+    # When True this row's VALUE renders at the low-contrast label color, not
+    # the loud value color — a companion/context number beside a percent lead
     # (see MUTED). Structural, set by the role builder; never authored.
     muted: bool = False
     # When True, ``field`` IS the row's literal display string, not a datum
@@ -107,9 +107,9 @@ class ChartAxesRoles:
     """Tooltip role support for one chart family — data roles, not VL screen axes."""
 
     supports_series: bool
-    # The header IS the colour-bound dimension (pie's category), so its row
+    # The header IS the color-bound dimension (pie's category), so its row
     # carries a swatch the same way a series row would. False for every
-    # cartesian family, whose header (x) is never colour-bound.
+    # cartesian family, whose header (x) is never color-bound.
     header_is_swatched: bool = False
 
 
@@ -117,7 +117,7 @@ class ChartAxesRoles:
 # KeyErrors in build_structured_tooltip_expr — fail fast rather than guess a
 # role shape. "scatter" and "scatter_colored" are two role shapes for the
 # SAME authored chart_type ("scatter") — the LUT key a caller passes depends
-# on whether a colour channel is bound (see features/structured_tooltip.py's
+# on whether a color channel is bound (see features/structured_tooltip.py's
 # _scatter_roles), not on any new authored discriminator.
 CHART_AXES_LUT: dict[str, ChartAxesRoles] = {
     "line": ChartAxesRoles(supports_series=True),
@@ -169,7 +169,7 @@ def header_tooltip_field(field: str, title: str, data: ChartRenderData) -> Toolt
 def series_row_promoted(field: str, data: ChartRenderData) -> bool:
     """A series row earns its place only when it actually distinguishes rows.
 
-    Matches the LUT's promotion rule: colour-channel cardinality > 1. A bound
+    Matches the LUT's promotion rule: color-channel cardinality > 1. A bound
     field whose data happens to carry a single distinct value would be a
     redundant row (every mark shares the same series) — omit it instead of
     padding the tooltip with a constant. Caller guards a non-empty ``field``
@@ -195,7 +195,7 @@ def _row_expr(tf: TooltipField, marker: str = "") -> str:
 
     ``marker`` optionally role-tags the row (the total footer) without
     disturbing its label:value shape; a muted field prepends ``MUTED`` ahead
-    of that marker so the value renders at the low-contrast label colour.
+    of that marker so the value renders at the low-contrast label color.
     """
     prefix = (MUTED if tf.muted else "") + marker
     return f"{json.dumps(prefix + tf.title + ': ')} + ({_value_expr(tf)})"

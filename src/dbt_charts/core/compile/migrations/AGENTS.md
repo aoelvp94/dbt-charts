@@ -65,7 +65,7 @@ from one declared union arm while application is arm-blind, so wherever an
 open map sits beside a declared field the final segment can land on a key the
 author *named*. `move_source_locations` gates every yield:
 `_plausible_positions` (identity — required props and an agreeing `type`,
-honouring the union's `if`/`then`), `_declares_tail` (declared properties
+honoring the union's `if`/`then`), `_declares_tail` (declared properties
 only, never `additionalProperties` — the distinction `Deletion` draws), and
 `_open_map_claims` (breaks the board-field/chart-id tie by *value*, which
 identity cannot). Read `additionalProperties` from **both** grammars: a

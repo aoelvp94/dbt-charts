@@ -4,7 +4,7 @@ Owns: Project-seam reads, RefIndex derivation, and per-process
 content-addressed memo.
 
 LoadedManifest.raw (the plain json.loads dict) is the data contract for all
-downstream consumers. Nothing here deserialises through dbt's typed
+downstream consumers. Nothing here deserializes through dbt's typed
 WritableManifest, so metadata.dbt_schema_version is not read: the handful of
 node keys this module touches (resource_type, name, schema, alias,
 relation_name, source_name) have been stable across every manifest version,
@@ -147,7 +147,7 @@ def ref_index(loaded: LoadedManifest) -> RefIndex:
 def load_manifest_at(project: Project, relpath: str) -> LoadedManifest:
     """Load and parse a manifest from a specific project-relative path.
 
-    Memoised per process on project.file_version(relpath). Use this when
+    Memoized per process on project.file_version(relpath). Use this when
     a caller needs to load a specific path independently of which candidate
     was used for the dev load.
 

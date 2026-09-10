@@ -10,7 +10,7 @@ contract this validator runs ahead of).
 
 Coverage is the authored surface: board-level ``style:`` and every chart,
 recursively, plus the alias table's own targets (validated via
-``_validate_board`` with ``allow_predefined=False``). Slots are recognised by
+``_validate_board`` with ``allow_predefined=False``). Slots are recognized by
 field name (``_FORMAT_FIELDS``) rather than by type annotation; every current
 format field is spelled one of those three names, so the coverage is complete.
 

@@ -24,6 +24,29 @@ class TestIntrospectIsMemoized:
         assert introspect() is introspect()
 
 
+class TestThemeSchemaSugarField:
+    """theme: has no backing Pydantic field on AuthoredBoard -- it is desugared
+
+    into extends: by a BeforeValidator on AuthoredBoardInput before validation
+    runs. introspect() must still surface it as a synthetic field, derived
+    from AuthoredBoardInput's SchemaSugar marker rather than hand-assembled by
+    a renderer.
+    """
+
+    def test_theme_field_present_on_authored_board(self) -> None:
+        import typing
+
+        from dbt_charts.core.compile.models.schema_names import ThemeName
+
+        schema = introspect()
+        board = schema.models["AuthoredBoard"]
+        theme = next((f for f in board.fields if f.name == "theme"), None)
+        assert theme is not None
+        assert theme.required is False
+        assert theme.enum_values is not None
+        assert set(theme.enum_values) == set(typing.get_args(ThemeName))
+
+
 class TestAuthordBoardFields:
     def test_title_field_present_with_description(self) -> None:
         schema = introspect()
@@ -121,7 +144,7 @@ class TestPatchModelsCollected:
             "QuantitativeAxisStylePatch",
             "BandAxisStylePatch",
             "BaseAxisGridStylePatch",
-            "MeasureGridStylePatch",
+            "AxisGridThresholdStylePatch",
             "AxisLineStylePatch",
             "AxisTicksStylePatch",
             "AxisLabelStylePatch",
@@ -319,7 +342,7 @@ class TestSchemaFieldTypes:
         assert ttl.enum_values == ["forever"]
         assert "str" in ttl.extra_union_types
 
-    def test_synthesised_patch_models_have_doc(self) -> None:
+    def test_synthesized_patch_models_have_doc(self) -> None:
         ir = introspect()
         for name, model in ir.models.items():
             if not model.generated:
@@ -399,7 +422,7 @@ def test_a_color_facet_survives_every_route_to_the_authored_model() -> None:
       why there is no `FontStylePatch`;
     - hand-written — `BorderStylePatch` is declared by hand and registered, so
       `build_patch_model_ext` short-circuits before any forwarding runs;
-    - generated — `build_patch_model` synthesises the class and drops every
+    - generated — `build_patch_model` synthesizes the class and drops every
       marker outside `_FORWARDED_MARKER_TYPES`.
 
     Only the third exercises the forwarding this module's `Facet` entry exists
@@ -415,7 +438,7 @@ def test_a_color_facet_survives_every_route_to_the_authored_model() -> None:
         ("FontStyle", "color"),
         ("BorderStylePatch", "color"),
         ("KpiTonesStylePatch", "positive"),
-        ("StylePatch", "color"),
+        ("StylePatch", "background"),
     ):
         field = next(f for f in models[model_name].fields if f.name == field_name)
         assert any(isinstance(facet, Color) for facet in field.facets), (

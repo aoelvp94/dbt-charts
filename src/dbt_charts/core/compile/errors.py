@@ -267,7 +267,7 @@ class TemplateOutputTooLargeError(CompilationError):
 
 
 class MergeValidationError(CompilationError):
-    """Pydantic validation error from an extends fragment or meta.yaml file.
+    """Pydantic validation error from an extends fragment or meta.yml file.
 
     Carries pre-structured diagnostics (from ``format_validation_errors_structured``)
     so the compiler routes them through the hint-bearing path instead of wrapping

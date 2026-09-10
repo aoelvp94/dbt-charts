@@ -272,7 +272,7 @@ class TestAcceptedShapes:
 
     @pytest.mark.parametrize("chart_type", ["area", "bar", "line"])
     @pytest.mark.parametrize("axis", ["rows", "columns"])
-    def test_multiples_with_a_colour_series_renders(
+    def test_multiples_with_a_color_series_renders(
         self, tmp_path: Path, chart_type: str, axis: str
     ) -> None:
         """The shipped default names the series with a legend above the panels

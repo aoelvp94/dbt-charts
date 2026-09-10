@@ -993,8 +993,8 @@ def _emit_vertical(
     x_is_banded = x_encoding_is_banded(x_enc)
 
     # Endpoint labels fire on a vertical bar only when the author opts in AND a
-    # series colour channel exists; they then take the right rail (so the y-axis
-    # moves left) and replace the colour legend. A series-coloured bar WITHOUT
+    # series color channel exists; they then take the right rail (so the y-axis
+    # moves left) and replace the color legend. A series-colored bar WITHOUT
     # Measure axis (VL y): orient is baked at resolve time (ay.position is concrete).
     _measure_y_fields = (measure_field,) if measure_field else ()
     ay_vl = measure_axis_to_vl(ay, data, _measure_y_fields)
@@ -1507,8 +1507,8 @@ def _emit_horizontal(
         "scale": y_scale,
     }
     # An authored chart.sort wins on the categorical (y) axis. Otherwise a
-    # horizontal bar WITHOUT a colour channel defaults to largest-measure-first;
-    # a series-coloured or wide horizontal bar pins ``sort: null`` so VL keeps
+    # horizontal bar WITHOUT a color channel defaults to largest-measure-first;
+    # a series-colored or wide horizontal bar pins ``sort: null`` so VL keeps
     # the query's first-occurrence domain order (mirrors V1 _apply_chart_sort /
     # _apply_default_horizontal_bar_sort).
     y_sort = chart_sort_to_vl(chart.sort)

@@ -3,7 +3,7 @@
 Three ways an authored legend key used to be discarded in silence:
 
 - ``legend.visible: true`` lost to the endpoint-label rail, which retires the
-  colour legend whenever it fires (the theme switches the rail on, so this hit
+  color legend whenever it fires (the theme switches the rail on, so this hit
   every multi-series line and area chart).
 - ``legend.position`` lost to the automatic top-legend policy on bar, and on
   line resolved to a legend that was never shown, because the position key
@@ -31,7 +31,7 @@ from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
 @pytest.fixture(autouse=True)
 def _reset():
-    """A neighbour on the same xdist worker can leave a config cached, and every
+    """A neighbor on the same xdist worker can leave a config cached, and every
     resolution here reads the theme."""
     reset_config()
     yield
@@ -59,11 +59,11 @@ def _render(make_chart, chart_type: str, style: dict[str, Any]):
 
 
 def _color_legend(spec: dict[str, Any]) -> Any:
-    """The colour legend config of the spec's series colour encoding.
+    """The color legend config of the spec's series color encoding.
 
     Walks concat/layer wrappers because an endpoint-label rail wraps the plot
     in an hconcat and the value-label feature adds sublayers; the series
-    colour channel is on the first node that carries one.
+    color channel is on the first node that carries one.
     """
     encoding = spec.get("encoding")
     if isinstance(encoding, dict) and "color" in encoding:
@@ -104,7 +104,7 @@ class TestAuthoredVisibleTrueBeatsTheEndpointRail:
         assert _color_legend(spec) is None
 
 
-class TestAuthoredPositionIsHonoured:
+class TestAuthoredPositionIsHonored:
     def test_line_position_bottom_renders_a_bottom_legend(self, make_chart):
         """Naming a position asks for a legend — it cannot resolve to nothing."""
         resolved, spec = _render(make_chart, "line", {"legend": {"position": "bottom"}})

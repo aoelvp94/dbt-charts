@@ -69,15 +69,16 @@
     outline-offset: 2px;
 }
 
-{# Footer attribution watermark link, wrapping the dbt charts wordmark —
-   deliberately subtle: the lockup keeps the muted footer color and only
-   dims on hover. #}
+{# Footer attribution link. The fill and the heavier weight are inline
+   attributes on the brand run itself (see _footer_attribution_svg) — a
+   rasterizer will not resolve this class against the run, so they cannot
+   live here. This rule owns only the cursor and the hover underline. #}
 .dbt-footer-link {
     cursor: pointer;
 }
 
 .dbt-footer-link:hover {
-    opacity: 0.7;
+    text-decoration: underline;
 }
 
 

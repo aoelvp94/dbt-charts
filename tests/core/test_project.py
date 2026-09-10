@@ -790,7 +790,7 @@ class TestFilesystemProjectQueries:
         """bytes-scan pre-filter is sound for arbitrary UTF-8 terms.
 
         `term.encode("utf-8") in data` works for multi-byte sequences because
-        UTF-8 is self-synchronising: no byte of one code point is a valid
+        UTF-8 is self-synchronizing: no byte of one code point is a valid
         suffix of another, so a substring search in byte space is identical to
         a substring search in decoded string space.
         """
@@ -823,8 +823,8 @@ class TestProjectPathLexicalAccessors:
     def test_is_meta_true_for_meta_yaml(
         self, tmp_path: Path, in_memory_project: Callable[..., Project]
     ) -> None:
-        project = in_memory_project(tmp_path, {"charts/meta.yaml": "sources: {}\n"})
-        pf = ProjectPath(project, "charts/meta.yaml")
+        project = in_memory_project(tmp_path, {"charts/meta.yml": "sources: {}\n"})
+        pf = ProjectPath(project, "charts/meta.yml")
         assert pf.is_meta is True
 
     def test_is_meta_false_for_normal_board(

@@ -113,7 +113,7 @@ class TestAuthoredMeasureFitsTheSlot:
 
     `max_chars` is authored YAML with no upper bound, so nothing stops an author
     asking for a measure wider than the card holding it. The containing SVG is a
-    viewport: anything wider is painted over its neighbours or cut at the board
+    viewport: anything wider is painted over its neighbors or cut at the board
     edge, so the slot is the one bound the author cannot raise.
     """
 
@@ -139,7 +139,7 @@ class TestAuthoredMeasureFitsTheSlot:
         )
         assert widest <= width + 0.5, (
             f"max_chars={max_chars} in a {width:.0f}px slot painted {widest:.0f}px "
-            f"-- prose spills onto neighbouring cards"
+            f"-- prose spills onto neighboring cards"
         )
 
 

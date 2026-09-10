@@ -86,7 +86,7 @@ class TestEditorialThemeBarLegend:
     def test_editorial_heatmap_legend_visible_true(self):
         """heatmap charts in editorial theme should show a color legend.
 
-        A heatmap encodes its whole measure in colour, so it needs a key
+        A heatmap encodes its whole measure in color, so it needs a key
         despite editorial's blanket "prefer direct labeling" default.
         """
         from dbt_charts.core.compile.resolve.style.board import (

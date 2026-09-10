@@ -89,7 +89,7 @@ def measure_label_pane_width(
     and Vega ellipsizes at the pane's mark limit, which is the cap itself.
 
     The cut names come back rather than being recorded here: only the caller
-    knows whether the rail it is building actually honours this width (the
+    knows whether the rail it is building actually honors this width (the
     vconcat top rail does not), so the caller owns the warning.
     """
     if not series_names:
@@ -141,7 +141,7 @@ def _estimated_series_names(
             }
         )
     # Layered single-series rail: applies_to()'s gate already confirmed every
-    # layer is colourless, so every layer with a y field names one entry.
+    # layer is colorless, so every layer with a y field names one entry.
     assert isinstance(chart, (ResolvedLineChart, ResolvedAreaChart, ResolvedBarChart))
     y_field = chart.y
     names = [

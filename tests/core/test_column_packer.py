@@ -2,7 +2,7 @@
 
 The packer chooses where a line sequence breaks across columns. It follows
 TeX's page-breaker model: every candidate break carries a cost, and the split
-minimising total cost wins. Balance is one cost term among several, so a widow
+minimizing total cost wins. Balance is one cost term among several, so a widow
 penalty can outrank a small imbalance -- which is the correct trade, and the
 reason this is not a chain of if-then rules.
 """

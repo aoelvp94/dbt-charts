@@ -362,7 +362,7 @@ def test_project_scope_accepts_the_same_scalars(authored: bool | str) -> None:
 
 
 def test_project_scope_rejects_bare_true() -> None:
-    """The one scalar the root cannot honour: it promises nothing about
+    """The one scalar the root cannot honor: it promises nothing about
     duration, and there is no scope above to take one from, so accepting it
     would silently mean cache-forever."""
     from dbt_charts.core.compile.models.config import ProjectCacheConfig

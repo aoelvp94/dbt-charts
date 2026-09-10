@@ -319,6 +319,61 @@ class TestSemanticBoardLevelTabs:
         assert tab_a.level == 3, f"deep tab A level should be 3, got {tab_a.level}"
 
 
+class TestTabItemOwnStyle:
+    """Content-only and empty tab items resolve their own `style:` block.
+
+    Regression for the bug where those branches in `_resolve_tab_items`
+    constructed `Board(...)` with the parent's resolved_style/chart_style_context
+    verbatim, never reading `tab_item.style`. The nested-board branch already
+    gets this for free via `normalize_board` → `compile_board_resolved_style`.
+    """
+
+    def test_content_only_tab_resolves_own_style(self):
+        """A content-only tab authoring style.font.color gets its own value."""
+        board = normalize_board(
+            AuthoredBoard.model_validate(
+                {
+                    "title": "Root",
+                    "tabs": {
+                        "items": [
+                            {
+                                "title": "Tab A",
+                                "text": "alpha",
+                                "style": {"font": {"color": "#ff00ff"}},
+                            },
+                        ],
+                    },
+                }
+            )
+        )
+        assert board.resolved_style.font.color != "#ff00ff"
+        tab_a = board.layout.items[0].board
+        assert tab_a is not None
+        assert tab_a.resolved_style.font.color == "#ff00ff"
+
+    def test_empty_tab_resolves_own_style(self):
+        """An empty tab authoring style.font.color gets its own value."""
+        board = normalize_board(
+            AuthoredBoard.model_validate(
+                {
+                    "title": "Root",
+                    "tabs": {
+                        "items": [
+                            {
+                                "title": "Empty Tab",
+                                "style": {"font": {"color": "#ff00ff"}},
+                            },
+                        ],
+                    },
+                }
+            )
+        )
+        assert board.resolved_style.font.color != "#ff00ff"
+        empty_tab = board.layout.items[0].board
+        assert empty_tab is not None
+        assert empty_tab.resolved_style.font.color == "#ff00ff"
+
+
 class TestAuthorLevelOverride:
     """board.style.title.level: <int> overrides the semantic computation."""
 

@@ -1,6 +1,6 @@
 """Shared Jinja helpers used by compile/template/parameterized.py and compile/template/jinja.py.
 
-Both modules need identical lenient-undefined and query-namespace behaviour;
+Both modules need identical lenient-undefined and query-namespace behavior;
 this module is the single canonical home. Consumers import from here.
 """
 

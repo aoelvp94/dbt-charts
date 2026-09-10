@@ -775,7 +775,7 @@ class TestFileTableTypeFidelity:
         a stamped error naming the two files that disagree, not the raw
         ArrowTypeError the executor would stamp ERR-INTERNAL.
 
-        Three shards, so the blamed pair is the offender and its neighbour —
+        Three shards, so the blamed pair is the offender and its neighbor —
         shard 1 is not in the message at all."""
         project = _make_project(
             tmp_path,

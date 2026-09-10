@@ -310,7 +310,7 @@ class TestSingleChartPropertyValidation:
         assert isinstance(text, list), f"wrap-two should yield list, got {text!r}"
         assert len(text) == 2, f"wrap-two should be exactly 2 lines, got {text!r}"
         assert text[1].endswith("…"), (
-            f"second line of wrap-two should ellipsise, got {text[1]!r}"
+            f"second line of wrap-two should ellipsize, got {text[1]!r}"
         )
         # Theme applies case: title to chart titles; "Wrap-two mode:" → "Wrap-Two Mode:"
         assert text[0].startswith("Wrap-Two Mode:"), (

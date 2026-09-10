@@ -97,11 +97,14 @@ def _fix_legend_symbol_linecap(svg: str) -> str:
 
 # vl-convert mints its own ids for generated defs -- clipPath (`clip3`) and
 # linearGradient (`gradient_0`) -- with a counter scoped to a single
-# vegalite_to_svg call, not to the board. Two charts rendered in separate calls
-# (one served from cache, one freshly re-rendered) can legitimately mint the
-# same low-numbered ids, colliding once their fragments land in one board
-# document. Scoped to vl-convert's own id families only -- ids dbt-charts
-# assigns downstream (e.g. `chart-{chart_id}` from rendering.py) are untouched.
+# vegalite_to_svg call, not to the board or the process. Two charts rendered
+# in separate calls in one process can mint the same low-numbered ids; two
+# BOARDS rendered in separate processes (docs' per-theme preview, a Cloud
+# page stacking more than one board's SVG) both start that counter at zero
+# too, so a chart-id suffix alone is not enough once two processes' output
+# shares a page. `_namespace_svg_ids` below suffixes every vl-convert id with
+# a content token *and* the chart id so neither collision survives. Scoped to
+# vl-convert's own id families only.
 _VLC_ID_FAMILY = r"(?:clip|gradient_)\d+"
 _VLC_ID_DEF_RE = re.compile(rf'id="({_VLC_ID_FAMILY})"')
 # Anchored to the reference forms vl-convert actually emits -- url(#id),
@@ -121,9 +124,12 @@ _UNSAFE_ID_CHARS_RE = re.compile(r"[^A-Za-z0-9_-]")
 
 
 def safe_svg_id(chart_id: str) -> str:
-    """The id-namespace suffix ``_namespace_svg_ids`` appends to every
-    vl-convert-minted id for this chart: ``chart_id`` sanitized to FuncIRI-safe
-    characters, plus a short digest suffix when sanitizing was lossy.
+    """The chart-id half of the id-namespace suffix ``_namespace_svg_ids``
+    appends to every vl-convert-minted id: ``chart_id`` sanitized to
+    FuncIRI-safe characters, plus a short digest suffix when sanitizing was
+    lossy. The suffix's other half — a content token — is computed by
+    ``_namespace_svg_ids`` itself and placed *before* this one, so this
+    function's own output always lands at the very end of the id.
 
     Public (not ``_``-prefixed) because ``chart_svg_dev.contract`` — the
     dev-only golden-sweep harness in ``libs/chart-svg`` — imports it to
@@ -145,10 +151,36 @@ def safe_svg_id(chart_id: str) -> str:
 
 
 def _namespace_svg_ids(svg: str, chart_id: str) -> str:
-    """Suffix every vl-convert-minted id (and its references) with ``chart_id``
-    so ids stay unique across independently-rendered charts on the same board.
+    """Suffix every vl-convert-minted id (and its references) with a content
+    token plus ``chart_id``, so ids stay unique across independently-rendered
+    charts on the same board *and* across independently-rendered processes
+    whose output lands on one page (docs' per-theme board preview, a Cloud
+    surface stacking more than one board's SVG).
+
+    The token is a short sha256 of this chart's own SVG fragment with
+    vl-convert's own id *digits* dropped first. Those digits are vl-convert's
+    counter position, not content -- it varies between renders of the exact
+    same chart (even in one process), so hashing the raw text would make two
+    renders of one chart disagree and break every same-run comparison. Two
+    charts that render byte-identical fragments (same theme, same data)
+    legitimately share a token: their defs are identical, so a reference
+    resolving to either paints the same -- the same reasoning as mdsvg's own
+    content-hashed class scope (``_compute_class_prefix``). Any real content
+    difference changes the canonicalized text and mints a new token.
+
+    The token goes *between* the id family and ``chart_id`` -- never after --
+    so ``chart_svg_dev.contract``'s ``endswith(f"-{safe_svg_id(chart_id)}")``
+    classification (and its Rust mirror, ``contract.rs``) needs no change.
     """
-    safe_id = safe_svg_id(chart_id)
+    strip_digits = str.maketrans("", "", "0123456789")
+    canon = _VLC_ID_DEF_RE.sub(
+        lambda m: f'id="{m.group(1).translate(strip_digits)}"', svg
+    )
+    canon = _VLC_ID_REF_RE.sub(
+        lambda m: f"{m.group(1)}{m.group(2).translate(strip_digits)}", canon
+    )
+    token = hashlib.sha256(canon.encode()).hexdigest()[:8]
+    safe_id = f"{token}-{safe_svg_id(chart_id)}"
     svg = _VLC_ID_DEF_RE.sub(lambda m: f'id="{m.group(1)}-{safe_id}"', svg)
     return _VLC_ID_REF_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}-{safe_id}", svg)
 
@@ -253,12 +285,12 @@ def _legend_label_texts(
     """Collect each discrete legend entry's full text, in scenegraph order.
 
     A discrete (nominal) legend gives each series its own ``legend-label``
-    node with exactly one ``items`` entry. A continuous/gradient COLOUR
-    legend (numeric or boolean colour field) instead renders ONE
+    node with exactly one ``items`` entry. A continuous/gradient COLOR
+    legend (numeric or boolean color field) instead renders ONE
     ``legend-label`` node whose ``items`` holds every tick label as a
     separate instance -- there is no per-series text to extract there, and
     no series identity to join a mark to. Returns None on encountering that
-    shape, signalling the caller to skip stamping entirely rather than
+    shape, signaling the caller to skip stamping entirely rather than
     mis-stamp a tick label as a series value. A continuous *size* legend
     renders one node per tick with one item each -- the same shape as a
     discrete entry -- so it is indistinguishable from the discrete case at

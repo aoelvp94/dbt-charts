@@ -459,7 +459,7 @@ def test_prepare_mapping_current_schema_patch_takes_fast_path_under_boardpatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A current-schema, patch-shaped fragment (no charts/layout/title — the
-    shape of every theme YAML and meta.yaml) must not be treated as a
+    shape of every theme YAML and meta.yml) must not be treated as a
     migration candidate just because it fails the AuthoredBoard
     "must have layout/chart/etc" invariant. Passing model=BoardPatch checks
     currency against a model that admits partial content."""
@@ -2048,7 +2048,7 @@ def _conditional_move_catalog() -> YamlSchemaCatalog:
     V2 has charts.*.support.{label,tone} but NO style.tone.
 
     Both schemas use additionalProperties: false on the chart so that
-    documents with style.tone are recognised as V1 (not V2/current),
+    documents with style.tone are recognized as V1 (not V2/current),
     triggering the ConditionalMove. ``type`` carries an ``enum``, mirroring
     the real discriminated chart union (`AuthoredChart`'s per-family ``if``/
     ``then`` branches each declare ``type: {enum: [...]}``) -- the positional
@@ -2181,7 +2181,7 @@ def test_conditional_move_conflict_raises_when_destination_already_set() -> None
     """Conflict: both style.tone (old) and support.tone (new) present → error.
 
     Tests _apply_conditional_move directly — schema recognition is not the
-    behaviour being exercised, only the conflict detection.
+    behavior being exercised, only the conflict detection.
     """
     from copy import deepcopy
 

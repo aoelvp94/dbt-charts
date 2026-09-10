@@ -419,7 +419,7 @@ class TestResolverStrategyWalk:
         layer widens the shared scale to (``overlay_x_domain_values``) —
         carries 30 same-width labels: a much narrower band that does not fit
         flat and needs the steepest tilt available. Picking the angle from
-        ``data`` alone (the pre-fix behaviour) returns 0.0 here even though
+        ``data`` alone (the pre-fix behavior) returns 0.0 here even though
         the rendered axis has 30 crowded bands, not 3.
         """
         from dbt_charts.core.render.chart.emitters._label_overlap import (

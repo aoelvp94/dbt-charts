@@ -2,7 +2,7 @@
 
 Three-way format contract:
 
-| source           | resolve_format behaviour                      | trim injected? |
+| source           | resolve_format behavior                      | trim injected? |
 |------------------|-----------------------------------------------|---------------|
 | predefined name  | house rules: engine spec + trim + notation    | yes           |
 | style.formats    | native d3: literal spec, no post-processing  | no            |

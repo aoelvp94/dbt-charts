@@ -286,7 +286,7 @@ class LayeredSchemaResolver:
                         f"SQLite source '{source_name}' is missing the required 'path' field."
                     )
                 # Resolve relative paths against project_root — mirrors DuckDB's
-                # behaviour so ./data/bird.sqlite works from any cwd.
+                # behavior so ./data/bird.sqlite works from any cwd.
                 if is_absolute_any_os(path):
                     resolved_path = path
                 else:

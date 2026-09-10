@@ -1104,7 +1104,7 @@ rows:
 
     def test_host_default_source_satisfies_sourceless_sql(self) -> None:
         """A host (e.g. the playground scratch endpoint) compiling composed content
-        with no charts/meta.yaml can supply host_default_source as the fallback
+        with no charts/meta.yml can supply host_default_source as the fallback
         default, so a sourceless SQL query no longer raises ERR-SOURCE-REQUIRED.
         """
         from dbt_charts.core.compile import compile

@@ -211,15 +211,15 @@ class TestEndpointLabelsHconcatEmitted:
         assert "config" in spec, "Expected theme config on hconcat root"
 
         # title, autosize, and padding intentionally stay on pane[0]:
-        # vega-lite centres the title over the view's own visual bounds —
-        # hoisting it to the wrapper would centre it over the full hconcat
+        # vega-lite centers the title over the view's own visual bounds —
+        # hoisting it to the wrapper would center it over the full hconcat
         # width (chart + label pane), shifting it rightward for wide label
         # panes.
         assert "padding" in pane0, "Expected pane[0] to keep its padding"
-        # title must NOT be on the wrapper — it would mis-centre over the
+        # title must NOT be on the wrapper — it would mis-center over the
         # label pane. It must stay on pane[0] to align with the chart body.
         assert "title" not in spec, (
-            "title must not be hoisted to hconcat root; it mis-centres over "
+            "title must not be hoisted to hconcat root; it mis-centers over "
             "the label pane. Keep it on pane[0]."
         )
 
@@ -280,15 +280,15 @@ class TestEndpointLabelsHconcatEmitted:
         # The cream-default category palette must reach the line strokes.
         # Catches the regression where config sat inside pane[0], vl-convert
         # silently ignored it, and the line fell back to vega's default
-        # `#4c78a8` / tick chrome appeared in the wrong colour.
+        # `#4c78a8` / tick chrome appeared in the wrong color.
         for themed_color in ("#0073c2", "#00c8ee"):
             assert themed_color.lower() in svg.lower(), (
-                f"Expected theme palette colour {themed_color!r} in rendered "
+                f"Expected theme palette color {themed_color!r} in rendered "
                 "SVG; if the default vega palette appears instead the "
                 "wrapper is dropping `config`."
             )
         assert "#4c78a8" not in svg, (
-            "Default vega palette colour leaked into rendered SVG — "
+            "Default vega palette color leaked into rendered SVG — "
             "theme config is not being applied to the hconcat wrapper"
         )
 

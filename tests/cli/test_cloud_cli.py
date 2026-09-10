@@ -2892,7 +2892,7 @@ def board_row(output: str) -> dict[str, str]:
     every pipe — and five columns do not fit a board URL on one line there, so
     a cell continues on the lines below it *within its own column*. Reading a
     cell means slicing by the header's column offsets; splitting on runs of
-    spaces interleaves the continuations of neighbouring columns instead.
+    spaces interleaves the continuations of neighboring columns instead.
 
     Each cell comes back as its own lines joined by a newline — the caller
     rejoins with `""` for a folded value (slug, URL: broken mid-word, no space

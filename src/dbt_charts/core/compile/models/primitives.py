@@ -281,7 +281,7 @@ _CSS_NAMED_COLORS = frozenset(
         "purple",
         "pink",
         "gray",
-        "grey",
+        "grey",  # codespell:ignore grey
         "cyan",
         "magenta",
         "lime",
@@ -465,7 +465,7 @@ class BorderStylePatch(BaseModel):
 
 
 # BorderStylePatch is all-Optional and is its own patch — prevent build_patch_model
-# from synthesising a double-suffixed BorderStylePatchPatch when BarChartStyle
+# from synthesizing a double-suffixed BorderStylePatchPatch when BarChartStyle
 # (which inherits border: BorderStylePatch | None) is patched for authored overlays.
 register_as_own_patch(BorderStylePatch)
 
@@ -561,7 +561,7 @@ VEGA_SCHEME_NAMES: frozenset[str] = frozenset(
         "teals",
         "greens",
         "browns",
-        "greys",
+        "greys",  # codespell:ignore greys
         "oranges",
         "purples",
         "reds",
@@ -830,7 +830,7 @@ def bake_scale_target_stops(target: ScaleTargetConfig) -> ResolvedScaleTargetCon
     runs on every intermediate `merge_onto_base` cascade step and would bake
     a stale value there before the final palette is known.
     `_with_resolved_scale_stops` (compile/resolve/chart/_table.py) is the WCAG
-    `surface="table"` analogue for table column scales.
+    `surface="table"` analog for table column scales.
     """
     if not isinstance(target.palette, str) or target.palette in VEGA_SCHEME_NAMES:
         return ResolvedScaleTargetConfig.model_validate(

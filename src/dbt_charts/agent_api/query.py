@@ -71,16 +71,18 @@ def lookup_board_query_sql(
 ) -> BoardQueryLookupResult:
     """Compile a board file, render the SQL template, and return it for offline use.
 
-    Expands ``{{ queries.X }}`` and substitutes variables so callers receive
-    valid SQL rather than a raw Jinja template.  Used by validate and describe
-    paths that need the rendered SQL text without executing it against a
-    warehouse.
+    Expands ``{{ queries.X }}``, resolves dbt ``ref()``/``source()`` against the
+    project's manifest, and substitutes variables, so callers receive valid SQL
+    rather than a raw Jinja template.  Used by validate and describe paths that
+    need the rendered SQL text without executing it against a warehouse — the
+    manifest is a file read, so this opens no connection.
     """
     from dbt_charts.core.compile.errors import JinjaError
     from dbt_charts.core.compile.template.parameterized import (
         render_parameterized_with_queries,
     )
     from dbt_charts.core.diagnostics.execution import ExecutionError
+    from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
 
     try:
         file_path = resolve_board_path(path, project)
@@ -128,19 +130,27 @@ def lookup_board_query_sql(
 
     source_type = dialect_for_source(query.source, project.sources.sources)
     warehouse = get_dialect(source_type) if source_type else None
+    dbt_refs = DbtRefResolver(project)
     try:
         merged_vars = merge_board_variables(board, vars or {})
+        # The resolve/render/resolve order execution runs across
+        # `AdapterRegistry._compose_query_refs` and each adapter's own
+        # `DbtRefResolver.resolve`, for the same two reasons: the render is
+        # StrictUndefined and doesn't know `ref`, and `{{ queries.X }}` inlines
+        # X's raw SQL, which the first pass never saw.
+        resolved_sql, _relations = dbt_refs.resolve(query.sql)
         rendered = render_parameterized_with_queries(
-            query.sql,
+            resolved_sql,
             merged_vars,
             queries=board.queries,
             strict=not query.lenient_variables,
             warehouse=warehouse,
         )
+        composed_sql, _inlined_relations = dbt_refs.resolve(rendered.sql)
     except (JinjaError, ExecutionError) as exc:
         return BoardQueryLookupResult(success=False, errors=[str(exc)])
 
-    return BoardQueryLookupResult(success=True, sql=rendered.sql, source=query.source)
+    return BoardQueryLookupResult(success=True, sql=composed_sql, source=query.source)
 
 
 class ExecuteQueryArgs(BaseModel):

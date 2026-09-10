@@ -32,7 +32,7 @@ _WIDE_COLUMNS: list[tuple[str, str]] = [
     ("product_line", "Ingestion Cloud"),
     ("customer_segment", "Mid-Market"),
     ("order_channel", "Partner Reseller"),
-    ("fulfilment_status", "Partially Shipped"),
+    ("fulfillment_status", "Partially Shipped"),
     ("net_revenue", "2,013,880"),
     ("gross_margin", "51.2%"),
     ("units_shipped", "24,553"),

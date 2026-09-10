@@ -704,7 +704,7 @@ class TestDuckDBSchemaSearchPath:
     def test_malicious_schema_in_raw_config_raises_value_error(
         self, tmp_path: Path
     ) -> None:
-        """Adapter-level defence: a raw config dict with a malicious schema value
+        """Adapter-level defense: a raw config dict with a malicious schema value
         must raise ValueError before issuing SET search_path.
 
         This regression test covers the case where source_config is constructed

@@ -19,7 +19,7 @@ from dbt_charts.core.render.chart.table import render_table_svg
 
 def _resolved_style_with_title_case(case: str) -> tuple:
     """Build resolved (ResolvedStyle, ChartStyleContext) with the given title.font.case."""
-    get_config()  # ensure settings initialised
+    get_config()  # ensure settings initialized
     new_font = get_theme_style().title.font.model_copy(update={"case": case})
     new_title = get_theme_style().title.model_copy(update={"font": new_font})
     new_style = get_theme_style().model_copy(update={"title": new_title})

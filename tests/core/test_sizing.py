@@ -2034,7 +2034,7 @@ class TestAspectRatioDrivenSizing:
         pinning the exact cap value, so legitimate default tuning doesn't break
         this test.
         """
-        get_config()  # ensure settings initialised
+        get_config()  # ensure settings initialized
         max_h = float(get_theme_style().charts.max_height)
         aspect = float(get_theme_style().charts.aspect_ratio)
         board_width = float(get_theme_style().frame.max_width)

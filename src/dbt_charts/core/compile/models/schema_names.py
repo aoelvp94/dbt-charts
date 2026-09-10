@@ -77,7 +77,7 @@ PaletteName = Literal[
 ]
 
 # PaletteName minus the tone family — the names a `palette:` field takes.
-# A tone is a colour-token source and resolves to no stops, so `palette()`
+# A tone is a color-token source and resolves to no stops, so `palette()`
 # refuses every one: naming a tone there parses and dies at resolve.
 StopsPaletteName = Literal[
     "category-6-tonal-blue",

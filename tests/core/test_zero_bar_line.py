@@ -405,14 +405,14 @@ class TestNormalizeStackTopRule:
             "zero baseline at y=0. Got layers: "
             f"{[layer.get('mark', {}).get('type') for layer in spec.get('layer', [])]}"
         )
-        # The rule's color should match the resolved grid.zero.color (same
+        # The rule's color should match the resolved grid.threshold.color (same
         # token used for the zero baseline — a single visual contract).
         assert rule["mark"].get("color"), (
             "top rule should carry an explicit color from the cascade"
         )
 
     def test_normalize_stack_top_rule_color_matches_zero_rule_color(self):
-        """Both the zero and the top rule pull from grid.zero.color — the
+        """Both the zero and the top rule pull from grid.threshold.color — the
         cascade owns the single visual contract for these emphasis rules."""
         spec = self._render(self._stacked_bar("normalize"))
         zero_rule = _get_zero_rule_layer(spec)
@@ -431,14 +431,14 @@ class TestNormalizeStackTopRule:
 
 
 def test_zero_rule_color_matches_resolved_grid_zero_color():
-    """Zero rule color in VL spec matches the resolved grid.zero.color (not hardcoded)."""
+    """Zero rule color in VL spec matches the resolved grid.threshold.color (not hardcoded)."""
     from dbt_charts.core.compile.resolve.style.axis_cascade import resolved_axis_style
 
     ctx = resolve_chart_style_context(get_theme_style())
     axis_y = resolved_axis_style(
         ctx, "axis_y", "quantitative", chart_type="", label_authored=False
     )
-    expected_color = axis_y.grid.zero.color
+    expected_color = axis_y.grid.threshold.color
 
     chart = BarChart(id="t", type="bar", x="x", y="y", query_name="q")
     data = [{"x": "A", "y": 10}, {"x": "B", "y": -5}]

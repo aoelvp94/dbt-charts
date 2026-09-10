@@ -173,7 +173,7 @@ def _wcag_boundary_t(
 
     ``t_pass`` must be a position where contrast vs ``text_color`` ≥
     _WCAG_TABLE_MIN; ``t_fail`` must be a position where it is below.  Returns
-    the last-passing t (precision ~1/2^50 in t, well below any visible colour
+    the last-passing t (precision ~1/2^50 in t, well below any visible color
     difference).
     """
     for _ in range(iters):
@@ -548,7 +548,7 @@ def resolve_palette_ref(ref: str, palettes: Mapping[str, str]) -> str:
     ``palette: category`` follows ``palettes[category]`` to whatever file the
     active theme binds, so a value tracks a theme switch instead of pinning one
     palette. The whole-palette counterpart to ``color_from_theme()``'s
-    ``category[2]``, which indirects a single colour through the same map.
+    ``category[2]``, which indirects a single color through the same map.
 
     Only the name is substituted; the ``:N``/``_r`` shorthand rides along. A ref
     naming no role is returned unchanged, so a catalog name still means itself.
@@ -976,7 +976,7 @@ def select_default_palette(
 # A "dark companion" palette is pair-defined with its bright counterpart: slot
 # N in the bright palette is the same hue as slot N in the dark palette, just
 # at a darker tone. Used for label ink that sits a notch darker than its mark
-# colour (endpoint labels on multi-series line/area charts, ``per_series``
+# color (endpoint labels on multi-series line/area charts, ``per_series``
 # strip labels on support_table-bearing charts).
 #
 # Pairs the engine knows about today:
@@ -985,7 +985,7 @@ def select_default_palette(
 #
 # Future palette ``X`` shipped alongside ``X-dark`` works automatically — the
 # resolver looks up ``<bright>-dark`` in the catalog and falls back to the
-# bright colour itself if no dark companion is registered.
+# bright color itself if no dark companion is registered.
 #
 # Both helpers live here (not in render/) because they are pure palette
 # indexing — no rendering, no spec construction. ``compile/resolve/``
@@ -1076,18 +1076,18 @@ def resolve_dark_companion_stops(
     emitted_colors: list[str],
     bright_palette_name: str | None = None,
 ) -> list[str]:
-    """Map a list of emitted mark colours to their dark-companion ink colours.
+    """Map a list of emitted mark colors to their dark-companion ink colors.
 
-    For each colour in ``emitted_colors``:
+    For each color in ``emitted_colors``:
 
-    - If ``bright_palette_name`` is provided, find the colour's index in that
+    - If ``bright_palette_name`` is provided, find the color's index in that
       palette and return the corresponding stop from ``<bright_palette_name>-dark``.
     - If ``bright_palette_name`` is None, scan all registered paired palettes for
-      one whose stops contain the colour (per-color independent lookup). Each
-      colour in the list is resolved independently — author-picked non-slot-0
+      one whose stops contain the color (per-color independent lookup). Each
+      color in the list is resolved independently — author-picked non-slot-0
       stops resolve correctly without any caller-side palette plumbing.
-    - If no dark companion is found for a colour (custom override not in any
-      palette, or no dark companion registered), fall back to the bright colour
+    - If no dark companion is found for a color (custom override not in any
+      palette, or no dark companion registered), fall back to the bright color
       itself (label matches the mark without contrast bump).
 
     ``bright_palette_name`` is optional. When unset, the per-color scan handles

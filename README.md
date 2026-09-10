@@ -52,8 +52,8 @@ Make charts of this with dbt charts. Start with: uv tool install dbt-charts && d
 By hand:
 
 ```bash
-dct init                        # bootstrap a project (creates charts/guide.yaml)
-dct validate charts/guide.yaml  # check board YAML for errors, no warehouse needed
+dct init                        # bootstrap a project (creates charts/guide.yml)
+dct validate charts/guide.yml   # check board YAML for errors, no warehouse needed
 dct serve                       # live preview server
 ```
 

@@ -197,7 +197,7 @@ def _block_scalar_body_ranges(source: str) -> list[tuple[int, int]]:
 class DbtChartsYamlLexer(RegexLexer):
     """Pygments lexer for dbt-Charts board YAML with embedded SQL in block scalars.
 
-    Top-level and nested keys are coloured distinctly. Lines inside
+    Top-level and nested keys are colored distinctly. Lines inside
     ``sql: |``, ``sql: >``, ``query: |``, ``query: >``, and ``queries.*: |``
     shorthand block scalars are delegated to ``SqlLexer`` so SQL keywords
     (SELECT, FROM, WHERE, ...) receive keyword styling. Other block scalar
@@ -242,7 +242,7 @@ class DbtChartsYamlLexer(RegexLexer):
     ) -> Iterator[tuple[int, _TokenType, str]]:
         """Yield tokens, delegating SQL block bodies to SqlLexer.
 
-        SQL block bodies are re-tokenised with SqlLexer. Other block scalar
+        SQL block bodies are re-tokenized with SqlLexer. Other block scalar
         bodies are emitted as plain text, and the rest goes through the normal
         YAML rules.
 
@@ -293,7 +293,7 @@ def highlight_board_yaml(source: str) -> str:
     """Highlight dbt-Charts board YAML and return an HTML string.
 
     SQL inside ``sql: |``, ``sql: >``, ``query: |``, ``query: >``, and
-    ``queries.*: |`` shorthand block scalars is coloured with SQL keyword
+    ``queries.*: |`` shorthand block scalars is colored with SQL keyword
     rules.  The wrapping HTML uses ``cssclass="highlight"`` for compatibility
     with the existing ``extra.css`` rules.
 

@@ -31,7 +31,10 @@ from typing import Any
 import yaml
 
 from dbt_charts.core.compile.errors import ParseError
-from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+from dbt_charts.core.compile.models.board.authored import (
+    AUTHORED_BOARD_ADAPTER,
+    AuthoredBoard,
+)
 from dbt_charts.core.utils import UniqueKeyLoader
 
 
@@ -86,36 +89,75 @@ def load_yaml_mapping(content: str) -> dict[str, Any]:
     Raises ``ParseError`` (with line context) on syntax errors, empty
     documents, or a non-mapping top-level value.
     """
+    return mapping_from_node(compose_yaml(content), content)
+
+
+def compose_yaml(content: str) -> yaml.Node:
+    """Scan ``content`` once into its node tree.
+
+    The one scan a board pays. The mapping (``mapping_from_node``) and the
+    source map (``build_source_index_from_node``) are both walks over the tree
+    this returns, so a caller that needs both composes here and hands the node
+    to each rather than scanning the text twice.
+
+    Raises ``ParseError`` (with line context) on a syntax error, or on an
+    empty document — there is no tree to hand back.
+    """
+    # The loader is driven directly: this is the mapping's own scan, not a
+    # second `yaml.compose` of the same text beside the source map's.
     try:
-        parsed_data = yaml.load(content, Loader=UniqueKeyLoader)
+        node = UniqueKeyLoader(content).get_single_node()
     except yaml.YAMLError as e:
-        # problem_mark is the actual error position (e.g. where an unterminated
-        # flow sequence was found to be missing its close); it's only present
-        # on yaml.error.MarkedYAMLError, not the plain yaml.YAMLError base, so
-        # this is a genuine type-narrowing check on a third-party exception —
-        # not a guaranteed field we're being defensive about.
-        problem_mark = (
-            e.problem_mark if isinstance(e, yaml.error.MarkedYAMLError) else None
-        )
-        line_num = problem_mark.line + 1 if problem_mark is not None else None
-        column_num = problem_mark.column + 1 if problem_mark is not None else None
-        context = _get_yaml_context_for_error(content, line_num) if line_num else None
-        suggestion = _get_yaml_parse_suggestion(str(e))
-        raise ParseError(
-            f"Invalid YAML syntax: {e}",
-            line=line_num,
-            column=column_num,
-            context=context,
-            suggestion=suggestion,
-        ) from e
+        raise _parse_error(e, content) from e
+    if node is None:
+        raise ParseError("Empty YAML document")
+    return node
+
+
+def mapping_from_node(
+    node: yaml.Node, content: str
+) -> dict[str, Any]:  # type-state: explicit_any — raw YAML mapping
+    """Construct the top-level mapping from a composed node tree.
+
+    Construction is where ``UniqueKeyLoader`` refuses a duplicate key, so the
+    check holds for a tree composed elsewhere exactly as it does for
+    ``load_yaml_mapping``'s own. ``content`` only enriches the error with its
+    line context.
+    """
+    # `deep=True` builds every nested node before returning, which is where
+    # `construct_mapping`'s duplicate-key check runs for each of them. It
+    # also flattens merge keys into the tree in place, so a caller that
+    # walks the node for positions does so before this.
+    try:
+        parsed_data = UniqueKeyLoader("").construct_object(node, deep=True)
+    except yaml.YAMLError as e:
+        raise _parse_error(e, content) from e
 
     if parsed_data is None:
         raise ParseError("Empty YAML document")
-
     if not isinstance(parsed_data, dict):
         raise ParseError(f"YAML must be a mapping, got {type(parsed_data).__name__}")
 
     return parsed_data
+
+
+def _parse_error(e: yaml.YAMLError, content: str) -> ParseError:
+    # problem_mark is the actual error position (e.g. where an unterminated
+    # flow sequence was found to be missing its close); it's only present
+    # on yaml.error.MarkedYAMLError, not the plain yaml.YAMLError base, so
+    # this is a genuine type-narrowing check on a third-party exception —
+    # not a guaranteed field we're being defensive about.
+    problem_mark = e.problem_mark if isinstance(e, yaml.error.MarkedYAMLError) else None
+    line_num = problem_mark.line + 1 if problem_mark is not None else None
+    column_num = problem_mark.column + 1 if problem_mark is not None else None
+    context = _get_yaml_context_for_error(content, line_num) if line_num else None
+    return ParseError(
+        f"Invalid YAML syntax: {e}",
+        line=line_num,
+        column=column_num,
+        context=context,
+        suggestion=_get_yaml_parse_suggestion(str(e)),
+    )
 
 
 def parse_mapping(parsed_data: dict[str, Any], content: str = "") -> AuthoredBoard:
@@ -136,13 +178,16 @@ def parse_mapping(parsed_data: dict[str, Any], content: str = "") -> AuthoredBoa
     from pydantic import ValidationError as PydanticValidationError
 
     try:
-        return AuthoredBoard.model_validate(parsed_data)
+        return AUTHORED_BOARD_ADAPTER.validate_python(parsed_data)
     except PydanticValidationError as e:
         # compiler._parse_error_to_diagnostics re-reads e.__cause__ as a
-        # PydanticValidationError and routes through format_validation_errors_structured.
-        # The ParseError message is not user-visible for this branch; the original
-        # PydanticValidationError carries the diagnostic details.
-        raise ParseError(f"Board schema validation failed: {e}") from e
+        # PydanticValidationError and routes through format_validation_errors_structured
+        # for the compiler path. Some callers (dct migrate, registered_views/expander.py)
+        # stringify this ParseError directly, so build the message from e.errors()
+        # rather than str(e) -- the latter's header names the internal
+        # BeforeValidator-wrapped adapter type, not AuthoredBoard.
+        error_summary = "; ".join(err["msg"] for err in e.errors())
+        raise ParseError(f"Board schema validation failed: {error_summary}") from e
     except (TypeError, ValueError) as e:
         raise ParseError(f"Failed to parse board structure: {e}") from e
 

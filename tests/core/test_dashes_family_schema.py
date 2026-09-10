@@ -5,7 +5,7 @@ After the restructure:
   field; bar/pie/line/area/etc. all reject it via extra_forbidden.
 - ChartsStyle.dashes (global cascade source and sole authoring surface) is unchanged.
 - ResolvedChartsStyle.dashes and the render gate (chart_has_active_dashes) are
-  unchanged — dashes behaviour is driven by the board-level field only.
+  unchanged — dashes behavior is driven by the board-level field only.
 
 Structural rejection here mirrors the pie-axis-cut precedent (ADR-015): the type
 system is honest — if a field has no behavioral effect on a surface, that surface

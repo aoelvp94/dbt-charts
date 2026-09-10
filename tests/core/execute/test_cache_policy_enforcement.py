@@ -470,7 +470,7 @@ def _sibling_executor(board, registry, adapter, cache) -> Executor:
 def _age_shared_entry(cache, board, names: tuple[str, str], hours: int) -> None:
     """Back-date the one entry *names* share, in the column's own frame.
 
-    written_at holds a naive UTC wall clock (see `_utc_wall_clock`), so ageing it
+    written_at holds a naive UTC wall clock (see `_utc_wall_clock`), so aging it
     with a naive *local* `datetime.now()` would put the entry off by the
     machine's UTC offset — east of Greenwich an "aged" entry would read as
     future-dated and still be served, and the test would fail for a reason that
@@ -709,7 +709,7 @@ class TestSiblingsDoNotShareOneMemoSlot:
             assert result.board.queries["live"].cache.enabled is False
             adapter = _ok_adapter(value=1)
 
-            # Seed a *fresh* entry — no ageing, so only the opt-out can save us.
+            # Seed a *fresh* entry — no aging, so only the opt-out can save us.
             _sibling_executor(
                 result.board, result.query_registry, adapter, cache
             ).execute_query("patient")

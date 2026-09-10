@@ -160,7 +160,7 @@ def test_label_dark_companion_follows_chart_local_palette_override(
     Core/Growth as blue/green areas but the LABEL pane was inking
     Core=dark-blue and Growth=dark-CYAN — the dark companion was indexed
     by alphabetical-domain position (slot 0, slot 1) instead of by the
-    actual emitted colour. Fix looks each emitted colour up in the bright
+    actual emitted color. Fix looks each emitted color up in the bright
     vivid-10 palette and pairs with the dark palette by that index.
     """
     from dbt_charts.core.compile.models.style.authored import (
@@ -198,7 +198,7 @@ def test_label_dark_companion_follows_chart_local_palette_override(
     label_pane = spec["hconcat"][1]
     label_range = label_pane["encoding"]["color"]["scale"]["range"]
 
-    # The two emitted area colours are bright slots 0 and 2 of vivid-10
+    # The two emitted area colors are bright slots 0 and 2 of vivid-10
     # (#0073c2 = blue, #00ad75 = green). The label dark companions must be
     # the dark twins of those same slots — NOT the dark twins of slots 0
     # and 1 (which would give dark-blue + dark-CYAN, the bug).

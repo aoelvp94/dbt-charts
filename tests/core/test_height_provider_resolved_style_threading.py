@@ -276,7 +276,7 @@ def test_height_provider_resolved_style_param_propagated_to_render(
 ) -> None:
     """The resolved_style passed into HeightProvider must reach _render_chart_to_svg.
 
-    This test parametrises over multiple themes to ensure the fix is general, not
+    This test parametrizes over multiple themes to ensure the fix is general, not
     just a special-case for cream→stark.
     """
     from dbt_charts.core.compile.config import get_theme_style

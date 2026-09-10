@@ -43,7 +43,7 @@ def numeral_vega_expr(
     ``datum.value`` on an axis, ``datum.<field>`` inside a ``calculate``
     transform for a mark label). Only SI (``s``-type) specs with an explicit
     ``notation`` carry the house-register post-process, matching
-    ``format_d3``'s own behaviour — a non-SI spec or a call without
+    ``format_d3``'s own behavior — a non-SI spec or a call without
     ``notation`` emits a plain ``format(...)`` call with no substitution
     chain. Round-aware (``format_d3``'s ``~``-trim injection) for the same
     reason: Vega runs its own d3 on the bare spec and never sees the Python
@@ -56,7 +56,7 @@ def numeral_vega_expr(
     ``format_spec`` must be a d3 spec as already resolved by ``resolve_format``
     — i.e., for predefined names, ``resolve_format`` has already baked the
     round-aware ``~`` trim into the spec. This function does NOT inject ``~``
-    itself (contrast the old behaviour). Predefined specs arrive pre-trimmed;
+    itself (contrast the old behavior). Predefined specs arrive pre-trimmed;
     inline specs arrive without ``~`` and stay that way, so Python and Vega
     agree on the same digit count.
 

@@ -72,7 +72,7 @@ class TestManifestLoadThroughSeam:
     cwd, not the project.
 
     After the fix, _all_manifest_relationships() reads via project.exists() /
-    project.read_text(), so a CloudManagedProject-like seam is honoured.
+    project.read_text(), so a CloudManagedProject-like seam is honored.
     """
 
     def test_manifest_load_uses_project_exists_not_raw_path(

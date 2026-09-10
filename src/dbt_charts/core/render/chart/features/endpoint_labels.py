@@ -44,10 +44,11 @@ from dbt_charts.core.render.chart.emitters._endpoint_rail import (
 )
 from dbt_charts.core.text.case import default_axis_title
 from dbt_charts.core.utils import (
+    VlSortOp,
     cumulative_stack_midpoints,
     numeric_column_values,
     sorted_series_by_stack_order,
-    stacked_x_domain_order,
+    x_domain_order,
 )
 
 
@@ -69,7 +70,7 @@ def _pack_against_bound(
     evicts placed items off the top of the stack — but only ones that were
     themselves pushed away from their own anchor (a label with genuine room
     needs no push and is never evicted) — retrying the new item after each
-    eviction, so an item is dropped only once no evictable neighbour remains
+    eviction, so an item is dropped only once no evictable neighbor remains
     and it still does not fit. Cascade order alone (which item happens to be
     processed last) never decides who gets dropped; an isolated anchor with
     real room keeps its place regardless of what a distant, unrelated
@@ -145,7 +146,7 @@ from dbt_charts.core.render.chart.series_label_truncation import (
     record_series_label_truncations,
 )
 from dbt_charts.core.render.chart.spec import ChartSpec, EndpointLabelData, RenderBox
-from dbt_charts.core.render.chart.x_domain import rendered_x_domain
+from dbt_charts.core.render.chart.x_domain import rendered_x_domain, vl_sort_op
 from dbt_charts.core.render.utils import normalize_scalar_for_json
 
 # Alias for the position column in the pre-computed inline data.
@@ -238,7 +239,7 @@ class RecascadeResult:
     causes and different remedies, and collapsing them made the rail report a
     height problem for a case height cannot cause or cure.
 
-    - ``fit`` — the intended gap was honoured, every label placed.
+    - ``fit`` — the intended gap was honored, every label placed.
     - ``gap_did_not_fit`` — the gap is known but ``(n-1) * gap`` exceeds the
       domain span in the best case. More height (or fewer series) resolves it.
       Every label is kept, spaced evenly below the intended gap.
@@ -317,7 +318,7 @@ def _distribute_evenly(
 ) -> RecascadeResult:
     """Spread labels evenly across the domain, preserving their relative order.
 
-    The answer whenever the intended gap cannot be honoured — because it does
+    The answer whenever the intended gap cannot be honored — because it does
     not fit, or because no slope exists to express it in data units. It needs
     no slope: positions are assigned from the domain directly. Always reports
     a non-``fit`` outcome so the caller records the degradation; an unreported
@@ -452,14 +453,14 @@ def recascade_endpoint_labels(
 def _refuse_unorderable_sort(
     chart_id: str, data: list[dict[str, Any]], sort: Any
 ) -> None:
-    """Refuse a `sort:` whose column carries no numbers to total.
+    """Refuse a `sort:` whose column carries no numbers to aggregate.
 
-    ``stacked_x_domain_order`` reproduces Vega-Lite's domain order by summing
-    the sort field per category, which is what VL's default ``sum`` op does.
-    On a non-numeric column VL concatenates the strings instead — an order this
-    cannot reproduce — so the rail would anchor on a row VL does not draw on
-    top. Resolve steers the default away from this shape; an explicit opt-in
-    lands here and gets told why.
+    ``x_domain_order`` reproduces Vega-Lite's domain order by folding the sort
+    field per category with VL's own aggregate. On a non-numeric column VL
+    concatenates the strings instead — an order this cannot reproduce — so the
+    rail would anchor on a row VL does not draw on top. Resolve steers the
+    default away from this shape; an explicit opt-in lands here and gets told
+    why.
     """
     if sort is None or numeric_column_values(data, sort.by):
         return
@@ -482,13 +483,14 @@ def _stacked_midpoints(
     max_column_total: float,
     sort_by: str,
     descending: bool,
+    op: VlSortOp,
     stack_order: str | None = None,
 ) -> list[tuple[str, float]]:
     """Compute cumulative segment midpoints for vertical stacked bars or areas.
 
     Anchors each series at its own most-recent non-null x — not one shared
     trailing column — so a series with a trailing null, or one that stops
-    early, is labelled at the midpoint of its own last real segment rather
+    early, is labeled at the midpoint of its own last real segment rather
     than dragged to the baseline of a column it has no value in (reuses
     ``last_nonnull_xy_per_series``, the same per-series walk-back the
     line/area rail already uses via ``last_nonnull_value_per_series``).
@@ -507,8 +509,8 @@ def _stacked_midpoints(
 
     Every name in *series_names* gets an anchor, including a series with no
     non-null value anywhere: it falls back to the domain's last x, zero-height
-    there, so its anchor is the seam between its neighbours — the place its
-    band would begin. The rail replaces the colour legend, so a dropped
+    there, so its anchor is the seam between its neighbors — the place its
+    band would begin. The rail replaces the color legend, so a dropped
     anchor would leave that series painting segments in other columns under
     no name anywhere on the chart. This is the one case the 0.0 seeding still
     covers; a series with real rows just not at the last column no longer
@@ -534,7 +536,7 @@ def _stacked_midpoints(
     if not series_names:
         return []
 
-    domain = stacked_x_domain_order(data, x_field, sort_by, descending)
+    domain = x_domain_order(data, x_field, sort_by, descending, op=op)
     last_rank = len(domain) - 1 if domain else 0
 
     # "Own last non-null x" means last in the *rendered* domain order, not
@@ -620,8 +622,8 @@ def _anchor_rows(
     walk-back read the axis's own order instead. The ranking shape is the
     stacked rail's (``_stacked_midpoints``), but not its domain source:
     ``rendered_x_domain`` also accounts for layer-contributed categories and
-    reads the encoding's own field ``sort`` — which the bar emitter sets from
-    an authored ``sort:``, and which no row order reflects.
+    reads the encoding's own field ``sort`` — which every cartesian emitter
+    sets from an authored ``sort:``, and which no row order reflects.
 
     ``domain_rows`` is the row set Vega-Lite orders the axis from, which is
     not always the row set being ranked: a wide ``y: [a, b]`` chart is folded
@@ -685,9 +687,9 @@ def _wide_endpoint_positions(
 
 
 def _layer_color_scale(spec: ChartSpec, chart_id: str) -> dict[str, str]:
-    """Return {label: fill} from the shared VL colour scale the overlay built.
+    """Return {label: fill} from the shared VL color scale the overlay built.
 
-    emitters/_overlay.py builds one shared colour scale's ``{domain, range}``
+    emitters/_overlay.py builds one shared color scale's ``{domain, range}``
     that paints every layer's marks AND its legend swatch off the same pair
     (``render_cartesian_overlay``'s ``shared_scale``), stamped onto every
     participating layer's own ``encoding.color.scale`` — the same object, so
@@ -703,7 +705,7 @@ def _layer_color_scale(spec: ChartSpec, chart_id: str) -> dict[str, str]:
         if fill_by_series is not None:
             return fill_by_series
     raise ChartDataError(
-        "layered chart has no shared colour scale for its endpoint-label rail",
+        "layered chart has no shared color scale for its endpoint-label rail",
         chart_id=chart_id,
     )
 
@@ -1027,6 +1029,11 @@ class EndpointLabelFeature:
             ) and chart.stack not in (None, "none")
             if is_stacked:
                 assert isinstance(chart, (ResolvedBarChart, ResolvedAreaChart))
+                # Bar only: bar leaves its x sort's aggregate to Vega-Lite,
+                # so a non-numeric sort column gives an order the rail cannot
+                # reproduce. A dimension axis pins its domain explicitly
+                # (pin_sorted_x_domain, emitters/_cartesian.py), which makes
+                # the ranking reproducible whatever the column holds.
                 _refuse_unorderable_sort(
                     chart.id,
                     data,
@@ -1042,8 +1049,19 @@ class EndpointLabelFeature:
                     if isinstance(chart, ResolvedBarChart)
                     else None
                 )
-                # Area has no authored sort; only bar carries one.
-                _sort = chart.sort if isinstance(chart, ResolvedBarChart) else None
+                # Read off the emitted encoding, not re-derived from the
+                # chart class: the rail has to rank columns the same way the
+                # axis does. Vega-Lite applies a field sort to a DISCRETE
+                # scale only — on a continuous temporal x it carries the key
+                # and ignores it — so ranking by an authored sort there would
+                # anchor every series on a column the axis does not draw last.
+                # A dimension axis states its aggregate on the encoding; bar
+                # states none, and vl_sort_op reads its own inference.
+                _x_enc = spec.encoding.get("x")
+                _x_enc = _x_enc if isinstance(_x_enc, dict) else {}
+                _sort_ranks = _x_enc.get("type") in ("nominal", "ordinal")
+                _sort = chart.sort if _sort_ranks else None
+                _sort_op = vl_sort_op(_x_enc.get("sort"))
                 y_domain_min, y_domain_max = _stacked_y_domain(
                     data, x_field, y_field, stack_mode
                 )
@@ -1061,6 +1079,7 @@ class EndpointLabelFeature:
                     y_domain_max,
                     _sort.by if _sort else "",
                     bool(_sort and _sort.order == "desc"),
+                    _sort_op,
                     stack_order=stack_order,
                 )
                 positions = _humanize_positions(
@@ -1101,7 +1120,7 @@ class EndpointLabelFeature:
                 )
 
             spec.endpoint_label_layout = "right_pane"
-            # Only this layout honours label_pane_width, so only here does the
+            # Only this layout honors label_pane_width, so only here does the
             # cap actually cut anything (the top_rail branch above ignores it).
             # A wide chart's series names come from y: [...] — unless it
             # also authors color:, whose values then lead every composite
@@ -1139,12 +1158,12 @@ class EndpointLabelFeature:
         """Label the base series and every overlay layer's own endpoint.
 
         Reachable only when applies_to() has confirmed chart.layers is
-        non-empty, there is no base colour-series channel to drive the
+        non-empty, there is no base color-series channel to drive the
         multi-series rail above, and x/y are both plain scalar columns (see
         ``layered_endpoint_rail_fires``) — each layer stands in for a
         "series" here, named the same way emitters/_overlay.py names it for
         the legend (authored ``label:``, else the humanized column name) and
-        coloured the same way it paints: read straight off the shared colour
+        colored the same way it paints: read straight off the shared color
         scale the overlay already built (``_layer_color_scale``), not
         re-derived.
 

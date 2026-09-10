@@ -256,7 +256,7 @@ class TestRenderChartFlag:
 
 
 class TestRenderChartErrors:
-    """Tests for --allow-chart-errors behaviour."""
+    """Tests for --allow-chart-errors behavior."""
 
     def _make_chart_error(self) -> Diagnostic:
         return Diagnostic.from_code(
@@ -264,7 +264,7 @@ class TestRenderChartErrors:
         )
 
     def test_chart_errors_default_exits_1(self) -> None:
-        """Default behaviour: any per-chart error causes exit 1 (CI-safe)."""
+        """Default behavior: any per-chart error causes exit 1 (CI-safe)."""
         from dbt_charts.agent_api.boards import BoardRenderResult
 
         fake_project = MagicMock(name="ProjectSession")

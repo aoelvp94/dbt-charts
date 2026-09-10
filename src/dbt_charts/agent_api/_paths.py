@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
-# tach-ignore(agent_api->cli: runtime host-type guard in resolve_board_or_error / _relpath_for_fs_location; the local-filesystem check needs a non-cli signal on Project — deferred)
+# tach-ignore(agent_api->cli: runtime host-type guard in resolve_board_or_error / _relpath_for_fs_location, and direct construction in compile_editor_buffer; the local-filesystem check needs a non-cli signal on Project — deferred)
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.diagnostics import (
     ERR_FILE_NOT_FOUND,
@@ -19,6 +19,7 @@ from dbt_charts.core.project import (
     BOARD_CANDIDATE_SUFFIXES as BOARD_CANDIDATE_SUFFIXES,
     CHARTS_SUBDIR as CHARTS_SUBDIR,
     BoardFile,
+    InMemoryBoard,
     Project,
     ProjectPath,
     assert_relpath,
@@ -27,18 +28,17 @@ from dbt_charts.core.project import (
 from dbt_charts.core.project_roots import (
     DCT_ROOT_MARKERS as DCT_ROOT_MARKERS,
     find_dct_root as find_dct_root,
-    find_project_root as find_project_root,
     find_repo_root as find_repo_root,
 )
 
 if TYPE_CHECKING:
-    from dbt_charts.core.compile.config import ProjectSourcesConfig
+    from dbt_charts.core.compile.compiler import CompileResult
 
 
 def iter_expanded_board_files(project: Project, under: str) -> list[ProjectPath]:
     """Board files under ``under``, sorted — the shared directory-walk filter.
 
-    Excludes private (leading-underscore) files, ``meta.yaml``/``meta.yml``
+    Excludes private (leading-underscore) files, ``meta.yml``/``meta.yaml``
     cascade fragments, and inspect-manifest-owned directories: none of these
     are standalone boards. Shared by ``validate_paths`` and ``describe_paths``
     so the two verbs' expansion can't drift out of sync again.
@@ -253,24 +253,78 @@ def build_yaml_render_context(
     )
 
 
-def project_sources_for_board(board_path: Path) -> ProjectSourcesConfig:
-    """The `sources:` registry of the project owning ``board_path``.
+@dataclass(frozen=True)
+class EditorCompileResult:
+    """Result of `compile_editor_buffer`.
 
-    Editor surfaces compile buffer text rather than a file on disk, so they
-    have no `Project` to hand `compile()` — but without the source registry
-    compile cannot tell a query's SQL dialect, and dialect is what makes a SQL
-    parse finding trustworthy enough to report.
-
-    A board outside any project needs no special case: `find_project_root`
-    falls back to the starting directory, which has no `dbt_charts.yml`, and the
-    registry comes back empty — compile then stays silent about SQL syntax
-    rather than guessing a dialect.
-
-    A `dbt_charts.yml` that exists but does not load raises, deliberately. That
-    is a real fault at a real location, and swallowing it here would decide on
-    the author's behalf that a broken project config is invisible — while
-    handing the caller an empty registry indistinguishable from "no project".
-    Callers attribute the failure; they do not get to pretend it did not
-    happen.
+    `own_file` is whatever identity string the compile was stamped with —
+    `board_path.relpath` on the cascade path, `str(file)` on every fallback
+    branch — the value a `Diagnostic`'s `range.file` equals for a finding on
+    *this* buffer. A cascade merges other project files (`charts/meta.yml`,
+    `extends` targets) into the same compile, and a finding in one of those
+    carries that file's own `range.file` instead — the caller compares
+    against `own_file` to attribute a foreign-origin finding to the file that
+    actually has the problem, rather than squiggling it onto an unrelated
+    line of this buffer.
     """
-    return FilesystemProject(find_project_root(board_path.parent, None)).sources
+
+    result: CompileResult
+    own_file: str
+    config_error: str | None = None
+
+
+def compile_editor_buffer(content: str, file: Path) -> EditorCompileResult:
+    """Compile editor buffer text, applying the meta.yml cascade when ``file``
+    sits inside a project.
+
+    Resolves a `Project` from `file`'s ancestry, the same "does a project
+    exist here" check the CLI uses (`find_dct_root`), so an editor buffer
+    compiles under the same cascade `dct validate`/`dct render` would apply.
+
+    Every fallback branch below drops to the non-cascade `compile()` with no
+    `project_sources` — so alongside skipping the folder `meta.yml` cascade
+    (`source:`, `extends:`, lint config), a SQL query's dialect is unknown and
+    compile stays silent about SQL syntax rather than guessing one (see
+    `_sql_parse_warnings`).
+
+    `EditorCompileResult.config_error` is an optional config-load-error
+    message for the caller to surface as a *separate* diagnostic — folding a
+    broken `dbt_charts.yml` into the compile result would replace every real
+    finding on the board with one line-1 error blaming the wrong document.
+    """
+    # Lazy: core.compile is the heavy stack agent_api's PEP 562 laziness
+    # exists to keep out of `import dbt_charts.cli.main` — this module is
+    # imported eagerly by cli/_project.py and cli/_workspace_guard.py, so a
+    # top-level import here would defeat that (test_lazy_imports.py).
+    from dbt_charts.core.compile.compiler import compile as dct_compile, compile_file
+
+    own_file = str(file)
+    root = find_dct_root(file.parent)
+    if root is None:
+        return EditorCompileResult(dct_compile(content, file=own_file), own_file)
+
+    project = FilesystemProject(root)
+    try:
+        _ = project.sources
+        _ = project.cache
+    except Exception as exc:  # noqa: BLE001 — attributed below, not swallowed
+        return EditorCompileResult(
+            dct_compile(content, file=own_file),
+            own_file,
+            config_error=f"Project dbt_charts.yml could not be loaded: {exc}",
+        )
+
+    try:
+        board_path = project.path_for_fspath(file)
+    except ValueError:
+        return EditorCompileResult(
+            dct_compile(content, file=own_file),
+            own_file,
+            config_error=(
+                f"{file} is outside project root {root}; folder meta.yml "
+                "defaults were not applied"
+            ),
+        )
+
+    result = compile_file(InMemoryBoard(content, path=board_path))
+    return EditorCompileResult(result, board_path.relpath)

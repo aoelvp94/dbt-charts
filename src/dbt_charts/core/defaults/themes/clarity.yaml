@@ -7,8 +7,6 @@
 extends: stark
 style:
   background: dbt-grays.white
-  page:
-    background: dbt-grays.white
   # Clarity palette — gray scaffold + steel-blue accent in place of
   # the brighter stark accent/muted.
   muted: dbt-grays.muted
@@ -78,6 +76,8 @@ style:
           color: dbt-grays.subtitle
       grid:
         color: dbt-grays.grid
+        threshold:
+          color: dbt-grays.subtitle
       ticks:
         color: dbt-grays.grid
       line:
@@ -85,12 +85,6 @@ style:
     axis_y:
       grid:
         color: dbt-grays.grid-emphasis
-        # Zero baseline. Width is load-bearing at 2.0: the rule paints over
-        # the gridline it sits on, so it must read as a distinct line rather
-        # than a slightly-thicker gridline.
-        zero:
-          color: dbt-grays.subtitle
-          width: 2.0
       ticks:
         color: dbt-grays.grid-emphasis
     axis_quantitative:

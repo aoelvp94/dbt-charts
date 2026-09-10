@@ -44,7 +44,7 @@ def _handle_render(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, A
     """Build the BoardFile for this render call and delegate to ProjectSession.
 
     'path' is boards-first resolved to a stored board; 'yaml_content' becomes a
-    pathless in-memory board (no meta.yaml cascade — matches the deleted
+    pathless in-memory board (no meta.yml cascade — matches the deleted
     agent_api dispatch's yaml_content arm). Exactly one of the two is required.
     """
     parsed = _boards.RenderBoardArgs.model_validate(args)

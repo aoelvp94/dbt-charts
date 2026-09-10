@@ -31,7 +31,7 @@ _WAREHOUSE_ONLY: frozenset[str] = frozenset({"execute_query", "query_board"})
 
 
 def _handler_args() -> dict[str, dict[str, Any]]:
-    """Args picked to exercise a graceful path that returns a Pydantic-modelled
+    """Args picked to exercise a graceful path that returns a Pydantic-modeled
     result. Wrong-input results are fine; the contract under test is
     JSON-cleanliness of the dict, not success.
     """

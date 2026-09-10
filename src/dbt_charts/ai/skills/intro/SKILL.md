@@ -85,7 +85,7 @@ for anything that stays broken.
 | Answer an analytical question ("show me…", "why did X change") | `analyst-runbook` — triage, shape, verify, deliver |
 | Look at an unfamiliar schema before writing anything | `data-exploration` |
 | Write or edit a board | `board-build` — the build, validate, render loop |
-| Choose chart types, layout, or colour | `board-design` |
+| Choose chart types, layout, or color | `board-design` |
 | Write a narrative report rather than a dashboard | `report-design` |
 | Reproduce a dashboard from a screenshot or export | `board-replicate` |
 | Check the board before handing it over | `board-review` (runs `board-structural-review` and `board-visual-review`) |

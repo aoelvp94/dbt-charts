@@ -33,9 +33,9 @@ from dbt_charts.core.compile.models.style.authored import (
     AxisYStylePatch,
     BandAxisStylePatch,
     BarChartStylePatch,
+    BaseAxisGridStylePatch,
     EndpointLabelsConfigPatch,
     LegendStylePatch,
-    MeasureGridStylePatch,
     QuantitativeAxisStylePatch,
     ScatterChartStylePatch,
 )
@@ -97,7 +97,7 @@ def test_chart_local_axis_y_grid_color_at_encoding():
 
     patch = BarChartStylePatch(
         orientation="vertical",
-        axis_y=AxisYStylePatch(grid=MeasureGridStylePatch(color="#dd0000")),
+        axis_y=AxisYStylePatch(grid=BaseAxisGridStylePatch(color="#dd0000")),
     )
     spec = _spec(style=patch)
     grid_color = spec.get("encoding", {}).get("y", {}).get("axis", {}).get("gridColor")
@@ -169,12 +169,12 @@ def test_axis_to_vl_mapper_emits_offset():
 
 def test_chart_local_axis_quantitative_at_encoding_not_config():
     """chart.style.axis_quantitative routes to encoding, not config.axisQuantitative."""
-    from dbt_charts.core.compile.models.style.authored import AxisGridStylePatch
+    from dbt_charts.core.compile.models.style.authored import BaseAxisGridStylePatch
 
     patch = BarChartStylePatch(
         orientation="vertical",
         axis_quantitative=QuantitativeAxisStylePatch(
-            grid=AxisGridStylePatch(color="#quant")
+            grid=BaseAxisGridStylePatch(color="#quant")
         ),
     )
     spec = _spec(style=patch)
@@ -191,11 +191,11 @@ def test_chart_local_axis_quantitative_at_encoding_not_config():
 
 def test_chart_local_axis_band_at_encoding_not_config():
     """chart.style.axis_band routes to encoding, not config.axisBand."""
-    from dbt_charts.core.compile.models.style.authored import AxisGridStylePatch
+    from dbt_charts.core.compile.models.style.authored import BaseAxisGridStylePatch
 
     patch = BarChartStylePatch(
         orientation="vertical",
-        axis_band=BandAxisStylePatch(grid=AxisGridStylePatch(color="#band")),
+        axis_band=BandAxisStylePatch(grid=BaseAxisGridStylePatch(color="#band")),
     )
     spec = _spec(style=patch)
     assert spec.get("config", {}).get("axisBand", {}).get("gridColor") != "#band"
@@ -208,14 +208,14 @@ def test_chart_local_axis_band_at_encoding_not_config():
 
 def test_chart_local_axis_y_wins_over_axis_quantitative():
     """chart.style.axis_y (channel-specific) overrides axis_quantitative for y."""
-    from dbt_charts.core.compile.models.style.authored import AxisGridStylePatch
+    from dbt_charts.core.compile.models.style.authored import BaseAxisGridStylePatch
 
     patch = BarChartStylePatch(
         orientation="vertical",
         axis_quantitative=QuantitativeAxisStylePatch(
-            grid=AxisGridStylePatch(color="#quant")
+            grid=BaseAxisGridStylePatch(color="#quant")
         ),
-        axis_y=AxisYStylePatch(grid=MeasureGridStylePatch(color="#channel")),
+        axis_y=AxisYStylePatch(grid=BaseAxisGridStylePatch(color="#channel")),
     )
     spec = _spec(style=patch)
     y_axis = spec.get("encoding", {}).get("y", {}).get("axis", {})
@@ -226,13 +226,13 @@ def test_chart_local_axis_y_wins_over_axis_quantitative():
 
 def test_chart_local_axis_quantitative_wins_over_chart_local_global():
     """chart.style.axis_quantitative wins when both axis_quantitative and other axes are set."""
-    from dbt_charts.core.compile.models.style.authored import AxisGridStylePatch
+    from dbt_charts.core.compile.models.style.authored import BaseAxisGridStylePatch
 
     patch = BarChartStylePatch(
         orientation="vertical",
-        axis_x=AxisXStylePatch(grid=AxisGridStylePatch(color="#x")),
+        axis_x=AxisXStylePatch(grid=BaseAxisGridStylePatch(color="#x")),
         axis_quantitative=QuantitativeAxisStylePatch(
-            grid=AxisGridStylePatch(color="#quant")
+            grid=BaseAxisGridStylePatch(color="#quant")
         ),
     )
     spec = _spec(style=patch)

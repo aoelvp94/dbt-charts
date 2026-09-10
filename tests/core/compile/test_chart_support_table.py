@@ -1,6 +1,6 @@
 """Tests for the chart.support_table primitive (authoring + validation).
 
-These tests describe the v1 authoring surface behaviour — entry shape,
+These tests describe the v1 authoring surface behavior — entry shape,
 grammar rules G1..G5, validation rules from the chart.support_table spec §3.
 """
 
@@ -478,7 +478,7 @@ def test_chart_patch_rejects_mixed_per_series_and_aggregate_in_same_list():
 
 
 def test_per_series_by_measure_field_default_false():
-    """by_measure defaults to False (existing per_series behaviour unchanged)."""
+    """by_measure defaults to False (existing per_series behavior unchanged)."""
     from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
 
     entry = ChartSupportTablePerSeries.model_validate({"per_series": "revenue"})

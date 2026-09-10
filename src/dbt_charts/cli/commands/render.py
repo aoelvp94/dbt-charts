@@ -248,7 +248,7 @@ def render_command(
             format=format,
             variables=variables,
             use_cache=use_cache,
-            # Match pre-PR behaviour: 2x retina PNG by default for the CLI.
+            # Match pre-PR behavior: 2x retina PNG by default for the CLI.
             scale=2.0,
             ignore_codes=ignore_codes,
             max_workers=max_workers,
@@ -339,7 +339,7 @@ def render_command_from_yaml(
         ProjectSession.from_project(project, cache=cache) as project_session,
     ):
         # stdin content has no on-disk location — a pathless in-memory board,
-        # no meta.yaml cascade.
+        # no meta.yml cascade.
         board = InMemoryBoard(yaml_content, path=None)
         result = project_session.render_board(
             board=board,

@@ -893,14 +893,12 @@ class TestStyleInheritance:
     """Tests for style inheritance."""
 
     def test_board_style(self):
-        """Test board-level style with sentinel colors that won't match any default."""
+        """Test board-level style with a sentinel background that won't match any default."""
         sentinel_bg = "#f0f1f2"
-        sentinel_color = "#334455"
         yaml_content = f"""
 title: Styled
 style:
   background: "{sentinel_bg}"
-  color: "{sentinel_color}"
 queries:
   q:
     sql: SELECT 1
@@ -918,7 +916,6 @@ rows:
         assert result.success
         # style is now a StylePatch object with pre-parsed values
         assert result.board.authored_style.background == sentinel_bg
-        assert result.board.authored_style.color == sentinel_color
 
     def test_boards_without_explicit_theme_inherit_default_theme(self):
         """Unthemed boards should inherit the configured default theme name only."""
@@ -1735,7 +1732,7 @@ rows:
         title-case convention — `apply_case("title")` uses the NYT
         small-words list, so ``by`` stays lowercase. Locks in
         consistency with axis titles / KPI captions that share the same
-        path; guards against a hand-rolled per-token capitaliser sneaking
+        path; guards against a hand-rolled per-token capitalizer sneaking
         back in.
         """
         chart = self._compile_donut("revenue_by_region")

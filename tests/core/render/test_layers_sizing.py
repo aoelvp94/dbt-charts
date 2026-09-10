@@ -40,7 +40,7 @@ def _one_line_layer() -> LineLayer:
 
 
 class TestAspectRatioWithLayers:
-    """A chart with layers: must honour aspect_ratio the same as one without."""
+    """A chart with layers: must honor aspect_ratio the same as one without."""
 
     def test_bar_with_layers_uses_chart_aspect_ratio(self) -> None:
         """chart.aspect_ratio=2.0 → height = width / 2.0, regardless of layers."""

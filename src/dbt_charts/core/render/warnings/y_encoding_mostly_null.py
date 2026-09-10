@@ -38,7 +38,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             continue
         if not chart.y:
             continue
-        # A chart absent from chart_results failed execution; nothing to analyse.
+        # A chart absent from chart_results failed execution; nothing to analyze.
         if chart_id not in ctx.chart_results:
             continue
 

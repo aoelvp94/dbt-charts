@@ -84,9 +84,8 @@ Changes in this release:
   theme transitively extends.
 
   ``theme:`` *is* expressible as a ``Move``, despite carrying no declared key
-  path of its own: it validates against ``ThemeName``, a real (if
-  hand-assembled) JSON Schema enum property (``_theme_property_schema()`` in
-  ``compile/schema/renderers/json_schema.py``). But ``theme:`` never
+  path of its own: it validates against ``ThemeName``, a real JSON Schema
+  enum property. But ``theme:`` never
   *disappears* from any grammar (it is permanent authoring sugar, unlike a
   genuinely retired field), so this cannot be an ordinary rename: old_path and
   new_path are both ``("theme",)``, an identity-path ``Move`` whose
@@ -289,7 +288,7 @@ Changes in this release:
     self-nesting depth — not hand-listing paths: no version module writes a
     literal ``Move``, and hand-enumeration is a technique this repo has never
     used. Widening it is unattempted here, not known-safe: nothing in the
-    tree pins the nested-position behaviour a depth-tracking walker would
+    tree pins the nested-position behavior a depth-tracking walker would
     have to preserve, so a retry needs its own coverage before it can be
     trusted. Left alone pre-1.0: no external board corpus authors ``tones`` inside a nested
     sub-board, and the silent path above is the only cost.
@@ -680,7 +679,7 @@ def moves(
         catalog=catalog,
     )
     # `theme:` is authoring sugar with no backing Pydantic field (see
-    # `_desugar_theme`), so `suffix_rename_moves`'s field-tree walk can never
+    # `desugar_theme`), so `suffix_rename_moves`'s field-tree walk can never
     # discover it -- it only finds real declared fields. Hand-declared at the
     # document root only: a nested sub-board's own `theme:` key
     # (`rows.*.theme`, `grid.items.*.item.theme`, ...) is a different document

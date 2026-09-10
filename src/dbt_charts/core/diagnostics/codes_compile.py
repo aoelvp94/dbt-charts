@@ -40,7 +40,7 @@ ERR_UNKNOWN_QUERY = REGISTRY.register(
         ),
         doc=(
             "Fired when a chart's `query:` names a query that is not declared "
-            "under `queries:` in the board or any included meta.yaml. Check for "
+            "under `queries:` in the board or any included meta.yml. Check for "
             "typos and ensure the query is declared."
         ),
         summary="Fired when a chart's `query:` names a query that isn't declared under `queries:`.",
@@ -128,11 +128,11 @@ ERR_SOURCE_REQUIRED = REGISTRY.register(
         message_template=(
             "Query {query_name!r}: SQL queries must have a source. "
             "Set it on the query (`source: my_db`), "
-            "or at the board or folder meta.yaml level (`source: my_db`)."
+            "or at the board or folder meta.yml level (`source: my_db`)."
         ),
         doc=(
             "Fired when a SQL query has no `source:` set at the query, board, or "
-            "folder meta.yaml level and no default source is configured. Set "
+            "folder meta.yml level and no default source is configured. Set "
             "`source: my_db` on the query or as a default at a higher level."
         ),
         summary="Fired when a SQL query has no source configured at any level.",
@@ -249,17 +249,17 @@ ERR_META_SCHEMA = REGISTRY.register(
     ErrorCode(
         code="ERR-META-SCHEMA",
         domain="compile",
-        title="meta.yaml contains an unknown or invalid field",
+        title="meta.yml contains an unknown or invalid field",
         message_template=(
-            "meta.yaml schema error: {message}. "
+            "meta.yml schema error: {message}. "
             "Check that all keys are valid board fields."
         ),
         doc=(
-            "Fired when a meta.yaml file contains a field that is not recognized "
+            "Fired when a meta.yml file contains a field that is not recognized "
             "by the board schema, or a field with an invalid value. Check that all "
             "keys match the supported board fields and remove any extras."
         ),
-        summary="Fired when a meta.yaml file contains a field the board schema doesn't recognize.",
+        summary="Fired when a meta.yml file contains a field the board schema doesn't recognize.",
         docs_topic="board",
     )
 )

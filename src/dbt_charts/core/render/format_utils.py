@@ -210,7 +210,7 @@ def format_kpi_parts(
             (``ResolvedTableColumnConfig.shared_scale``). When set, the value
             is scaled and formatted through ``shared_scale.digit_spec``
             instead of independently picking its own SI suffix -- the table
-            analogue of an axis ruler's tick painting (mirrors
+            analog of an axis ruler's tick painting (mirrors
             ``quantitative_tick_labels``'s ``ruler``-aware branch). ``None``
             (the default) is today's per-row independent SI behavior,
             unchanged.

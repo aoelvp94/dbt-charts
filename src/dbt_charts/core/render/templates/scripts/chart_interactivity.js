@@ -21,7 +21,7 @@
     const ROLE_ORDER = '‌';
     /*{# Emphasis modifier (emitters/_tooltip.py's MUTED), orthogonal to the role #}*/
     /*{# markers above: prefixes a value/total row whose VALUE should render at the #}*/
-    /*{# low-contrast label colour, not the loud value colour -- a companion number #}*/
+    /*{# low-contrast label color, not the loud value color -- a companion number #}*/
     /*{# beside a percent lead (pie's raw slice count + grand total). Composes with #}*/
     /*{# a role marker, so it's peeled ahead of the role marker below. #}*/
     const MUTED = '⁠';
@@ -29,8 +29,8 @@
     /*{# Internal structural dividers (header underline, footer-total rule) are a #}*/
     /*{# fixed hairline, decoupled from the box frame's border.width. The frame #}*/
     /*{# width is 0 on the shadowed themes (the shadow separates the card) but the #}*/
-    /*{# header/total lines must persist regardless -- they organise the content, #}*/
-    /*{# they aren't the outer edge. Colour still comes from the theme (border.color). #}*/
+    /*{# header/total lines must persist regardless -- they organize the content, #}*/
+    /*{# they aren't the outer edge. Color still comes from the theme (border.color). #}*/
     const DIVIDER_WIDTH = 1;
     // Vertical gap that detaches the overlay reference row (combo target/
     // goal) from the parts+total group in the x-unified bubble (xUnifiedHtml).
@@ -127,7 +127,7 @@
     }
 
     /*{# ALL header-role entries, in aria-label order. Every family but heatmap #}*/
-    /*{# carries exactly one (x, or the colour dim); heatmap's compound [x, y] #}*/
+    /*{# carries exactly one (x, or the color dim); heatmap's compound [x, y] #}*/
     /*{# identity carries two -- both must contribute to the match key below, or #}*/
     /*{# grouping-by-header would collapse every heatmap cell sharing just the x #}*/
     /*{# value into one (wrong) bubble. #}*/
@@ -176,7 +176,7 @@
     /*{# converters/chart.py's SVG post-process pass -- falling back to #}*/
     /*{# trimmed textContent when unstamped (a scenegraph probe failure). #}*/
     /*{# Returns a {seriesValue: index} map, or an empty map when there's no #}*/
-    /*{# legend (e.g. endpoint-labelled lines) -- in which case matches #}*/
+    /*{# legend (e.g. endpoint-labeled lines) -- in which case matches #}*/
     /*{# keep their natural order. #}*/
     function legendSeriesOrder(svg) {
         const order = {};
@@ -408,7 +408,7 @@
     /*{# header/series rows: bold identity headline, swatch+bare-value series row, #}*/
     /*{# field label dropped on both (the LUT's role marker already tells us which #}*/
     /*{# is which -- no title-text matching needed). Both set the themed value #}*/
-    /*{# colour EXPLICITLY: without it the text inherits the page/iframe default #}*/
+    /*{# color EXPLICITLY: without it the text inherits the page/iframe default #}*/
     /*{# (black), which vanishes on dark-box themes (stark, plain, editorial). #}*/
     function headerRow(entry, seriesColor, ts) {
         const swatch = entry.swatch && seriesColor ? seriesSwatch(seriesColor) : '';
@@ -429,8 +429,8 @@
             ? 'display:flex;justify-content:space-between;gap:' + ts.gap + 'px;margin-top:4px;padding-top:4px;border-top:' + DIVIDER_WIDTH + 'px solid ' + ts.border.color + ';'
             : 'display:flex;justify-content:space-between;gap:' + ts.gap + 'px;padding:2px 0;';
         const labelWeight = isTotal ? ts.value.font.weight : ts.label.font.weight;
-        /*{# Contrast is colour, not weight (matches the x-unified grid): a muted #}*/
-        /*{# value drops to the low-contrast label colour; weight stays uniform so #}*/
+        /*{# Contrast is color, not weight (matches the x-unified grid): a muted #}*/
+        /*{# value drops to the low-contrast label color; weight stays uniform so #}*/
         /*{# the total's border still reads as the footer emphasis. #}*/
         const valueColor = entry.muted ? ts.label.font.color : ts.value.font.color;
         return (
@@ -478,8 +478,8 @@
     }
 
     /*{# One row in the x-unified bubble: swatch, series name, percent (value/ #}*/
-    /*{# foreground colour, only when the bubble's rows carry one), and raw #}*/
-    /*{# value (label/dim colour, weight 500, no parens) -- each its own grid #}*/
+    /*{# foreground color, only when the bubble's rows carry one), and raw #}*/
+    /*{# value (label/dim color, weight 500, no parens) -- each its own grid #}*/
     /*{# cell so percent and raw form true right-aligned columns regardless of #}*/
     /*{# digit count, instead of one drifting joined string. #}*/
     function xUnifiedRow(entries, seriesColor, isActive, ts, hasPercent) {
@@ -500,7 +500,7 @@
         const nameCell = xUnifiedCell(label, 'color:' + ts.label.font.color + ';', activeBg, false, false);
 
         /*{# Weight is uniform across every numeric cell (matching the total row); #}*/
-        /*{# lead-vs-companion contrast is carried by COLOUR, not weight. #}*/
+        /*{# lead-vs-companion contrast is carried by COLOR, not weight. #}*/
         const valueWeight = 'font-weight:' + ts.value.font.weight + ';';
 
         let pctCell = '';
@@ -515,10 +515,10 @@
         } else {
             valueText = values[0] ? formatValue(values[0].value) : '';
         }
-        /*{# Contrast rule: the lead value takes the high-contrast value colour; a #}*/
-        /*{# value drops to the low-contrast label colour ONLY when it's the raw #}*/
+        /*{# Contrast rule: the lead value takes the high-contrast value color; a #}*/
+        /*{# value drops to the low-contrast label color ONLY when it's the raw #}*/
         /*{# companion beside a percent (there the % is the lead). A sole value #}*/
-        /*{# (no % column) IS its row's lead -> value colour, matching single-mark. #}*/
+        /*{# (no % column) IS its row's lead -> value color, matching single-mark. #}*/
         const valueColor = hasPercent ? ts.label.font.color : ts.value.font.color;
         const valueCell = xUnifiedCell(
             valueText,
@@ -678,16 +678,16 @@
 
         svg.addEventListener('mousemove', function (event) {
             const target = event.target;
-            const labelledTarget = target && target.closest
+            const labeledTarget = target && target.closest
                 ? event.target.closest('[aria-label]')
                 : null;
-            let mark = labelledTarget && isDataMark(labelledTarget)
-                ? labelledTarget
+            let mark = labeledTarget && isDataMark(labeledTarget)
+                ? labeledTarget
                 : null;
 
             /*{# Vega area paths are aria-hidden because one path represents every #}*/
-            /*{# datum; their labelled point siblings carry the correct values. #}*/
-            /*{# Layered marks can have the same visible-mark/labelled-sibling split. #}*/
+            /*{# datum; their labeled point siblings carry the correct values. #}*/
+            /*{# Layered marks can have the same visible-mark/labeled-sibling split. #}*/
             if (!mark && target && target.closest && target.closest(MARK_GROUP_SELECTOR)) {
                 const chart = target.closest('.dbt-chart');
                 if (chart) {

@@ -1,4 +1,4 @@
-"""Regression tests for DbtAdapter routing and error-wrapping behaviour."""
+"""Regression tests for DbtAdapter routing and error-wrapping behavior."""
 
 import json
 from collections.abc import Callable

@@ -88,7 +88,7 @@ Compile-stage invariants (variables board-global, one layout per board, ids from
 
 ### Project-file access goes through `Project`, never raw `Path`
 
-`Project` / `ProjectPath` / `ProjectDirectory` (`core/project.py`) model a project; core reads/writes project content (board YAML, `meta.yaml`, extends/includes, data files) only through these handles — a raw `Path` read hard-codes local disk and breaks under any other store.
+`Project` / `ProjectPath` / `ProjectDirectory` (`core/project.py`) model a project; core reads/writes project content (board YAML, `meta.yml`, extends/includes, data files) only through these handles — a raw `Path` read hard-codes local disk and breaks under any other store.
 
 - Never touch the filesystem for a project path: no `Path.read_text()` / `.write_text()` / `.exists()` / `open()` / `os.walk` — go through a `Project` handle.
 - `Project` is an ABC with no filesystem default: `read_text`, `read_bytes`, `exists`, `iter_files`, `write_text`, `sources`, and `config_document()` are abstract, so each host supplies its own store. Hosts: `FilesystemProject` (`dbt_charts.cli.filesystem_project`, built at the `dbt_charts.cli` composition root, imported by core only under `TYPE_CHECKING`) and Cloud's `CloudManagedProject` (git-blob store).

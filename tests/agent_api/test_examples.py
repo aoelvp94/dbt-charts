@@ -94,14 +94,16 @@ class TestSearchExamples:
         ]
 
     def test_scoring_tiers_rank_slug_then_metadata_then_body(self) -> None:
-        """One query that lands in all three tiers, so each branch's score is
-        pinned: deleting any of them changes this list."""
-        hits = search_examples("table").hits
-
-        assert [(h.slug, h.score) for h in hits] == [
+        """Two queries that between them land in all three tiers, so each
+        branch's score is pinned: deleting any of them changes a list."""
+        assert [(h.slug, h.score) for h in search_examples("table").hits] == [
             ("tables/table-style-variants", 1.0),
             ("boards/kpi-overview", 0.8),
+        ]
+        assert [(h.slug, h.score) for h in search_examples("revenue").hits] == [
+            ("boards/kpi-overview", 0.8),
             ("kpis/kpi-variants", 0.5),
+            ("tables/table-style-variants", 0.5),
         ]
 
     def test_no_match_returns_empty(self) -> None:

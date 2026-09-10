@@ -25,13 +25,14 @@ from dbt_charts.core.render.chart.vl_field_maps import (
     line_mark_to_vl,
     scatter_mark_to_vl,
 )
-from dbt_charts.core.utils import stacked_x_domain_order
+from dbt_charts.core.render.chart.x_domain import vl_sort_op
+from dbt_charts.core.utils import x_domain_order
 
 # Vega's ``autosize: fit`` sizes the plot to fit everything the scenegraph draws,
 # so a mark spilling past the plot rect pushes the plot box inward — and on line
 # and area charts most of that spill is ink nobody can see: the invisible hover
 # hit-target disc (opacity 0, sized by ``HOVER_TARGET_SIZE`` below) and the
-# background-coloured halo. Paying layout for it left the grid ~9px inside the
+# background-colored halo. Paying layout for it left the grid ~9px inside the
 # card padding the title sits on. Spread this into the mark props of a layer
 # whose paint nobody can see: a clip cuts a stroke in half wherever it runs
 # along the plot boundary (a series
@@ -48,7 +49,7 @@ CLIP_TO_PLOT: VLDict = {"clip": True}
 # every line/area datum: r = sqrt(size)/2 (Vega's circle symbol — NOT
 # sqrt(size/pi)). Ceiling: discs paint in data order and SVG hit-testing picks
 # the topmost shape, so a radius past half the smallest on-screen x-step lets
-# a later datum's disc steal its neighbour's hit region. Reuses the ~18px
+# a later datum's disc steal its neighbor's hit region. Reuses the ~18px
 # empirical "points still read as discrete, not a caterpillar" spacing floor
 # that `chart_rendering.point.min_px_per_point` (default_config.yml) is
 # itself calibrated against, since no finer-grained signal is available here:
@@ -68,15 +69,17 @@ def pin_categorical_domain_order(cat_enc: VLDict, data: list[VLDict]) -> None:
     default) each sub-layer's sort aggregate runs over an incomplete subset,
     which Vega-Lite cannot reconcile into one coherent order and falls back
     to alphabetical. Pinning the domain explicitly, computed once from the
-    full (unfiltered) dataset via ``stacked_x_domain_order`` — the same
+    full (unfiltered) dataset via ``x_domain_order`` — the same
     per-category sort-aggregate ``x_domain.py``'s ``rendered_x_domain`` (used
     by ``emitters/_overlay.py``) builds its own union on top of — makes the
     split invisible to the axis either way.
 
-    ``cat_enc["sort"]`` reaching a bar's categorical channel is always either
-    absent or ``chart_sort_to_vl``'s own ``{"field", "order"}`` shape
-    (``emitters/_cartesian.py``) — never a bare VL-native sort array, which
-    the authored surface has no way to produce.
+    ``cat_enc["sort"]`` reaching a categorical channel is always either absent
+    or ``chart_sort_to_vl``'s own ``{"field", "order"}`` shape, optionally with
+    the ``op`` a dimension axis pins (``emitters/_cartesian.py``) — never a
+    bare VL-native sort array, which the authored surface has no way to
+    produce. ``vl_sort_op`` reads that pin so the domain computed here folds
+    each category the same way Vega-Lite will.
     """
     if cat_enc.get("type") not in ("nominal", "ordinal"):
         return
@@ -86,7 +89,9 @@ def pin_categorical_domain_order(cat_enc: VLDict, data: list[VLDict]) -> None:
     sort = cat_enc.get("sort")
     sort_field = sort["field"] if isinstance(sort, dict) else ""
     descending = isinstance(sort, dict) and sort.get("order") == "descending"
-    ordered = stacked_x_domain_order(data, cat_field, sort_field, descending)
+    ordered = x_domain_order(
+        data, cat_field, sort_field, descending, op=vl_sort_op(sort)
+    )
     if not ordered:
         return
     existing_scale = cat_enc.get("scale")
@@ -133,7 +138,7 @@ def _hover_target_point(
     same oversized hit target.
 
     The overlay is invisible today, but it still needs the chart's ink: with no
-    fill Vega-Lite stamps its own default on the mark, which is the wrong colour
+    fill Vega-Lite stamps its own default on the mark, which is the wrong color
     the moment this layer gains any opacity. Mirrors ``_area_point_sublayers``.
     """
     mark_props: VLDict = {
@@ -249,14 +254,14 @@ def _line_fg_sublayers(
     """Build foreground line + optional point sub-layers. Empty when stroke_width is zero.
 
     For multi-series (has_color_encoding), omits the static stroke so the
-    parent encoding.color drives the per-series colour — matching V1.
+    parent encoding.color drives the per-series color — matching V1.
     """
     if stroke_width == 0:
         return []
     has_explicit_line_color = "stroke" in fg_props
     fg_mark_props: VLDict = {**fg_props, "tooltip": True, "aria": False}
     # Only apply single_series_color when no authored stroke.color is present
-    # (fg_props carries it from line_mark_to_vl) and no color encoding owns colour.
+    # (fg_props carries it from line_mark_to_vl) and no color encoding owns color.
     if not has_color_encoding and "stroke" not in fg_mark_props:
         fg_mark_props["stroke"] = single_series_color
     layers: list[ChartSpec] = [
@@ -740,7 +745,7 @@ def _area_fg_layers(
             "tooltip": True,
         }
         # Only apply single_series_color when no authored stroke.color is present
-        # (fg_line_props carries it when authored) and no color encoding owns colour.
+        # (fg_line_props carries it when authored) and no color encoding owns color.
         if not has_color_encoding and "stroke" not in fg_line_mark_props:
             fg_line_mark_props["stroke"] = single_series_color
         layers.append(

@@ -170,7 +170,7 @@ def test_layer_step_curve_on_a_horizontal_base_says_so() -> None:
 def _layered_bar_spec(
     orientation: str, *, labels: bool = False, layer_type: str = "bar"
 ) -> dict[str, Any]:
-    """A layer over a bar base, labelled on request.
+    """A layer over a bar base, labeled on request.
 
     ``layer_type`` matters: a bar layer's labels come from
     ``_build_bar_text_layer`` while line/area/scatter route through
@@ -288,7 +288,7 @@ def test_layered_base_series_is_named_by_its_measure(orientation: str) -> None:
 
     A horizontal base draws its measure on VL x, so the plain title to read is
     the x one — `y_plain` there is the category, and the base series would be
-    labelled `month`. Nothing else asserts this: a horizontal layered chart
+    labeled `month`. Nothing else asserts this: a horizontal layered chart
     only gained a base legend entry once base and layers began sharing one
     measure scale.
     """

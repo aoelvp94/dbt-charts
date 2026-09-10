@@ -35,8 +35,9 @@ _SCANNED_DIRS = [
 # Pattern 1: style attribute OR'd with a hardcoded literal fallback, multi-level access.
 # Matches: `resolved_style.title.font.color or ""`, `charts_style.padding or 12`.
 # Requires the `or` operand to start with a quote or digit — only string/number
-# literals are banned.  Fallbacks to another style field (`or resolved_style.color`)
-# are intentional semantic cascades, not hardcoded defaults.
+# literals are banned.  Fallbacks to another style field
+# (`or resolved_style.title.font.color`) are intentional semantic cascades,
+# not hardcoded defaults.
 # Word-boundary alternatives prevent false positives on `stylesheet.url or`.
 # Known limitation: ternary fallbacks (`x if x else d`) are covered by review,
 # not by this regex.

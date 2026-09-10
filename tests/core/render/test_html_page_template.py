@@ -89,7 +89,7 @@ class TestHtmlPageTemplateStructure:
 
         assert "<title>Test Board</title>" in html
         assert f"font-family: {board.resolved_style.font.family};" in html
-        assert f"background-color: {board.resolved_style.page.background};" in html
+        assert f"background-color: {board.resolved_style.background};" in html
 
     def test_html_wrapper_does_not_parse_the_svg_body_as_xml(self) -> None:
         from dbt_charts.core.render.converters.html import to_html

@@ -8,7 +8,7 @@ default card chrome:
     3. Support   (optional: glyph + value + neutral trailing explainer)
 
 Layout uses fixed internal slots so that labels wrapping to two lines do
-not push neighbouring KPIs' value baselines out of alignment when several
+not push neighboring KPIs' value baselines out of alignment when several
 KPIs sit side-by-side in a row.
 """
 
@@ -111,7 +111,7 @@ def _card_align(
     chart_id: str,
     authored_text: str,
 ) -> Literal["left", "center", "right"] | None:
-    """The alignment the card can actually honour, decided once for all runs.
+    """The alignment the card can actually honor, decided once for all runs.
 
     ``align`` is a whole-card choice (see ``KpiChartStyle.align``): value, label
     and support form one stacked text column at a shared content edge. So the
@@ -215,7 +215,7 @@ def _evaluate_channel_for_row(
                 matched = output
         # When no threshold rule matched and a fallback gradient scale is present,
         # evaluate the gradient — this is the "scale shows through otherwise"
-        # behaviour that mirrors Looker's threshold-over-scale priority.
+        # behavior that mirrors Looker's threshold-over-scale priority.
         if matched is fallback and ch.fallback_scale is not None:
             numeric = coerce_numeric_cell(cell_value)
             if numeric is None:

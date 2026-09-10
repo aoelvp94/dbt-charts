@@ -260,7 +260,7 @@ def render_registered_view(
         controls: Whether the render carries the live control runtime's
             drawn payload (a select's full option list). ``dct serve``'s
             registered-view route has never set this, so the default
-            (``False``) preserves that behaviour; Cloud passes ``True``, same
+            (``False``) preserves that behavior; Cloud passes ``True``, same
             as its board renders.
 
     Returns:

@@ -47,8 +47,12 @@ from dbt_charts.core.compile.normalize.variables import (
     validate_choice_type,
     validate_variable_value,
 )
-from dbt_charts.core.compile.parse.parser import parse_yaml
-from dbt_charts.core.compile.parse.source_map import build_source_index
+from dbt_charts.core.compile.parse.parser import (
+    compose_yaml,
+    mapping_from_node,
+    parse_mapping,
+)
+from dbt_charts.core.compile.parse.source_map import build_source_index_from_node
 from dbt_charts.core.compile.schema.introspection import (
     AuthorableModel,
     AuthorableSchema,
@@ -80,7 +84,7 @@ Widget = Literal["text", "number", "checkbox", "select", "combo", "list"]
 #             set one key at a time), or a value the compiler silently discards
 #             (nothing raises), or a control the render sweep skips (it is bound
 #             to the `list` widget for cost). A named test asserts the
-#             compiler's behaviour beside the panel's instead.
+#             compiler's behavior beside the panel's instead.
 #   POLICY    nothing in the compiler agrees or disagrees. There is no source of
 #             truth to drift from; the entry is a scoping decision with a reason.
 #   STRUCTURE not a rule at all — a fact about the schema's own shape.
@@ -114,7 +118,7 @@ _NOT_DESIGN = frozenset(
         # ERR-SOURCE-NOT-FOUND for every query on the board. The panel commits
         # on blur, so one stray focus repoints the whole board's data.
         "source",
-        # A serving behaviour flag — whether rendered links auto-resolve — not
+        # A serving behavior flag — whether rendered links auto-resolve — not
         # an appearance. A design control that changes navigation is the wrong
         # affordance for it.
         "auto_link",
@@ -169,6 +173,15 @@ _NOT_DESIGN = frozenset(
         "chart_focus",
         "layers",
         "conditional_formatting",
+        # Authoring sugar for `extends:`, desugared before the panel ever sees
+        # an instance -- `getattr(instance, "theme", None)` always finds
+        # nothing, so a control here renders empty. A writable control would
+        # also fight `extends`, whose reconciliation with a theme value is
+        # one-directional (extends -> theme), and on a nested board every
+        # write would be silently discarded (`extends` is withheld there for
+        # the same reason `_ROOT_ONLY` names it, but this field isn't in that
+        # set).
+        "theme",
     }
 )
 
@@ -300,7 +313,7 @@ _LIST_CONFLICTS = {
 # to a gradient channel (`resolve/chart/channel.py`), and the wide fold takes
 # only a plain series column to cross its measures with
 # (`resolve_wide_measure_channels` raises `ERR-MULTI-Y-COLOR-CONFLICT` on any
-# other mode). Parse no longer looks at colour at all, so the save endpoint's
+# other mode). Parse no longer looks at color at all, so the save endpoint's
 # re-parse waves a list `y` through and the chart dies at resolve.
 # GATED — the render sweep, via the gradient fixtures.
 _VALUE_CONFLICTS = {
@@ -330,15 +343,15 @@ _VALUE_CONFLICTS = {
 #
 # `HeatmapChart.y` is the third, and the only one with no validator behind it at
 # all. `reject_multi_series_channel_conflicts` states the rule every wide family
-# obeys — the fold spends the mark fill on the measures — and a heatmap's colour
+# obeys — the fold spends the mark fill on the measures — and a heatmap's color
 # *is* its measure, so there is nothing left to spend. Heatmap neither calls that
 # validator nor refuses from its own resolver, so `y: [region, revenue]` renders
 # clean: a y band stacking two columns' values against each other, and a cell
-# colour that has stopped encoding magnitude. Neither gate can see a chart that
+# color that has stopped encoding magnitude. Neither gate can see a chart that
 # is merely wrong, so this one is pinned by an explicit test.
 # GATED for scatter and spark bar (both sweeps). The `HeatmapChart` row is
 # POLICY: a heatmap renders a list `y` clean, so there is no rule to agree with
-# — `test_a_heatmap_spends_its_colour_channel_on_the_measure_and_takes_no_list`
+# — `test_a_heatmap_spends_its_color_channel_on_the_measure_and_takes_no_list`
 # is the whole of it.
 _NEVER_A_LIST = {
     "SparkBarChart": ("y",),
@@ -433,7 +446,7 @@ _REQUIRED_WITH = {"bar": {"y": ("x",)}}
 # STRUCTURE — which key the tables above are filed under, not a rule.
 _BY_DISCRIMINATOR = {"BarChart"}
 
-# Fields the compiler honours on the root board and not on a nested one.
+# Fields the compiler honors on the root board and not on a nested one.
 # `card_gap` raises there (`dispatch.normalize_board`: "card_gap can only be
 # set on the root board") — a single click from a board that will not compile,
 # and a checkbox commits on that first click. The `frame` group is the quiet
@@ -451,7 +464,7 @@ _BY_DISCRIMINATOR = {"BarChart"}
 # is discarded at *render* with no diagnostic, which neither sweep can observe.
 _ROOT_ONLY = ("card_gap", "style.frame", "extends")
 
-# The mirror: honoured on a nested board and read nowhere at the root.
+# The mirror: honored on a nested board and read nowhere at the root.
 # `AuthoredBoard.height` is documented "Height when nested" and reached only
 # from `normalize_layout`'s layout-item branch, so at the root a save succeeds,
 # the value is discarded, the board is unchanged, and the panel renders it back
@@ -490,7 +503,7 @@ class DesignProperty(BaseModel):
     authored_here: bool = Field(
         description=(
             "True when this file sets the value. False means it falls back to a "
-            "meta.yaml, an `extends:` template, or a theme default — which of "
+            "meta.yml, an `extends:` template, or a theme default — which of "
             "those is not yet tracked."
         )
     )
@@ -526,7 +539,7 @@ class DesignProperty(BaseModel):
             "Semantic facets the schema declares on this field, lowercased, "
             "naming what the value means where its type cannot. A consumer "
             "picks a control from these; the schema does not name controls, "
-            "because what a colour should look like is the editor's decision "
+            "because what a color should look like is the editor's decision "
             "and not the model's."
         ),
     )
@@ -959,7 +972,7 @@ def _describe(
     """One model's controls and groups, recursed to the leaves.
 
     Bounded by `_CHILD_TARGETS`, which the target walk descends instead; the
-    `ancestors` guard is defence in depth for a self-referential style model.
+    `ancestors` guard is defense in depth for a self-referential style model.
 
     `description` is the description of the *field that introduced this call* —
     not a property of `model_name` itself — so the root call leaves it at the
@@ -1181,7 +1194,7 @@ def _describe(
             description=field.description,
             enum_values=enum_values,
             # `default_repr` rather than `default`: a required field holds
-            # `dataclasses.MISSING`, which would serialise as a repr of the
+            # `dataclasses.MISSING`, which would serialize as a repr of the
             # sentinel object.
             default_repr=field.default_repr,
             options_complete=options_complete,
@@ -1583,14 +1596,34 @@ def design_target(board: Path, path: str, *, project: Project) -> DesignTarget:
 def build_design_target(yaml_text: str, path: str) -> DesignTarget:
     """The design target for `path`, from board YAML already in hand.
 
-    Split from `design_target` because a host that already holds the text (a
-    Cloud editor buffer, an unsaved draft) has nothing to resolve, and forcing
-    it through a path would mean writing the buffer to a store to read it back.
-    This half performs no I/O at all.
+    The target-only public form of `build_design`: what `design_target` and
+    every consumer that reads no mapping call. Split from `design_target`
+    because a host that already holds the text (a Cloud editor buffer, an
+    unsaved draft) has nothing to resolve, and forcing it through a path would
+    mean writing the buffer to a store to read it back. No I/O at all.
+    """
+    return build_design(yaml_text, path)[0]
+
+
+def build_design(yaml_text: str, path: str) -> tuple[DesignTarget, dict[str, Any]]:
+    """`build_design_target` plus the mapping the board was parsed from.
+
+    The mapping is the board as written, before migration and validation —
+    what a host reads when the model cannot answer for the text (the written
+    `type:` behind a `BarChart`, a variable's raw `input:`). It rides along
+    because the target is built from it: the board is scanned once, and the
+    model, the source map and this mapping are three walks over that one tree.
     """
     schema = introspect()
-    board = parse_yaml(yaml_text)
-    authored = frozenset(build_source_index(yaml_text, "<design-target>").source_map)
+    node = compose_yaml(yaml_text)
+    # The index first: construction flattens merge keys into the tree in
+    # place (`<<: *anchor` becomes the anchor's own key nodes), and the map
+    # has to read the board as written.
+    authored = frozenset(
+        build_source_index_from_node(node, yaml_text, "<design-target>").source_map
+    )
+    mapping = mapping_from_node(node, yaml_text)
+    board = parse_mapping(mapping, yaml_text)
     if "theme" in authored:
         # `theme:` is authoring sugar the parser folds into `extends:` before
         # the walk sees either, so the source map holds the spelling the file
@@ -1621,4 +1654,4 @@ def build_design_target(yaml_text: str, path: str) -> DesignTarget:
         children=described.children,
         path=target_path,
         writes_at=writes_at,
-    )
+    ), mapping

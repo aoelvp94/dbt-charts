@@ -1,0 +1,266 @@
+title: Layered charts
+theme: vivid
+style:
+  frame:
+    width: 1872
+queries:
+  monthly_documents:
+    source: db
+    sql: |
+      SELECT month, documents_created, documents_completed
+      FROM dundersign_serving.monthly_metrics
+      WHERE month > (SELECT MIN(month) FROM dundersign_serving.monthly_metrics)
+        AND month < (SELECT MAX(month) FROM dundersign_serving.monthly_metrics)
+      ORDER BY month
+  monthly_revenue_users:
+    source: db
+    sql: |
+      SELECT month, revenue, active_users
+      FROM dundersign_serving.monthly_metrics
+      WHERE month > (SELECT MIN(month) FROM dundersign_serving.monthly_metrics)
+        AND month < (SELECT MAX(month) FROM dundersign_serving.monthly_metrics)
+      ORDER BY month
+  monthly_revenue_target:
+    source: db
+    sql: |
+      SELECT
+        month,
+        revenue,
+        CASE
+          WHEN month < DATE '2025-12-01' THEN 1500
+          WHEN month < DATE '2026-03-01' THEN 2200
+          WHEN month < DATE '2026-06-01' THEN 2600
+          ELSE 2900
+        END AS target
+      FROM dundersign_serving.monthly_metrics
+      WHERE month > (SELECT MIN(month) FROM dundersign_serving.monthly_metrics)
+        AND month < (SELECT MAX(month) FROM dundersign_serving.monthly_metrics)
+      ORDER BY month
+  daily_revenue:
+    source: examples_db
+    sql: |
+      SELECT date, SUM(revenue) AS revenue
+      FROM ecommerce_orders
+      GROUP BY date
+      ORDER BY date
+  daily_revenue_average:
+    source: examples_db
+    sql: |
+      SELECT
+        date,
+        revenue,
+        AVG(revenue) OVER (ORDER BY date ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS trailing_average
+      FROM {{ queries.daily_revenue }}
+      ORDER BY date
+  monthly_documents_revenue:
+    source: db
+    sql: |
+      SELECT month, documents_completed, revenue AS billings
+      FROM dundersign_serving.monthly_metrics
+      WHERE month > (SELECT MIN(month) FROM dundersign_serving.monthly_metrics)
+        AND month < (SELECT MAX(month) FROM dundersign_serving.monthly_metrics)
+      ORDER BY month
+  company_revenue_target:
+    source: examples_db
+    sql: |
+      SELECT
+        company,
+        quarterly_revenue,
+        round(quarterly_revenue * 1.15) AS target_revenue
+      FROM company_revenue
+      ORDER BY quarterly_revenue DESC
+  region_category_revenue:
+    source: examples_db
+    sql: |
+      SELECT region, category, SUM(revenue) AS revenue
+      FROM ecommerce_orders
+      GROUP BY region, category
+      ORDER BY region, category
+  region_total_revenue:
+    source: examples_db
+    sql: |
+      SELECT region, SUM(revenue) AS total_revenue
+      FROM ecommerce_orders
+      GROUP BY region
+      ORDER BY region
+  region_daily_revenue:
+    source: examples_db
+    sql: |
+      SELECT date, region, SUM(revenue) AS revenue
+      FROM ecommerce_orders
+      GROUP BY date, region
+  daily_revenue_range:
+    source: examples_db
+    sql: |
+      SELECT
+        date,
+        MIN(revenue) AS lowest_region,
+        MAX(revenue) AS highest_region,
+        MEDIAN(revenue) AS median_region
+      FROM {{ queries.region_daily_revenue }}
+      GROUP BY date
+      ORDER BY date
+charts:
+  bar_line_overlay:
+    query: monthly_documents
+    type: bar
+    title: Documents created and completed
+    subtitle: "layers: draws a second series over the bars, sharing one axis"
+    x: month
+    y: documents_created
+    y_label: Documents created
+    layers:
+    - type: line
+      y: documents_completed
+      label: Completed
+  bar_dual_axis:
+    query: monthly_revenue_users
+    type: bar
+    title: Revenue vs. active users
+    subtitle: "layers[].axis_y.position: right gives the line its own scale"
+    x: month
+    y: revenue
+    y_label: Revenue ($)
+    style:
+      number_format: currency_whole
+    layers:
+    - type: line
+      y: active_users
+      label: Active users
+      axis_y:
+        position: right
+        title: Active users
+  actual_vs_target:
+    query: monthly_revenue_target
+    type: bar
+    title: Revenue against a stepped quarterly target
+    subtitle: "a layer with marks.line.curve: step draws a target staircase"
+    x: month
+    y: revenue
+    y_label: Revenue ($)
+    style:
+      number_format: currency_whole
+    layers:
+    - type: line
+      y: target
+      label: Target
+      style:
+        marks:
+          line:
+            curve: step
+  line_scatter:
+    query: daily_revenue
+    type: line
+    title: Daily revenue with each day marked
+    subtitle: "layers: adds a scatter mark on top of the line's own values"
+    x: date
+    y: revenue
+    y_label: Revenue
+    style:
+      number_format: currency_whole
+    layers:
+    - type: scatter
+      y: revenue
+      label: Daily total
+  area_line:
+    query: daily_revenue_average
+    type: area
+    title: Daily revenue with a 7-day average
+    subtitle: "layers: overlays a smoothed line on the raw area"
+    x: date
+    y: revenue
+    y_label: Revenue
+    style:
+      number_format: currency_whole
+    layers:
+    - type: line
+      y: trailing_average
+      label: 7-day average
+  two_lines_dual_axis:
+    query: monthly_documents_revenue
+    type: line
+    title: Documents completed vs. revenue
+    subtitle: "two line series, each pinned to its own y axis"
+    x: month
+    y: documents_completed
+    y_label: Documents completed
+    layers:
+    - type: line
+      y: billings
+      label: Revenue
+      axis_y:
+        position: right
+        title: Revenue ($)
+        labels:
+          format: currency_whole
+      style:
+        marks:
+          line:
+            stroke:
+              width: 2
+  layers_horizontal:
+    query: company_revenue_target
+    type: bar
+    title: Quarterly revenue against target, by company
+    subtitle: "an overlay layer follows the base chart's horizontal orientation"
+    x: company
+    y: quarterly_revenue
+    y_label: Quarterly revenue
+    style:
+      orientation: horizontal
+      number_format: currency_whole
+    layers:
+    - type: line
+      y: target_revenue
+      label: Target
+  stacked_bar_total_line:
+    query: region_category_revenue
+    type: bar
+    title: Revenue by region with the region total
+    subtitle: "layers: can read a different query to overlay a total line"
+    x: region
+    y: revenue
+    color: category
+    style:
+      stack: zero
+      number_format: currency_whole
+    layers:
+    - type: line
+      query: region_total_revenue
+      y: total_revenue
+      label: Total
+  range_band_median:
+    query: daily_revenue_range
+    type: area
+    title: Daily revenue range across regions
+    subtitle: "layers: adds the lowest and median lines over the highest-region area"
+    x: date
+    y: highest_region
+    y_label: Highest region
+    style:
+      number_format: currency_whole
+    layers:
+    - type: line
+      y: lowest_region
+      label: Lowest region
+    - type: line
+      y: median_region
+      label: Median region
+rows:
+- text: |
+    A `layers:` list overlays extra marks on a bar, line, area, or scatter
+    chart, sharing its x axis. That's how dbt Charts builds combo charts,
+    dual-axis charts, and actual-versus-target comparisons, all shown below
+    with real sample data.
+- cols:
+  - bar_line_overlay
+  - bar_dual_axis
+  - actual_vs_target
+- cols:
+  - line_scatter
+  - area_line
+  - two_lines_dual_axis
+- cols:
+  - layers_horizontal
+  - stacked_bar_total_line
+  - range_band_median

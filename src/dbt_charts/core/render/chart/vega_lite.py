@@ -216,6 +216,12 @@ def _render_vl_artifact(
         ),
         height=box_height_full,
         facet_unnarrowed_panel_width=unnarrowed_panel_width,
+        # The divisors actually applied above, so a per-panel budget charges
+        # only a panel's share of the whole-chart chrome. `panel_rows` is 1 in
+        # the no-height branch for the reason stated there: `continuous_height`
+        # is already per-panel, nothing was divided.
+        panel_rows=row_cardinality if effective_height is not None else 1,
+        panel_cols=col_cardinality,
     )
     # emit_chart resolves the chart's own rows from `datasets` by query_name —
     # the caller's `datasets` (layer overrides only, for older callers) may not
@@ -312,7 +318,7 @@ def _render_vl_artifact(
         # Padding is root-only in Vega-Lite: on a concat it is dropped from a
         # child pane and Vega falls back to its own default, which put a
         # multi-series chart's ink 11px higher in its cell than its
-        # single-series neighbour's. Width and height stay on `size_target` —
+        # single-series neighbor's. Width and height stay on `size_target` —
         # those genuinely are per-pane.
         vl["padding"] = padding
     if width > 0:

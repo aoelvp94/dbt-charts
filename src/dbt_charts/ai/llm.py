@@ -244,7 +244,7 @@ def classify(exc: BaseException) -> AITurnFailure:
 
     Reads the provider exception preserved on ``__cause__`` — its
     machine-readable ``code`` first, then its HTTP status. Never the message
-    text: prose is localised and reworded between SDK releases, so a label
+    text: prose is localized and reworded between SDK releases, so a label
     derived from it would drift without any change on our side.
 
     The real path double-wraps: ``LLMClientError.__cause__`` is the

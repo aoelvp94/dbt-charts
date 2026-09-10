@@ -118,14 +118,112 @@ def test_title_that_already_fits_is_left_alone() -> None:
     assert titles.y_title == LONG
 
 
-def test_unbreakable_word_is_still_bounded() -> None:
-    """A single word longer than the budget is hard-broken, never overflowed."""
+def test_unbreakable_word_is_ellipsized_never_split() -> None:
+    """A word longer than the budget is cut with an ellipsis, not broken in two.
+
+    Splitting inside a word is wrong output on any surface, and the pieces can
+    land inside ``max_lines``, which leaves the cut unflagged as well.
+    """
     ax, ay = _axes()
     word = "Supercalifragilisticexpialidociousandthensomemorecharacters"
     titles = resolve_xy_titles(
         "month", "observed", None, word, ax, ay, RenderBox(width=500, height=220), ""
     )
     assert _fits(titles.y_title, axis_title_budget(220), ay.title.font)
+    assert isinstance(titles.y_title, str)
+    assert titles.y_title.endswith("…")
+
+
+def test_short_word_over_its_budget_is_ellipsized_not_split() -> None:
+    """An everyday one-word title, not just a pathological one.
+
+    ``commits`` at 110px is only a few pixels over its budget, so a character
+    break would land in exactly two chunks — inside ``max_lines``, where the
+    line count alone reports nothing.
+    """
+    ax, ay = _axes()
+    titles = resolve_xy_titles(
+        "month",
+        "observed",
+        None,
+        "commits",
+        ax,
+        ay,
+        RenderBox(width=500, height=110),
+        "",
+    )
+    assert isinstance(titles.y_title, str)
+    assert titles.y_title.endswith("…")
+    assert "commits".startswith(titles.y_title.rstrip("…"))
+
+
+def test_over_wide_word_does_not_displace_the_words_that_fit() -> None:
+    """Only the word that does not fit is cut; the ones that do survive whole.
+
+    A character break spills the long word's own remainder onto line two, which
+    then swallows the following word (``xpialidocious com…``). Cutting the word
+    where it starts leaves line two to the word that fits.
+    """
+    ax, ay = _axes()
+    titles = resolve_xy_titles(
+        "month",
+        "observed",
+        None,
+        "Supercalifragilisticexpialidocious commits",
+        ax,
+        ay,
+        RenderBox(width=500, height=180),
+        "",
+    )
+    assert isinstance(titles.y_title, list)
+    assert titles.y_title[0].endswith("…")
+    assert titles.y_title[1] == "commits"
+    assert _fits(titles.y_title, axis_title_budget(180), ay.title.font)
+
+
+def test_row_facet_panel_is_not_charged_whole_chart_chrome() -> None:
+    """A panel pays its share of the chrome, not the whole chart's.
+
+    7 row panels of a 770px card get 110px each. The chrome outside the plot
+    (title block, view padding) is bought once for the whole card, so charging
+    each panel the full 72px leaves a 38px budget it never lost — and a title
+    that fits the panel fine gets cut.
+    """
+    ax, ay = _axes()
+    titles = resolve_xy_titles(
+        "month",
+        "observed",
+        None,
+        "commits",
+        ax,
+        ay,
+        RenderBox(width=500, height=110, panel_rows=7),
+        "",
+    )
+    assert titles.y_title == "commits"
+
+
+def test_column_facet_panel_is_not_charged_whole_chart_chrome() -> None:
+    """The same share applies on the width axis, which the x title measures.
+
+    A column facet draws its own x axis inside every panel, so the title is
+    per-panel there exactly as the y title is under a row facet. 7 column
+    panels of an 800px card get 97px each: charging all 72px leaves 25px and
+    ellipsizes to three characters; a seventh of it leaves 86px and the title
+    renders whole.
+    """
+    ax, ay = _axes()
+    titles = resolve_xy_titles(
+        "month",
+        "observed",
+        "commits",
+        None,
+        ax,
+        ay,
+        RenderBox(width=97, height=500, panel_cols=7),
+        "",
+    )
+    assert titles.x_title == "commits"
 
 
 def test_budget_is_conservative_against_the_extent() -> None:
@@ -134,6 +232,8 @@ def test_budget_is_conservative_against_the_extent() -> None:
     assert axis_title_budget(900) < 900
     # Degenerate extents never produce a negative or zero budget.
     assert axis_title_budget(10) >= 1
+    # One panel out of seven owes a seventh of the chrome, not all of it.
+    assert axis_title_budget(110, 7) > axis_title_budget(110)
 
 
 def test_axis_to_vl_emits_title_limit_from_max_width() -> None:

@@ -498,7 +498,10 @@ def _fragment_from_yaml(
     import yaml
     from pydantic import ValidationError as PydanticValidationError
 
-    from dbt_charts.core.compile.models.board.patch import BoardPatch
+    from dbt_charts.core.compile.models.board.patch import (
+        BOARD_PATCH_ADAPTER,
+        BoardPatch,
+    )
     from dbt_charts.core.utils import UniqueKeyLoader
 
     try:
@@ -514,7 +517,7 @@ def _fragment_from_yaml(
 
         data = prepare_board_mapping(data, model=BoardPatch)
     try:
-        return BoardPatch.model_validate(data)
+        return BOARD_PATCH_ADAPTER.validate_python(data)
     except PydanticValidationError as e:
         from dbt_charts.core.compile.parse.source_map import (
             build_source_index,
@@ -550,10 +553,10 @@ def _load_fragment(path: ProjectPath) -> BaseModel:
 
 def _fragment_own_patch(fragment: BaseModel) -> BaseModel:
     """Extract a BoardPatch from a fragment's explicitly-set fields, minus identity/extends."""
-    from dbt_charts.core.compile.models.board.patch import BoardPatch
+    from dbt_charts.core.compile.models.board.patch import BOARD_PATCH_ADAPTER
 
     data = fragment.model_dump(exclude_unset=True, exclude=_EXTENDS_STRIP)
-    return BoardPatch.model_validate(data)
+    return BOARD_PATCH_ADAPTER.validate_python(data)
 
 
 def _named_board_path(entry: str, ctx: _ExtendCtx) -> ProjectPath | None:
@@ -757,9 +760,9 @@ def resolve_built_in_theme(name: str) -> BaseModel:
     extends chains, so the ctx has no project (``board_dir``/``boards_root`` are
     None) — only the theme-name set.
     """
-    from dbt_charts.core.compile.models.board.patch import BoardPatch
+    from dbt_charts.core.compile.models.board.patch import BOARD_PATCH_ADAPTER
 
-    node = BoardPatch.model_validate({"extends": name})
+    node = BOARD_PATCH_ADAPTER.validate_python({"extends": name})
     ctx = _ExtendCtx(board_dir=None, boards_root=None, theme_names=get_theme_names())
     return _merge_extends_inner(node, ctx, frozenset(), theme_sink=None)
 
@@ -810,9 +813,9 @@ def merge_metas(
     boards_root: ProjectDirectory,
     theme_sink: list[str] | None = None,
 ) -> BaseModel:
-    """Fold all meta.yaml files from *boards_root* down to *board_dir* into a BoardPatch.
+    """Fold all meta.yml files from *boards_root* down to *board_dir* into a BoardPatch.
 
-    Walks from *boards_root* toward *board_dir* collecting every meta.yaml
+    Walks from *boards_root* toward *board_dir* collecting every meta.yml
     found on the path. For each meta, its own ``extends`` chain is resolved
     first, then its own fields are merged on top. All meta patches are then
     folded root→leaf (root meta is lowest priority; nearest meta wins).
@@ -830,7 +833,11 @@ def merge_metas(
     """
     from pydantic import ValidationError as PydanticValidationError
 
-    from dbt_charts.core.compile.models.board.patch import EMPTY_PATCH, BoardPatch
+    from dbt_charts.core.compile.models.board.patch import (
+        BOARD_PATCH_ADAPTER,
+        EMPTY_PATCH,
+        BoardPatch,
+    )
     from dbt_charts.core.compile.parse.meta import find_meta_files, load_meta_file
 
     # Validate that board_dir is within boards_root before delegating.
@@ -859,7 +866,7 @@ def merge_metas(
         try:
             from dbt_charts.core.compile.migrations import prepare_board_mapping
 
-            fragment = BoardPatch.model_validate(
+            fragment = BOARD_PATCH_ADAPTER.validate_python(
                 prepare_board_mapping(meta_data, model=BoardPatch)
             )
         except PydanticValidationError as e:

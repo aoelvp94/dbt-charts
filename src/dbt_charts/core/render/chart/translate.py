@@ -75,20 +75,22 @@ def _base_spec(mark: str, spec: ChartSpec) -> dict[str, Any]:
 def _translate_standard(vl_mark: str, spec: ChartSpec) -> dict[str, Any]:
     """Translate a standard single-mark ChartSpec to a VL spec dict.
 
-    If the spec has overlay rule layers appended by baseline features, the
-    output is promoted to a VL ``layer[]`` spec with the main chart in layer[0]
-    and rule overlays appended.
+    If the spec has overlay layers appended by baseline features, the output is
+    promoted to a VL ``layer[]`` spec: ``spec.underlays`` first, then the main
+    chart, then ``spec.layers``. A feature chooses the side it needs — above a
+    bar's fills, beneath a scatter's points.
     """
     vl = _base_spec(vl_mark, spec)
 
     # Collect VL overlay layers (rule/point marks from baseline features).
     rule_layers = [_translate_layer(layer) for layer in spec.layers]
+    under_layers = [_translate_layer(layer) for layer in spec.underlays]
 
-    if rule_layers:
+    if rule_layers or under_layers:
         main_layer: dict[str, Any] = {"mark": vl.pop("mark")}
         if spec.main_layer_encoding:
             main_layer["encoding"] = spec.main_layer_encoding
-        vl["layer"] = [main_layer, *rule_layers]
+        vl["layer"] = [*under_layers, main_layer, *rule_layers]
         # Overlay layers made this a layered spec — carry any resolve block
         # (e.g. axis.y independent from MirrorAxisFeature) onto the output.
         if spec.resolve:
@@ -149,6 +151,10 @@ def _translate_layer(layer: ChartSpec) -> dict[str, Any]:
     top-level spec gets.
     """
     if layer.mark == "layered":
+        # layer.underlays is never populated on a sub-layer: the only writer
+        # (baseline.py's scatter branch) appends to the top-level spec passed
+        # into apply(), never to a nested ChartSpec — so this reads layer.layers
+        # only, unlike the top-level assembly below.
         nested: dict[str, Any] = {
             "layer": [_translate_layer(sub) for sub in layer.layers]
         }
@@ -217,9 +223,12 @@ def _translate_layered(spec: ChartSpec) -> dict[str, Any]:
         vl["transform"] = spec.transforms
     if spec.resolve:
         vl["resolve"] = spec.resolve
-    vl["layer"] = [_translate_layer(layer) for layer in spec.layers]
-    if vl["layer"]:
-        _isolate_independent_y_axis(vl, vl["layer"][0])
+    # Underlays first, same contract as _translate_standard — a feature that asked
+    # for a layer beneath the data must get it on the layered path too, or the rule
+    # silently vanishes for a chart with authored `layers:`.
+    vl["layer"] = [_translate_layer(layer) for layer in (*spec.underlays, *spec.layers)]
+    if spec.layers:
+        _isolate_independent_y_axis(vl, vl["layer"][len(spec.underlays) :][0])
     if spec.endpoint_label_layout is not None and spec.endpoint_label_data is not None:
         vl = _wrap_endpoint_labels(
             vl, spec.endpoint_label_layout, spec.endpoint_label_data
@@ -305,8 +314,8 @@ def _wrap_endpoint_labels(
 def _label_color_encoding(label_data: EndpointLabelData) -> dict[str, Any]:
     """Build the VL color encoding for the label pane (independent scale).
 
-    Uses dark_companion_range for the label text colour when available (preferred:
-    higher contrast than the bright mark colour).  Falls back to color_range.
+    Uses dark_companion_range for the label text color when available (preferred:
+    higher contrast than the bright mark color).  Falls back to color_range.
     """
     enc: dict[str, Any] = {
         "field": label_data.series_field,
@@ -688,7 +697,7 @@ def assemble_final_vl(
             presentation, not a per-chart decision.
 
     Returns:
-        Vega-Lite JSON-serialisable spec dict with config and background applied.
+        Vega-Lite JSON-serializable spec dict with config and background applied.
 
     Raises:
         ValueError: For non-VL family marks (kpi, table).

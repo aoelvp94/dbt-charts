@@ -164,7 +164,7 @@ def test_bar_endpoint_labels_single_series_no_wrap(resolve_bar_chart):
     """Single-series bar (no color encoding) → no hconcat even if enabled.
 
     The wrap gate is multi-series only — the dark-companion palette pairing
-    has no meaning when there is only one series colour.
+    has no meaning when there is only one series color.
     """
     rc = resolve_bar_chart(data=_single_series_data(), enabled=True, color=None)
     spec = _render(rc, _single_series_data())
@@ -191,7 +191,7 @@ def test_stacked_anchors_are_segment_midpoints(resolve_bar_chart):
     by_series = {r["series"]: r["__y"] for r in rows}
     # Trailing x: A=40, B=60. Value ordering (B larger, at baseline):
     # B midpoint 30, A midpoint 80. Domain is wide ([0, 100]); cluster
-    # spans the centre, so the cascade leaves anchors untouched
+    # spans the center, so the cascade leaves anchors untouched
     # (gap 50 ≫ min_data_gap derived from font size).
     assert by_series == {"B": 30.0, "A": 80.0}
 
@@ -241,7 +241,7 @@ def test_normalize_anchors_on_unit_scale(resolve_bar_chart):
 def test_grouped_anchors_at_bar_tops(resolve_bar_chart):
     """Grouped/overlapping (stack: none): anchor = each series' value at last x.
 
-    Grouped is not the default labelling shape — the author asked for it here.
+    Grouped is not the default labeling shape — the author asked for it here.
     """
     data = _multi_series_stacked_data()
     rc = resolve_bar_chart(data=data, enabled=True, stack="none", author_asked=True)
@@ -480,7 +480,7 @@ def test_center_stack_renders_svg_naming_every_series(resolve_bar_chart):
 def test_negative_values_auto_disable_endpoint_labels(resolve_bar_chart):
     """Negative values in a stacked column would put VL's stacked domain
     across both signs and break the cumulative-midpoint computation — the
-    render layer still raises if it ever sees this combination (defence in
+    render layer still raises if it ever sees this combination (defense in
     depth for a direct, non-default construction), but the resolve-time
     default now steers away from it first: same auto-disable treatment as
     stack: center above, and the chart still renders."""
@@ -496,7 +496,7 @@ def test_negative_values_auto_disable_endpoint_labels(resolve_bar_chart):
 
 
 def test_negative_values_raise_registered_code_not_err_internal(resolve_bar_chart):
-    """The defence-in-depth raise for a direct, non-default construction
+    """The defense-in-depth raise for a direct, non-default construction
     (endpoint_labels forced back on after resolve's auto-disable) must carry
     a registered code, not the ERR-INTERNAL fallback, and its fix must name
     the field's full authored path (`style.endpoint_labels.visible`), not
@@ -641,7 +641,7 @@ def test_cascade_nudges_clustered_anchors(resolve_bar_chart):
 
 def test_label_pane_color_domain_alphabetical(resolve_bar_chart):
     """Label pane's color domain mirrors VL's default nominal sort so the
-    dark-companion stops line up with the bar segments' colours."""
+    dark-companion stops line up with the bar segments' colors."""
     data = [
         {"date": "2024-01-01", "value": 10, "series": "Zebra"},
         {"date": "2024-01-01", "value": 20, "series": "Apple"},
@@ -662,7 +662,7 @@ def test_label_pane_color_domain_alphabetical(resolve_bar_chart):
 def test_wrap_disables_pane0_legend_when_endpoint_labels_enabled(resolve_bar_chart):
     """Auto-disable the categorical legend on pane[0] when wrapping.
 
-    Direct labels and a side legend encode the same series→colour mapping;
+    Direct labels and a side legend encode the same series→color mapping;
     rendering both is double-encoding and the legend's overhang clips the
     label pane out of the canvas. Resolved in the endpoint-labels brief.
     """
@@ -752,7 +752,7 @@ def test_stack_order_matches_value_convention(resolve_bar_chart):
     Regression guard for the resolver's stack-order convention. This test pins
     which series actually sits at the top vs the bottom of the stack so a
     misaligned label-vs-segment pairing (the symptom: labels point at the wrong
-    coloured segment) can't sneak past CI again.
+    colored segment) can't sneak past CI again.
     """
     # Three series with distinct values so segment positions are unambiguous.
     data = [
@@ -873,6 +873,7 @@ def test_series_with_no_rows_anywhere_still_anchors_at_the_seam() -> None:
         max_column_total=100.0,
         sort_by="",
         descending=False,
+        op="sum",
         stack_order=None,
     )
     by_series = dict(result)

@@ -382,7 +382,7 @@ def test_a_query_backed_select_draws_the_widget_its_data_resolved_to() -> None:
     assert _groups(svg)[0].get("data-dbt-input") == "datepicker"
 
 
-class TestGeometryNeverEvaluatesBehaviour:
+class TestGeometryNeverEvaluatesBehavior:
     """Laying a control out must not ask a question only the render can answer.
 
     The sizing pass runs with no executor and with defaults rather than
@@ -476,7 +476,7 @@ rows:
 
 
 class TestDrawnStateMatchesTheResolvedControl:
-    def test_a_slider_thumb_honours_the_authored_range(self) -> None:
+    def test_a_slider_thumb_honors_the_authored_range(self) -> None:
         """Regression: the thumb read theme defaults (0–100) and pinned right.
 
         An authored 1000–5000 slider at 2000 sits a quarter along, and the HTML
@@ -816,7 +816,7 @@ def test_a_multiselect_publishes_json_whatever_shape_its_value_arrived_in(
     `data-dbt-value="US"`. The runtime JSON-parses this attribute for a
     multiselect and falls back to `[]` on a parse error, so the board's own
     committed filter came back empty the next time anything read the variable
-    snapshot — a tab link or a commit on a neighbouring control silently cleared
+    snapshot — a tab link or a commit on a neighboring control silently cleared
     it. `display_value` narrowed the same value and the published one did not,
     which is the two-readings drift `coerce_multiselect` exists to prevent.
     """
@@ -963,14 +963,14 @@ def test_an_unset_date_still_states_itself_in_a_static_export() -> None:
     assert drawn != ["On or after:"], "the field states nothing at all"
 
 
-def test_a_label_sits_on_the_baseline_its_own_face_centres_it_on() -> None:
-    """The label is centred in its box, and the strip asks the face where that is.
+def test_a_label_sits_on_the_baseline_its_own_face_centers_it_on() -> None:
+    """The label is centered in its box, and the strip asks the face where that is.
 
     Wiring rather than the ratio itself: the strip snaps ``y`` to whole pixels,
     so at an 11px label the face's answer and the ``font_size * 0.35`` it
     replaced round to the same line. ``centered_baseline_offset``'s own tests
     pin the ratio; this pins that the strip is what asks for it, and fails if
-    the label goes back to being centred on some other rule.
+    the label goes back to being centered on some other rule.
     """
     from dbt_charts.core.font_measure import centered_baseline_offset
 
@@ -1012,7 +1012,7 @@ def test_every_chooser_publishes_the_chooser_unset_label(
     it has a row — but a row whose `unset` said `none` would still satisfy that,
     and the control would silently lose its path back to unfiltered. That is the
     shape of the bug the traits table was written for, so the column that decides
-    it gets a behavioural test like the other two.
+    it gets a behavioral test like the other two.
     """
     svg, _ = _strip(
         {"region": Variable(input=input_type, options=VariableOptions(static=["US"]))}

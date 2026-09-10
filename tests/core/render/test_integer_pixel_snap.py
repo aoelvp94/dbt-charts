@@ -296,7 +296,7 @@ class TestSummaryRuleYIsInteger:
         )
         es = dataclasses.replace(es, table=new_table)
 
-        # Use a fractional width to maximise chance of non-integer row_y before
+        # Use a fractional width to maximize chance of non-integer row_y before
         # the snap fix: per_row_height = height / n_rows won't be integer.
 
         board_rs = resolve_style(get_theme_style())

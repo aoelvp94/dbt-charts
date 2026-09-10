@@ -76,7 +76,7 @@ def main() -> None:
     # A `palette:` field takes stops, and a tone resolves to none: `palette()`
     # raises `ToneAsPaletteError` on every one, so naming a tone there parses
     # and dies at resolve with ERR-PALETTE-UNKNOWN. The role map keeps the whole
-    # index (`_base.yaml` binds `info: info`) — a role names a colour source,
+    # index (`_base.yaml` binds `info: info`) — a role names a color source,
     # which is what a tone is.
     stops_palette_names = sorted(set(palette_names) - set(list_palettes("tone")))
     # Every slot the `category` role can seat under any built-in theme. A
@@ -114,7 +114,7 @@ def main() -> None:
         "# The whole index, which only `style.palettes` (the role map) accepts.\n"
         f"{_literal_block('PaletteName', palette_names)}\n"
         "# PaletteName minus the tone family — the names a `palette:` field takes.\n"
-        "# A tone is a colour-token source and resolves to no stops, so `palette()`\n"
+        "# A tone is a color-token source and resolves to no stops, so `palette()`\n"
         "# refuses every one: naming a tone there parses and dies at resolve.\n"
         f"{_literal_block('StopsPaletteName', stops_palette_names)}\n"
         "# StopsPaletteName union Vega/Vega-Lite scheme names — the only closed set\n"

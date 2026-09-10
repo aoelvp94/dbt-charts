@@ -1051,7 +1051,7 @@ def test_attach_promotes_tooltip_to_spec_level_for_strip_inheritance():
 
 
 def test_temporal_x_strip_anchor_depends_on_mark():
-    # temporal+timeUnit: a BAR spans the time band, so its cell centres on the
+    # temporal+timeUnit: a BAR spans the time band, so its cell centers on the
     # band (0.5) + dx. A LINE/AREA point sits on its exact date (the grid tick),
     # so its cell must ride that per-point position — NO bandPosition. Anchoring
     # a line cell to the band offsets it half a band AND pulls the band _end into
@@ -1062,7 +1062,7 @@ def test_temporal_x_strip_anchor_depends_on_mark():
 
     bar_enc = _shared_x_encoding(temporal_enc, mark_is_bar=True)
     assert bar_enc.get("bandPosition") == 0.5, (
-        "a temporal+timeUnit BAR strip centres on the band (0.5) + dx"
+        "a temporal+timeUnit BAR strip centers on the band (0.5) + dx"
     )
 
     line_enc = _shared_x_encoding(temporal_enc, mark_is_bar=False)
@@ -1214,8 +1214,8 @@ def test_attach_aggregate_sampling_places_window_after_aggregate():
 
 def test_ordinal_x_strip_text_includes_dx_for_band_centering():
     # Bug B: with align:right at bandPosition:0.5 the right edge of each cell
-    # sits at the band centre, making values look shifted left of the bar.
-    # Fix: the text mark must carry a positive dx so the column centre aligns
+    # sits at the band center, making values look shifted left of the bar.
+    # Fix: the text mark must carry a positive dx so the column center aligns
     # with the band midpoint (same invariant as _compute_lane_positions in
     # table.py: number_x = band_center + max_w / 2).
 
@@ -1237,14 +1237,14 @@ def test_ordinal_x_strip_text_includes_dx_for_band_centering():
     mark = text_layers[0]["mark"]
     assert "dx" in mark, (
         "ordinal x text mark must carry dx when entry_dx is supplied so the "
-        "number lane centre aligns with the band midpoint"
+        "number lane center aligns with the band midpoint"
     )
     assert mark["dx"] == 8.0
 
 
 def test_attach_entry_dx_none_omits_dx_from_mark():
     # When entry_dx is None (no centering requested), dx must not appear in
-    # the mark — this preserves the old behaviour for callers that don't
+    # the mark — this preserves the old behavior for callers that don't
     # supply widths (e.g. tests that don't have data).
 
     spec = _base_spec()
@@ -1443,11 +1443,11 @@ def test_per_series_layer_has_groupby_aggregate_transform():
 def test_per_series_label_layers_have_colored_fill():
     """Each per_series label layer must carry the caller-supplied dark_fills entry.
 
-    attach_support_table no longer resolves bright->dark-companion colours itself
+    attach_support_table no longer resolves bright->dark-companion colors itself
     (that's baked once onto ResolvedChartsStyle.dark_companion_palette at
     resolve time — see
     dbt-charts/tests/core/compile/test_resolved_charts_style_dark_companion_palette.py);
-    this only exercises that the already-resolved colours it's handed land on
+    this only exercises that the already-resolved colors it's handed land on
     the right label layer, in order.
     """
     from dbt_charts.core.compile.models.chart.authored import ChartSupportTablePerSeries
@@ -2119,7 +2119,7 @@ def test_attach_layered_spec_with_independent_x_scale_raises_chart_data_error():
 
 
 def test_bottom_position_row_y_is_below_spec_height():
-    # position: bottom must keep the current behaviour: strip below the plot.
+    # position: bottom must keep the current behavior: strip below the plot.
     # Row y > spec_height (300 from _base_spec) is the invariant.
     spec = _base_spec()
     table = _table([ChartSupportTableSource(source="revenue")])
@@ -2433,7 +2433,7 @@ def test_top_position_strip_height_excludes_axis_offset():
 
 
 def test_strip_height_and_row_y_use_label_max_lines():
-    # support_table_strip_height and _row_y_pixel must both honour label_max_lines
+    # support_table_strip_height and _row_y_pixel must both honor label_max_lines
     # for position:bottom (the x-axis offset is between plot and strip).
     # For position:top, label_max_lines does not affect placement (axis is below).
     from dbt_charts.core.compile.support_table import axis_offset
@@ -2535,7 +2535,7 @@ def test_validate_quantitative_over_40_returns_step_and_does_not_raise():
 
 
 def test_validate_ordinal_over_40_still_raises():
-    # Ordinal x with 50 rows: fail-closed behaviour must remain.
+    # Ordinal x with 50 rows: fail-closed behavior must remain.
     from dbt_charts.core.render.chart.support_table_attachment import (
         validate_support_table_against_data,
     )
@@ -2550,7 +2550,7 @@ def test_validate_ordinal_over_40_still_raises():
 
 
 def test_validate_no_x_type_over_40_still_raises():
-    # No x_type (default None) should keep fail-closed behaviour.
+    # No x_type (default None) should keep fail-closed behavior.
     from dbt_charts.core.render.chart.support_table_attachment import (
         validate_support_table_against_data,
     )

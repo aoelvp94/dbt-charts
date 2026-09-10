@@ -1,4 +1,4 @@
-"""Tests for the ``clock`` authoring field's own model + cascade behaviour.
+"""Tests for the ``clock`` authoring field's own model + cascade behavior.
 
 Companion to ``test_subday_clock_label_expr.py`` (the pure labelExpr
 function) and ``test_subday_clock_render.py`` (real renders) — this module
@@ -47,7 +47,7 @@ class TestClockField:
         """Y-axis label is AxisLabelStyle — clock is structurally absent, so
         authoring it there must fail the same way any unknown field would
         under extra="forbid" (matching tilt_increments' own x-only
-        enforcement). Behavioural check, not a model_fields introspection.
+        enforcement). Behavioral check, not a model_fields introspection.
         """
         from pydantic import ValidationError
 

@@ -79,7 +79,8 @@ class TestTonalFoundationDefaults:
 
 
 class TestHtmlPageCanvas:
-    """HTML converter uses the theme's page background as body fallback."""
+    """HTML converter's outer <body> background tracks the board's own
+    style.background, independent of the SVG background override option."""
 
     _YAML = (
         "title: Test\nqueries:\n  q:\n    type: values\n"
@@ -87,12 +88,17 @@ class TestHtmlPageCanvas:
         "    query: q\n    type: bar\n    x: month\n    y: revenue\nrows:\n  - c"
     )
 
-    def _render_html(self, local_project: Callable[..., FilesystemProject], **opts):
+    def _render_html(
+        self,
+        local_project: Callable[..., FilesystemProject],
+        yaml: str | None = None,
+        **opts,
+    ):
         from dbt_charts.core.compile import compile
         from dbt_charts.core.execute import Executor
         from dbt_charts.core.render import render
 
-        result = compile(self._YAML)
+        result = compile(yaml if yaml is not None else self._YAML)
         assert result.board is not None
         assert result.query_registry is not None
         assert result.success
@@ -103,39 +109,48 @@ class TestHtmlPageCanvas:
         )
         return render(result.board, executor, format="html", **opts).output
 
-    def test_html_body_uses_page_background_not_override(
+    def test_html_body_uses_board_background_not_the_svg_background_override(
         self, local_project: Callable[..., FilesystemProject]
     ):
-        """HTML body always uses page.background; the background option affects SVG only."""
+        """HTML body background tracks the board's own style.background; the
+        SVG background override option affects the SVG canvas only, not the
+        outer HTML page."""
+        from dbt_charts.core.compile.config import get_theme_style
+
+        default_background = get_theme_style().background
         html = self._render_html(local_project, background="#ff0000")
-        # HTML body color comes from page.background (theme), not the SVG canvas override.
         assert "background-color: #ff0000;" not in html
+        assert f"background-color: {default_background};" in html
 
-    def test_html_page_background_from_resolved_style(
+    def test_html_body_tracks_a_non_white_board_background(
         self, local_project: Callable[..., FilesystemProject]
     ):
-        """Board-level style.page.background flows through the resolved style."""
-        from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute import Executor
-        from dbt_charts.core.render import render
+        """A board authoring a non-white style.background reaches the HTML
+        body — the outer page canvas is not hardcoded."""
+        yaml = self._YAML.replace(
+            "title: Test\n", "title: Test\nstyle:\n  background: '#3b2f2f'\n"
+        )
+        html = self._render_html(local_project, yaml=yaml)
+        assert "background-color: #3b2f2f;" in html
 
-        yaml = (
-            "title: Test\nstyle:\n  page:\n    background: '#ff0000'\n"
-            "queries:\n  q:\n    type: values\n"
-            "    rows:\n      - {month: Jan, revenue: 100}\ncharts:\n  c:\n    query: q\n    type: bar\n    x: month\n"
-            "    y: revenue\nrows:\n  - c"
+    @pytest.mark.parametrize("theme_name", ["paper", "neon"])
+    def test_html_body_tracks_a_non_white_theme_background(
+        self, theme_name: str, local_project: Callable[..., FilesystemProject]
+    ):
+        """A board on a theme whose own style.background isn't white (paper's
+        cream, neon's near-black) must reach the HTML body as that theme's
+        real color — this is the case the removed, independently-configurable
+        style.page.background used to cover; the deletion is a no-op only if
+        the board's own background still reaches the page canvas."""
+        from dbt_charts.core.compile.config import get_theme_style
+
+        theme_background = get_theme_style(theme_name).background
+        assert theme_background != "#FFFFFF"
+        yaml = self._YAML.replace(
+            "title: Test\n", f"title: Test\ntheme: {theme_name}\n"
         )
-        result = compile(yaml)
-        assert result.board is not None
-        assert result.query_registry is not None
-        assert result.success
-        executor = Executor(
-            result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
-            query_registry=result.query_registry,
-        )
-        html = render(result.board, executor, format="html").output
-        assert "background-color: #ff0000;" in html
+        html = self._render_html(local_project, yaml=yaml)
+        assert f"background-color: {theme_background};" in html
 
 
 class TestRenderedSurfaceBackground:

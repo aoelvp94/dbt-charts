@@ -263,9 +263,9 @@ def test_strip_top_reserves_two_line_axis_label_space():
 # =============================================================================
 
 
-def test_compute_entry_dx_centres_banded_temporal_bar():
+def test_compute_entry_dx_centers_banded_temporal_bar():
     # A temporal+timeUnit bar is a band scale (strip anchors at bandPosition:0.5),
-    # so it centres the number column on the midpoint via dx exactly like an
+    # so it centers the number column on the midpoint via dx exactly like an
     # ordinal bar. (Continuous axes — temporal without timeUnit, quantitative —
     # still return None; covered by test_compute_entry_dx_returns_none_for_continuous_x.)
     from dbt_charts.core.compile.models.chart.authored import (
@@ -332,7 +332,7 @@ def test_compute_entry_dx_returns_none_for_empty_data():
     dt_style = get_theme_style().charts.support_table
 
     result = _entry_dx(dt, [], dt_style, has_time_unit=False, x_type="ordinal")
-    assert result is None, "empty data must return None — no widths to centre on"
+    assert result is None, "empty data must return None — no widths to center on"
 
 
 def test_compute_entry_dx_uses_aggregate_entry_format():
@@ -367,7 +367,7 @@ def test_compute_entry_dx_aggregates_multi_row_per_x():
     # must aggregate the data by x-field before measuring string widths.  Without
     # aggregation, the dx is measured from raw per-row values which are typically
     # much smaller than the aggregated total — the column then lands left of the
-    # band centre instead of centred.
+    # band center instead of centered.
     #
     # This test uses aggregate="sum" over two x-groups each with two rows.
     # Group "A": 250+250=500 → "$500"  (raw widest: "$250")
@@ -427,7 +427,7 @@ def test_text_mark_dx_negated_for_left_align():
     # HIGH fix: with align="left", a positive dx shifts the left edge of each
     # cell to band_center + dx, placing the entire column to the right of the
     # bar instead of centering it.  The dx must be negated so the left edge
-    # sits at band_center - max_w/2, which centres the column on the bar.
+    # sits at band_center - max_w/2, which centers the column on the bar.
     # align="right" keeps dx positive (right edge at band_center + max_w/2).
     from dbt_charts.core.render.chart.support_table_attachment import _text_mark_props
 
@@ -694,7 +694,7 @@ def test_lex_sortable_ordinal_x_dx_appears_in_rendered_spec():
     dx_values = [m.get("dx") for m in text_marks]
     assert any(dx is not None and dx != 0 for dx in dx_values), (
         "lex-sortable ordinal x must produce non-zero dx on text marks so cells "
-        f"centre on the band midpoint; mark dx values: {dx_values!r}.  "
+        f"center on the band midpoint; mark dx values: {dx_values!r}.  "
         "Check that apply_chart_support_table_post_pass passes x_type (the spec encoding "
         "type) rather than validator_x_type to _compute_support_table_entry_dx."
     )

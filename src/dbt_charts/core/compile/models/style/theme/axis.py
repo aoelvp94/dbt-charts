@@ -81,34 +81,45 @@ from dbt_charts.core.compile.models.style.theme.board import (
 )
 
 
-class AxisGridZeroStyle(BaseModel):
-    """Zero-baseline gridline color and width overrides.
+# Nested under the parent grid style's `threshold` field.
+class AxisGridThresholdStyle(BaseModel):
+    """Threshold-rule color, width, and visibility overrides.
 
-    Nested sub-object under BaseAxisGridStyle.zero. Quantitative axes only —
-    band axes never tick at value=0.
+    Styles the heavy rule drawn at a quantitative axis's meaningful crossing
+    point — zero on most quantitative axes, 1.0 on a ratio/percent axis — the
+    rule shared by the zero-anchor line, the unity (100%) line, and the
+    normalize-stack top lines.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     # All fields nullable — cascade fills from parent axis into axis_x/y/quantitative.
-    color: Annotated[str | None, Color()] = (
-        Field(  # None inherits from parent axis zero.color
-            default=None,
-            description="Color of the zero-baseline grid line; None inherits from parent axis.",
-        )
-    )
-    width: float | None = Field(  # None inherits from parent axis zero.width
+    visible: bool | None = Field(
         default=None,
-        description="Width of the zero-baseline grid line in pixels; None inherits from parent axis.",
+        description="Show the threshold rule; None inherits from parent axis.",
+    )
+    color: Annotated[str | None, Color()] = Field(
+        default=None,
+        description="Color of the threshold rule; None inherits from parent axis.",
+    )
+    width: float | None = Field(
+        default=None,
+        description="Width of the threshold rule in pixels; None inherits from parent axis.",
     )
 
 
+# `threshold` has no visible effect on an axis that never ticks at the
+# threshold (a band axis, or a categorical x-axis), but the model can't
+# reject that combination statically — the x slot is authored the same way
+# whether x classifies categorical or quantitative, and that classification
+# is only known later, at resolve time.
 class BaseAxisGridStyle(BaseModel):
     """Grid line style for all axis variants.
 
-    No zero field — that lives only on MeasureGridStyle (AxisYStyle.grid). A
-    zero-baseline gridline only makes sense on the measure (y) axis; putting it
-    on the shared base would allow authoring it on x-axes where it is silent.
+    ``threshold`` styles the heavy rule at a quantitative axis's meaningful
+    crossing point — zero on most quantitative axes, 1.0 on a ratio/percent
+    axis. It applies to any quantitative axis and has no visible effect on a
+    categorical or band axis.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -135,24 +146,16 @@ class BaseAxisGridStyle(BaseModel):
         default=None,
         description="Dash pattern for grid lines; None renders a solid line.",
     )
-
-
-class MeasureGridStyle(BaseAxisGridStyle):
-    """BaseAxisGridStyle + zero-baseline override for the measure (y) axis.
-
-    Used only by AxisYStyle.grid. The zero sub-block is structurally absent on
-    all other axis variants so the model rejects it at validation time.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    # Zero-baseline sub-block. None means "no override at this level"; the
-    # cascade fills individual zero.* fields from the parent axis.
-    # SkipInheritSlots(cascade=True): apply_inherit copies the entire zero object
-    # when the child axis has zero=None; fills individual None fields when partial.
-    zero: Annotated[AxisGridZeroStyle | None, SkipInheritSlots(cascade=True)] = Field(
+    # Threshold sub-block. None means "no override at this level"; the
+    # cascade fills individual threshold.* fields from the parent axis.
+    # SkipInheritSlots(cascade=True): apply_inherit copies the entire
+    # threshold object when the child axis has threshold=None; fills
+    # individual None fields when partial.
+    threshold: Annotated[
+        AxisGridThresholdStyle | None, SkipInheritSlots(cascade=True)
+    ] = Field(
         default=None,
-        description="Zero-baseline gridline style; None inherits from parent axis.",
+        description="Threshold-rule gridline style; None inherits from parent axis.",
     )
 
 
@@ -223,7 +226,7 @@ class AxisTicksStyle(BaseModel):
             "count. On the measure axis (axis_y) the renderer computes an "
             "explicit round-numbered ladder of at most this many ticks. On "
             "axis_x it passes through as VL's axis.tickCount: a temporal scale "
-            "honours it closely, a quantitative one rounds to a nearby "
+            "honors it closely, a quantitative one rounds to a nearby "
             "round-numbered ladder. To name the interval instead of the "
             "count, author ticks.step on a quantitative axis_x. An ordinal "
             "axis_x has no tick-count concept and ignores this."
@@ -541,8 +544,7 @@ class ScaleDomainValidationMixin(BaseModel):
     Inherited by both ``ScaleContinuousStyle`` and its generated Patch so
     chart-local authored patches enforce the same domain rules as
     theme-stage input — ``build_patch_model_ext`` only carries over
-    validators that live on the patch model's base class (mirrors
-    ``_BoardDesugarMixin``).
+    validators that live on the patch model's base class.
 
     The 2-element shape (a fixed ``tuple``, not a variable-length ``list``),
     per-bound ``int | float | str`` typing (which also rejects a ``None``
@@ -881,7 +883,7 @@ class TooltipShadowStyle(BaseModel):
 
 
 class TooltipSwatchStyle(BaseModel):
-    """Series colour swatch in the tooltip: the mark-coloured chip next to each
+    """Series color swatch in the tooltip: the mark-colored chip next to each
     series row. All fields required; theme YAML supplies defaults."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -939,7 +941,7 @@ class TooltipStyle(BaseModel):
         description="Tooltip drop-shadow config; theme always provides this."
     )
     swatch: TooltipSwatchStyle = Field(
-        description="Series colour swatch size/shape; theme always provides this."
+        description="Series color swatch size/shape; theme always provides this."
     )
     active_marker: Literal["fill", "triangle"] = Field(
         description=(
@@ -1135,10 +1137,11 @@ class AxisXStyle(BaseAxisStyle):
 class AxisYStyle(BaseAxisStyle):
     """Measure axis style. Theme slot: axis_y.
 
-    Adds measure-only fields: mirror; overrides grid with MeasureGridStyle
-    (adds grid.zero). x-axis-only fields (fill, time_unit, type,
-    tilt_increments, labels.values) are structurally absent so the model
-    rejects them at validation time.
+    Adds measure-only fields: mirror. Grid style is the shared
+    BaseAxisGridStyle inherited from BaseAxisStyle — its ``threshold``
+    sub-block is not y-only, see that class's docstring. x-axis-only fields
+    (fill, time_unit, type, tilt_increments, labels.values) are structurally
+    absent so the model rejects them at validation time.
 
     No ``categorical_orient`` (deleted 2026-08 trim) — ``position`` (below)
     now serves the "which side does this axis's orient read as" role for
@@ -1147,11 +1150,6 @@ class AxisYStyle(BaseAxisStyle):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # Override base's grid type to add grid.zero (measure axis only).
-    grid: MeasureGridStyle = Field(
-        default_factory=MeasureGridStyle,
-        description="Measure axis grid style (includes zero-baseline override).",
-    )
     position: Annotated[Literal["left", "right", "auto"] | None, SkipInheritSlots()] = (
         Field(
             default=None,

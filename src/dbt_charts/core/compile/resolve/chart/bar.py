@@ -128,7 +128,7 @@ from dbt_charts.core.utils import (
     layered_endpoint_rail_shape,
     measured_label_padding,
     numeric_column_values,
-    stacked_x_domain_order,
+    x_domain_order,
 )
 
 __all__ = [
@@ -151,14 +151,14 @@ def _bar_endpoint_labels_for_stack(
     font_family: str,
     font_size: float,
 ) -> EndpointLabelsConfig:
-    """Direct labelling is the default; the disqualifiers below turn it back off.
+    """Direct labeling is the default; the disqualifiers below turn it back off.
 
     Every disqualifier here steers the *default* away from a shape it would
     render badly or not at all. An author who wrote
     ``style.endpoint_labels.visible: true`` on this chart has said they want
     the rail on that shape, so ``author_opted_in`` returns the cascaded value
     untouched: grouped bars label at their bar tops as they always have, and
-    the shapes render refuses (a negative measure, a sorted or centre-stacked
+    the shapes render refuses (a negative measure, a sorted or center-stacked
     horizontal rail, ``multiples:``) raise there with a message naming the
     conflict. Quietly dropping the rail instead would be neither.
     """
@@ -168,7 +168,7 @@ def _bar_endpoint_labels_for_stack(
         isinstance(entry, ChartSupportTablePerSeries) and not entry.by_measure
         for entry in normalized.support_table.entries
     ):
-        # A per-series support table already prints one row per series, labelled
+        # A per-series support table already prints one row per series, labeled
         # in that series' own ink — the rail would name them a second time,
         # and it costs the plot the height and the axis side it needs.
         return endpoint_labels.model_copy(update={"visible": False})
@@ -204,7 +204,7 @@ def _bar_endpoint_labels_for_stack(
     if normalized.sort is not None and not numeric_column_values(
         data, normalized.sort.by
     ):
-        # Both rails reproduce Vega-Lite's domain order by totalling the sort
+        # Both rails reproduce Vega-Lite's domain order by totaling the sort
         # column per category. On a non-numeric column VL concatenates the
         # strings instead, an order this cannot mirror — so the rail would
         # anchor on a row VL does not draw on top.
@@ -243,10 +243,10 @@ def _every_series_reaches_the_anchor_row(
     """True when the horizontal rail's anchor row carries a segment for every series.
 
     The vertical rail can seat a series that is absent from its anchor column on
-    the zero-height seam between its neighbours, because the label cascade then
+    the zero-height seam between its neighbors, because the label cascade then
     pushes it clear. The horizontal rail has no such resolver: a series absent
     from the anchor row anchors on a zero-width seam, sitting exactly at a
-    neighbour's segment edge — a fragile position a later data refresh can
+    neighbor's segment edge — a fragile position a later data refresh can
     turn into an overprint even when today's snapshot happens to have room.
     This is disqualified unconditionally, independent of what
     ``_horizontal_rail_labels_would_collide`` measures for the current render:
@@ -262,8 +262,9 @@ def _every_series_reaches_the_anchor_row(
     if not isinstance(color, str) or not isinstance(x, str):
         return True
     sort = normalized.sort
-    domain = stacked_x_domain_order(
-        data, x, sort.by if sort else "", bool(sort and sort.order == "desc")
+    # Stacked bar: a stacking mark, so VL folds each category with sum.
+    domain = x_domain_order(
+        data, x, sort.by if sort else "", bool(sort and sort.order == "desc"), op="sum"
     )
     if not domain:
         return True
@@ -387,7 +388,7 @@ def _horizontal_rail_labels_would_collide(
     font_family: str,
     font_size: float,
 ) -> bool:
-    """True when the top rail's own label text would overlap a neighbour.
+    """True when the top rail's own label text would overlap a neighbor.
 
     Recomputes the exact positions the rail renders at
     (``cumulative_stack_midpoints`` — top-row cumulative segment midpoints,
@@ -504,7 +505,7 @@ def _any_column_stacks_more_than_one_series(
     """True when at least one column carries segments from two or more series.
 
     The rail names the segments *within* a stack. When ``color:`` merely
-    re-labels ``x:`` — one series per column, the shape a category-coloured bar
+    re-labels ``x:`` — one series per column, the shape a category-colored bar
     takes — nothing stacks, so there are no segments to name and the rail
     degenerates into a badly-laid-out legend. Hand those back to a legend.
 
@@ -666,8 +667,8 @@ def _resolve_bar(
     orientation = _bar_orientation(normalized, data, ax_merged.time_unit is not None)
     # The layered-single-series rail (EndpointLabelFeature._apply_layered_single_series)
     # only ever fires on the vertical right_pane path — a horizontal bar's rail is the
-    # colour-series top_rail only (see applies_to()'s horizontal branch, which never
-    # reaches the layered fallback), so a horizontal layered bar with no colour must
+    # color-series top_rail only (see applies_to()'s horizontal branch, which never
+    # reaches the layered fallback), so a horizontal layered bar with no color must
     # not claim the rail here either, or its legend gets suppressed with nothing to
     # replace it.
     endpoint_label_has_layers = (
@@ -677,11 +678,11 @@ def _resolve_bar(
             [layer.color is None for layer in normalized.layers],
         )
     )
-    # A horizontal bar's colour-series rail (EndpointLabelFeature.applies_to()'s
+    # A horizontal bar's color-series rail (EndpointLabelFeature.applies_to()'s
     # horizontal branch) only ever fires on a genuinely stacked chart — a
     # grouped (stack: none) horizontal bar never gets a rail even with a
-    # colour series and endpoint_labels.visible explicitly authored, so
-    # letting suppression fire off the colour-series term there would retire
+    # color series and endpoint_labels.visible explicitly authored, so
+    # letting suppression fire off the color-series term there would retire
     # the legend with nothing to replace it.
     _horizontal_is_grouped = orientation == "horizontal" and resolved_stack in (
         None,
@@ -700,10 +701,10 @@ def _resolve_bar(
     # Bar wants a top legend whenever it isn't stacked -- its own long-
     # standing default, unconditional, even with an overlay layer to name: a
     # stacked bar's segments read better against a side legend, and stacking
-    # is orthogonal to whether a layer is present. The colour channel's
+    # is orthogonal to whether a layer is present. The color channel's
     # real, distinct values are already known from the executed dataset --
     # not guessed -- via the same accessor _distinct_series_count above reads.
-    # A gradient colour channel's entries still get built here (this tuple
+    # A gradient color channel's entries still get built here (this tuple
     # is also wants_top_legend_shape's "this shape has entries to name"
     # signal, which must survive a gradient), but cartesian_series_naming
     # ignores them for the two rungs that measure rows -- once, for every
@@ -776,10 +777,10 @@ def _resolve_bar(
     )
     # The classifier's series count, not the legend's entry count -- see
     # `_floor_entry_count` below for the difference and why they are
-    # separate. A wide bar (`y: [m01..m25]`) folds its measures into a colour
+    # separate. A wide bar (`y: [m01..m25]`) folds its measures into a color
     # channel at render (fold_wide_measures, emitters/_wide.py) and gets one
-    # series per measure, crossed with the colour column's values when it
-    # authors one. A plain (non-list) y contributes no colour-cardinality
+    # series per measure, crossed with the color column's values when it
+    # authors one. A plain (non-list) y contributes no color-cardinality
     # series here; it can still draw a legend off its layers, which is the
     # floor's business below, not the collapse model's.
     if isinstance(normalized.y, list):
@@ -819,7 +820,7 @@ def _resolve_bar(
     # The floor's own entry count, deliberately NOT `legend_entry_count`:
     # that one feeds `_stack_legend_should_yield`, whose verdict reaches
     # `suppress_legend` on the resolved chart. A layered bar draws a real
-    # legend (base plus one entry per overlay, sharing a colour scale) that
+    # legend (base plus one entry per overlay, sharing a color scale) that
     # `legend_entry_count` does not see, but widening that variable moved a
     # rendered decision -- it un-short-circuited the yield classifier on a
     # shape its stacked-segment collapse model was never calibrated for, and
@@ -830,7 +831,7 @@ def _resolve_bar(
     # symbols tall, not 60 -- the sibling _stack_legend_should_yield clamps
     # the same way. Unclamped, a high-cardinality legend charges rows that
     # never render and accuses a plot that is not starved.
-    # A colour-less overlay joins the base's colour scale under its own
+    # A color-less overlay joins the base's color scale under its own
     # label, adding exactly one entry (_overlay.py appends it
     # unconditionally) -- measured domain ["APAC", "EMEA", "NA", "target"]
     # for 3 regions and one line layer. A layer that authors its own
@@ -838,15 +839,15 @@ def _resolve_bar(
     # domain, which can be none of them: a per-region target line draws the
     # same 4 entries as the bars alone. Charging it +1 anyway bills a row
     # the legend does not draw and accuses a plot that is not starved, so
-    # only colour-less layers are counted here. The remainder -- a coloured
+    # only color-less layers are counted here. The remainder -- a colored
     # layer introducing genuinely new values -- is undercharged, which
     # keeps this a miss rather than a false positive, the direction this
     # check errs in everywhere else.
-    _unlabelled_layers = sum(1 for layer in normalized.layers if layer.color is None)
+    _unlabeled_layers = sum(1 for layer in normalized.layers if layer.color is None)
     if legend_entry_count:
-        _floor_entry_count = legend_entry_count + _unlabelled_layers
+        _floor_entry_count = legend_entry_count + _unlabeled_layers
     elif normalized.layers:
-        _floor_entry_count = 1 + _unlabelled_layers
+        _floor_entry_count = 1 + _unlabeled_layers
     else:
         _floor_entry_count = 0
     _legend_entries_for_floor = (

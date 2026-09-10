@@ -36,7 +36,7 @@ class TestVariableControlsRendering:
     """The server draws every control into the board; a host only binds them.
 
     So the picture is the same whoever asks for it — `controls=True` changes no
-    geometry and no drawing. What it changes is the behaviour payload hung off
+    geometry and no drawing. What it changes is the behavior payload hung off
     the drawn control: the option list a runtime opens, which an artifact has
     nothing to open with.
     """

@@ -25,7 +25,7 @@ Conditional formatting adds severity colors without changing the data.
 
 - Users need to scan, sort, and triage rows (incidents, tickets, pipelines)
 - Columns have mixed types: currency, percent, status strings, dates
-- Severity or thresholds matter (P1 red, P2 yellow, resolved grey)
+- Severity or thresholds matter (P1 red, P2 yellow, resolved gray)
 
 ## When NOT to use this
 

@@ -105,6 +105,11 @@
       },
       "field": "month",
       "scale": {
+        "domain": [
+          "Jan",
+          "Feb",
+          "Mar"
+        ],
         "padding": 0.0,
         "paddingInner": 0.0
       },
@@ -181,6 +186,11 @@
           },
           "field": "month",
           "scale": {
+            "domain": [
+              "Jan",
+              "Feb",
+              "Mar"
+            ],
             "padding": 0.0,
             "paddingInner": 0.0
           },

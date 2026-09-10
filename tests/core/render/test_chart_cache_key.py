@@ -953,7 +953,7 @@ class TestColsBoardItemAlignment:
 
 
 class TestAlignBoardChartsRowsLayout:
-    """_align_board_charts behaviour depends on the board's inner layout type and chart count.
+    """_align_board_charts behavior depends on the board's inner layout type and chart count.
 
     - cols board: all side-by-side charts are equalized (always).
     - rows board, exactly 1 Vega chart: the chart may be expanded (safe — it's alone).

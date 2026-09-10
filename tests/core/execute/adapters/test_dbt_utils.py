@@ -263,8 +263,8 @@ class TestCallForms:
         assert resolved == "SELECT * FROM raw_stripe.payments"
         assert [r.ref_name for r in relations] == ["stripe.payments"]
 
-    def test_trim_markers_are_matched_but_not_honoured(self) -> None:
-        """Jinja would strip the neighbouring space; in SQL that welds tokens."""
+    def test_trim_markers_are_matched_but_not_honored(self) -> None:
+        """Jinja would strip the neighboring space; in SQL that welds tokens."""
         sql = "SELECT * FROM {{- ref('customers') -}} WHERE id > 0"
         resolved, _ = resolve_dbt_refs_with_provenance(sql, _INDEX)
         assert resolved == "SELECT * FROM analytics.customers WHERE id > 0"

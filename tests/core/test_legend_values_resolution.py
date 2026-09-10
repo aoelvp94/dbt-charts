@@ -4,7 +4,7 @@ writer of ``encoding.color.legend.values``; an authored list is resolved
 against the real domain and wins outright instead of being clobbered.
 
 Families: stacked bar, wide bar, multi-series line, ``color:`` area, and a
-field-coloured overlay. An unresolvable entry never silently disappears,
+field-colored overlay. An unresolvable entry never silently disappears,
 but it never fails the render either: it is always dropped, and the
 render-warnings detector (covered separately by
 ``tests/render/warnings/test_legend_values_unresolved.py``) is what
@@ -316,7 +316,7 @@ class TestAuthoredValuesSurvive:
             "east - revenue ($)",
         ]
 
-    def test_field_coloured_overlay(self, make_chart):
+    def test_field_colored_overlay(self, make_chart):
         from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
 
         rows = [
@@ -341,9 +341,7 @@ class TestAuthoredValuesSurvive:
         )
         assert _color_legend_values(spec, overlay=True) == ["B", "A", "target"]
 
-    def test_field_coloured_overlay_layer_legend_carries_no_raw_values(
-        self, make_chart
-    ):
+    def test_field_colored_overlay_layer_legend_carries_no_raw_values(self, make_chart):
         """Regression: apply_color_legend ran on EVERY layer's own color
         encoding, including the added LineLayer's, copying the raw authored
         `legend.values` verbatim there too -- inert today only because
@@ -1123,7 +1121,7 @@ class TestUnresolvedValuesDropWithoutRaising:
         layer_color = chart_pane(spec)["layer"][1]["encoding"]["color"]
         assert layer_color["legend"]["values"] == ["target"]
 
-    def test_single_series_base_with_field_coloured_layer_does_not_raise(
+    def test_single_series_base_with_field_colored_layer_does_not_raise(
         self, make_chart
     ):
         # base_label arm (no color: on the base), but the LAYER itself
@@ -1151,7 +1149,7 @@ class TestUnresolvedValuesDropWithoutRaising:
         )
         assert _color_legend_values(spec, overlay=True) == ["value"]
 
-    def test_field_coloured_overlay_unresolved_entry_does_not_raise(self, make_chart):
+    def test_field_colored_overlay_unresolved_entry_does_not_raise(self, make_chart):
         # scale_domain here is base_series (query data) plus layer labels.
         # The unresolved entry falls back to the full engine order instead
         # of an empty legend (WARN_LEGEND_VALUES_UNRESOLVED covers the

@@ -42,7 +42,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # Regression coverage: test_style_authored_bootstrap_order.py.
 from dbt_charts.core.compile.models.style.authored._base import (
     AreaMarkStylePatch,
-    AxisGridStylePatch,
+    AxisGridThresholdStylePatch,
     AxisLabelStylePatch,
     AxisLineStylePatch,
     AxisTicksStylePatch,
@@ -62,7 +62,6 @@ from dbt_charts.core.compile.models.style.authored._base import (
     GlobalMarksStylePatch,
     LegendStylePatch,
     LineMarkStylePatch,
-    MeasureGridStylePatch,
     PaddingStylePatch,
     PointMarkStylePatch,
     QuantitativeAxisStylePatch,
@@ -118,7 +117,7 @@ __all__ = [
     "_validate_glyph_pair",
     "AreaChartStylePatch",
     "AreaMarkStylePatch",
-    "AxisGridStylePatch",
+    "AxisGridThresholdStylePatch",
     "AxisLabelStylePatch",
     "AxisLineStylePatch",
     "AxisTicksStylePatch",
@@ -131,7 +130,6 @@ __all__ = [
     "BaseScaleStylePatch",
     "DimensionLabelStylePatch",
     "DimensionTicksStylePatch",
-    "MeasureGridStylePatch",
     "QuantitativeAxisStylePatch",
     "ScaleContinuousStylePatch",
     "XScaleStylePatch",

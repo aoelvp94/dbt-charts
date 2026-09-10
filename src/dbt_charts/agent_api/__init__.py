@@ -47,7 +47,8 @@ if TYPE_CHECKING:
     # falling back to Any on every re-export.
     from dbt_charts.agent_api import examples as examples, skills as skills
     from dbt_charts.agent_api._paths import (
-        project_sources_for_board as project_sources_for_board,
+        EditorCompileResult as EditorCompileResult,
+        compile_editor_buffer as compile_editor_buffer,
     )
     from dbt_charts.agent_api.describe import (
         DescribeBoardArgs as DescribeBoardArgs,
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
         DesignNode as DesignNode,
         DesignProperty as DesignProperty,
         DesignTarget as DesignTarget,
+        build_design as build_design,
         build_design_target as build_design_target,
         design_target as design_target,
     )
@@ -173,6 +175,7 @@ __all__ = [
     "DesignNode",
     "DesignProperty",
     "DesignTarget",
+    "build_design",
     "build_design_target",
     "describe_board",
     "design_target",
@@ -184,7 +187,8 @@ __all__ = [
     "extract_ref_calls",
     "render_dashboard",
     "board_import_closure",
-    "project_sources_for_board",
+    "compile_editor_buffer",
+    "EditorCompileResult",
 ]
 
 # `schema_hints` and `validate_query` (the functions) are deliberately NOT
@@ -209,9 +213,13 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     ),
     "examples": ("dbt_charts.agent_api.examples", ""),
     "skills": ("dbt_charts.agent_api.skills", ""),
-    "project_sources_for_board": (
+    "compile_editor_buffer": (
         "dbt_charts.agent_api._paths",
-        "project_sources_for_board",
+        "compile_editor_buffer",
+    ),
+    "EditorCompileResult": (
+        "dbt_charts.agent_api._paths",
+        "EditorCompileResult",
     ),
     "DescribeBoardArgs": ("dbt_charts.agent_api.describe", "DescribeBoardArgs"),
     "DescribeBoardResult": ("dbt_charts.agent_api.describe", "DescribeBoardResult"),
@@ -219,6 +227,7 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "DesignNode": ("dbt_charts.agent_api.design", "DesignNode"),
     "DesignProperty": ("dbt_charts.agent_api.design", "DesignProperty"),
     "DesignTarget": ("dbt_charts.agent_api.design", "DesignTarget"),
+    "build_design": ("dbt_charts.agent_api.design", "build_design"),
     "build_design_target": ("dbt_charts.agent_api.design", "build_design_target"),
     "design_target": ("dbt_charts.agent_api.design", "design_target"),
     "DocsArgs": ("dbt_charts.agent_api.docs", "DocsArgs"),

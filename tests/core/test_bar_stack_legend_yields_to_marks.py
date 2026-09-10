@@ -200,7 +200,7 @@ def test_twenty_five_series_drops_the_legend() -> None:
 def test_authored_legend_position_never_beats_the_yield() -> None:
     """An authored ``position:`` outranks the automatic legend policies, but not
     this guard. The tiny-tier ternary still resolves the legend to top/compact
-    regardless of the authored position, so honouring ``visible`` here would
+    regardless of the authored position, so honoring ``visible`` here would
     hand the author a chart that raises ERR-CHART-PAINTED-NO-MARKS *and* a
     legend in a position they did not ask for. The marks always win.
     """
@@ -397,7 +397,7 @@ def test_twenty_five_series_at_narrow_card_draws_marks_with_real_height() -> Non
 
 def test_wide_measure_stacked_bar_at_narrow_card_draws_marks_with_real_height() -> None:
     """A wide bar (``y: [m01..m25]``, no ``color:``) folds its measures into a
-    colour channel at render and gets a full legend — one entry per measure —
+    color channel at render and gets a full legend — one entry per measure —
     via ``fold_wide_measures``. The classifier must charge that legend the
     same way it would a ``color:``-driven one: reading ``normalized.color``
     alone (``None`` here) and falling back to 0 entries reproduces the

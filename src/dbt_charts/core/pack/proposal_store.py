@@ -35,13 +35,13 @@ def load_proposal(path: Path) -> PackProposal:
 
 
 def dump_proposal(proposal: PackProposal, path: Path) -> None:
-    """Serialise a proposal to YAML and write it to *path*.
+    """Serialize a proposal to YAML and write it to *path*.
 
     Creates parent directories as needed. Writes block-style YAML
     (default ``yaml.safe_dump`` output — no flow-style objects).
 
     Args:
-        proposal: The :class:`PackProposal` to serialise.
+        proposal: The :class:`PackProposal` to serialize.
         path: Destination file path.
     """
     path.parent.mkdir(parents=True, exist_ok=True)

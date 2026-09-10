@@ -238,7 +238,7 @@ def test_grouped_bar_on_quantitative_x_paints_visible_marks(
     VL auto-stacks a bar mark whenever a discrete channel (color) accompanies
     the quantitative measure, even with `xOffset` present and no aggregate —
     collapsing every bar to zero height against a y-domain sized for the
-    grouped (non-stacked) case (reproduces at 3+ colour groups — 2 renders
+    grouped (non-stacked) case (reproduces at 3+ color groups — 2 renders
     fine, a VL quirk). The fix suppresses that default explicitly with
     `y.stack: null`; without it this test trips the guard above instead of
     drawing anything.

@@ -794,7 +794,7 @@ ERR_ENDPOINT_LABELS_UNORDERABLE_SORT = REGISTRY.register(
         message_template=(
             "Chart {chart_id!r}: chart.sort by {sort_by!r} cannot be "
             "combined with stacked bar endpoint labels — the label rail "
-            "reproduces Vega-Lite's domain order by totalling that column "
+            "reproduces Vega-Lite's domain order by totaling that column "
             "per category, and it carries no numeric values. Sort by a "
             "measure instead, or set style.endpoint_labels.visible: false "
             "on this chart."
@@ -1234,7 +1234,7 @@ WARN_BAR_BAND_WIDTH_TOO_NARROW = REGISTRY.register(
         doc=(
             "Fires when a (vertical) bar chart packs so many bands into its plot "
             "width that each band's fill drops below a readability floor: the fill "
-            "disappears and the bar's own border stroke merges neighbours into a "
+            "disappears and the bar's own border stroke merges neighbors into a "
             '"ghost band" smear. Classic trigger: daily-granularity data (hundreds '
             "of distinct days) rendered as bars at a normal chart width. Also fires "
             "on a numeric x (no band scale) when the bar's width, authored or "
@@ -1916,7 +1916,7 @@ WARN_TABLE_COLUMNS_OVERFLOW = REGISTRY.register(
             "Fires when a table needs more width than the slot it was given. A "
             "table sizes each column to its minimum readable width; when those "
             "widths sum past the available width, the renderer widens the whole "
-            "table past its slot, so in a dashboard it spills over its neighbour "
+            "table past its slot, so in a dashboard it spills over its neighbor "
             "or is clipped, printing columns on top of each other."
         ),
         docs_topic="charts",
@@ -2036,7 +2036,7 @@ WARN_TOO_MANY_X_CATEGORIES = REGISTRY.register(
     WarningCode(
         code="WARN-TOO-MANY-X-CATEGORIES",
         domain="render",
-        title="Categorical x-axis has too many distinct values to read",
+        title="x-axis has too many distinct values to read",
         message_template=(
             "Chart {chart_id!r}: x field {field!r} has {count} distinct "
             "values; labels collide and marks are too thin to read "
@@ -2051,9 +2051,13 @@ WARN_TOO_MANY_X_CATEGORIES = REGISTRY.register(
             "values than fit legibly; labels collide and the marks are too thin "
             "to read. For a bar chart, also fires on a temporal x-axis: bars still "
             "draw one band per distinct x value even where the density gate has "
-            "moved bucketed temporal data off the ordinal scale. Never fires on a "
-            "quantitative axis, or on a temporal axis for line/area/scatter charts, "
-            "where a dense axis is a continuous draw, not a crowded band."
+            "moved bucketed temporal data off the ordinal scale. On that axis the "
+            "warning is about band width only: a temporal axis thins its own tick "
+            "labels, so nothing is claimed about label collision, and the fix is to "
+            "widen the chart, roll up to a coarser time grain, or switch to a line "
+            "chart. Never fires on a quantitative axis, "
+            "or on a temporal axis for line/area/scatter charts, where a dense axis "
+            "is a continuous draw, not a crowded band."
         ),
         docs_topic="charts",
     )
@@ -2067,7 +2071,7 @@ WARN_VALUE_LABELS_CROWD_WIDTH = REGISTRY.register(
         message_template=(
             "Chart {chart_id!r}: widest value label is {label_width:.0f}px "
             "but each mark only has {slot_width:.0f}px; labels will overflow "
-            "and collide with neighbours."
+            "and collide with neighbors."
         ),
         fix_template=(
             "Shorten the number format (e.g. use SI suffix `.2~s` instead of "

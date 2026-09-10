@@ -1,0 +1,176 @@
+title: "One dataset, nine ways"
+notes: One 15-month dataset drawn nine different ways, all in the same ink — a tour of the mark types dbt Charts supports.
+
+style:
+  frame:
+    width: 1200
+  charts:
+    color:
+      categorical:
+        single_series_palette: [dbt-grays.heading]
+
+queries:
+  monthly:
+    columns: [month, value]
+    values:
+      - ["2025-01", 104]
+      - ["2025-02", 99]
+      - ["2025-03", 112]
+      - ["2025-04", 108]
+      - ["2025-05", 121]
+      - ["2025-06", 118]
+      - ["2025-07", 130]
+      - ["2025-08", 127]
+      - ["2025-09", 134]
+      - ["2025-10", 131]
+      - ["2025-11", 145]
+      - ["2025-12", 158]
+      - ["2026-01", 172]
+      - ["2026-02", 196]
+      - ["2026-03", 184]
+
+rows:
+  - text: |
+      Same 15 months of data, same board, same ink. Every chart below reads the
+      same query; what changes from chart to chart is a line or two of YAML: the
+      mark type, a bar's width, whether a line shows its points. Read across each
+      row to see how much one small setting changes the way a trend looks.
+
+      **Dots and stems.** Points plot a bare dot per month; a lollipop pairs
+      that dot with a thin stem back to zero; a skinny bar fills in the stem.
+
+  - cols: [c_points, c_lollipop, c_bar_skinny]
+
+  - text: |
+      **Bar weight, then a filled step.** The same bar grows from a skinny
+      stem to a wide column, then the outline turns into a stepped, filled
+      area.
+
+  - cols: [c_bar_default, c_bar_fat, c_area_step]
+
+  - text: |
+      **From fill to line.** A smooth filled area, then the same trend drawn as
+      a line, first bare and then with its monthly points marked.
+
+  - cols: [c_area, c_line, c_line_points]
+
+charts:
+  c_points:
+    query: monthly
+    type: scatter
+    title: "Points"
+    x: month
+    y: value
+    style:
+      axis_x:
+        title:
+          visible: false
+      axis_y:
+        title:
+          visible: false
+        scale:
+          continuous:
+            zero: true
+      marks:
+        point:
+          size: 60
+
+  c_lollipop:
+    query: monthly
+    type: bar
+    title: "Lollipop"
+    x: month
+    y: value
+    style:
+      color:
+        categorical:
+          palette: [dbt-grays.heading, dbt-grays.heading]
+      legend:
+        visible: false
+      marks:
+        bar:
+          size: 3
+    layers:
+      - type: scatter
+        y: value
+        style:
+          marks:
+            point:
+              size: 60
+
+  c_bar_skinny:
+    query: monthly
+    type: bar
+    title: "Bar — skinny"
+    x: month
+    y: value
+    style:
+      marks:
+        bar:
+          size: 3
+
+  c_bar_default:
+    query: monthly
+    type: bar
+    title: "Bar — default"
+    x: month
+    y: value
+
+  c_bar_fat:
+    query: monthly
+    type: bar
+    title: "Bar — fat"
+    x: month
+    y: value
+    style:
+      marks:
+        bar:
+          band_width: 1.0
+
+  c_area_step:
+    query: monthly
+    type: area
+    title: "Area — stepped"
+    x: month
+    y: value
+    style:
+      marks:
+        area:
+          curve: step
+
+  c_area:
+    query: monthly
+    type: area
+    title: "Area — default"
+    x: month
+    y: value
+
+  c_line:
+    query: monthly
+    type: line
+    title: "Line — no points"
+    x: month
+    y: value
+    style:
+      axis_y:
+        scale:
+          continuous:
+            zero: true
+      marks:
+        point:
+          size: 0
+
+  c_line_points:
+    query: monthly
+    type: line
+    title: "Line — with points"
+    x: month
+    y: value
+    style:
+      axis_y:
+        scale:
+          continuous:
+            zero: true
+      marks:
+        point:
+          size: 60

@@ -343,7 +343,7 @@ rows:
 
 class TestTitleSelectionBoxDoesNotOverhangVariablesColumn:
     """Regression: the title band's selection box claims card_padding on both
-    horizontal sides, but its right neighbour in the band is the variables
+    horizontal sides, but its right neighbor in the band is the variables
     column, not the card edge — so the box overhangs the column by
     card_padding minus variables.gap whenever the gap is narrower than the
     padding. Computed from the rendered geometry (not the theme's literal

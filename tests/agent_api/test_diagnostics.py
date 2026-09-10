@@ -85,7 +85,7 @@ class TestListDiagnosticCodes:
 
     def test_every_summary_ends_in_terminal_punctuation(self) -> None:
         """Regression: `_first_sentence` used to stop at a `.` inside an inline
-        code span (e.g. `scale.type: log`) or a bare identifier (`meta.yaml`),
+        code span (e.g. `scale.type: log`) or a bare identifier (`meta.yml`),
         shipping summaries like 'Fired when a meta.' The guard now requires the
         terminating `.`/`!`/`?` to be followed by whitespace-or-end-of-string,
         so an accepted summary can no longer end mid-identifier — this asserts
@@ -223,12 +223,12 @@ class TestFirstSentence:
             )
 
     def test_raises_on_period_immediately_followed_by_non_space(self) -> None:
-        """A bare identifier like `meta.yaml` is not a sentence boundary."""
+        """A bare identifier like `meta.yml` is not a sentence boundary."""
         from dbt_charts.agent_api.diagnostics import _first_sentence
 
         with pytest.raises(ValueError, match="sentence-boundary"):
             _first_sentence(
-                "Fired when a meta.yaml file contains a field that is not "
+                "Fired when a meta.yml file contains a field that is not "
                 "recognized by the board schema."
             )
 

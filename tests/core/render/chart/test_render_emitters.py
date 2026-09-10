@@ -793,11 +793,11 @@ def test_scatter_emit_encoding_has_x_and_y(scatter_style: ResolvedScatterStyle) 
 def test_scatter_categorical_y_sort_stays_out_of_bar_stack_blast_radius(
     scatter_style: ResolvedScatterStyle,
 ) -> None:
-    """A categorical-y scatter (dot plot)'s authored sort must reach VL exactly
-    as ``chart_sort_to_vl`` maps it — no forced ``op``. Scatter marks never
-    carry a stack concept, so a fix scoped to bar's grouped-column ``y.stack``
-    suppression must never leak an opinion into this shared helper's output
-    for scatter.
+    """A categorical-y scatter (dot plot) is a dimension axis, so its authored
+    sort carries the same ``op: min`` every dimension axis pins — the aggregate
+    a point mark's own VL inference lands on, stated rather than left implicit.
+    What it must never pick up is bar's stacking ``sum``: a fix scoped to bar's
+    grouped-column ``y.stack`` suppression cannot reach this axis.
     """
     from dbt_charts.core.compile.models.chart.authored import ChartSort
     from dbt_charts.core.render.chart.emitters import get_emitter
@@ -820,9 +820,11 @@ def test_scatter_categorical_y_sort_stays_out_of_bar_stack_blast_radius(
     )
     data = [{"team": "Onboarding", "hours": 1.8}, {"team": "Support", "hours": 2.4}]
     spec = get_emitter(chart).emit(chart, _DEFAULT_BOX, regroup((), data))
-    assert spec.encoding["y"]["sort"] == {"field": "hours", "order": "descending"}, (
-        f"got {spec.encoding['y'].get('sort')!r}"
-    )
+    assert spec.encoding["y"]["sort"] == {
+        "field": "hours",
+        "order": "descending",
+        "op": "min",
+    }, f"got {spec.encoding['y'].get('sort')!r}"
 
 
 def test_heatmap_emit_encoding_has_x_and_y(heatmap_style: ResolvedHeatmapStyle) -> None:
@@ -1713,7 +1715,7 @@ def test_resolve_geo_projection_structured_projection_extracts_type() -> None:
     """_resolve_geo_projection must extract .type from a Projection object, not str() it.
 
     str(Projection(type='mercator')) yields "type='mercator'" — a broken VL projection name.
-    The resolver is the single point that canonicalises structured projections into bare strings;
+    The resolver is the single point that canonicalizes structured projections into bare strings;
     the emitter reads chart.geo_projection_type (already a str) via ADR-008.
     """
     from dbt_charts.core.compile.models.vega_lite.contracts import Projection

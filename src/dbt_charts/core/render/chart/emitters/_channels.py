@@ -613,7 +613,7 @@ def channel_to_encoding(
         ch: The resolved style channel.
         data: Row data for the chart — used to infer the VL type for series-mode
             channels (quantitative vs nominal) matching oracle infer_vega_type_from_data
-            behaviour.
+            behavior.
         axis_style: Optional resolved axis style; when provided, emits an ``axis``
             key via ``axis_to_vl``. Family PRs pass ``board_style.charts.axis_*``
             here — this is the shared seam for per-axis presentation porting.

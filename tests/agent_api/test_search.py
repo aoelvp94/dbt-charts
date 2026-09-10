@@ -217,10 +217,10 @@ class TestSearchIndexesEveryBoard:
     def test_meta_cascade_file_is_not_indexed(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """``meta.yaml`` is directory defaults, not a board someone can open."""
+        """``meta.yml`` is directory defaults, not a board someone can open."""
         boards = tmp_path / "charts"
         boards.mkdir()
-        (boards / "meta.yaml").write_text("title: Regional defaults\nextends: cream\n")
+        (boards / "meta.yml").write_text("title: Regional defaults\nextends: cream\n")
 
         assert search_boards_hits("regional", local_project(tmp_path)) == []
 

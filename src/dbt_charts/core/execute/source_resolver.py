@@ -313,7 +313,7 @@ class AllowlistedSourceResolver(DefaultSourceResolver):
     answer lives. `describe_query` reaches it too: it routes a file source's
     SQL through `check_ad_hoc_query`, which wraps it in `DESCRIBE (...)` and
     hands it to the same `AdapterRegistry.execute` — the identical
-    no-materializer refusal fires there if none is configured. Behaviour is no
+    no-materializer refusal fires there if none is configured. Behavior is no
     more permissive than the execute path; describe just answers with columns
     instead of rows when a materializer *is* present.
 

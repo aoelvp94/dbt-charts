@@ -1,14 +1,14 @@
-"""Meta.yaml cascading configuration resolution.
+"""Meta.yml cascading configuration resolution.
 
 Stage: COMPILE
-Purpose: Resolve meta.yaml chain from board file to project root.
+Purpose: Resolve meta.yml chain from board file to project root.
 
 Entry Points:
     find_meta_files(board_path, root_dir) -> list[ProjectPath]
     load_meta_file(meta_path) -> tuple[dict[str, Any], MetaLintConfig]
     resolve_meta_lint(board_path, root_dir) -> MetaLintConfig | None
 
-meta.yaml is a partial AuthoredBoard — the same authoring surface as a board file,
+meta.yml is a partial AuthoredBoard — the same authoring surface as a board file,
 but without a layout requirement. Content fields are merged by the resolution engine
 (merge_metas / merged_patch). Lint directives are extracted separately here.
 
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class MetaLintConfig:
-    """Lint-suppression directives extracted from meta.yaml lint: section.
+    """Lint-suppression directives extracted from meta.yml lint: section.
 
     Carried separately from the AuthoredBoard merge so lint policy does not
     pollute the board content model.
@@ -43,7 +43,7 @@ class MetaLintConfig:
 
 
 def load_meta_file(meta_path: ProjectPath) -> tuple[dict[str, Any], MetaLintConfig]:
-    """Load a meta.yaml file.
+    """Load a meta.yml file.
 
     Returns the meta dict (a partial ``AuthoredBoard``) and the extracted lint
     config. The ``lint`` key is stripped out of the returned dict — it is a
@@ -98,10 +98,10 @@ def load_meta_file(meta_path: ProjectPath) -> tuple[dict[str, Any], MetaLintConf
 def find_meta_files(
     board_path: ProjectPath, root_dir: ProjectDirectory
 ) -> list[ProjectPath]:
-    """Find all meta.yaml files from board directory up to root.
+    """Find all meta.yml files from board directory up to root.
 
     Walks up the directory tree from the board file's directory to root_dir,
-    collecting meta.yaml files found. Returns them ordered root → board directory
+    collecting meta.yml files found. Returns them ordered root → board directory
     (so child configs come last for proper override order).
 
     Args:
@@ -112,7 +112,7 @@ def find_meta_files(
     current = board_path.parent
 
     while True:
-        for name in ("meta.yaml", "meta.yml"):
+        for name in ("meta.yml", "meta.yaml"):
             candidate = current / name
             if candidate.exists():
                 meta_paths.append(candidate)
@@ -133,10 +133,10 @@ def resolve_meta_lint(
     board_path: ProjectPath,
     root_dir: ProjectDirectory,
 ) -> MetaLintConfig | None:
-    """Return combined MetaLintConfig for the meta.yaml chain above board_path.
+    """Return combined MetaLintConfig for the meta.yml chain above board_path.
 
     Walks up from board_path to root_dir, collects lint directives from every
-    meta.yaml found, merges them root→leaf, and returns the result. Returns
+    meta.yml found, merges them root→leaf, and returns the result. Returns
     None when no meta files exist or none carry a lint: block.
 
     Args:

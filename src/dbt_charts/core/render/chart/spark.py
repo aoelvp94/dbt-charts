@@ -87,7 +87,7 @@ def _signed_fraction(value: float, max_value: float, signed: bool) -> SignedFrac
 
     Non-finite ``value`` (NaN, ±Infinity) reports ``fraction=0.0,
     is_negative=False`` — the same null rule as every other numeric-cell
-    consumer (``utils.coerce_numeric_cell``): no colour, no domain
+    consumer (``utils.coerce_numeric_cell``): no color, no domain
     contribution. Without this, ``min()``/``max()`` propagate NaN
     asymmetrically and a null cell would paint as the most-negative value in
     the column.
@@ -333,7 +333,7 @@ def render_spark_columns(
     )
     bars: list[str] = []
     # Non-finite values (NaN, ±Infinity) follow the same null rule as every
-    # other numeric-cell consumer (utils.coerce_numeric_cell): no colour, no
+    # other numeric-cell consumer (utils.coerce_numeric_cell): no color, no
     # domain contribution. They still occupy their x-slot — the loops below
     # skip drawing a rect for them rather than letting them corrupt max()/
     # min() (NaN propagates through both asymmetrically and silently wrecks

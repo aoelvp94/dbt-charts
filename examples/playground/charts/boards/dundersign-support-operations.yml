@@ -1,0 +1,546 @@
+title: Support operations
+notes: |
+  Triage board for the support lead. Above-the-fold answers: what's in the
+  queue right now, how old is it, are we keeping up with intake, and which
+  issues dominate. Built on the Dundersign tickets table on the stark theme:
+  a four-up band of intake breakdowns, a stacked column of queue age by
+  priority, and a per-ticket open-queue table with glyphs and an age bar.
+
+theme: stark
+source: dundersign_db
+
+style:
+  frame:
+    width: 1440
+  variables:
+    position: title-inline
+
+variables:
+  date_range:
+    label: Created
+    input: daterange
+  priority:
+    placeholder: "All priorities"
+    options:
+      query: priority_options
+      column: priority
+
+queries:
+  # Priorities ordered urgent → low so the dropdown reads by urgency rather
+  # than alpha.
+  priority_options:
+    sql: |
+      SELECT priority
+      FROM (VALUES ('urgent'), ('high'), ('normal'), ('low')) AS p(priority)
+
+  # ── KPI rail ────────────────────────────────────────────────────────────
+  # "Today" anchors to max(created_at) — the fixture stops on 2026-05-10
+  # so a wall-clock NOW() would push 100% of tickets into the "90d+" band.
+  # Same anchoring convention as the CF demo.
+  kpi_data:
+    sql: |
+      WITH bounds AS (
+        SELECT MAX(created_at)::DATE AS today FROM tickets
+      ),
+      scoped AS (
+        SELECT
+          t.*,
+          (bounds.today - t.created_at::DATE) AS age_days
+        FROM tickets t, bounds
+        WHERE {{ filter('priority', priority) }}
+          AND {{ filter_date_range('created_at', date_range) }}
+      )
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'new')                                  AS open_tickets,
+        COUNT(*) FILTER (WHERE status = 'new' AND age_days > 90)                AS aging_90,
+        COUNT(*) FILTER (WHERE status = 'new' AND age_days > 90)::FLOAT
+          / NULLIF(COUNT(*) FILTER (WHERE status = 'new'), 0)                   AS aging_share,
+        COUNT(*) FILTER (
+          WHERE status = 'solved'
+            AND age_days <= 30
+        )                                                                       AS solved_30,
+        COUNT(*) FILTER (
+          WHERE status = 'solved'
+            AND age_days <= 30
+        )::FLOAT
+          / NULLIF(COUNT(*) FILTER (
+              WHERE status = 'solved'
+                AND age_days > 30
+                AND age_days <= 60
+            ), 0) - 1                                                           AS solved_30_growth,
+        MEDIAN(age_days) FILTER (WHERE status = 'new')::INT                     AS median_age,
+        MAX(age_days)    FILTER (WHERE status = 'new')::INT                     AS oldest_age
+      FROM scoped
+
+  # ── Hero: queue counts by priority × age band ───────────────────────────
+  # Both categorical dimensions carry a "N · " ordering prefix so the VL
+  # nominal-scale domains read urgent → low and fresh → aging without dct
+  # having to expose chart-level color/x sort on the stacked-bar path.
+  queue_age_by_priority:
+    sql: |
+      WITH bounds AS (
+        SELECT MAX(created_at)::DATE AS today FROM tickets
+      ),
+      banded AS (
+        SELECT
+          priority,
+          -- Numeric prefix on each band so the legend (which Vega-Lite
+          -- sorts alphabetically on the color field) reads fresh→aging
+          -- left-to-right. Without the prefix, "180+ days" sorts before
+          -- "31–90 days" and the sequential palette inverts. Hack until
+          -- dct exposes a color.sort surface.
+          CASE
+            WHEN (today - created_at::DATE) <=   7 THEN '1 · ≤7 days'
+            WHEN (today - created_at::DATE) <=  30 THEN '2 · 8–30 days'
+            WHEN (today - created_at::DATE) <=  90 THEN '3 · 31–90 days'
+            WHEN (today - created_at::DATE) <= 180 THEN '4 · 91–180 days'
+            ELSE                                        '5 · 180+ days'
+          END AS age_band,
+          CASE
+            WHEN (today - created_at::DATE) <=   7 THEN 1
+            WHEN (today - created_at::DATE) <=  30 THEN 2
+            WHEN (today - created_at::DATE) <=  90 THEN 3
+            WHEN (today - created_at::DATE) <= 180 THEN 4
+            ELSE                                        5
+          END AS age_order,
+          CASE priority
+            WHEN 'urgent' THEN 1 WHEN 'high' THEN 2
+            WHEN 'normal' THEN 3 WHEN 'low'  THEN 4
+          END AS priority_order
+        FROM tickets, bounds
+        WHERE status = 'new'
+          AND {{ filter('priority', priority) }}
+          AND {{ filter_date_range('created_at', date_range) }}
+      )
+      SELECT
+        -- Numeric-prefix priority so the stacked-column color stack reads
+        -- urgent → low in urgency order. VL stacks color values
+        -- alphabetically by default, and dct doesn't expose a color-sort
+        -- surface on stacked bars; encoding the order into the string is
+        -- the only knob that survives. The same prefix shows in the
+        -- endpoint labels and the legend (legend.label.expr isn't exposed
+        -- either). Same hack-shape lives on age_band in this query.
+        CASE priority
+          WHEN 'urgent' THEN '1 · Urgent'
+          WHEN 'high'   THEN '2 · High'
+          WHEN 'normal' THEN '3 · Normal'
+          WHEN 'low'    THEN '4 · Low'
+        END                                          AS priority,
+        priority_order,
+        age_band,
+        age_order,
+        COUNT(*) AS tickets
+      FROM banded
+      GROUP BY 1, 2, 3, 4
+      ORDER BY priority_order, age_order
+
+  # ── Small-multiples backing data ────────────────────────────────────────
+  # Four mini categorical breakdowns of the full ticket history (not filtered
+  # to open only — these are intake-mix shapes, not queue-state shapes). Each
+  # query carries a sort_order column so the rendered bars match the
+  # editorial ordering (urgent→low, problem→task, etc.) instead of
+  # alphabetical.
+  intake_by_priority:
+    sql: |
+      SELECT
+        priority,
+        COUNT(*)                                  AS tickets,
+        CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2
+                      WHEN 'normal' THEN 3 WHEN 'low'  THEN 4
+        END                                        AS sort_order
+      FROM tickets
+      WHERE {{ filter('priority', priority) }}
+        AND {{ filter_date_range('created_at', date_range) }}
+      GROUP BY 1, 3
+      ORDER BY 3
+
+  intake_by_channel:
+    sql: |
+      SELECT
+        via_channel                                AS channel,
+        COUNT(*)                                  AS tickets
+      FROM tickets
+      WHERE {{ filter('priority', priority) }}
+        AND {{ filter_date_range('created_at', date_range) }}
+      GROUP BY 1
+      -- A count tie has no defined order without a tiebreaker.
+      ORDER BY 2 DESC, 1 ASC
+
+  intake_by_type:
+    sql: |
+      SELECT
+        ticket_type                                AS type,
+        COUNT(*)                                  AS tickets
+      FROM tickets
+      WHERE {{ filter('priority', priority) }}
+        AND {{ filter_date_range('created_at', date_range) }}
+      GROUP BY 1
+      -- A count tie has no defined order without a tiebreaker.
+      ORDER BY 2 DESC, 1 ASC
+
+  status_mix:
+    sql: |
+      SELECT
+        status,
+        COUNT(*)                                  AS tickets
+      FROM tickets
+      WHERE {{ filter('priority', priority) }}
+        AND {{ filter_date_range('created_at', date_range) }}
+      GROUP BY 1
+      -- A count tie has no defined order without a tiebreaker.
+      ORDER BY 2 DESC, 1 ASC
+
+  # ── Open queue: individual aging tickets ────────────────────────────────
+  # Bottom table — the dense glyph-table showcase. One row per ticket,
+  # sorted by priority urgency then by age. Lives in a 55%-width slot
+  # so the column set is trimmed (no via_channel — the channel mix lives
+  # in the small-multiples row above) and widths are tightened to fit
+  # ~720 px of usable inner width. Stark's font needs the 55%/240px split
+  # below (vs. paper's 50%/200px) to keep Subject on one line at 18 rows.
+  open_queue:
+    sql: |
+      WITH bounds AS (
+        SELECT MAX(created_at)::DATE AS today FROM tickets
+      ),
+      ranked AS (
+        SELECT
+          id,
+          subject,
+          ticket_type,
+          priority,
+          (bounds.today - created_at::DATE)         AS age_days,
+          (bounds.today - created_at::DATE)         AS age_bar,
+          strftime(created_at, '%-d %b')            AS opened,
+          CASE priority
+            WHEN 'urgent' THEN 1 WHEN 'high' THEN 2
+            WHEN 'normal' THEN 3 WHEN 'low'  THEN 4
+          END                                        AS prio_sort
+        FROM tickets, bounds
+        WHERE status = 'new'
+          AND {{ filter('priority', priority) }}
+          AND {{ filter_date_range('created_at', date_range) }}
+      )
+      SELECT id, subject, ticket_type, priority,
+             age_days, age_bar, opened
+      FROM ranked
+      -- age_days ties are unresolved without a tiebreaker, and this is a
+      -- per-row LIMIT — a tie at the boundary can swap which tickets make
+      -- the cut, not just their order.
+      ORDER BY prio_sort, age_days DESC, id ASC
+      LIMIT 18
+
+charts:
+  # ── KPIs ────────────────────────────────────────────────────────────────
+  # Tones are hand-pinned per data sign (KPI ToneLiteral is a static enum;
+  # see tone-auto entry in the design-gaps doc). On the default Dundersign
+  # fixture the queue is 246-deep with 204 (83%) aging > 90 days — every
+  # KPI except "solved last 30 days" reads negative.
+  kpi_open:
+    type: kpi
+    query: kpi_data
+    label: Open tickets
+    value: open_tickets
+    style:
+      value:
+        format: ",.0f"
+    support:
+      value: aging_share
+      label: aging > 90 days
+      format: ".0%"
+      glyph: "▲"
+      tone: negative
+
+  kpi_aging:
+    type: kpi
+    query: kpi_data
+    label: Aging > 90 days
+    value: aging_90
+    style:
+      value:
+        format: ",.0f"
+    support:
+      value: median_age
+      label: median age (days)
+      format: ",.0f"
+      glyph: "●"
+      tone: negative
+
+  kpi_solved:
+    type: kpi
+    query: kpi_data
+    label: Solved · last 30 days
+    value: solved_30
+    style:
+      value:
+        format: ",.0f"
+    support:
+      value: solved_30_growth
+      label: vs prior 30 days
+      format: "+.0%"
+      glyph: "▲"
+      tone: positive
+
+  kpi_oldest:
+    type: kpi
+    query: kpi_data
+    label: Oldest open (days)
+    value: oldest_age
+    style:
+      value:
+        format: ",.0f"
+    support:
+      value: open_tickets
+      label: tickets in queue
+      format: ",.0f"
+      glyph: "○"
+      tone: warning
+
+  # ── Hero: vertical stacked column — queue by age, colored by priority ──
+  # One column per age band, urgency-stacked. The 180+ days column towers
+  # over the others (the queue's center of gravity is stale tickets) and
+  # the editorial endpoint labels on the right edge of each segment carry
+  # the priority key inline so no separate legend is needed.
+  hero_queue_age:
+    query: queue_age_by_priority
+    type: bar
+    title: Queue by age, stacked by priority
+    subtitle: Each column is one age band; segments are priority counts
+    x: age_band
+    y: tickets
+    color: priority
+    # ChartSort applies to the categorical encoding axis (age_band here)
+    # and orders it fresh→aging via the age_order column carried in SQL.
+    sort:
+      by: age_order
+      order: asc
+    style:
+      # No palette override — lets the theme's editorial-10 categorical
+      # default fan out across the four priorities. The first four stops
+      # (blue / sky / green / purple) keep adjacent priority bands muted
+      # while remaining distinguishable.
+      # Force vertical columns. Without this, dct's auto-orientation flips
+      # to horizontal whenever x is a short categorical (5 age bands here),
+      # and the chart renders as bars instead of columns.
+      orientation: vertical
+      stack: zero
+      axis_y:
+        # Tick ladder is derived, not pinned, so it tracks the data.
+        labels:
+          # Safe on a vertical-orientation chart — the measure axis stays
+          # on the left, right-aligned digit labels are the editorial
+          # convention. Do NOT copy this onto a horizontal-orientation
+          # bar; gap B7 documents how the same knob mis-applies to the
+          # bottom visual axis after the orientation swap.
+          align: right
+      axis_x:
+        labels:
+          # Strip the "N · " ordering prefix from the age_band labels (the
+          # prefix exists in the SQL so VL's nominal scale domain orders
+          # fresh→aging without dct exposing color/x sort on stacked bars).
+          expr: "datum.value ? slice(datum.value, 4) : ''"
+      # Direct labels on the right edge of each column (editorial-10-dark
+      # companion inks them). The shipped `default` theme keeps the legend
+      # off — at this hero width direct labeling reads cleaner than a side
+      # legend. The "N · " priority labels carry their ordering prefix
+      # into the endpoint labels; until dct exposes a labelExpr on the
+      # endpoint-label pane, the prefix is visible.
+      endpoint_labels:
+        visible: true
+
+  # ── Small-multiples row: four mini categorical breakdowns ──────────────
+  # Same shape repeated four times — short horizontal bars at compact width.
+  # Each chart hides its axis title (the chart title carries the dimension
+  # name) and forces sans family because at ~330 px width the cascade picks
+  # serif under the board-level inflation bug.
+  # dbt charts convention: x is the category, y is the measure, regardless
+  # of rendered orientation. style.orientation: horizontal then routes the
+  # measure onto VL's x channel at emit time (axis_y= measure always).
+  # Note: previously set `axis_y.label.align: right` on each chart below to
+  # invoke the editorial right-orient digit-column convention. For
+  # horizontal-orientation bars that knob mis-applies — the orientation
+  # swap puts the measure on the bottom visual axis, but the `text-anchor`
+  # from `align: right` survives unrotated, and labels visibly left-shift
+  # from each tick instead of centering. Dropped here; logged as gap B7.
+  bar_priority:
+    query: intake_by_priority
+    type: bar
+    title: Priority
+    subtitle: All tickets, by urgency
+    x: priority
+    y: tickets
+    sort:
+      by: sort_order
+      order: asc
+    style:
+      orientation: horizontal
+      title:
+        font:
+          family: "'Inter Variable', Inter, system-ui, sans-serif"
+      endpoint_labels:
+        visible: true
+
+  bar_channel:
+    query: intake_by_channel
+    type: bar
+    title: Channel
+    subtitle: All tickets, intake source
+    x: channel
+    y: tickets
+    style:
+      orientation: horizontal
+      title:
+        font:
+          family: "'Inter Variable', Inter, system-ui, sans-serif"
+      endpoint_labels:
+        visible: true
+
+  bar_type:
+    query: intake_by_type
+    type: bar
+    title: Type
+    subtitle: All tickets, by classification
+    x: type
+    y: tickets
+    style:
+      orientation: horizontal
+      title:
+        font:
+          family: "'Inter Variable', Inter, system-ui, sans-serif"
+      endpoint_labels:
+        visible: true
+
+  bar_status:
+    query: status_mix
+    type: bar
+    title: Status
+    subtitle: Active vs resolved
+    x: status
+    y: tickets
+    style:
+      orientation: horizontal
+      title:
+        font:
+          family: "'Inter Variable', Inter, system-ui, sans-serif"
+      endpoint_labels:
+        visible: true
+
+  # ── Open queue (bottom) ─────────────────────────────────────────────────
+  open_queue_table:
+    type: table
+    query: open_queue
+    title: ""
+    conditional_formatting:
+      priority:
+        when:
+        - eq: urgent
+          glyph: "■"
+          glyph_color: "#a8423a"     # urgent crimson
+        - eq: high
+          glyph: "■"
+          glyph_color: "#d49656"     # editorial gold
+        - eq: normal
+          glyph: "■"
+          glyph_color: "#7a8a9a"     # cool slate
+        - eq: low
+          glyph: "■"
+          glyph_color: "#a8b4a8"     # muted sage
+      ticket_type:
+        when:
+        - eq: problem
+          glyph: "✕"
+          glyph_color: "#a8423a"
+        - eq: incident
+          glyph: "!"
+          glyph_color: "#d49656"
+        - eq: question
+          glyph: "?"
+          glyph_color: "#5d7891"
+        - eq: task
+          glyph: "·"
+          glyph_color: "#7a8a7a"
+      # Conditional-formatting rules apply additively in YAML order — each
+      # matching rule overwrites the prior's outputs (table_support.py
+      # _apply_rule_outputs). Order from least-specific to most-specific
+      # so the tighter threshold wins on rows where both match.
+      age_days:
+        when:
+        - lte: 7
+          glyph: "●"
+          glyph_color: "#608470"
+        - gt: 90
+          glyph: "◐"
+          glyph_color: "#d49656"
+        - gt: 365
+          glyph: "○"
+          glyph_color: "#ae6349"
+    style:
+      # No `pagination:` override — defaults to enabled with page_rows 20
+      # from stark.yaml. The "+ N more rows" truncation footer is a separate
+      # viewport-overflow behavior; pagination alone doesn't suppress it
+      # when the cell can't fit page_rows rows.
+      columns:
+        # Widths chosen so `ticket_NN` fits one line in `id` (avoids the
+        # first-row-shorter / spark-misaligned cascade), `Subject` is wide
+        # enough to keep every ticket subject on one line under stark's
+        # font (narrower and long subjects wrap, squeezing the 18-row page
+        # to 15 — WARN-TABLE-PAGE-SQUEEZED), and `Type` fits its longest
+        # value ("question") on one line. Sum = 720, the full 55%-of-1440
+        # right column.
+        id:
+          label: ID
+          width: 90
+        subject:
+          label: Subject
+          width: 240
+        ticket_type:
+          label: Type
+          width: 90
+        priority:
+          label: Priority
+          width: 80
+        age_days:
+          label: Age
+          format:
+            spec: ",.0f"
+            suffix: " d"
+          align: right
+          width: 70
+        age_bar:
+          label: ""
+          spark:
+            type: bar
+          width: 75
+        opened:
+          label: Opened
+          align: left
+          width: 75
+
+# ── Layout ────────────────────────────────────────────────────────────────
+# Deliberately different shape from dundersign-commercial-finance.yml. CF
+# puts KPIs in a left vertical rail with the hero spanning the middle and
+# a paired sidekick chart on the right. This board stacks three full-width
+# bands — KPI banner, four-up categorical band, and a hero/queue split —
+# so the visual rhythm reads "summary → distribution → detail" rather
+# than CF's left-to-right gradient.
+
+rows:
+- cols:
+  - kpi_open
+  - kpi_aging
+  - kpi_solved
+  - kpi_oldest
+
+- cols:
+  - bar_priority
+  - bar_channel
+  - bar_type
+  - bar_status
+
+- cols:
+  - width: "45%"
+    rows:
+    - hero_queue_age
+  - width: "55%"
+    height: 620
+    rows:
+    - open_queue_table

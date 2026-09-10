@@ -2,7 +2,7 @@
 
 import math
 import re
-from collections.abc import Hashable, Sequence
+from collections.abc import Callable, Hashable, Sequence
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
@@ -199,7 +199,7 @@ def coerce_numeric_cell(cell: Any) -> float | None:
     numeric strings, bool excluded) — shared so a compile-time format
     decision and the render-time formatting of the same cell agree on
     whether it's numeric. Non-finite values (NaN, ±Infinity) return None
-    so all callers agree on the null rule: no colour, no domain contribution.
+    so all callers agree on the null rule: no color, no domain contribution.
     """
     if isinstance(cell, (int, float, Decimal)) and not isinstance(cell, bool):
         result = float(cell)
@@ -345,36 +345,83 @@ def normalize_data_for_json(data: Rows) -> Rows:
     return normalized
 
 
+# The aggregate Vega-Lite folds a category's rows into before ordering a field
+# sort. Which one it uses is a property of the composed spec, not of the sort:
+# a stacking mark gets ``sum``, everything else ``min``. Reproducing the
+# rendered order therefore means knowing which — never assuming.
+VlSortOp = Literal["sum", "min"]
+
+# One of a sort column's cell values as Vega-Lite folds it: a number under
+# ``sum``, whatever the column holds under ``min``. Dynamic by construction,
+# like any other raw query cell.
+_SortValue = Any  # type-state: explicit_any — raw sort-column cell value
+
+
+def _js_min(values: list[_SortValue]) -> _SortValue:
+    """The fold Vega applies for ``op: "min"``, in d3's shape.
+
+    Not Python's ``min``: d3 keeps its running minimum unless ``min > value``,
+    so a value it cannot compare is passed over rather than raising — and the
+    result is therefore order-dependent for a heterogeneous column, which is
+    what Vega draws. ``min()`` would raise ``TypeError`` on rows Vega renders
+    fine.
+
+    Exact for the columns a query returns: all-numeric, all-string (JS compares
+    two strings lexicographically, as Python does), all-date. It diverges from
+    JS only where a number and a *numeric string* share one column — JS coerces
+    to Number there, Python does not — which a SQL column, having one type,
+    does not produce.
+    """
+    result: _SortValue = None
+    for value in values:
+        if result is None:
+            result = value
+            continue
+        try:
+            if value < result:
+                result = value
+        except TypeError:
+            continue
+    return result
+
+
+_VL_SORT_AGGREGATE: dict[VlSortOp, Callable[[list[_SortValue]], _SortValue]] = {
+    "sum": sum,
+    "min": _js_min,
+}
+
+
 def domain_sort_aggregates(
     rows: Rows,
     x_field: str,
     sort_field: str,
-) -> dict[Hashable, float]:
-    """Per-x-category sum of ``sort_field`` for domain ordering.
+    op: VlSortOp,
+) -> dict[Hashable, _SortValue]:
+    """Per-x-category aggregate of ``sort_field`` for domain ordering.
 
-    ``stacked_x_domain_order`` is the single caller. Its authored field-sort
-    paths are categorical bars, where Vega-Lite's ``EncodingSortField.op``
-    defaults to ``sum``: stacked bars set an explicit stack, while grouped bars
-    use an offset channel rather than ``stack: null``.
+    ``x_domain_order`` is the single caller and owns picking ``op``.
 
-    Uses ``coerce_numeric_cell`` for type-safe coercion: handles int/float/
-    Decimal and numeric strings (the real shape warehouse rows arrive in —
-    some adapters return measure columns as strings). Returns only x values
-    that have at least one finite numeric ``sort_field`` value.
+    ``sum`` is arithmetic, so it coerces (``coerce_numeric_cell`` also reads
+    the numeric strings some adapters return for measure columns) and drops
+    what will not coerce. ``min`` is a comparison, and Vega compares strings
+    and dates natively — a ``sort:`` by a month-start date or a label is an
+    ordering, and coercing it to a number first would throw that away.
     """
-    by_category: dict[Hashable, list[float]] = {}
+    by_category: dict[Hashable, list[_SortValue]] = {}
     for row in rows:
         x = row.get(x_field)
         if x is None:
             continue
-        val = coerce_numeric_cell(row.get(sort_field))
-        if val is not None:
-            by_category.setdefault(x, []).append(val)
-    return {x: sum(vals) for x, vals in by_category.items()}
+        raw = row.get(sort_field)
+        value = coerce_numeric_cell(raw) if op == "sum" else raw
+        if value is not None:
+            by_category.setdefault(x, []).append(value)
+    aggregate = _VL_SORT_AGGREGATE[op]
+    return {x: aggregate(vals) for x, vals in by_category.items()}
 
 
-def stacked_x_domain_order(
-    rows: Rows, x_field: str, sort_by: str, descending: bool
+def x_domain_order(
+    rows: Rows, x_field: str, sort_by: str, descending: bool, *, op: VlSortOp
 ) -> list[Hashable]:
     """A categorical x domain in Vega-Lite's rendered order.
 
@@ -382,23 +429,36 @@ def stacked_x_domain_order(
     consumers, which must agree on which category is first and last.
 
     An empty ``sort_by`` means no authored sort, and VL preserves first-
-    occurrence row order when the encoding carries ``sort: null``. Otherwise
-    VL sorts by the named field, and
-    ``EncodingSortField.op`` defaults to ``sum`` — so this totals the field
-    per category. The current field-sort callers are categorical bar paths;
-    see ``domain_sort_aggregates`` for why their aggregate is ``sum``.
+    occurrence row order when the encoding carries ``sort: null``. Otherwise VL
+    sorts by the named field, folding each category's rows with ``op`` first.
+    ``op`` is keyword-only and undefaulted because getting it wrong is silent:
+    one row per category makes every aggregate agree, so a wrong ``op`` only
+    surfaces on the multi-row data a caller is least likely to test with.
 
-    A category with no value for the sort field keeps its domain-value
-    position at the end, which is where VL puts it.
+    A category with no value for the sort field is placed at the end, which is
+    where VL puts it descending; ascending, VL leads with it. The pin makes the
+    two agree by construction, so the difference is a deliberate simplification
+    rather than a mismatch.
+
+    Where nothing ranks at all — text under ``sum`` totals to NaN, and a number
+    cannot be compared against a string — this returns row order, measured
+    against ``vl_convert`` for the fixtures in ``test_cartesian_primitives.py``.
+    It is not universal: Vega sorts with a comparator that reports "equal" for
+    pairs it cannot order, and ``Array.prototype.sort`` over a non-transitive
+    comparator can partially rank depending on its own pivots. Row order is the
+    deterministic reading of that, not a claim about every arrangement.
     """
     xs = list(
         dict.fromkeys(row[x_field] for row in rows if row.get(x_field) is not None)
     )
     if not sort_by:
         return xs
-    totals = domain_sort_aggregates(rows, x_field, sort_by)
+    totals = domain_sort_aggregates(rows, x_field, sort_by, op)
     ranked = [x for x in xs if x in totals]
-    ranked.sort(key=lambda x: totals[x], reverse=descending)
+    try:
+        ranked.sort(key=lambda x: totals[x], reverse=descending)
+    except TypeError:
+        return xs
     return ranked + [x for x in xs if x not in totals]
 
 
@@ -487,13 +547,14 @@ def cumulative_stack_midpoints(
     ``compile/resolve/chart/bar.py``) rather than negotiated here.
 
     A series absent from the top row is zero-width there and anchors on the
-    seam between its neighbours — see ``_stacked_midpoints`` (the vertical
+    seam between its neighbors — see ``_stacked_midpoints`` (the vertical
     rail's own, unrelated anchor helper in render/chart/features/endpoint_labels.py).
 
     For ``stack_mode == "normalize"``, midpoints are divided by the top-row total
     so they land on the 0..1 scale that VL renders for normalize stacks.
     """
-    x_values = stacked_x_domain_order(data, x_field, sort_by, descending)
+    # Horizontal stacked bar: a stacking mark, so VL folds with sum.
+    x_values = x_domain_order(data, x_field, sort_by, descending, op="sum")
     if not x_values:
         return []
     top_row_x = x_values[0]
@@ -601,9 +662,9 @@ def layered_endpoint_rail_fires(
     order — this function owns the "at least one, and every one" combination
     so that fact isn't re-approximated three different ways at three call
     sites (the exact drift that caused two prior review rounds: a layer
-    with its own colour field splits into several sub-series with no single
+    with its own color field splits into several sub-series with no single
     endpoint to anchor one label on, ``_apply_layered_single_series`` skips
-    it — so rather than naming only the colourless layers on the rail and
+    it — so rather than naming only the colorless layers on the rail and
     leaving that one sub-series to the legend, the whole rail falls back to
     legend-only).
     """

@@ -64,7 +64,7 @@ def _hbar_spec(width=400, height=200):
 
 
 def test_column_edges_left_places_last_column_right_edge_at_plot_edge():
-    # No gutter (the default): the raw geometry function's own behaviour.
+    # No gutter (the default): the raw geometry function's own behavior.
     edges = _column_edges([30.0, 50.0], "left", spec_width=400.0, plot_gutter=0.0)
     assert edges[-1][1] == pytest.approx(0.0)
     assert edges[0][0] == pytest.approx(-80.0)
@@ -292,7 +292,7 @@ def test_attach_columns_grouped_per_series_stays_a_single_column():
 def test_attach_columns_grouped_per_series_cells_land_on_their_own_sub_band():
     """Each cell must pick up the parent's own yOffset channel (copied
     verbatim) so it lands on that series' sub-band -- vertically aligned with
-    the bar it describes -- instead of the category band centre a stacked
+    the bar it describes -- instead of the category band center a stacked
     bar's cells share.
     """
     spec = _hbar_spec()
@@ -326,14 +326,14 @@ def test_attach_columns_grouped_per_series_cells_land_on_their_own_sub_band():
     assert len(cells) == 2
     for cell in cells:
         assert cell["encoding"]["yOffset"] == {"field": "product", "type": "nominal"}
-        # Category band centre still shared, same as any column cell.
+        # Category band center still shared, same as any column cell.
         assert cell["encoding"]["y"]["field"] == "region"
 
 
 def test_attach_columns_grouped_per_series_without_parent_offset_omits_it():
     """A color field the bar chose not to offset (e.g. 1:1 with x) carries no
     yOffset on the parent spec either -- the cells then fall back to the
-    category band centre, matching the bar's own marks in that case.
+    category band center, matching the bar's own marks in that case.
     """
     spec = _hbar_spec()
     spec["encoding"]["color"] = {"field": "product", "type": "nominal"}
@@ -501,7 +501,7 @@ def test_attach_columns_left_position_reserves_gutter_before_the_plot():
     # must not sit at x=0 -- the gutter is the column's own trailing padding
     # PLUS the axis's own label padding (composed from the two theme tokens,
     # not a hardcoded number), so a dense field of digits stands off the
-    # marks by as much as a neighbouring axis label would.
+    # marks by as much as a neighboring axis label would.
     spec = _hbar_spec()
     table = _table([ChartSupportTableSource(source="revenue")])
     numerals = plain_numerals(table, None, "Inter", [[]] * len(table.entries))
@@ -578,9 +578,9 @@ def test_attach_columns_right_position_gets_the_same_plot_side_gutter():
 # =============================================================================
 
 
-def test_per_series_columns_share_category_band_centre_not_sub_band_offset():
+def test_per_series_columns_share_category_band_center_not_sub_band_offset():
     # Defect 2 regression: a per_series COLUMN is the transpose of a per_series
-    # ROW — every cell in it must sit at the category's own band centre (the
+    # ROW — every cell in it must sit at the category's own band center (the
     # same y the axis label reads at), not at that series' sub-band offset.
     # The parent spec's own grouped-bar yOffset must not leak into the cells.
     spec = _hbar_spec()
@@ -611,7 +611,7 @@ def test_per_series_columns_share_category_band_centre_not_sub_band_offset():
         and layer["encoding"]["text"]["field"] != "__header"
     ]
     assert len(cells) == 2
-    # Every cell shares the exact same y-encoding — the category band centre.
+    # Every cell shares the exact same y-encoding — the category band center.
     for cell in cells:
         assert cell["encoding"]["y"] == {
             "field": "region",
@@ -863,7 +863,7 @@ def test_attach_columns_emits_vertical_rule_between_columns_when_width_positive(
     # Sits past the raw boundary between the two columns, in the gutter —
     # never ON the boundary itself, which is where column 0's own
     # right-aligned text sits (see
-    # test_attach_columns_rule_never_overprints_neighbouring_column_text for
+    # test_attach_columns_rule_never_overprints_neighboring_column_text for
     # why: the boundary is exactly where column 0's rightmost glyph paints).
     # position="left": plot_gutter = row.padding.horizontal (6.0) shifts the
     # whole block left of the plot edge, so the raw boundary sits at
@@ -877,7 +877,7 @@ def test_attach_columns_emits_vertical_rule_between_columns_when_width_positive(
 
 
 @pytest.mark.parametrize("position", ["left", "right"])
-def test_attach_columns_rule_never_overprints_neighbouring_column_text(position):
+def test_attach_columns_rule_never_overprints_neighboring_column_text(position):
     """Regression: the rule used to land exactly at the column's own right
     edge -- the same pixel its text right-aligns to -- so it painted
     straight through the rightmost glyph of the column to its left.
@@ -887,7 +887,7 @@ def test_attach_columns_rule_never_overprints_neighbouring_column_text(position)
     row.padding.horizontal of slack on the LEFT (the column reserves 2x
     padding, per _entry_column_widths, but all of it lands on the left, per
     _column_cell_layer's x-anchor). So the only pixel range that clears both
-    neighbours' painted glyphs is (this_column_right, this_column_right +
+    neighbors' painted glyphs is (this_column_right, this_column_right +
     row.padding.horizontal] -- verified here against the actual measured
     text of both columns, not the raw column boundary.
     """

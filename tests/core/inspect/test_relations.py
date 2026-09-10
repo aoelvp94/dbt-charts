@@ -407,7 +407,7 @@ def test_an_if_else_choosing_between_tables_is_undetermined() -> None:
 
 
 def test_a_temp_created_with_a_column_list_is_not_emitted() -> None:
-    """A parenthesised column list wraps the target, hiding it from a direct read."""
+    """A parenthesized column list wraps the target, hiding it from a direct read."""
     read = relations_read_by(
         {
             "q": SqlQuery(

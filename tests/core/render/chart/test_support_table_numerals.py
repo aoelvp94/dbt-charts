@@ -670,7 +670,7 @@ def test_currency_without_a_magnitude_still_anchors_its_symbol():
 def test_derived_decimal_depth_is_trimmed_but_authored_depth_is_not():
     """Trailing zeros are a ruler's business, not a data value's.
 
-    Padding 25 out to "25.0" so it matches a 5.5 neighbour would assert a
+    Padding 25 out to "25.0" so it matches a 5.5 neighbor would assert a
     precision the source data may not carry. Where WE derived the depth from a
     significant-figure request, trim it; where the author wrote the decimal
     count themselves, honor it exactly.

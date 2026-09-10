@@ -93,7 +93,8 @@ def test_serve_missing_required_variable_renders_structured_error(
 def test_serve_missing_required_variable_error_page_tracks_theme(
     tmp_path: Path,
 ) -> None:
-    """The structured error page uses the board theme, not a hardcoded palette."""
+    """The structured error page uses the board theme, not a hardcoded
+    palette."""
     from fastapi.testclient import TestClient
 
     from dbt_charts.cli.filesystem_project import FilesystemProject  # noqa: PLC0415
@@ -113,7 +114,6 @@ def test_serve_missing_required_variable_error_page_tracks_theme(
 
     assert resp.status_code == 422
     body = resp.text
-    assert f"--page-bg: {rstyle.page.background};" in body
     assert f"--panel-bg: {rstyle.background};" in body
     assert f"--text: {rstyle.font.color};" in body
     assert f"--muted: {rstyle.muted};" in body

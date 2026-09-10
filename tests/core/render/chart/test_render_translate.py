@@ -173,6 +173,28 @@ def test_translate_layered_raises_for_unmapped_layer_mark() -> None:
         translate_to_vl(layered_spec)
 
 
+def test_translate_layered_with_underlays_and_no_layers_does_not_raise() -> None:
+    """A layered spec whose feature-added underlays (e.g. a threshold rule
+    drawn beneath the data) has no ``spec.layers`` of its own must not raise
+    ``IndexError``.
+
+    ``_translate_layered`` guarded the main-layer lookup on
+    ``if vl["layer"]:`` -- the COMBINED underlays+layers list -- while
+    indexing past just the underlays (``vl["layer"][len(spec.underlays):][0]``).
+    With underlays present and layers empty, the guard passed but the slice
+    was empty, raising IndexError on ``[0]``.
+    """
+    layered_spec = ChartSpec(
+        mark="layered",
+        encoding={},
+        layers=[],
+        underlays=[_spec("rule")],
+        config={},
+    )
+    result = translate_to_vl(layered_spec)
+    assert len(result["layer"]) == 1
+
+
 def test_translate_overlay_layer_unknown_mark_raises() -> None:
     """Overlay layer with an unknown (non-VL) mark must raise, not pass through silently."""
     spec = ChartSpec(

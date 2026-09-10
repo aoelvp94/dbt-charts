@@ -771,7 +771,7 @@ def test_cascade_charts_callout_fonts(model_copy_at):
     from dbt_charts.core.compile.models.primitives import FontStyle
 
     # Set charts.font to a distinctive value — this is what should propagate into
-    # charts.callout, matching the behaviour of kpi, table, label, series_label, etc.
+    # charts.callout, matching the behavior of kpi, table, label, series_label, etc.
 
     base = get_theme_style()
     seed = model_copy_at(

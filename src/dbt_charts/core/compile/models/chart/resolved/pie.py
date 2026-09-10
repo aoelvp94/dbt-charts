@@ -40,7 +40,7 @@ class ResolvedPieChart(_SharedResolvedChartFields):
     )
     total: ChartTotal | None = Field(
         default=None,
-        description="Total-value annotation for donut centre.",
+        description="Total-value annotation for donut center.",
     )
     format: FormatState = Field(
         default=None,

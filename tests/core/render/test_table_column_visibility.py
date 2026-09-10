@@ -276,7 +276,7 @@ class TestStyleInputColumnsAutoHide:
         assert ">400<" in svg
 
     def test_explicit_entry_beats_auto_hide(self) -> None:
-        """An explicit style.columns entry is a display signal: a labelled
+        """An explicit style.columns entry is a display signal: a labeled
         style-input column renders under its label instead of vanishing —
         under the old semantics its listing showed it, and auto-hiding an
         explicitly authored column would reintroduce the silent-loss bug."""
@@ -290,7 +290,7 @@ class TestStyleInputColumnsAutoHide:
             self._HELPER_DATA,
         )
         assert 'font-weight="bold"' in svg, "the style ref must keep driving"
-        assert "Weight" in svg, "the labelled column must render"
+        assert "Weight" in svg, "the labeled column must render"
         assert ">400<" in svg
 
     def test_font_color_helper_is_auto_hidden(self) -> None:

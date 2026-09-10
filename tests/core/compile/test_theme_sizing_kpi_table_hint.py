@@ -10,7 +10,7 @@ sizing contract, and directing the author to remove it.
 These paths cannot be expressed as a Deletion (no structural schema history
 to migrate from), so there is no ``dct migrate`` path -- only fail-loud.
 
-Coverage includes meta.yaml and extends fragment paths — the hint must reach
+Coverage includes meta.yml and extends fragment paths — the hint must reach
 authors regardless of where the invalid field is authored.
 """
 
@@ -86,7 +86,7 @@ def test_theme_table_aspect_ratio_raises_with_hint() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Regression: same hints must fire when the invalid field is in meta.yaml or
+# Regression: same hints must fire when the invalid field is in meta.yml or
 # in an extends fragment — the compiler must not swallow them as ERR-INTERNAL.
 # ---------------------------------------------------------------------------
 
@@ -121,12 +121,12 @@ style:
 
 
 def test_meta_yaml_kpi_sizing_hint(in_memory_project: type) -> None:
-    """style.charts.kpi.min_height in meta.yaml raises with a hint, not ERR-INTERNAL."""
+    """style.charts.kpi.min_height in meta.yml raises with a hint, not ERR-INTERNAL."""
     project = in_memory_project(
         Path("/tmp/test"),
         {
             "charts/board.yml": _VALID_KPI_BOARD,
-            "charts/meta.yaml": _META_WITH_KPI_MIN_HEIGHT,
+            "charts/meta.yml": _META_WITH_KPI_MIN_HEIGHT,
         },
     )
     result = compile_file(project.path("charts/board.yml").read_board())
@@ -139,7 +139,7 @@ def test_meta_yaml_kpi_sizing_hint(in_memory_project: type) -> None:
     assert "remove" in all_text.lower()
     # The error must point at the fragment file, not at the board.
     assert result.errors[0].range is not None
-    assert result.errors[0].range.file == "charts/meta.yaml"
+    assert result.errors[0].range.file == "charts/meta.yml"
 
 
 def test_extends_fragment_table_sizing_hint(in_memory_project: type) -> None:

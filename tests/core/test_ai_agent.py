@@ -65,6 +65,20 @@ def test_build_agent_system_prompt_composes_skills_index_and_docs_pointer(
     assert prompt.index("SKILL_INDEX") < prompt.index("DOCS_POINTER")
 
 
+def test_build_agent_system_prompt_opens_with_the_american_english_rule(
+    tmp_path: Path,
+) -> None:
+    from dbt_charts.ai import agent
+
+    context = DbtChartsAIContext(
+        project_session=ProjectSession.open(tmp_path, read_only=False)
+    )
+
+    assert agent.build_agent_system_prompt(context).startswith(
+        "Write in American English."
+    )
+
+
 def test_build_agent_system_prompt_uses_descriptions_not_full_bodies(
     tmp_path: Path,
 ) -> None:
@@ -253,6 +267,7 @@ def test_build_agent_system_prompt_is_a_no_op_without_project_files(
     expected = "\n\n---\n\n".join(
         part
         for part in (
+            "Write in American English.",
             agent.build_skills_index(),
             agent.build_docs_pointer(),
             agent.build_sources_context(project_session.adapter_registry),

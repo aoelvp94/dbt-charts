@@ -16,7 +16,7 @@ token) instead of stark's ``vivid-10``.
 
 This test renders a real board end-to-end through the actual compile +
 execute + render pipeline (no mocked renderer, no pre-seeded
-``pre_resolved`` cache) — mirroring quick-guide.yaml's "4. Charts" nested
+``pre_resolved`` cache) — mirroring quick-guide.yml's "4. Charts" nested
 ``theme: stark`` construct — and asserts the nested chart's bar-mark fill
 and stroke colors come from stark's own palette/canvas tokens, not the
 root cream board's.

@@ -294,7 +294,7 @@ def test_bulk_schema_for_config_scopes_bigquery_to_the_region(
 def test_bulk_schema_for_config_raises_on_max_rows_truncation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Same guard as bulk_schema: a truncated catalogue must raise loudly, and
+    """Same guard as bulk_schema: a truncated catalog must raise loudly, and
     the fetch itself is bounded — never the whole warehouse into memory."""
     monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "1")
     source_config = _duckdb_with_two_schemas(tmp_path)

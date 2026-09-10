@@ -6,7 +6,7 @@ these values resolve *exactly* as dbt would: env_var defaults, the
 ``DBT_ENV_SECRET_``-prefixed secret form, and non-string value preservation
 (`port: 5432` stays an int) all come for free.
 
-Behaviour matches dbt's, deliberately:
+Behavior matches dbt's, deliberately:
 - A missing ``env_var()`` with no default raises (surfaced as ``ValueError`` —
   see :func:`_render`) for normal fields.
 - dbt's ``SecretRenderer`` *defers* rendering for ``password`` keypaths (real

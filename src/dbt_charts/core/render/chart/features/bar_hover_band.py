@@ -112,7 +112,7 @@ from dbt_charts.core.utils import coerce_numeric_cell
 # VL config to apply mark defaults to the band). Not ``dbt-`` — that prefix is
 # reserved for the CSS/SVG-facing surface (``dbt-box-outer`` etc.); VL style
 # names do NOT appear as CSS classes in rendered SVG, so this isn't that
-# surface — the band is instead recognised at the SVG level by
+# surface — the band is instead recognized at the SVG level by
 # ``opacity="0"`` on its rect paths (mark_extents.py).
 _HOVER_BAND_STYLE = "dct-hover-band"
 
@@ -141,7 +141,7 @@ def _band_mark_props(spec: ChartSpec) -> VLDict:
     ``{"expr": ...}``) so the band matches the real bar's own footprint.
     Without these the band can span the gutter (no "width"/"height" -> full
     slot) or be narrower than the bar (no "size" on grouped bars), both
-    causing a wrong-neighbour hit. ``tooltip: True`` is load-bearing, not
+    causing a wrong-neighbor hit. ``tooltip: True`` is load-bearing, not
     decorative: without it, a legend-bearing chart's ``dct_legend`` param
     stamping skips opacity-0 layers, which Vega then compiles to
     ``pointer-events: none`` on the band.
@@ -289,7 +289,7 @@ def _append_stacked_total_hover_band(
     x-unified tooltip already shows every series at a given x once ANY mark there is
     hovered (see ``collectMatchingMarks``). The only real gap is a column whose
     TOTAL renders too short to hover at all. Giving every series its own band (the
-    non-stacked design) would reintroduce the wrong-neighbour hit-test/link bug
+    non-stacked design) would reintroduce the wrong-neighbor hit-test/link bug
     stacked exclusion was added to avoid -- multiple bands at the same tiny x would
     overlap, and whichever painted last would win every hit test. So this emits at
     most ONE band per tiny x, carried by one arbitrarily-but-deterministically

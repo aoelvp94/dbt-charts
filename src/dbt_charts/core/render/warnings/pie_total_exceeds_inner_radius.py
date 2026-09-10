@@ -16,7 +16,7 @@ Width source: for normal VL donuts, the stamped slot width from
 vega_specs[chart_id]["width"] minus the slice labels' reach on both sides
 (arc_disk_width — the same model classification uses). Under autosize fit the
 runtime view can shrink further for a legend; that deduction is deliberately
-not modelled (the shared VL chrome estimator is a separate task), so the
+not modeled (the shared VL chrome estimator is a separate task), so the
 computed hole is a slight upper bound and the check errs toward not firing.
 chart.wheel_width for attached-table donuts (SVG path, absent from vega_specs).
 

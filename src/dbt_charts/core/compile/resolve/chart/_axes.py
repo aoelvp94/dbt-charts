@@ -318,20 +318,20 @@ def _endpoint_label_rail_fires(
 ) -> bool:
     """Return True when a rail of endpoint labels will render.
 
-    Needs a series colour channel (a folded wide area measure series, or a
+    Needs a series color channel (a folded wide area measure series, or a
     layered chart naming each layer's own endpoint — see
     ``EndpointLabelFeature._apply_layered_single_series``) to have anything
     to name, plus endpoint labels switched on. Callers must gate
     ``has_layers`` on ``dbt_charts.core.utils.layered_endpoint_rail_fires``
     themselves — this function trusts whatever it's handed.
 
-    The layered term only fires when there is NO base colour channel at all
-    (``color_ch is None``): a gradient/literal/conditional colour channel
+    The layered term only fires when there is NO base color channel at all
+    (``color_ch is None``): a gradient/literal/conditional color channel
     puts a non-series ``color`` encoding on the base spec, so
     ``emitters/_overlay.py``'s ``use_shared_scale`` never builds the shared
-    colour scale the layered rail reads (``_layer_color_scale``) — this must
+    color scale the layered rail reads (``_layer_color_scale``) — this must
     agree with ``EndpointLabelFeature.applies_to()``, which returns False for
-    exactly that colour-channel shape.
+    exactly that color-channel shape.
     """
     color_ch = channels.get("color")
     return endpoint_labels_visible and (
@@ -349,19 +349,19 @@ def _suppress_legend_for_endpoint_labels(
     wide_measure_series: bool = False,
     has_layers: bool = False,
 ) -> bool:
-    """Return True when endpoint labels will replace the colour legend.
+    """Return True when endpoint labels will replace the color legend.
 
     Two disjoint shapes retire the legend, each matched to what
     ``EndpointLabelFeature.apply()`` actually names — deliberately narrower
     than "the rail fires at all":
 
-    - No base colour channel, only layers (the layered rail —
+    - No base color channel, only layers (the layered rail —
       ``_apply_layered_single_series``): ``layered_rail_fires`` (callers pass
       ``dbt_charts.core.utils.layered_endpoint_rail_fires``'s result) is
-      already gated on every layer lacking its own colour field, so once
+      already gated on every layer lacking its own color field, so once
       it's True the rail names every series the legend would otherwise
       carry — nothing left for the legend to do.
-    - A base colour-series channel, or a folded wide-area measure series:
+    - A base color-series channel, or a folded wide-area measure series:
       the rail (``_resolve_endpoint_label_positions`` / ``_apply_wide_area``)
       only ever names the base's own series, never an overlay layer's — see
       ``EndpointLabelFeature.apply()``'s branch on ``has_series_color``, which
@@ -369,7 +369,7 @@ def _suppress_legend_for_endpoint_labels(
       Retiring the legend here is only safe when there is no layer left
       unnamed — this must be the *raw* ``chart.layers`` fact (``has_layers``),
       not ``layered_rail_fires``: an overlay strands regardless of whether
-      shape/orientation/colour gates keep the layered rail itself from
+      shape/orientation/color gates keep the layered rail itself from
       firing.
     """
     if not endpoint_labels_visible:
@@ -534,7 +534,7 @@ def _bake_ay_orient(
     """Resolve 'auto' y-axis position for line/area/bar at compile time.
 
     'auto' flips to 'left' when endpoint labels take the right rail (series
-    colour channel present, a layered chart, or endpoint_labels.visible on a
+    color channel present, a layered chart, or endpoint_labels.visible on a
     folded wide area); 'right' otherwise. Non-'auto' positions pass through
     unchanged so authored explicit sides win.
 
@@ -646,7 +646,7 @@ def _series_display_name(field: str | None, label: str | None) -> str | None:
     title. Mirrors ``XYTitles.y_plain``'s exact formula
     (``render/chart/emitters/_cartesian.py``) and the "Engine-derived layer
     name" rule (``render/chart/emitters/_overlay.py``) -- the same value the
-    render layer will actually put in the colour scale domain, so measuring
+    render layer will actually put in the color scale domain, so measuring
     against it here is measuring the real entry, not a guess.
     """
     return label or (default_axis_title(field) if field else None)
@@ -655,8 +655,8 @@ def _series_display_name(field: str | None, label: str | None) -> str | None:
 def cartesian_color_domain_values(
     dataset: ChartDataset, color: str | None
 ) -> tuple[str, ...]:
-    """The chart's real, distinct colour-channel values, read off the
-    executed dataset -- empty when the chart has no colour channel.
+    """The chart's real, distinct color-channel values, read off the
+    executed dataset -- empty when the chart has no color channel.
 
     Null values are dropped: render's ``distinct_series_values``
     (``render/chart/emitters/_cartesian.py``) documents why a null paints no
@@ -684,16 +684,16 @@ def cartesian_top_legend_entries(
     series' own display name and each overlay layer's, present only when the
     chart actually has layers (an unlayered chart's own series is not a
     legend entry -- there is nothing else to distinguish it from). Unioned
-    with ``color_domain_values`` -- the chart's real, distinct colour-channel
+    with ``color_domain_values`` -- the chart's real, distinct color-channel
     values, already read off the executed dataset by the caller
-    (``ChartDataset.column_values``), empty when the chart has no colour
+    (``ChartDataset.column_values``), empty when the chart has no color
     channel. That is the one source genuinely unknowable before this point;
     everything else here is authored, not guessed.
 
     ``has_color`` mirrors render's own ``field_color_base`` fork
-    (``render/chart/emitters/_overlay.py``): a base with its own colour field
+    (``render/chart/emitters/_overlay.py``): a base with its own color field
     never gets its y-title added as a separate legend entry there -- its
-    colour-domain values (``color_domain_values``) stand in for it instead.
+    color-domain values (``color_domain_values``) stand in for it instead.
     Passing the base name in on top of that domain would charge the fit
     predicate for an entry render never draws. A layer with no ``y`` is
     likewise skipped entirely by render (it has nothing to plot), so it is
@@ -766,7 +766,7 @@ def estimate_left_axis_reserve_px(
     guarantee for line/area: with endpoint labels visible,
     ``_bake_ay_orient`` can still flip their own measure axis to the left
     when the rail fires (``_endpoint_label_rail_fires``) -- a wide-measure
-    fold, or a ``color:`` channel in series mode, or an unlabelled
+    fold, or a ``color:`` channel in series mode, or an unlabeled
     (``color`` absent) ``layers:`` overlay, each alone sufficient -- this
     reserve does not currently account for that real, content-driven left
     axis (known gap, not fixed here).
@@ -1018,7 +1018,7 @@ def cartesian_series_naming(
     Owns the composition every family previously hand-assembled: the
     tiny-width fallback to a compact top legend
     (``_series_label_layout_for_width``), whether endpoint labels retire the
-    colour legend (``_suppress_legend_for_endpoint_labels``), whether a
+    color legend (``_suppress_legend_for_endpoint_labels``), whether a
     small-multiples grid wants one legend above the panels
     (``_multiples_wants_top_legend``), and the top_legend/off ternary that
     reads those together with the author's own ``legend:`` keys.
@@ -1107,7 +1107,7 @@ def cartesian_series_naming(
     than a real measurement, the same convention ``left_axis_reserve_px``
     already uses there.
 
-    A gradient colour channel is excluded from the two ladder rungs that
+    A gradient color channel is excluded from the two ladder rungs that
     measure rows, here, once, for every family -- not re-derived per call
     site. ``channels["color"]`` is the real, resolved channel
     (``style.color.gradient`` is authorable on bar, line, and area alike,
@@ -1117,7 +1117,7 @@ def cartesian_series_naming(
     computed. This does NOT null the parameter itself -- ``top_legend_series``
     is also ``wants_top_legend_shape``'s "this shape has entries to name"
     signal, which forces the legend visible even when the row doesn't fit;
-    nulling it would silence a gradient-coloured line/area's legend
+    nulling it would silence a gradient-colored line/area's legend
     entirely on a theme that hides it by default, trading a placement bug
     for a worse one.
     """

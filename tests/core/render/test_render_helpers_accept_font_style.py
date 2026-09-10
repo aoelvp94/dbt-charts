@@ -152,8 +152,8 @@ def test_e_render_spark_bar_sentinel_via_render_spark() -> None:
 # =============================================================================
 
 # Note: _render_pagination_controls used to take font: FontStyle; the
-# paginator now owns its own font/colour/weight cluster as PaginatorStyle, so
-# that signature shape is no longer pinned here. The visual behaviour is
+# paginator now owns its own font/color/weight cluster as PaginatorStyle, so
+# that signature shape is no longer pinned here. The visual behavior is
 # covered by tests/core/test_table_pagination_controls.py.
 
 

@@ -77,7 +77,7 @@ def _plan_text_columns(
         count = min(max(1, int((available + gutter) // (col_width + gutter))), ceiling)
         # An authored measure overrides the shipped one, not the card holding it:
         # the containing SVG is a viewport, so a column wider than its slot is
-        # painted over its neighbours rather than spilling harmlessly.
+        # painted over its neighbors rather than spilling harmlessly.
         fits = (available - (count - 1) * gutter) / count
         return MeasurePlan(columns=count, column_width=min(col_width, fits))
     return plan_measure(

@@ -191,7 +191,7 @@ def test_vertical_grouped_bar_keeps_every_queried_bucket(
 def test_horizontal_grouped_bar_keeps_every_queried_bucket(
     make_chart, null_months: set[str], case: str
 ) -> None:
-    """A horizontal, series-coloured bar keeps every bucket the query returned.
+    """A horizontal, series-colored bar keeps every bucket the query returned.
 
     This is the branch that keeps VL's default (no explicit sort) domain
     order — the one exposed to the invalid-value-filter bug; the single-

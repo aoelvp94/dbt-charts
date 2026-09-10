@@ -42,8 +42,11 @@ import json
 import vl_convert as vlc
 
 from dbt_charts.core.compile.models.chart.authored import ChartSort
-from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
-from dbt_charts.core.compile.models.chart.normalized import BarChart as NBarChart
+from dbt_charts.core.compile.models.chart.authored._layer import BarLayer, LineLayer
+from dbt_charts.core.compile.models.chart.normalized import (
+    BarChart as NBarChart,
+    ScatterChart as NScatterChart,
+)
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
@@ -51,6 +54,7 @@ from dbt_charts.core.font_measure import RESERVATION_GUARD
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.emitters._overlay import _reconcile_x_domain
 from dbt_charts.core.render.chart.emitters.bar import BarEmitter
+from dbt_charts.core.render.chart.emitters.scatter import ScatterEmitter
 from dbt_charts.core.render.chart.spec import RenderBox
 from dbt_charts.core.render.chart.translate import translate_to_vl
 
@@ -309,9 +313,9 @@ def test_unauthored_x_diverging_query_layer_contributes_to_union_domain() -> Non
     upstream had already pinned the domain to base-only rows — e.g. a
     mixed-sign bar's positive/negative split
     (``pin_categorical_domain_order``, ``emitters/_layers.py``). This test
-    pins the union directly: without the arm, ``layer_x_columns`` stays
-    empty, ``_reconcile_x_domain`` returns at its first guard, and no
-    ``scale.domain`` is set at all — the assertion below fails outright."""
+    pins the union directly: without the arm, ``layer_x_columns`` stays empty,
+    ``_reconcile_x_domain`` pins the base's rows alone, and the domain comes
+    back ``["Jan", "Feb"]`` — the assertion below fails outright."""
     data = [
         {"month": "Jan", "revenue": 100.0},
         {"month": "Feb", "revenue": 200.0},
@@ -360,7 +364,14 @@ def test_unauthored_layer_shares_base_rows_on_year_shaped_x() -> None:
     )
     wrapper = _line_layer_wrapper(vl, "target")
     assert wrapper.get("data") is None
-    assert "domain" not in vl["encoding"]["x"].get("scale", {})
+    # The domain is pinned on every layered categorical x. What this test
+    # cares about is the values: the base's own already-bucket-normalized
+    # rows, not the raw ``datasets`` lookup ("2020-01-01", not "2020").
+    assert vl["encoding"]["x"]["scale"]["domain"] == [
+        "2020-01-01",
+        "2021-01-01",
+        "2022-01-01",
+    ]
     outer_rows = vl["data"]["values"]
     base_rows = vl["layer"][0]["data"]["values"]
     assert len(outer_rows) == len(base_rows) == 3
@@ -475,3 +486,110 @@ def test_layered_line_continuous_x_authored_scale_domain_survives() -> None:
         session.emit_chart(resolved, _DEFAULT_BOX, {resolved.query_name: data})
     )
     assert vl["encoding"]["x"]["scale"]["domain"] == ["2019-01-01", "2026-01-01"]
+
+
+_COLOR_SORT_DATA: list[dict] = [
+    {"label": "Nov 21", "seq": 1, "kind": "alpha", "value": 10.0, "overlay": None},
+    {"label": "Nov 21", "seq": 1, "kind": "beta", "value": 3.0, "overlay": None},
+    {"label": "Feb 22", "seq": 2, "kind": "alpha", "value": 12.0, "overlay": None},
+    {"label": "Feb 22", "seq": 2, "kind": "beta", "value": 2.0, "overlay": None},
+    {"label": "May 22", "seq": 3, "kind": "alpha", "value": 9.0, "overlay": None},
+    {"label": "May 22", "seq": 3, "kind": "beta", "value": 4.0, "overlay": None},
+    {"label": "Feb 23", "seq": 6, "kind": "alpha", "value": 8.0, "overlay": 8.0},
+    {"label": "Feb 23", "seq": 6, "kind": "beta", "value": 3.0, "overlay": 3.0},
+]
+# seq descending: Feb 23(6), May 22(3), Feb 22(2), Nov 21(1). Alphabetical —
+# what Vega-Lite falls back to — is Feb 22, Feb 23, May 22, Nov 21, and query
+# row order is Nov 21, Feb 22, May 22, Feb 23; all three differ.
+_EXPECTED_COLOR_SORT_ORDER = ["Feb 23", "May 22", "Feb 22", "Nov 21"]
+
+
+def test_layered_color_bar_with_authored_sort_renders_in_sort_order() -> None:
+    """A layer authoring neither its own ``x:`` nor its own ``query:`` still
+    forks the base's dataflow across Vega-Lite sub-layers — here through the
+    ``color:`` channel's own series-order ``calculate`` — so the shared
+    categorical x domain has to be pinned for the authored ``chart.sort`` to
+    survive. Such a layer contributes nothing to ``layer_x_columns``, so an
+    empty one is no evidence the domain is safe."""
+    layer = BarLayer(type="bar", y="overlay", color="kind")
+    chart = _bar_normalized(
+        x="label",
+        y="value",
+        color="kind",
+        stack="zero",
+        style={"orientation": "vertical"},
+        layers=[layer],
+        sort=ChartSort(by="seq", order="desc"),
+    )
+    resolved = resolve(chart, _COLOR_SORT_DATA, _default_board_style())
+
+    vl = translate_to_vl(
+        BarEmitter().emit(resolved, _DEFAULT_BOX, regroup((), _COLOR_SORT_DATA))
+    )
+    assert vl["encoding"]["x"]["scale"]["domain"] == _EXPECTED_COLOR_SORT_ORDER
+    assert _rendered_x_axis_order(vl) == _EXPECTED_COLOR_SORT_ORDER
+
+
+def test_unlayered_color_bar_with_authored_sort_keeps_vl_native_field_sort() -> None:
+    """The control for the test above. Unlayered, the chart is one VL spec
+    with nothing forking the x scale, so Vega-Lite's own field ``sort``
+    already orders the axis and the reconciler never runs — this spec must
+    stay exactly as it was, sort key intact and no pinned ``scale.domain``.
+
+    Asserted on the spec rather than through ``_rendered_x_axis_order``: an
+    unlayered emitter stamps no top-level ``data``, so the compiled
+    scenegraph has no categories to read back."""
+    chart = _bar_normalized(
+        x="label",
+        y="value",
+        color="kind",
+        stack="zero",
+        style={"orientation": "vertical"},
+        sort=ChartSort(by="seq", order="desc"),
+    )
+    resolved = resolve(chart, _COLOR_SORT_DATA, _default_board_style())
+
+    vl = translate_to_vl(
+        BarEmitter().emit(resolved, _DEFAULT_BOX, regroup((), _COLOR_SORT_DATA))
+    )
+    x_enc = vl["encoding"]["x"]
+    assert x_enc["sort"] == {"field": "seq", "order": "descending"}
+    assert "domain" not in x_enc.get("scale", {})
+
+
+def test_layered_scatter_categorical_x_pins_query_row_order() -> None:
+    """A layered scatter's categorical x pins query row order, like every
+    other cartesian family's does.
+
+    Scatter builds its own x encoding (``emitters/scatter.py``) and, unlike
+    ``build_x_enc`` (``emitters/_cartesian.py``), emits no ``sort`` key — so
+    an UNLAYERED
+    categorical-x scatter still takes Vega-Lite's own ascending default and
+    renders alphabetically. Adding a layer therefore changes this chart's
+    axis order. That divergence is scatter's missing ``sort: None``, not the
+    pin's; this test pins the layered half so a later fix to the unlayered
+    half has to move both together.
+    """
+    data = [
+        {"segment": "North", "revenue": 100.0, "target": 10.0},
+        {"segment": "East", "revenue": 200.0, "target": 20.0},
+        {"segment": "South", "revenue": 50.0, "target": 30.0},
+    ]
+    layer = LineLayer(type="line", y="target")
+    chart = NScatterChart(
+        id="scatter1",
+        type="scatter",
+        x="segment",
+        y="revenue",
+        query=_sql(),
+        query_name="q",
+        variable_dependencies=set(),
+        layers=[layer],
+    )
+    resolved = resolve(chart, data, _default_board_style())
+
+    vl = translate_to_vl(
+        ScatterEmitter().emit(resolved, _DEFAULT_BOX, regroup((), data))
+    )
+    assert vl["encoding"]["x"]["scale"]["domain"] == ["North", "East", "South"]
+    assert _rendered_x_axis_order(vl) == ["North", "East", "South"]

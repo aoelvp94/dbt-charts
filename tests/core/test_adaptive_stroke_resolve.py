@@ -1035,7 +1035,7 @@ rows:
     def test_ring_tracks_the_layer_stroke_without_a_density_signal(
         self, stroke: float
     ) -> None:
-        """Parametrised because one case cannot tell a mechanism from a
+        """Parametrized because one case cannot tell a mechanism from a
         coincidence: VL's own point default is 2, so a lone ``stroke: 2`` case
         passes just as well with no ring logic at all."""
         rings = self._rings(self._BOARD.format(stroke=stroke))

@@ -244,7 +244,7 @@ class TestApparatusRefactor:
         """After resolve_style, table body inherits root style.font.size (no
         hardcoded 13px)."""
 
-        get_config()  # ensure settings initialised
+        get_config()  # ensure settings initialized
         ctx = resolve_chart_style_context(get_theme_style())
         assert ctx.table.font.size == get_theme_style().font.size, (
             f"Expected table body size {get_theme_style().font.size}, got "

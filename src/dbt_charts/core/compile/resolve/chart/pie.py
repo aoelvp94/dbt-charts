@@ -84,7 +84,7 @@ def _resolve_pie(
     )
     primary = _with_color_tokens(normalized.style, chart_style_context)
     pie = merge_onto_base(chart_style_context.pie, primary)
-    # The centre total and every slice tooltip vote on one set (theta values
+    # The center total and every slice tooltip vote on one set (theta values
     # plus their sum) so they never disagree about the same sub-$1 value --
     # see resolve_format_for_values's per-set contract.
     theta_values = _column_numeric_values(data, normalized.theta)

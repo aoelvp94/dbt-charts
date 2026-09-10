@@ -1,6 +1,6 @@
 """Turning a chart-scoped exception into the Diagnostic every surface publishes.
 
-Stage: RENDER. A neutral leaf so the three modules that materialise chart
+Stage: RENDER. A neutral leaf so the three modules that materialize chart
 errors — the sizing pass, the SVG walk, and the data-format walk — share one
 payload shape instead of each stamping its own subset of identity fields.
 """

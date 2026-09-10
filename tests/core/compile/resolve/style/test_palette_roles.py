@@ -1,7 +1,7 @@
 """A theme palette role may stand in for a palette name — in theme YAML only.
 
 `palettes:` maps a role (`category`, `sequence`) to a palette file. Before this,
-that map only served single-colour tokens like `category[2]`, while the palette
+that map only served single-color tokens like `category[2]`, while the palette
 fields repeated the file name — so a theme named the same palette twice with
 nothing keeping the two in sync.
 
@@ -192,7 +192,7 @@ def test_unknown_name_is_rejected_with_a_did_you_mean():
 
 
 def test_a_tone_in_a_stops_slot_is_a_diagnostic_not_a_traceback():
-    """A tone resolves but names one colour; `palette()` raises a subclass of
+    """A tone resolves but names one color; `palette()` raises a subclass of
     ValueError that is not UnknownPaletteError, which must not escape."""
     result = compile_board(_board("negative"))
     assert not result.success

@@ -318,7 +318,7 @@ def _item_text(item: ListItem) -> str:
 
 
 class TestListCases:
-    """17 cases pinned against CommonMark behaviour.
+    """17 cases pinned against CommonMark behavior.
 
     21 of 34 assertions fail against the old parser (before _parse_list).
     The failing assertions are annotated with "# old: FAIL".

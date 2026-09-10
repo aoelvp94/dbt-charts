@@ -4,7 +4,7 @@ core/diagnostics/codes_render.py for what this fires on.
 The check is general, not bar-specific: for N labels spread across a categorical
 x-axis, each gets a slot of ``plot_width / N``. If the widest rendered label is
 wider than its slot, labels overflow their mark and collide with their
-neighbours. Same computation for bar, line, and area value labels.
+neighbors. Same computation for bar, line, and area value labels.
 
 Both sides are exact: the slot uses the panel's real rendered width from the
 Vega-Lite spec (``vega_specs[chart_id].width``, unwrapping the small-multiples

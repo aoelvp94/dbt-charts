@@ -111,7 +111,7 @@ class BoardRenderResult(BaseModel):
     # bytes for binary formats (png/pdf); str for text-based; dict for json.
     # MCP callers should not request binary formats — `model_dump_json()` /
     # `json.dumps()` in the MCP dispatcher will fail on bytes at the wire
-    # boundary, which is correct behaviour.
+    # boundary, which is correct behavior.
     data: dict[str, Any] | str | bytes | None = None
     validation_errors: list[Diagnostic] = []
     warnings: list[Diagnostic] = []
@@ -172,11 +172,11 @@ def _view_url(
 
 
 def _charts_meta_default_source(charts_dir: ProjectDirectory) -> str | None:
-    """Return the project-level default source declared in ``charts/meta.yaml``.
+    """Return the project-level default source declared in ``charts/meta.yml``.
 
     A pathless in-memory board (``InMemoryBoard(content, path=None)``) compiles
-    in isolation, so the on-disk meta.yaml cascade never runs. A board that
-    inherits its source from ``charts/meta.yaml`` (``source: <name>``) would then
+    in isolation, so the on-disk meta.yml cascade never runs. A board that
+    inherits its source from ``charts/meta.yml`` (``source: <name>``) would then
     compile as sourceless and fail ``ERR-SOURCE-REQUIRED``. Read that
     project-level default through the ``ProjectDirectory`` abstraction — so it
     works for both the filesystem and a host-injected file plugin (Cloud's git
@@ -184,7 +184,7 @@ def _charts_meta_default_source(charts_dir: ProjectDirectory) -> str | None:
     """
     from dbt_charts.core.compile.parse.parser import load_yaml_mapping
 
-    for name in ("meta.yaml", "meta.yml"):
+    for name in ("meta.yml", "meta.yaml"):
         meta_path = charts_dir / name
         if meta_path.exists():
             source = load_yaml_mapping(meta_path.read_text()).get("source")
@@ -285,7 +285,7 @@ def render_dashboard(
     location alongside a pre-compiled result.
 
     ``board`` binds the content to compile to its project location (the
-    ``charts/meta.yaml`` cascade anchor, relative-ref base, and error/link path);
+    ``charts/meta.yml`` cascade anchor, relative-ref base, and error/link path);
     it does not need to exist on the store (an unsaved buffer compiles fine). A
     ``board.path`` of ``None`` compiles with no cascade and contributes no file
     identity (no preview URL, unstamped errors, no dir-navigation variables).
@@ -370,7 +370,7 @@ def render_dashboard(
         if board.path is not None:
             result = compile_file(board)
         else:
-            # Pathless in-memory content: no meta.yaml cascade to run, so
+            # Pathless in-memory content: no meta.yml cascade to run, so
             # compile the string directly — the historical yaml_content arm.
             result = compile(
                 board.content,
@@ -506,7 +506,7 @@ def render_dashboard(
         # This yields two suppressed sets that both belong in the result and
         # must not be collapsed. They differ by which layer silenced them:
         # `result.suppressed_warnings` matched a compile-time layer (query-level
-        # `ignore:` or meta.yaml lint config), while `compile_suppressed`
+        # `ignore:` or meta.yml lint config), while `compile_suppressed`
         # matched the render-time layers applied just above (--ignore-warning,
         # dbt_charts.yml, per-chart codes).
         compile_active, compile_suppressed = _partition_warnings(
