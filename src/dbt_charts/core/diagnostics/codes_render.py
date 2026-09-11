@@ -1,7 +1,8 @@
 """ERR-* and WARN-* codes for the render domain.
 
 Error codes: KPI multirow, bar duplicate rows, map key mismatch, format
-unsupported, no layout, input invalid, Vega-Lite unsupported type, histogram
+unsupported, format converter unavailable, format conversion failed, no
+layout, input invalid, Vega-Lite unsupported type, histogram
 non-numeric, histogram pre-aggregated, label/ticks validation, percent range,
 emitter not found, labels field not found, scale domain, concat overshoot,
 chart painted no marks, pie null theta, pie negative theta, multiples +
@@ -70,10 +71,13 @@ ERR_GAP_FILL_BUCKET_COLLISION = REGISTRY.register(
         ),
         doc=(
             "Fired when gap-filling an ordinal bucketed-time axis finds two "
-            "rows whose x-values round to the same bucket (e.g. two "
-            "timestamps on the same calendar day under a `yearmonthdate` "
-            "grain). A last-wins merge would silently discard one row; "
-            "aggregate to the bucket grain in the query before rendering."
+            "rows whose x-values fall inside the same bucket: two timestamps "
+            "on one calendar day under `yearmonthdate`, or a finer-grained "
+            "series under a coarser authored `time_unit` (monthly rows under "
+            "`yearquarter`, daily rows under `yearmonth`). A coarser grain "
+            "places rows in buckets; it does not combine them, and a "
+            "last-wins merge would silently discard all but one. Aggregate "
+            "to the bucket grain in the query before rendering."
         ),
         summary="Fired when two rows collapse to the same gap-fill bucket.",
         docs_topic="charts",
@@ -179,6 +183,49 @@ ERR_FORMAT_UNSUPPORTED = REGISTRY.register(
         doc=(
             "Fired when a render verb is called with an output format that is not "
             "supported. Check the supported formats in the CLI reference."
+        ),
+        docs_topic="errors",
+    )
+)
+
+ERR_FORMAT_CONVERTER_UNAVAILABLE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FORMAT-CONVERTER-UNAVAILABLE",
+        domain="render",
+        title="Format conversion library is not installed",
+        message_template=(
+            "{format!r} rendering requires vl-convert-python. Install it "
+            "with: pip install vl-convert-python"
+        ),
+        doc=(
+            "Fired when a PNG or PDF export (or any render path that needs "
+            "vl-convert-python to turn a Vega-Lite spec into SVG/PNG/PDF) "
+            "runs in an environment where vl-convert-python is not "
+            "installed. Install it: `pip install vl-convert-python`."
+        ),
+        docs_topic="errors",
+    )
+)
+
+ERR_FORMAT_CONVERSION_FAILED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-FORMAT-CONVERSION-FAILED",
+        domain="render",
+        title="Format conversion failed",
+        message_template=(
+            "{format!r} export failed while converting the rendered board "
+            "({detail}). Try exporting {alt_formats} instead, or split the "
+            "board into smaller boards."
+        ),
+        doc=(
+            "Fired when the vl-convert-python converter raises while "
+            "turning a rendered board into PNG or PDF bytes. On PDF "
+            "exports, the most common permanent cause is the PDF format's "
+            "own 28-level graphics-state nesting limit: a sufficiently "
+            "large or deeply nested board can exceed it. Try a different "
+            "export format, or split the board into smaller boards. The "
+            "underlying converter message is preserved in the diagnostic "
+            "detail."
         ),
         docs_topic="errors",
     )
@@ -1569,8 +1616,9 @@ WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER = REGISTRY.register(
             "Fires when a chart's y-encoding field name looks like money or a "
             "percentage but the chart's baked y-axis format is unfit to render "
             "that kind. Detection is name-based: fields ending in _usd, _revenue, "
-            "_amount, _pct, _rate, etc. trigger when the resolved y-axis format "
-            "does not carry `$` or `%`."
+            "_amount, _pct, _rate, etc. (or bare names like `share`, `mrr`) "
+            "trigger when the resolved y-axis format does not carry the "
+            "matching symbol (`$` for money, `%` for a percentage)."
         ),
         docs_topic="charts",
     )

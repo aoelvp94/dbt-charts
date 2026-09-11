@@ -969,15 +969,15 @@ rows:
     ):
         """The board-level position surfaces as an error, and needs the hint too.
 
-        A board carrying BOTH the theme-level key (which has a Deletion) and the
-        chart-local one (which has none) recognizes as the older grammar, applies
-        deletions, still fails the current-schema check, and reports the ORIGINAL
-        mapping -- so the theme-level key reaches Pydantic after all and this
-        branch fires. Any other current-schema violation elsewhere in the board
-        reaches it the same way. Same shape as the font/border precedent in
-        test_card_style_hint_font_border.py.
+        Both axis_quantitative positions migrate now, so the trigger is an
+        unrelated current-schema violation: the board recognizes as the older
+        grammar, applies its deletions, still fails the current-schema check on
+        `bogus_field`, and reports the ORIGINAL mapping -- so the theme-level
+        key reaches Pydantic after all and this branch fires. Same shape as the
+        font/border precedent in test_card_style_hint_font_border.py.
         """
         yaml_content = """title: Test
+bogus_field: 1
 queries:
   q1:
     sql: SELECT 1 AS x, 'A' AS y
@@ -1022,10 +1022,13 @@ rows:
 
     def test_heatmap_chart_local_axis_quantitative_names_axis_band(self):
         """Heatmap's axes are both nominal -- axis_quantitative has nothing to
-        style. The chart-local position has no Deletion available (the tail
-        is still live on the other five cartesian families), so it must fail
-        loud with a hint naming the real alternative, axis_band."""
+        style. The chart-local position migrates now (a chart_type-scoped
+        Deletion in versions/v0_6_0.py), so the hint is what an author sees
+        only where migration cannot finish -- here, an unrelated
+        current-schema violation. It must name the real alternative,
+        axis_band."""
         yaml_content = """title: Test
+bogus_field: 1
 queries:
   q1:
     sql: SELECT 1 AS x, 'A' AS y
@@ -1054,7 +1057,7 @@ rows:
 
     def test_heatmap_theme_level_axis_quantitative_migrates_silently(self):
         """Same field, board-level slot -- but this position DOES have a
-        Deletion (see compile/migrations/versions/current.py), so it never
+        Deletion (see compile/migrations/versions/v0_6_0.py), so it never
         reaches the parser as an unknown field. A Deletion strips the key
         before Pydantic ever sees it, so this compiles clean via the same
         in-memory migration `dct migrate` would apply to the file -- there is
@@ -1788,7 +1791,7 @@ class TestSchemaVersionUpgradeHint:
             load_yaml_schema_catalog,
         )
 
-        return load_yaml_schema_catalog().latest.version
+        return load_yaml_schema_catalog().latest_released.version
 
     def test_newer_schema_version_appends_an_upgrade_hint(self):
         errors = self._errors(

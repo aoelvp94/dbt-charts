@@ -15,6 +15,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
+from dbt_charts.core.utils import YAML_LOADER
+
 if sys.version_info >= (3, 11):
     from typing import Self
 else:
@@ -202,7 +204,7 @@ def list_boards(
         if not pf.is_yaml or pf.is_meta:
             continue
         try:
-            content = yaml.safe_load(pf.read_text())
+            content = yaml.load(pf.read_text(), Loader=YAML_LOADER)
             if not isinstance(content, dict):
                 skipped.append(SkippedFile(file=pf, reason="Not a YAML mapping"))
                 continue

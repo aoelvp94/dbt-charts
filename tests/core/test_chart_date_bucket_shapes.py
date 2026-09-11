@@ -462,3 +462,86 @@ def test_time_unit_auto_renders_marks_for_every_date_shape(
     assert measured == expected, (
         f"{label}: expected {expected} marks under time_unit: auto, measured {measured}"
     )
+
+
+# --- ordinal scaffold budget gates line/area/scatter grain too ---
+
+
+def _off_lattice_dates(start: dt.date, n: int, gap_days: int) -> list[dt.date]:
+    """n dates gap_days apart, on no calendar lattice. 45 days is no whole
+    number of months, quarters or years and shifts weekday every step, so
+    nothing coarser fits and ``detect_time_unit`` returns yearmonthdate — a
+    day grain whose [min, max] span is ~45x the row count."""
+    return [start + dt.timedelta(days=gap_days * i) for i in range(n)]
+
+
+def test_line_area_scatter_drop_grain_past_scaffold_budget() -> None:
+    """Ten dates 45 days apart detect as yearmonthdate (day) grain, a 406-day
+    span for 10 real points. ``ordinal_scaffold_within_budget``
+    already rejects this for bar; line/area/scatter must consult the
+    same gate and drop the grain too, or Vega-Lite bands one gridline per day
+    into a solid gray stripe behind the plot."""
+    rows = [
+        {"m": d.isoformat(), "v": i}
+        for i, d in enumerate(_off_lattice_dates(dt.date(2023, 1, 4), 10, 45))
+    ]
+    for chart_type in ("line", "area", "scatter"):
+        enc = _x_encoding(chart_type, rows)
+        assert enc.get("type") == "temporal", f"{chart_type}: {enc!r}"
+        assert "timeUnit" not in enc, (
+            f"{chart_type}: over-budget grain must be dropped, got {enc!r}"
+        )
+
+
+def test_line_area_scatter_dense_daily_keeps_grain() -> None:
+    """120 contiguous daily points is within budget (span == row count) — the
+    control proving the scaffold gate discriminates rather than dropping
+    grain everywhere. Must not move alongside the sparse case above."""
+    first = dt.date(2024, 1, 1)
+    rows = [
+        {"m": (first + dt.timedelta(days=i)).isoformat(), "v": i} for i in range(120)
+    ]
+    for chart_type in ("line", "area", "scatter"):
+        enc = _x_encoding(chart_type, rows)
+        assert enc.get("type") == "temporal", f"{chart_type}: {enc!r}"
+        assert enc.get("timeUnit") == "utcyearmonthdate", (
+            f"{chart_type}: dense-daily grain must be preserved, got {enc!r}"
+        )
+
+
+def _faceted_x_encoding(chart_type: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Like ``_x_encoding``, but with ``multiples: {rows: "panel"}`` authored,
+    reading the x encoding out of the faceted spec's inner ``spec`` pane."""
+    chart = _CHART_ADAPTER.validate_python(
+        {
+            "id": f"test_{chart_type}",
+            "type": chart_type,
+            "x": "m",
+            "y": "v",
+            "multiples": {"rows": "panel"},
+        }
+    )
+    resolved = resolve(chart, rows, chart_style_context=_BOARD_CTX)
+    spec = render_resolved_chart(resolved, rows, _BOARD_STYLE).payload
+    return spec["spec"]["encoding"]["x"]
+
+
+def test_faceted_line_area_scatter_dense_panels_keep_grain() -> None:
+    """Two panels of contiguous dailies twenty years apart: each panel is
+    individually dense (zero synthesized buckets, budget == row count), so
+    the per-panel scaffold measurement bar.py already uses must apply here
+    too. Pooling the two panels' spans instead reads an ~7,300-day range for
+    80 real points and wrongly drops the grain — the exact failure
+    ``ordinal_scaffold_within_budget``'s docstring names as the case this
+    gate exists to prevent."""
+    rows = [
+        {"m": (start + dt.timedelta(days=i)).isoformat(), "v": i, "panel": panel}
+        for panel, start in (("a", dt.date(2000, 1, 1)), ("b", dt.date(2020, 1, 1)))
+        for i in range(40)
+    ]
+    for chart_type in ("line", "area", "scatter"):
+        enc = _faceted_x_encoding(chart_type, rows)
+        assert enc.get("type") == "temporal", f"{chart_type}: {enc!r}"
+        assert enc.get("timeUnit") == "utcyearmonthdate", (
+            f"{chart_type}: dense per-panel grain must be preserved, got {enc!r}"
+        )

@@ -49,8 +49,71 @@ _DATE_RE = re.compile(
 )
 
 
-class UniqueKeyLoader(yaml.SafeLoader):
-    """PyYAML SafeLoader that raises ConstructorError on duplicate mapping keys.
+# Every parse of board text goes through this one loader — libyaml's C
+# scanner, never PyYAML's pure-Python one: the two scanners do not accept
+# the same language (a tab as separation whitespace, for one), so a board
+# must never be parsed by both. Never wrap this in try/except ImportError.
+if not yaml.__with_libyaml__:
+    raise ImportError(
+        "dbt-charts requires PyYAML built with libyaml (yaml.CSafeLoader); "
+        "install a PyYAML wheel or build it against libyaml"
+    )
+
+
+# The deepest authored board in the repo nests 12 levels; the compile path's
+# own Python recursion gives out near 330. libyaml's node composer recurses
+# in C with no guard at all, so ~25k levels (50 KB of brackets, or of "- ")
+# segfault the interpreter instead of raising — the Python scanner raised a
+# catchable RecursionError. Nothing above this loader can catch that, so the
+# ceiling is enforced here, over libyaml's own event stream, which is
+# iterative and safe at any depth.
+MAX_YAML_NESTING = 100
+
+
+class NestingTooDeepError(yaml.MarkedYAMLError):
+    """Board text nested past ``MAX_YAML_NESTING`` — refused before composing."""
+
+
+class BoardLoader(yaml.CSafeLoader):
+    """CSafeLoader that refuses to compose text nested past ``MAX_YAML_NESTING``."""
+
+    def __init__(
+        self,
+        stream: object,  # type-state: object_annotation — narrowed to str below
+    ) -> None:
+        # Imported here, not at module top: an import sorter would hoist it
+        # above the libyaml guard, and on a build without libyaml it is this
+        # import that fails — the guard's install hint has to come first.
+        from yaml._yaml import CParser
+
+        # Text only: the depth pass below would drain a file-like stream and
+        # leave the composer an empty document.
+        if not isinstance(stream, str):
+            raise TypeError("BoardLoader parses text, not a stream")
+        depth = 0
+        events = CParser(stream)
+        try:
+            while events.check_event():
+                event = events.get_event()
+                if isinstance(event, yaml.SequenceStartEvent | yaml.MappingStartEvent):
+                    depth += 1
+                    if depth > MAX_YAML_NESTING:
+                        raise NestingTooDeepError(
+                            problem=f"nesting deeper than {MAX_YAML_NESTING} levels",
+                            problem_mark=event.start_mark,
+                        )
+                elif isinstance(event, yaml.SequenceEndEvent | yaml.MappingEndEvent):
+                    depth -= 1
+        finally:
+            events.dispose()
+        super().__init__(stream)
+
+
+YAML_LOADER = BoardLoader
+
+
+class UniqueKeyLoader(BoardLoader):
+    """BoardLoader that raises ConstructorError on duplicate mapping keys.
 
     Scan runs on the raw node list before flatten_mapping so merge-key overrides
     (<<: *anchor + explicit key) are not flagged as duplicates.
@@ -243,6 +306,68 @@ def is_year_shaped(samples: list[Any]) -> bool:
         else:
             return False
     return True
+
+
+def is_vega_numeric_value(
+    value: int | float | Decimal | bool | str | date | datetime,
+) -> bool:
+    """Whether ``value`` counts as numeric for Vega-Lite type inference.
+
+    The single source of truth for "is this cell numeric" as far as deciding
+    a color/measure encoding's VL type goes — ``render/chart/type_inference.py``'s
+    ``infer_vega_type_from_data``, ``render/chart/emitters/_channels.py``'s
+    ``_numeric_extent``, and ``compile/resolve/chart/_channels.py``'s
+    ``_flag_quantitative_color`` (via ``vega_infers_quantitative`` below) all
+    call this so they cannot independently drift onto different numeric
+    rules (that drift once caused a real bug: a numeric-*string* column got
+    a numeric domain baked onto a scale VL was rendering nominal, since a
+    looser string-coercing rule was used to compute the domain). Deliberately
+    does NOT accept numeric strings — a `"77"` cell is nominal data VL cannot
+    compare against a raw number, no matter how a downstream consumer feels
+    about coercing it. Also
+    deliberately does NOT exclude ``bool`` (unlike ``coerce_numeric_cell``,
+    which does, for a different, render-formatting-cell contract): a boolean
+    series field must reach the quantitative "no reorder" skip path (see
+    test_shared_spatial_series_order), and ``bool`` is an ``int`` subclass, so
+    counting it as numeric is the natural default of the isinstance check.
+    Includes ``Decimal`` so warehouse NUMERIC/DECIMAL columns (BigQuery,
+    DuckDB) are not misclassified nominal.
+    """
+    return isinstance(value, (int, float, Decimal))
+
+
+def vega_infers_quantitative(data: Rows, field: str) -> bool:
+    """Whether Vega-Lite's own type inference would resolve ``field`` to a
+    quantitative encoding.
+
+    The one shared predicate behind both sides of the hover-emphasis
+    magnitude gate: ``render/chart/emitters/_channels.py``'s
+    ``channel_to_encoding`` calls ``infer_vega_type_from_data`` directly to
+    pick the VL encoding type for a bare ``color: <field>`` series channel;
+    ``compile/resolve/chart/_channels.py``'s ``_flag_quantitative_color``
+    calls this function to predict the same verdict at compile time, before
+    the emitter ever runs — so the two can no longer independently drift on
+    the sample window, the numeric rule, or the all-or-nothing threshold.
+    Mirrors ``infer_vega_type_from_data``'s own numeric sample exactly: the
+    first 10 rows, skipping ``None`` cells, every remaining sampled value
+    must read as numeric. A field absent from the first row returns
+    ``False`` (the same row-0 guard ``infer_vega_type_from_data`` applies);
+    an entirely-null sample (the field present but every sampled value
+    ``None``) returns vacuous-true instead, since
+    ``infer_vega_type_from_data`` now delegates its own verdict to this same
+    function — an all-null color column still renders Vega-Lite's
+    quantitative gradient legend, so the gate must flag it too.
+    """
+    if not data or field not in data[0]:
+        return False
+    sample_values = [
+        row.get(field) for row in data[: min(10, len(data))] if field in row
+    ]
+    if not sample_values:
+        return False
+    return all(
+        is_vega_numeric_value(value) for value in sample_values if value is not None
+    )
 
 
 def is_date_like(value: Any) -> bool:

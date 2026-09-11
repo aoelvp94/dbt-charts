@@ -60,6 +60,11 @@ class FormatError(RenderError):
     - SVG to PNG/PDF conversion fails
     - HTML template error
 
+    Always construct via `FormatError.from_code(...)` with a registered
+    diagnostic code. There is no dedicated plain-message constructor; a bare
+    `FormatError("...")` falls back to the inherited `RenderError.__init__`,
+    which stamps `ERR_INTERNAL` and leaves `.format` at its `None` default.
+
     Example:
         >>> try:
         ...     render(board, executor, format="unknown")
@@ -68,10 +73,6 @@ class FormatError(RenderError):
     """
 
     format: str | None = None
-
-    def __init__(self, message: str, format: str | None = None):
-        self.format = format
-        super().__init__(f"Format conversion failed: {message}", format)
 
 
 @dataclass

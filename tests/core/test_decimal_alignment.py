@@ -266,6 +266,7 @@ class TestAxisDecimalAlignment:
             exponent=6,
             mode=SuffixMode.ANCHOR,
             reserve=True,
+            prefix_repeats=False,
             prefix="",
             digit_spec=",.1~f",
             anchor_at_start=False,

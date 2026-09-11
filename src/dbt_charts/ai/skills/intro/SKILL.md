@@ -7,7 +7,7 @@ description: >
   tool is, the shortest path from data to a rendered board, and which skill
   to read next. Use when asked to 'make charts of this with dbt charts',
   'chart this on dbt charts', or 'use dbt charts', before any other skill.
-  Do NOT use once you know the tool — go straight to board-build.
+  Do NOT use once you know the tool — go straight to {{ s_skill_name_build }}.
 metadata:
   author: fivetran
 ---
@@ -66,7 +66,7 @@ dct serve                       # live preview, re-renders on every save
 
 `dct serve` prints a URL; open it, hand it to the user, and leave the server
 running while you iterate. A render that fails names a diagnostic code —
-`dct docs errors <CODE>` explains it, and `dct-troubleshooting` is the skill
+`dct docs errors <CODE>` explains it, and `{{ s_skill_name_troubleshooting }}` is the skill
 for anything that stays broken.
 
 ## 4. Learn the language as you go
@@ -82,19 +82,19 @@ for anything that stays broken.
 
 | You are about to… | Read |
 |---|---|
-| Answer an analytical question ("show me…", "why did X change") | `analyst-runbook` — triage, shape, verify, deliver |
-| Look at an unfamiliar schema before writing anything | `data-exploration` |
-| Write or edit a board | `board-build` — the build, validate, render loop |
-| Choose chart types, layout, or color | `board-design` |
-| Write a narrative report rather than a dashboard | `report-design` |
-| Reproduce a dashboard from a screenshot or export | `board-replicate` |
-| Check the board before handing it over | `board-review` (runs `board-structural-review` and `board-visual-review`) |
-| Fix a render or query error | `dct-troubleshooting` |
-| Publish to dbtcharts.com | `cloud-setup` — sign in, connect the repo, map sources, render |
-| Wire dbt charts into an MCP client instead of the shell | `dct-mcp-setup` |
+| Answer an analytical question ("show me…", "why did X change") | `{{ s_skill_name_analyst_runbook }}` — triage, shape, verify, deliver |
+| Look at an unfamiliar schema before writing anything | `{{ s_skill_name_data_exploration }}` |
+| Write or edit a board | `{{ s_skill_name_build }}` — the build, validate, render loop |
+| Choose chart types, layout, or color | `{{ s_skill_name_design_board }}` |
+| Write a narrative report rather than a dashboard | `{{ s_skill_name_design_report }}` |
+| Reproduce a dashboard from a screenshot or export | `{{ s_skill_name_replicate_board }}` |
+| Check the board before handing it over | `{{ s_skill_name_review }}` (runs `{{ s_skill_name_structural_review }}` and `{{ s_skill_name_visual_review }}`) |
+| Fix a render or query error | `{{ s_skill_name_troubleshooting }}` |
+| Publish to dbtcharts.com | `{{ s_skill_name_cloud_setup }}` — sign in, connect the repo, map sources, render |
+| Wire dbt charts into an MCP client instead of the shell | `{{ s_skill_name_mcp_setup }}` |
 
-For "make charts of this", the path is `analyst-runbook` → `board-build`,
-then `cloud-setup` only if the user wants the boards live.
+For "make charts of this", the path is `{{ s_skill_name_analyst_runbook }}` → `{{ s_skill_name_build }}`,
+then `{{ s_skill_name_cloud_setup }}` only if the user wants the boards live.
 
 ## Installing the skills is optional
 
@@ -111,5 +111,5 @@ once into your user-level directories: `dct init skills --global`.
 
 The user looking at the board: the `dct serve` URL, with the server still
 running and you saying so, or the dbtcharts.com URL `dct cloud boards` reports
-after `cloud-setup`. Alongside it, one or two sentences on what the data says
+after `{{ s_skill_name_cloud_setup }}`. Alongside it, one or two sentences on what the data says
 and what you assumed about metric, grain, and time window.

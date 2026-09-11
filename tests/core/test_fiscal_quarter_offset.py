@@ -300,19 +300,49 @@ def _monthly_data(n_months: int = 17) -> list[dict[str, Any]]:
     return data
 
 
+def _quarterly_data() -> list[dict[str, Any]]:
+    """The quarter buckets ``_monthly_data()``'s 17-month span covers."""
+    import datetime as dt
+
+    return [
+        {"month": dt.date(year, month, 1).isoformat(), "cumulative": 1000 + i * 500}
+        for i, (year, month) in enumerate(
+            [
+                (2024, 1),
+                (2024, 4),
+                (2024, 7),
+                (2024, 10),
+                (2025, 1),
+                (2025, 4),
+                (2025, 7),
+            ]
+        )
+    ]
+
+
 class TestCoarserLabelCadenceOverlapWidth:
     def test_label_time_unit_matches_equivalent_encoding_time_unit_sizing(
         self,
     ) -> None:
         """label.time_unit: yearquarter over monthly data must look the same
         as encoding time_unit: yearquarter — same font size, same angle —
-        because both display the same ~6 visible quarterly labels."""
+        because both display the same visible quarterly labels.
+
+        The two sides are fed differently on purpose: a quarterly *encoding*
+        owes its rows the quarterly grain, so monthly rows under it are a
+        bucket collision (two months in one quarter), not a drop to the
+        quarter openers. A quarterly *label cadence* leaves the monthly
+        encoding alone and only thins the ticks.
+        """
         rs, ctx = resolve_style_and_context(get_theme_style("clarity"))
         data = _monthly_data()
 
         encoding_chart = _area_chart({"time_unit": "yearquarter"})
         encoding_spec = generate_vega_lite_spec(
-            encoding_chart, data, board_style=rs, chart_style_context=ctx
+            encoding_chart,
+            _quarterly_data(),
+            board_style=rs,
+            chart_style_context=ctx,
         )
         encoding_axis = encoding_spec["encoding"]["x"]["axis"]
 

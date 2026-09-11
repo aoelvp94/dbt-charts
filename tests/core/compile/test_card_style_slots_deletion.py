@@ -3,8 +3,9 @@
 Board-level ``style.charts.<family>.font`` / ``.border`` were accepted by the
 0.5.0 grammar and are auto-stripped by ``dct migrate`` (Deletion declared at
 the 0.5.0 -> 0.6.0 boundary in ``versions/v0_6_0.py``). The chart-local
-position (``charts.<id>.style.font`` / ``.border``) cannot ship a Deletion --
-its only available tails are still live -- so it fails loud instead.
+position (``charts.<id>.style.font`` / ``.border``) is declarable but
+unconverted -- its only available tails are live on the families that keep
+theirs, so it needs per-family ``chart_type`` scoping -- and fails loud today.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.migrations import (
     SchemaMigrationWarning,
     migrate_mapping,
@@ -68,7 +70,7 @@ def _board(style: dict[str, Any]) -> dict[str, Any]:
 
 def test_registry_declares_the_board_level_card_style_deletions() -> None:
     """Declared at the 0.5.0 -> 0.6.0 boundary, now frozen -- not at
-    ``catalog.latest.version``, which is 0.6.0 itself post-freeze."""
+    ``catalog.latest_released.version``, which is 0.6.0 itself post-freeze."""
     _, registry = _board_migration_context()
     deletions = registry.deletions_from("0.5.0")
 
@@ -98,7 +100,7 @@ def test_tail_was_in_the_released_grammar_and_is_gone_from_the_live_one(
     Source-present is what makes the key worth migrating; target-absent is what
     stops the tail stripping a slot that still works. Source is pinned to
     0.5.0, the grammar the tail actually shipped in -- not
-    ``catalog.latest.version``, which is 0.6.0 post-freeze and never had it.
+    ``catalog.latest_released.version``, which is 0.6.0 post-freeze and never had it.
     """
     tail = ("charts", family, field)
     assert _schema_has_tail(catalog.schema_for("0.5.0"), tail)
@@ -154,11 +156,30 @@ def test_live_marks_bar_border_survives_migration(
 
 
 @pytest.mark.parametrize("field", ["font", "border"])
-def test_chart_local_position_is_not_migrated_and_fails_loud(field: str) -> None:
-    """The chart-local half ships no Deletion, by necessity -- assert the
-    tail the mechanism would need is still live, so the registry would reject
-    it. The author-facing error for this position is covered by
-    test_card_style_hint_font_border.py.
+def test_chart_local_position_is_not_migrated(field: str) -> None:
+    """The chart-local half ships no Deletion, so the key still fails loud.
+
+    Pinned at ``compile()``, where an author meets it: asserting the tail is
+    live would say nothing, since a scoped declaration is legal on a live tail.
+    The hint's wording is covered by test_card_style_hint_font_border.py.
     """
-    catalog = load_yaml_schema_catalog()
-    assert _schema_has_tail(catalog.current_schema, ("style", field))
+    result = compile(
+        f"""title: Test
+queries:
+  q: {{type: values, rows: [{{n: 1}}]}}
+charts:
+  c:
+    type: bar
+    query: q
+    x: n
+    y: n
+    style:
+      {field}: {{}}
+rows:
+- c
+"""
+    )
+
+    assert not result.success
+    unknown = {e.fields.get("unknown_field") for e in result.errors if e.fields}
+    assert field in unknown

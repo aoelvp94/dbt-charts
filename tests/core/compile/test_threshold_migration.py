@@ -1,13 +1,15 @@
-"""Migration test for the 0.6.0 -> current axis grid ``zero`` -> ``threshold``
+"""Migration test for the 0.6.0 -> 0.7.0 axis grid ``zero`` -> ``threshold``
 rename.
 
 The axis grid's threshold-rule sub-block, previously spelled ``zero``,
 renamed to ``threshold`` (and widened onto the shared base grid class, so it
 is now reachable at every axis slot, not just ``axis_y``). Declared via
-``suffix_rename_moves`` in ``compile/migrations/versions/current.py``'s
-``THRESHOLD_RENAMES``, anchored at the parent ``grid`` key
+``suffix_rename_moves`` in
+``compile/migrations/versions/v0_7_0.py``'s ``THRESHOLD_RENAMES``, anchored
+at the parent ``grid`` key
 (``("grid", "threshold") -> ("grid", "zero")``) for self-documenting hygiene,
-matching ``AXIS_Y_LABEL_RENAMES``'s own two-segment anchor there — not
+matching ``AXIS_Y_LABEL_RENAMES``'s own two-segment anchor in
+``versions/v0_6_0.py`` — not
 because a bare one-segment tail would incorrectly match the unrelated
 ``scale.continuous.zero`` boolean (it structurally can't; see that module's
 docstring for why).
@@ -118,17 +120,12 @@ def test_axis_y_grid_zero_migrates_to_threshold_at_board_level_position(
 
 
 #: Every ``grid.zero`` position ``suffix_rename_moves`` resolves at the
-#: ``catalog.latest.version`` (0.6.0) boundary -- the boundary production
-#: actually walks (``_build_board_migration_context`` calls
-#: ``pending.moves(catalog.latest.version, _CURRENT, catalog=catalog)``, never
-#: a hardcoded "0.5.0"). Written out rather than re-derived so a change to the
+#: 0.6.0 boundary. Written out rather than re-derived so a change to the
 #: resolver's traversal -- or a bad anchor silently resolving to zero moves --
 #: shows up here as a diff instead of passing silently (``suffix_rename_moves``
 #: has no other way to fail loud on a mistyped anchor/tail). Includes both
 #: ``GridItem.item`` open-map arm positions (``grid.items.*.item.*...`` and
-#: its ``tabs.items.*`` nested form) that only exist in the 0.6.0 schema --
-#: a 0.5.0-sourced walk misses them, which is exactly the gap this pin
-#: exists to catch.
+#: its ``tabs.items.*`` nested form) that only exist in the 0.6.0 schema.
 EXPECTED_THRESHOLD_MOVES = (
     "charts.*.style.axis_y.grid.zero",
     "cols.*.*.style.axis_y.grid.zero",
@@ -165,23 +162,17 @@ def test_resolved_move_set_is_exactly_the_documented_positions(
 ) -> None:
     """The ``grid.zero`` tail resolves to these 27 positions and no others.
 
-    Sourced from ``catalog.latest.version``, matching
-    ``_build_board_migration_context``'s real call -- not a hardcoded
-    "0.5.0", which under-counts by the two ``GridItem.item`` open-map arm
-    positions that only exist in the 0.6.0 schema and so were invisible to
-    this guard.
-
     A bad anchor (e.g. a typo in the parent-key qualifier) either silently
     resolves to zero moves or picks up an unintended position such as
     ``scale.continuous.zero`` -- both change this set, so this is the test
     that actually fails on a broken declaration rather than just checking
     "no exception was raised".
     """
-    from dbt_charts.core.compile.migrations.versions.current import moves
+    from dbt_charts.core.compile.migrations.versions.v0_7_0 import moves
 
     threshold_moves = [
         move
-        for move in moves(catalog.latest.version, "current", catalog=catalog)
+        for move in moves("0.6.0", "0.7.0", catalog=catalog)
         if move.old_path[-2:] == ("grid", "zero")
     ]
     resolved = tuple(sorted(".".join(move.old_path) for move in threshold_moves))

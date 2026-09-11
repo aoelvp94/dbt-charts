@@ -1,8 +1,8 @@
-"""Migration test for the 0.5.0 -> current description -> notes rename.
+"""Migration test for the 0.5.0 -> 0.6.0 description -> notes rename.
 
 ``description:`` renamed to ``notes:`` on every object carrying non-rendering
 prose — declared as a ``Move`` via ``suffix_rename_moves`` in
-``compile/migrations/versions/current.py``'s ``NOTES_RENAMES``.
+``compile/migrations/versions/v0_6_0.py``'s ``NOTES_RENAMES``.
 
 The open-map cases are the point of this file. ``queries:``/``charts:``/
 ``variables:`` are open maps, so an author may legitimately *name* a query

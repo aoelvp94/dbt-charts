@@ -113,6 +113,7 @@ from dbt_charts.core.compile.models.style.theme.callout import (
 )
 from dbt_charts.core.compile.models.style.theme.charts import (
     ChartsStyle,
+    HoverEmphasisStyle,
 )
 from dbt_charts.core.compile.models.style.theme.geoshape import (
     GeoshapeChartMarksStyle,
@@ -180,6 +181,7 @@ from dbt_charts.core.compile.models.style.theme.marks import (
     TextMarkStyle,
     TotalSlotStyle,
     TotalStyle,
+    TotalValueSlotStyle,
 )
 from dbt_charts.core.compile.models.style.theme.page import (
     FooterRule,
@@ -305,6 +307,7 @@ __all__ = [
     "HeatmapChartStyle",
     "HistogramChartMarksStyle",
     "HistogramChartStyle",
+    "HoverEmphasisStyle",
     "InputStyle",
     "InputWidths",
     "KpiChartStyle",
@@ -391,6 +394,7 @@ __all__ = [
     "TooltipStyle",
     "TotalSlotStyle",
     "TotalStyle",
+    "TotalValueSlotStyle",
     "VALID_FONT_WEIGHTS",
     "VariablesLabelStyle",
     "VariablesPlaceholderStyle",

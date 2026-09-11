@@ -59,20 +59,40 @@ from dbt_charts.core.diagnostics.codes_compile import (
 LayoutNode = str | AuthoredBoard | AuthoredChart | TabItem | dict[str, AuthoredChart]
 
 
-def _layout_children(node: LayoutNode) -> list[LayoutNode]:
-    """Direct layout children of a board or tab node."""
+def _layout_children_with_locations(
+    node: LayoutNode, prefix: str = ""
+) -> list[tuple[str, LayoutNode]]:
+    """Direct layout children of a board or tab node, each labeled with its
+    source-map location (dotted, sequence indices included, matching
+    `_get_layout_items`'s spelling).
+    """
     if not isinstance(node, (AuthoredBoard, TabItem)):
         return []
-    children: list[LayoutNode] = []
+
+    prefix = f"{prefix}." if prefix else ""
+    children: list[tuple[str, LayoutNode]] = []
     if node.rows:
-        children.extend(node.rows)
+        children.extend((f"{prefix}rows.{i}", item) for i, item in enumerate(node.rows))
     if node.cols:
-        children.extend(node.cols)
+        children.extend((f"{prefix}cols.{i}", item) for i, item in enumerate(node.cols))
     if node.grid:
-        children.extend(gi.item for gi in node.grid.items)
+        # `GridItem.item` is a nested field, so the authored scalar lives at
+        # `grid.items.<n>.item` — `grid.items.<n>` is the wrapper block.
+        children.extend(
+            (f"{prefix}grid.items.{i}.item", gi.item)
+            for i, gi in enumerate(node.grid.items)
+        )
     if node.tabs:
-        children.extend(node.tabs.items)
+        children.extend(
+            (f"{prefix}tabs.items.{i}", tab_item)
+            for i, tab_item in enumerate(node.tabs.items)
+        )
     return children
+
+
+def _layout_children(node: LayoutNode) -> list[LayoutNode]:
+    """Direct layout children of a board or tab node."""
+    return [child for _, child in _layout_children_with_locations(node)]
 
 
 def _declared_names(board: AuthoredBoard) -> tuple[set[str], set[str]]:
@@ -306,8 +326,11 @@ def _validate_layout_references(
     return errors
 
 
-def _get_layout_items(board: AuthoredBoard) -> list[tuple[str, Any]]:
-    """Extract all layout items with their locations.
+def _get_layout_items(
+    board: AuthoredBoard,
+) -> list[tuple[str, Any]]:  # type-state: explicit_any — heterogeneous chart union
+    """Extract every layout item, recursing through nested boards, tabs, and
+    grids — anywhere `_layout_children` can reach.
 
     Locations are source-map keys: dotted all the way down, sequence indices
     included (`rows.0`, `tabs.items.1.rows.0`). They are used both to resolve
@@ -315,76 +338,32 @@ def _get_layout_items(board: AuthoredBoard) -> list[tuple[str, Any]]:
     so there is one spelling rather than a display form and a lookup form that
     can drift.
 
+    A nested board declaring its own `charts:` needs no special case — those
+    names are already in the board-global set `_declared_names` collects, so
+    its items resolve like any other.
+
     Args:
         board: AuthoredBoard to extract items from
 
     Returns:
         List of (location, item) tuples
     """
-    items: list[tuple[str, Any]] = []
-
-    if board.rows:
-        for idx, item in enumerate(board.rows):
-            items.append((f"rows.{idx}", item))
-            items.extend(_get_nested_items(item, f"rows.{idx}"))
-
-    if board.cols:
-        for idx, item in enumerate(board.cols):
-            items.append((f"cols.{idx}", item))
-            items.extend(_get_nested_items(item, f"cols.{idx}"))
-
-    if board.grid:
-        # `GridItem.item` is a nested field, so the authored scalar lives at
-        # `grid.items.<n>.item` — `grid.items.<n>` is the wrapper block.
-        for idx, grid_item in enumerate(board.grid.items):
-            location = f"grid.items.{idx}.item"
-            items.append((location, grid_item.item))
-            items.extend(_get_nested_items(grid_item.item, location))
-
-    if board.tabs:
-        for idx, tab_item in enumerate(board.tabs.items):
-            if tab_item.rows:
-                for i, item in enumerate(tab_item.rows):
-                    location = f"tabs.items.{idx}.rows.{i}"
-                    items.append((location, item))
-                    items.extend(_get_nested_items(item, location))
-            if tab_item.cols:
-                for i, item in enumerate(tab_item.cols):
-                    location = f"tabs.items.{idx}.cols.{i}"
-                    items.append((location, item))
-                    items.extend(_get_nested_items(item, location))
-
-    return items
+    return _walk_layout_items(board, "")
 
 
-def _get_nested_items(item: Any, parent_location: str) -> list[tuple[str, Any]]:
-    """Extract items from nested board structures.
-
-    A nested board reaches here as an `AuthoredBoard`: the parser types layout
-    items, so matching `dict` would miss every nesting.
-
-    A nested board declaring its own `charts:` needs no special case — those
-    names are already in the board-global set `_declared_names` collects, so
-    its items resolve like any other.
-
-    Args:
-        item: Item that might be a nested board
-        parent_location: Parent location string
-
-    Returns:
-        List of (location, item) tuples from nested structures
-    """
-    if not isinstance(item, AuthoredBoard):
-        return []
-
-    items: list[tuple[str, Any]] = []
-    for key, entries in (("rows", item.rows), ("cols", item.cols)):
-        if entries is None:
-            continue
-        for idx, entry in enumerate(entries):
-            location = f"{parent_location}.{key}.{idx}"
-            items.append((location, entry))
-            items.extend(_get_nested_items(entry, location))
+def _walk_layout_items(
+    node: LayoutNode, location: str
+) -> list[tuple[str, Any]]:  # type-state: explicit_any — heterogeneous chart union
+    """`_get_layout_items`'s recursion step: labeled children of `node`, plus
+    their own children in turn."""
+    items: list[tuple[str, Any]] = []  # type-state: explicit_any — see above
+    for child_location, child in _layout_children_with_locations(node, location):
+        # A tab is a container, not a chart/board reference in its own right
+        # — record its location for the recursion below, but don't offer it
+        # up to `_validate_layout_references` as a leaf item.
+        if not isinstance(child, TabItem):
+            items.append((child_location, child))
+        items.extend(_walk_layout_items(child, child_location))
     return items
 
 

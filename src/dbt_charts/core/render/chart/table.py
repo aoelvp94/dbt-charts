@@ -122,7 +122,7 @@ from dbt_charts.core.render.chart.title_overflow import (
 from dbt_charts.core.render.controls import controls_are_interactive
 from dbt_charts.core.render.format_utils import MAGNITUDE_SUFFIXES, format_kpi_parts
 from dbt_charts.core.render.script_embedding import embed_svg_script
-from dbt_charts.core.render.svg_utils import authored_kind_attr, px
+from dbt_charts.core.render.svg_utils import authored_kind_attr, card_box, px
 from dbt_charts.core.render.utils import (
     normalize_data_types,
     slug_to_text,
@@ -3256,6 +3256,7 @@ def _render_table_svg_core(
     height: float | None,
     is_placeholder: bool,
     variables: dict[str, Any] | None,
+    inset: dict[str, float] | None,
 ) -> str:
     """Shared SVG body for the table renderer.
 
@@ -3414,6 +3415,10 @@ def _render_table_svg_core(
     subtitle_text = subtitle
 
     table_width: float = tc.preferred_width if width is None else width
+    # The card is the slot, not the table: on column overflow table_width
+    # widens past the slot (below) but the card must not follow it into the
+    # neighbor, so the wrapper's box and this rect agree on the outer edge.
+    slot_width = table_width
     title_font = table_style.title_font
     title_font_weight: int | str = int(title_font.weight)
     title_font_size = int(title_font.size)
@@ -4104,8 +4109,10 @@ def _render_table_svg_core(
 
     # Background — omit rect when table.background is unset or transparent.
     if colors["background"] and colors["background"].lower() != "transparent":
+        bx, by, bw, bh = card_box(slot_width, table_height, inset)
         svg_parts.append(
-            f'<rect x="0" y="0" width="{table_width_s}" height="{table_height_s}" '
+            f'<rect x="{_format_svg_numeric(bx)}" y="{_format_svg_numeric(by)}" '
+            f'width="{_format_svg_numeric(bw)}" height="{_format_svg_numeric(bh)}" '
             f'fill="{colors["background"]}" rx="4"/>',
         )
 
@@ -4560,6 +4567,7 @@ def render_table_svg(
     board_style: ResolvedStyle,
     is_placeholder: bool = False,
     variables: VariableValues | None = None,
+    inset: dict[str, float] | None = None,
 ) -> str:
     """Render a ResolvedTableChart as SVG.
 
@@ -4610,6 +4618,7 @@ def render_table_svg(
         height=height,
         is_placeholder=is_placeholder,
         variables=effective_variables,
+        inset=inset,
     )
 
 

@@ -24,14 +24,13 @@ from dbt_charts.core.compile.migrations import (
     migrate_yaml_text,
     prepare_board_mapping,
 )
-from dbt_charts.core.compile.migrations.migrations import _CURRENT
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     JsonObject,
     YamlSchemaCatalog,
-    YamlSchemaEntry,
+    next_minor,
 )
 
-from ._migration_catalogs import flat_schema, released, synthetic_catalog
+from ._migration_catalogs import flat_schema, synthetic_catalog
 
 V1 = "0.1.0"
 V2 = "0.2.0"
@@ -774,31 +773,14 @@ def _legend_catalog() -> YamlSchemaCatalog:
 
 
 def _current_boundary_catalog() -> YamlSchemaCatalog:
-    """V2 is latest with 'dead'+'live'; current_schema has only 'live'.
+    """V2 is latest with 'dead'+'live'; the DEV entry's schema has only 'live'.
 
     Simulates an unreleased deletion — the latest frozen schema still has the
     field, but the live Pydantic model has removed it.
     """
-    latest_schema: JsonObject = flat_schema("dead", "live")
-    current_schema: JsonObject = flat_schema("live")
-    entries = (
-        YamlSchemaEntry(
-            version=V2,
-            released_at=released(0),
-            filename=f"{V2}.json",
-            sha256="test2",
-            predecessor=V1,
-        ),
-        YamlSchemaEntry(
-            version=V1,
-            released_at=released(1),
-            filename=f"{V1}.json",
-            sha256="test1",
-            predecessor=None,
-        ),
-    )
-    return YamlSchemaCatalog(
-        entries, {V1: flat_schema("ancient"), V2: latest_schema}, current_schema
+    return synthetic_catalog(
+        {V1: flat_schema("ancient"), V2: flat_schema("dead", "live")},
+        current=flat_schema("live"),
     )
 
 
@@ -816,39 +798,39 @@ def test_deletion_target_path_must_be_absent_from_target_schema() -> None:
 
 
 def test_deletion_current_target_path_must_be_absent_from_current_schema() -> None:
-    """A tail still present in the current (live) schema must not be deleted to _CURRENT."""
+    """A tail still present in the current (live) schema must not be deleted to the DEV version."""
     catalog = _current_boundary_catalog()
 
     # "live" still exists in the current schema — declaring a deletion is wrong
     with pytest.raises(MigrationError, match="still exists in"):
         MigrationRegistry(
             [],
-            [Deletion(V2, _CURRENT, ("live",))],
+            [Deletion(V2, catalog.dev.version, ("live",))],
             catalog=catalog,
         )
 
 
 def test_deletion_valid_current_target_accepts_absent_tail() -> None:
-    """Deletion to _CURRENT is accepted when the tail is absent from current_schema."""
+    """Deletion to the DEV version is accepted when the tail is absent from current_schema."""
     catalog = _current_boundary_catalog()
 
     # "dead" is in V2 (source) but not in current_schema — valid deletion
     registry = MigrationRegistry(
         [],
-        [Deletion(V2, _CURRENT, ("dead",))],
+        [Deletion(V2, catalog.dev.version, ("dead",))],
         catalog=catalog,
     )
     assert registry.deletions_from(V2)
 
 
 def test_deletion_current_source_must_be_latest_schema() -> None:
-    """Deletion targeting _CURRENT must source from the latest frozen schema, not an older one."""
+    """Deletion targeting the DEV version must target the immediately succeeding schema."""
     catalog = _current_boundary_catalog()
 
-    with pytest.raises(MigrationError, match="latest frozen schema"):
+    with pytest.raises(MigrationError, match="immediately succeeding"):
         MigrationRegistry(
             [],
-            [Deletion(V1, _CURRENT, ("ancient",))],
+            [Deletion(V1, catalog.dev.version, ("ancient",))],
             catalog=catalog,
         )
 
@@ -895,7 +877,7 @@ def test_support_window_exemption_latest_schema_is_always_migratable() -> None:
     pending_catalog = _current_boundary_catalog()
     pending_registry = MigrationRegistry(
         [],
-        [Deletion(V2, _CURRENT, ("dead",))],
+        [Deletion(V2, pending_catalog.dev.version, ("dead",))],
         catalog=pending_catalog,
     )
     with warnings.catch_warnings():
@@ -1291,51 +1273,6 @@ def test_deletion_raises_on_flow_style_yaml() -> None:
         migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
 
 
-def test_deletion_raises_on_block_scalar_containing_key() -> None:
-    """Deletion raises MigrationError instead of silently corrupting block-scalar content.
-
-    A ``text: |`` block scalar whose content contains a line like ``dead: true``
-    looks identical to a real YAML key to the line-regex scanner.  Without an
-    equality check the line is deleted from inside the prose and the file is
-    returned silently corrupted.  The equality check against the in-memory result
-    catches the mismatch before returning.
-    """
-    old: JsonObject = cast(
-        JsonObject,
-        {
-            "type": "object",
-            "properties": {
-                "dead": {"type": "boolean"},
-                "text": {"type": "string"},
-                "live": {"type": "string"},
-            },
-            "additionalProperties": False,
-        },
-    )
-    new: JsonObject = cast(
-        JsonObject,
-        {
-            "type": "object",
-            "properties": {
-                "text": {"type": "string"},
-                "live": {"type": "string"},
-            },
-            "additionalProperties": False,
-        },
-    )
-    catalog = synthetic_catalog({V1: old, V2: new})
-    registry = MigrationRegistry(
-        [],
-        [Deletion(V1, V2, ("dead",))],
-        catalog=catalog,
-    )
-
-    yaml_text = "dead: true\ntext: |\n    dead: true\n    Prose after.\nlive: keep\n"
-
-    with pytest.raises(MigrationError, match="block scalar"):
-        migrate_yaml_text(yaml_text, catalog=catalog, registry=registry)
-
-
 def test_version_module_with_only_deletions_is_accepted() -> None:
     """A version module with deletions() but no moves() is valid."""
     import sys
@@ -1491,9 +1428,8 @@ def test_deletion_does_not_affect_sibling_parent_in_mapping() -> None:
 def test_deletion_does_not_affect_sibling_parent_in_yaml_text() -> None:
     """A tail key under a different parent must not be deleted from YAML text.
 
-    The parent-chain guard in _yaml_parent_chain_matches verifies that the
-    enclosing block is ``legend``, not ``other``.  Regressing it to an
-    unconditional delete would strip the ``dead`` line from the ``other`` block.
+    The struck path names the ``legend`` block, so the ``dead`` line under
+        ``other`` is a different path and survives.
     """
     catalog = _sibling_parent_catalog()
     registry = MigrationRegistry(
@@ -1549,9 +1485,9 @@ def _open_legend_catalog() -> YamlSchemaCatalog:
 def test_deletion_does_not_remove_null_valued_key_in_yaml_text() -> None:
     """A null-valued block key unrelated to the deletion must not be pruned.
 
-    _prune_childless_ancestors is scoped to ancestors of deleted lines; a key
-    that is not on the ancestor walk is never a candidate, regardless of how
-    many children it has.
+    Only the paths the walk struck are removed, and an emptied parent is
+        struck in its own right — a key the walk never touched is never a
+        candidate, however few children it has.
     """
     catalog = _open_legend_catalog()
     registry = MigrationRegistry(
@@ -1884,9 +1820,9 @@ def test_deletion_does_not_orphan_interior_comment_in_yaml_text() -> None:
 def test_pruned_block_does_not_delete_trailing_column_zero_comment() -> None:
     """A column-0 comment after a pruned block must survive.
 
-    _prune_childless_ancestors consumed every blank/comment line after the
-    block because the cleanup loop had no bound on the block's extent.  A
-    column-0 banner comment that follows the pruned block must be preserved.
+    A struck key takes the blank and comment lines inside its own block with
+        it, bounded by the block's indentation. A column-0 banner comment sits
+        outside that extent and must survive.
     """
     catalog = _orphan_parent_catalog()
     registry = MigrationRegistry(
@@ -1924,7 +1860,9 @@ def test_pruned_block_does_not_delete_sibling_leading_comment() -> None:
     assert "live: keep" in result
 
 
-def test_a_pending_move_is_validated_against_the_real_catalog() -> None:
+def test_a_pending_move_is_validated_against_the_real_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A pending module's moves() are validated against the real packaged catalog.
 
     ``title``/``id`` are two real, structural top-level fields that are certain
@@ -1945,58 +1883,45 @@ def test_a_pending_move_is_validated_against_the_real_catalog() -> None:
     import types
 
     from dbt_charts.core.compile.migrations.migrations import _board_migration_context
-
-    pending_dotted = "dbt_charts.core.compile.migrations.versions.current"
-    fake_pending = types.ModuleType(pending_dotted)
-    fake_pending.moves = lambda source, target, *, catalog: (  # type: ignore[attr-defined]
-        Move(source, target, ("title",), ("id",)),
+    from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
+        load_yaml_schema_catalog,
     )
 
-    original = sys.modules.get(pending_dotted)
-    sys.modules[pending_dotted] = fake_pending
+    catalog = load_yaml_schema_catalog()
+    pending_dotted = (
+        "dbt_charts.core.compile.migrations.versions."
+        f"v{catalog.dev.version.replace('.', '_')}"
+    )
+    fake_pending = types.ModuleType(pending_dotted)
+    vars(fake_pending).update(
+        moves=lambda source, target, *, catalog: (
+            Move(source, target, ("title",), ("id",)),
+        )
+    )
+
+    monkeypatch.setitem(sys.modules, pending_dotted, fake_pending)
     _board_migration_context.cache_clear()
     try:
         with pytest.raises(MigrationError, match="still exists in"):
             _board_migration_context()
     finally:
-        if original is not None:
-            sys.modules[pending_dotted] = original
-        else:
-            sys.modules.pop(pending_dotted, None)
         _board_migration_context.cache_clear()
 
 
 def _current_boundary_move_catalog() -> YamlSchemaCatalog:
-    """V2 is latest with 'old'; current_schema has 'new' (unreleased rename)."""
-    latest_schema: JsonObject = flat_schema("old")
-    current_schema: JsonObject = flat_schema("new")
-    entries = (
-        YamlSchemaEntry(
-            version=V2,
-            released_at=released(0),
-            filename=f"{V2}.json",
-            sha256="test2",
-            predecessor=V1,
-        ),
-        YamlSchemaEntry(
-            version=V1,
-            released_at=released(1),
-            filename=f"{V1}.json",
-            sha256="test1",
-            predecessor=None,
-        ),
-    )
-    return YamlSchemaCatalog(
-        entries, {V1: flat_schema("ancient"), V2: latest_schema}, current_schema
+    """V2 is latest with 'old'; the DEV entry's schema has 'new' (unreleased rename)."""
+    return synthetic_catalog(
+        {V1: flat_schema("ancient"), V2: flat_schema("old")},
+        current=flat_schema("new"),
     )
 
 
 def test_move_current_target_accepts_present_new_path() -> None:
-    """A Move to _CURRENT validates when the new path exists in current_schema."""
+    """A Move to the DEV version validates when the new path exists in current_schema."""
     catalog = _current_boundary_move_catalog()
 
     registry = MigrationRegistry(
-        [Move(V2, _CURRENT, ("old",), ("new",))],
+        [Move(V2, catalog.dev.version, ("old",), ("new",))],
         catalog=catalog,
     )
 
@@ -2009,18 +1934,18 @@ def test_move_current_target_path_must_be_present_in_current_schema() -> None:
 
     with pytest.raises(MigrationError, match="absent from"):
         MigrationRegistry(
-            [Move(V2, _CURRENT, ("old",), ("missing",))],
+            [Move(V2, catalog.dev.version, ("old",), ("missing",))],
             catalog=catalog,
         )
 
 
 def test_move_current_source_must_be_latest_schema() -> None:
-    """A Move targeting _CURRENT must source from the latest frozen schema."""
+    """A Move targeting the DEV version must target the immediately succeeding schema."""
     catalog = _current_boundary_move_catalog()
 
-    with pytest.raises(MigrationError, match="latest frozen schema"):
+    with pytest.raises(MigrationError, match="immediately succeeding"):
         MigrationRegistry(
-            [Move(V1, _CURRENT, ("ancient",), ("new",))],
+            [Move(V1, catalog.dev.version, ("ancient",), ("new",))],
             catalog=catalog,
         )
 
@@ -2029,7 +1954,7 @@ def test_migrates_old_shape_document_via_pending_move() -> None:
     """An old-shape document reaches the current shape through a pending Move."""
     catalog = _current_boundary_move_catalog()
     registry = MigrationRegistry(
-        [Move(V2, _CURRENT, ("old",), ("new",))],
+        [Move(V2, catalog.dev.version, ("old",), ("new",))],
         catalog=catalog,
     )
 
@@ -2268,17 +2193,17 @@ def test_conditional_move_validates_wrong_adjacency_raises() -> None:
 
 
 def test_conditional_move_current_target_source_must_be_latest() -> None:
-    """ConditionalMove targeting _CURRENT must source from the latest frozen schema."""
+    """ConditionalMove targeting the DEV version must target the immediately succeeding schema."""
     catalog = _current_boundary_catalog()
 
-    with pytest.raises(MigrationError, match="latest frozen schema"):
+    with pytest.raises(MigrationError, match="immediately succeeding"):
         MigrationRegistry(
             [],
             [],
             [
                 ConditionalMove(
                     source_schema=V1,
-                    target_schema=_CURRENT,
+                    target_schema=catalog.dev.version,
                     chart_type="kpi",
                     old_tail=("ancient",),
                     new_tail=("live",),
@@ -2448,24 +2373,8 @@ def _marks_boundary_catalog() -> YamlSchemaCatalog:
             "additionalProperties": True,
         },
     )
-    entries = (
-        YamlSchemaEntry(
-            version=V2,
-            released_at=date(2026, 6, 1),
-            filename=f"{V2}.json",
-            sha256="test2",
-            predecessor=V1,
-        ),
-        YamlSchemaEntry(
-            version=V1,
-            released_at=date(2026, 5, 1),
-            filename=f"{V1}.json",
-            sha256="test1",
-            predecessor=None,
-        ),
-    )
-    return YamlSchemaCatalog(
-        entries, {V1: flat_schema("ancient"), V2: latest_schema}, current_schema
+    return synthetic_catalog(
+        {V1: flat_schema("ancient"), V2: latest_schema}, current=current_schema
     )
 
 
@@ -2487,7 +2396,7 @@ def test_marks_dead_slots_pending_deletions_strip_their_keys() -> None:
     catalog = _marks_boundary_catalog()
     registry = MigrationRegistry(
         [],
-        [Deletion(V2, _CURRENT, tail) for tail in sorted(marks_deletions)],
+        [Deletion(V2, catalog.dev.version, tail) for tail in sorted(marks_deletions)],
         catalog=catalog,
     )
 
@@ -2708,99 +2617,195 @@ def test_deletion_would_fire_respects_chart_type_scope() -> None:
     )
 
 
-def test_delete_tail_in_yaml_text_respects_chart_type_scope_both_authoring_shapes() -> (
-    None
-):
-    """_delete_tail_in_yaml_text consumer (the dct migrate text rewriter).
+def test_yaml_text_rewrite_replays_only_the_paths_the_walk_struck() -> None:
+    """The dct migrate text rewriter, driven by the in-memory result.
 
-    Covers both shapes a chart block can take in real boards: an inline
-    list item under rows: (dash-prefixed) and a charts: mapping entry keyed
-    by chart id (momentum.yml's own shape) — the sibling `type:` search has
-    to recognize both block-start forms.
+    A quoted `type: "bar"` and a trailing comment on it are not the text
+    layer's problem: it replays the paths `_apply_deletions` struck, and those
+    come from the parsed document. The two real-board shapes (an inline list
+    item under `rows:`, a `charts:` mapping entry) round-trip against the live
+    grammar in test_conditional_formatting_deletion_migration.py.
     """
-    from dbt_charts.core.compile.migrations.migrations import _delete_tail_in_yaml_text
-
-    deletion = Deletion(V1, V2, ("some_field",), chart_type="bar")
-
-    list_item_text = (
-        "rows:\n  - type: bar\n    some_field: x\n  - type: table\n    some_field: y\n"
+    catalog = _scoped_deletion_catalog()
+    registry = MigrationRegistry(
+        [],
+        [Deletion(V1, V2, ("some_field",), chart_type="bar")],
+        catalog=catalog,
     )
-    result = _delete_tail_in_yaml_text(list_item_text, deletion)
-    assert "some_field: x" not in result
-    assert "some_field: y" in result
-
-    mapping_entry_text = (
+    text = (
         "charts:\n"
-        "  b:\n"
-        "    type: bar\n"
-        "    some_field: x\n"
-        "  t:\n"
-        "    type: table\n"
-        "    some_field: y\n"
-    )
-    result = _delete_tail_in_yaml_text(mapping_entry_text, deletion)
-    assert "some_field: x" not in result
-    assert "some_field: y" in result
-
-    quoted_text = 'rows:\n  - type: "bar"\n    some_field: x\n  - type: table\n    some_field: y\n'
-    result = _delete_tail_in_yaml_text(quoted_text, deletion)
-    assert "some_field: x" not in result
-    assert "some_field: y" in result
-
-    commented_text = (
-        "rows:\n  - type: bar  # my chart\n    some_field: x\n"
-        "  - type: table\n    some_field: y\n"
-    )
-    result = _delete_tail_in_yaml_text(commented_text, deletion)
-    assert "some_field: x" not in result
-    assert "some_field: y" in result
-
-    # Mapping-entry shape (momentum.yml's own), quoted type, backward scan
-    # (`type:` sits above the leaf at the same indent) — the call site the
-    # bare-token `mapping_entry_text` fixture above never actually exercises,
-    # since a bare `type: bar` normalizes to itself either way.
-    quoted_mapping_entry_text = (
-        "charts:\n"
-        '  b:\n    type: "bar"\n    some_field: x\n'
+        '  b:\n    type: "bar"  # my chart\n    some_field: x\n'
         "  t:\n    type: table\n    some_field: y\n"
     )
-    result = _delete_tail_in_yaml_text(quoted_mapping_entry_text, deletion)
+
+    result = migrate_yaml_text(text, catalog=catalog, registry=registry)
+
     assert "some_field: x" not in result
     assert "some_field: y" in result
 
-    # `type:` below the leaf (forward scan) with a quoted token — the
-    # backward scan finds nothing before the chart-id line (no dash, so
-    # `_YAML_LIST_ITEM_KEY_RE` doesn't match it) and falls through to the
-    # forward scan, which is the third, previously-untested call site.
-    forward_scan_quoted_text = (
-        "charts:\n"
-        '  b:\n    some_field: x\n    type: "bar"\n'
-        "  t:\n    some_field: y\n    type: table\n"
-    )
-    result = _delete_tail_in_yaml_text(forward_scan_quoted_text, deletion)
-    assert "some_field: x" not in result
-    assert "some_field: y" in result
 
-    # A block sequence authored at the leaf's own indentation (legal, common
-    # YAML, and what many linters prefer) sits between `type:` and the leaf.
-    # `_YAML_KEY_RE` cannot match a `- item` line, so the scan must skip past
-    # it rather than treat it as the chart block's boundary. Backward scan:
-    # `type:` sits above both the sequence and the leaf.
-    backward_scan_sequence_sibling_text = (
-        "charts:\n"
-        "  b:\n    type: bar\n    warnings_ignore:\n    - some_warning\n    some_field: x\n"
-        "  t:\n    type: table\n    some_field: y\n"
-    )
-    result = _delete_tail_in_yaml_text(backward_scan_sequence_sibling_text, deletion)
-    assert "some_field: x" not in result
-    assert "some_field: y" in result
+def test_yaml_text_rewrite_leaves_a_block_scalar_alone() -> None:
+    """A `text: |` block scalar whose content reads like a key line.
 
-    # Same shape, forward scan: the sequence sits between the leaf and `type:`.
-    forward_scan_sequence_sibling_text = (
-        "charts:\n"
-        "  b:\n    some_field: x\n    warnings_ignore:\n    - some_warning\n    type: bar\n"
-        "  t:\n    some_field: y\n    type: table\n"
+    The rewriter resolves paths through the YAML node tree, so prose inside a
+    block scalar is never a key to it: the line survives and the real key is
+    struck.
+    """
+    old: JsonObject = cast(
+        JsonObject,
+        {
+            "type": "object",
+            "properties": {
+                "dead": {"type": "boolean"},
+                "text": {"type": "string"},
+                "live": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
     )
-    result = _delete_tail_in_yaml_text(forward_scan_sequence_sibling_text, deletion)
-    assert "some_field: x" not in result
-    assert "some_field: y" in result
+    new: JsonObject = cast(
+        JsonObject,
+        {
+            "type": "object",
+            "properties": {"text": {"type": "string"}, "live": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    )
+    catalog = synthetic_catalog({V1: old, V2: new})
+    registry = MigrationRegistry([], [Deletion(V1, V2, ("dead",))], catalog=catalog)
+
+    result = migrate_yaml_text(
+        "dead: true\ntext: |\n    dead: true\n    Prose after.\nlive: keep\n",
+        catalog=catalog,
+        registry=registry,
+    )
+
+    assert result.startswith("text: |")
+    assert "    dead: true" in result
+    assert "live: keep" in result
+
+
+# ---------------------------------------------------------------------------
+# DEV-version boundary invariants
+# ---------------------------------------------------------------------------
+
+
+def test_enforce_support_window_raises_for_the_dev_version() -> None:
+    """_enforce_support_window must never treat the DEV version as never-expiring.
+
+    Unreachable through migrate_mapping in practice -- the DEV early return
+    and the latest-released exemption both short-circuit before this
+    function would ever see it -- so this pins the invariant directly rather
+    than proving it via a live call path. A ``released_at is None`` entry
+    reaching here means one of those guards broke.
+    """
+    from dbt_charts.core.compile.migrations.migrations import (
+        _enforce_support_window,
+    )
+
+    catalog = synthetic_catalog({V1: flat_schema("a"), V2: flat_schema("a")})
+
+    with pytest.raises(MigrationError):
+        _enforce_support_window(catalog.dev.version, catalog, today=date.today())
+
+
+def test_enforce_support_window_raises_for_an_unretained_identifier() -> None:
+    """A schema identifier absent from the catalog must raise, not StopIteration."""
+    from dbt_charts.core.compile.migrations.migrations import (
+        _enforce_support_window,
+    )
+
+    catalog = synthetic_catalog({V1: flat_schema("a"), V2: flat_schema("a")})
+
+    with pytest.raises(MigrationError):
+        _enforce_support_window("9.9.9", catalog, today=date.today())
+
+
+def test_recognize_never_probes_the_dev_version_as_a_candidate_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_recognize's probe loop must skip the DEV version outright.
+
+    Nothing sources a transition *from* the DEV version -- it is always the
+    newest entry, with no successor to migrate into -- so probing it can
+    never yield a verdict. Pinned by making that probe fatal rather than by
+    finding a document it would wrongly match today: the appliers are
+    positionally gated, so such a document may not exist, and a guard that
+    depends on one being found stops guarding the moment they get safer.
+    """
+    from dbt_charts.core.compile.migrations import migrations as _impl
+
+    catalog = synthetic_catalog({V1: flat_schema("a"), V2: flat_schema("b")})
+    registry = MigrationRegistry([], catalog=catalog)
+
+    def _fatal_on_dev(
+        mapping: object, identifier: str, catalog: YamlSchemaCatalog, registry: object
+    ) -> bool:
+        if identifier == catalog.dev.version:
+            raise AssertionError("probed the DEV version as a transition source")
+        return False
+
+    monkeypatch.setattr(_impl, "_transition_applies", _fatal_on_dev)
+
+    with pytest.raises(UnsupportedSchemaError):
+        _impl._recognize({"nonexistent": "value"}, catalog, registry)
+
+
+def test_synthetic_catalog_raises_when_computed_dev_name_collides() -> None:
+    """The computed DEV name must not already be a version the caller gave.
+
+    Silently resolving it would let a version the caller meant to keep
+    retained (with its own frozen schema) quietly answer ``schema_for`` with
+    the live DEV grammar instead.
+    """
+    assert next_minor("0.6.1") == "0.7.0"
+    with pytest.raises(ValueError, match="collides"):
+        synthetic_catalog({"0.7.0": flat_schema("a"), "0.6.1": flat_schema("a")})
+
+
+def test_retired_theme_renames_dev_entry_wins_key_collisions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A key both the DEV module and an older frozen module remap must
+    resolve to the DEV module's target -- the newest declaration in the
+    chain wins any collision. Unreachable with the real ``THEME_RENAMES``
+    tables today (the current DEV module's table is empty), so this pins the
+    precedence with faked modules swapped into ``sys.modules`` for the real,
+    newest two catalog boundaries.
+    """
+    import sys
+    import types
+
+    from dbt_charts.core.compile.migrations.migrations import retired_theme_renames
+    from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
+        load_yaml_schema_catalog,
+    )
+
+    catalog = load_yaml_schema_catalog()
+    dev_dotted = (
+        "dbt_charts.core.compile.migrations.versions."
+        f"v{catalog.dev.version.replace('.', '_')}"
+    )
+    frozen_dotted = (
+        "dbt_charts.core.compile.migrations.versions."
+        f"v{catalog.latest_released.version.replace('.', '_')}"
+    )
+
+    fake_dev = types.ModuleType(dev_dotted)
+    vars(fake_dev).update(
+        moves=lambda source, target, *, catalog: (),
+        THEME_RENAMES={"retired": "dev-target"},
+    )
+    fake_frozen = types.ModuleType(frozen_dotted)
+    vars(fake_frozen).update(
+        moves=lambda source, target, *, catalog: (),
+        THEME_RENAMES={"retired": "frozen-target"},
+    )
+
+    monkeypatch.setitem(sys.modules, dev_dotted, fake_dev)
+    monkeypatch.setitem(sys.modules, frozen_dotted, fake_frozen)
+    retired_theme_renames.cache_clear()
+    try:
+        assert retired_theme_renames()["retired"] == "dev-target"
+    finally:
+        retired_theme_renames.cache_clear()

@@ -66,7 +66,9 @@ def _ruler(
     of it ad hoc per test. ``anchor_at_start`` defaults to False (the common
     case: the magnitude-extreme is the LAST tick of an ascending,
     non-negative ladder) -- tests for an all-negative ladder pass True
-    explicitly.
+    explicitly. ``prefix_repeats`` is always ``not reserve`` -- production
+    bakes both from the same ``column_forming`` fact (``scale.py``'s
+    ``_build_ruler``), and no test needs the two to diverge.
     """
     prefix, digit_spec = ruler_digit_format(format_spec)
     register = "analytic" if mode is SuffixMode.ANCHOR else "narrative"
@@ -80,6 +82,7 @@ def _ruler(
         exponent=exponent,
         mode=mode,
         reserve=reserve,
+        prefix_repeats=not reserve,
         prefix=prefix,
         digit_spec=digit_spec,
         anchor_at_start=anchor_at_start,
@@ -163,14 +166,39 @@ class TestExpressionShape:
         assert "datum.index" not in expr
         assert "datum.value !== 0" in expr
 
-    def test_currency_prefix_anchors_on_index_in_both_modes(self) -> None:
-        for mode in (SuffixMode.ANCHOR, SuffixMode.REPEAT):
-            ruler = _ruler(3, mode, format_spec="$.3~s")
-            expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
-            assert "datum.index === 1" in expr
-            # The symbol is embedded inside the anchor's format() spec (so d3-format
-            # places it correctly relative to the sign) -- not as a bare "$" literal.
-            assert re.search(r'format\([^,]+,"[^"]*\$[^"]*"\)', expr) is not None, expr
+    def test_currency_prefix_anchors_on_index_in_anchor_mode(self) -> None:
+        ruler = _ruler(3, SuffixMode.ANCHOR, format_spec="$.3~s")
+        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        assert "datum.index === 1" in expr
+        # The symbol is embedded inside the anchor's format() spec (so d3-format
+        # places it correctly relative to the sign) -- not as a bare "$" literal.
+        assert re.search(r'format\([^,]+,"[^"]*\$[^"]*"\)', expr) is not None, expr
+
+    def test_currency_prefix_still_anchors_in_repeat_mode_on_a_column_forming_axis(
+        self,
+    ) -> None:
+        """REPEAT mode is not an orientation proxy: a column-forming axis's
+        ladder can independently land in REPEAT (its own magnitude-driven
+        register) while the prefix still anchors on one tick --
+        ``ruler.prefix_repeats`` (keyed on column_forming alone), not
+        ``ruler.mode``, decides this.
+        """
+        ruler = _ruler(3, SuffixMode.REPEAT, format_spec="$.3~s", reserve=True)
+        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        assert "datum.index === 1" in expr
+        assert re.search(r'format\([^,]+,"[^"]*\$[^"]*"\)', expr) is not None, expr
+
+    def test_currency_prefix_repeats_with_no_anchor_index_on_a_non_column_forming_axis(
+        self,
+    ) -> None:
+        """A non-column-forming (horizontal) axis reads
+        ``ruler.prefix_repeats`` -- every tick carries the symbol, so there
+        is no anchor ternary to reference an index.
+        """
+        ruler = _ruler(3, SuffixMode.REPEAT, format_spec="$.3~s", reserve=False)
+        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        assert "datum.index" not in expr
+        assert re.search(r'format\([^,]+,"[^"]*\$[^"]*"\)', expr) is not None, expr
 
     def test_digit_format_call_strips_the_currency_symbol(self) -> None:
         """The anchor tick's format spec carries the currency symbol (so d3-format
@@ -235,6 +263,10 @@ class TestRealVegaRendering:
         ]
 
     def test_repeat_mode_900k_ladder(self) -> None:
+        """A column-forming axis (the default here): REPEAT is the ladder's
+        own magnitude-driven suffix register, independent of the prefix,
+        which still anchors on one tick (``ruler.prefix_repeats`` is False).
+        """
         ruler = _ruler(3, SuffixMode.REPEAT, format_spec="$.3~s")
         expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
         ticks = [0.0, 200_000.0, 400_000.0, 600_000.0, 800_000.0, 1_000_000.0]
@@ -247,6 +279,26 @@ class TestRealVegaRendering:
             "400k",
             "600k",
             "800k",
+            "$1,000k",
+        ]
+
+    def test_repeat_mode_900k_ladder_non_column_forming_repeats_the_prefix(
+        self,
+    ) -> None:
+        """The non-column-forming companion to the test above: same ladder,
+        ``reserve=False`` -- the prefix now repeats on every non-zero tick.
+        """
+        ruler = _ruler(3, SuffixMode.REPEAT, format_spec="$.3~s", reserve=False)
+        expr = inject_axis_numeral_expr({}, ruler)["labelExpr"]
+        ticks = [0.0, 200_000.0, 400_000.0, 600_000.0, 800_000.0, 1_000_000.0]
+        labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
+
+        assert labels == [
+            "0",
+            "$200k",
+            "$400k",
+            "$600k",
+            "$800k",
             "$1,000k",
         ]
 
@@ -271,10 +323,10 @@ class TestRealVegaRendering:
         labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
         assert labels == [
             "0",
-            "100k",
-            "200k",
-            "300k",
-            "400k",
+            "$100k",
+            "$200k",
+            "$300k",
+            "$400k",
             "$500k",
         ]
 
@@ -422,6 +474,58 @@ class TestNonCompactingEndAnchoredPrefix:
         )["labelExpr"]
 
         assert "datum.index === 0" in expr
+
+
+class TestNonCompactingRepeatPrefix:
+    """A non-column-forming axis (a horizontal bar's measure axis) has no
+    vertical digit column for an anchor-only prefix to disambiguate against
+    -- resolve leaves ``tick_label.anchor_at_start`` at ``None`` for that
+    axis, and this module reads that as the repeat signal: the prefix
+    renders on every non-zero tick, mirroring ``ruler``'s ``SuffixMode.REPEAT``
+    (zero carries neither a prefix nor a suffix, in either mode).
+    """
+
+    def test_anchor_at_start_none_emits_no_anchor_ternary(self) -> None:
+        expr = inject_axis_numeral_expr(
+            {},
+            None,
+            tick_label=ResolvedTickLabel(
+                format=",.0f", prefix="$", anchor_at_start=None
+            ),
+        )["labelExpr"]
+        assert "datum.index" not in expr
+
+    def test_anchor_at_start_none_repeats_prefix_on_every_nonzero_tick(self) -> None:
+        ticks = [0.0, 2_000.0, 4_000.0, 6_000.0, 8_000.0]
+        expr = inject_axis_numeral_expr(
+            {},
+            None,
+            tick_label=ResolvedTickLabel(
+                format=",.0f", prefix="$", anchor_at_start=None
+            ),
+        )["labelExpr"]
+        labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
+        assert labels[0] == "0", labels
+        assert all(label.startswith("$") for label in labels[1:]), labels
+
+    def test_anchor_at_start_bool_still_renders_exactly_one_dollar_sign(self) -> None:
+        """Companion: the untouched column-forming case -- a bool anchor
+        still gates the prefix onto exactly one tick, the largest positive
+        value in the ladder.
+        """
+        ticks = [0.0, 2_000.0, 4_000.0, 6_000.0, 8_000.0]
+        expr = inject_axis_numeral_expr(
+            {},
+            None,
+            tick_label=ResolvedTickLabel(
+                format=",.0f", prefix="$", anchor_at_start=False
+            ),
+        )["labelExpr"]
+        labels = _render_axis_labels(ticks, (ticks[0], ticks[-1]), expr)
+        dollar_labels = [label for label in labels if "$" in label]
+        assert len(dollar_labels) == 1, labels
+        assert labels[-1] == "$8,000", labels
+        assert labels[0] == "0", labels
 
 
 class TestNegativeAnchorCurrencySign:

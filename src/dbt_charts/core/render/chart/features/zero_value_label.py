@@ -138,6 +138,17 @@ class ZeroValueLabelFeature:
             layer_enc["size"] = size
 
         spec.layers.append(
-            ChartSpec(mark="text", mark_props=mark_props, encoding=layer_enc)
+            ChartSpec(
+                mark="text",
+                mark_props=mark_props,
+                encoding=layer_enc,
+                # This "0" IS the row's own printed value -- _zero_label_scope
+                # guarantees ValueLabelFeature's own bar path never fires on
+                # the same row set, so the two are mutually exclusive, never
+                # a double-label. Without the marker, hovering would recede
+                # the (invisible) zero-height bar while its own "0" stayed
+                # lit, the opposite of every other row.
+                value_label=True,
+            )
         )
         return spec

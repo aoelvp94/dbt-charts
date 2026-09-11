@@ -196,6 +196,16 @@ class ChartSpec:
     # into `layers` above relies on: nothing that reaches scatter is counted
     # by `layers[0]`/`layers[-1]`/etc, because scatter's rule lives here instead.
     underlays: list[ChartSpec] = field(default_factory=list)
+    # True only on a flat text-mark ChartSpec that IS one mark's own printed
+    # value (features/value_labels.py's per-segment/line/point/scatter label,
+    # an overlay layer's own label via emitters/_overlay.py's reuse of
+    # text_layer_spec(), or features/zero_value_label.py's direct "0" label
+    # for a genuine-zero bar row) -- never on a nested "layered" sub-spec, a
+    # stack's aggregate total label, or any of pie.py's own text layers
+    # (center total, outside labels), which never set this flag. vega_lite.py
+    # reads it off the assembled spec to stamp `$df_value_label_layers`, the
+    # join key chart_interactivity.js's recedableMarks() twin search gates on.
+    value_label: bool = False
     config: dict[str, Any] = field(default_factory=dict)
     mark_props: dict[str, Any] = field(default_factory=dict)
     # Simple string name ("mercator") or full projection dict ({"type": "conic...", "center": [...]}).

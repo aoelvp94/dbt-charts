@@ -3589,9 +3589,9 @@ class TestOneParsePerBuild:
 
         scans = 0
         loads = 0
-        real = yaml.SafeLoader.get_single_node
+        real = yaml.CSafeLoader.get_single_node
 
-        def spy(loader: yaml.SafeLoader) -> yaml.Node | None:
+        def spy(loader: yaml.CSafeLoader) -> yaml.Node | None:
             nonlocal scans
             scans += 1
             return real(loader)
@@ -3601,11 +3601,12 @@ class TestOneParsePerBuild:
             loads += 1
             return None
 
-        # Every board loader here derives from SafeLoader, so the spy sees the
-        # compose behind the model and the one behind the source map alike;
+        # Every board loader here derives from the pinned CSafeLoader
+        # (dbt_charts.core.utils.YAML_LOADER), so the spy sees the compose
+        # behind the model and the one behind the source map alike;
         # `get_single_data` is `yaml.load`'s scan-and-construct entry, which
         # the one composed node feeding `construct_document` never enters.
-        monkeypatch.setattr(yaml.SafeLoader, "get_single_node", spy)
+        monkeypatch.setattr(yaml.CSafeLoader, "get_single_node", spy)
         monkeypatch.setattr(
             yaml.constructor.BaseConstructor, "get_single_data", spy_load
         )

@@ -52,6 +52,7 @@ def _resolve_init_root(project_dir: Path | None, *, yes: bool) -> Path:
 def run_wizard(
     *,
     project_dir: Path | None,
+    project_dir_explicit: bool,
     force: bool,
     yes: bool,
     skills: bool | None,
@@ -164,9 +165,13 @@ def run_wizard(
                 all_targets=False,
                 dir_override=None,
                 global_install=False,
-                force=force,
                 check=False,
-                project_dir=root,
+                # The user's own --project-dir, not `root` (the wizard's
+                # already-resolved scaffold root): skills follow the same
+                # git-root default as `dct init skills` unless the user
+                # named a directory explicitly.
+                project_dir=project_dir,
+                project_dir_explicit=project_dir_explicit,
             )
 
     if do_mcp:

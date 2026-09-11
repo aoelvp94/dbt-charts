@@ -156,6 +156,14 @@ style:
       border:
         color: dbt-creams.border
         radius: 4.0
+    # Literal dbt-creams.* token, not chrome.* -- style.palettes.chrome stays
+    # bound to dbt-grays in _base.yaml and is never rebound for paper, so a
+    # chrome.* reference here would hand paper cool-gray neutrals on a warm
+    # canvas. One scaffold rung past paper's own measure gridline, at twice
+    # that gridline's width.
+    hover_emphasis:
+      drop_line_color: dbt-creams.disabled
+      drop_line_width: 3.0
     support_table:
       font:
         color: dbt-creams.muted

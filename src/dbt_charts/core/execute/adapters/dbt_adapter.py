@@ -105,6 +105,7 @@ def _read_target_dict(
     profile_name: str,
     target_name: str | None,
     profiles_dir: Path | None = None,
+    render: bool = False,
 ) -> dict[str, Any]:
     """Return the connection fields for the given profile+target from profiles.yml.
 
@@ -121,7 +122,10 @@ def _read_target_dict(
     only for manifest loading (WritableManifest) and test execution.
 
     Relative `path:` entries (DuckDB) are resolved against `dbt_project_path`
-    so the adapter opens the file dbt would have opened, regardless of CWD.
+    so the adapter opens the file dbt would have opened, regardless of CWD. With
+    `render=True` this anchors the rendered path (see the `render` arg below) —
+    with `render=False` a templated `path:` is anchored unrendered, a
+    pre-existing gap the resolver path's own later render doesn't correct.
 
     Args:
         dbt_project_path: The dbt project root; used as the anchor for relative
@@ -131,6 +135,14 @@ def _read_target_dict(
             default target (profile["target"]), falling back to "dev" if absent.
         profiles_dir: Explicit absolute path to the profiles.yml directory when the
             file does not live at dbt_project_path. None = standard resolution order.
+        render: False (default) returns the target with its Jinja/env_var() left
+            raw — for a caller that renders it exactly once itself downstream
+            (source_resolver._expand_dbt_profile, via DbtTargetSourceConfig's
+            validator). True renders it here, reusing the same render already
+            computed for validation below — for a caller with no render step of
+            its own (DbtAdapter._get_dbt_adapter). Never pass True from a caller
+            that also renders the result, or an env_var() value that itself
+            contains Jinja delimiters would be evaluated a second time.
     """
     profiles = _read_profiles_yml(dbt_project_path, profiles_dir=profiles_dir)
     profile = profiles.get(profile_name)
@@ -172,20 +184,14 @@ def _read_target_dict(
     #
     # Validation needs dbt's canonical spelling AND its rendered values — dbt renders
     # Jinja first, so validating the raw YAML would reject an env_var() in any field
-    # dbt types as non-string (port, threads, …). Both transforms apply to a throwaway
-    # copy: the returned target keeps the author's spelling for the readers below, and
-    # its Jinja is left raw. On the resolver path that dict becomes a
-    # DbtTargetSourceConfig, whose inherited validator renders it exactly once —
-    # rendering here as well would evaluate that pass's own output as a template. The
-    # two direct callers (DbtAdapter._get_adapter, source_resolver._expand_dbt_profile)
-    # never render, same as before this change.
+    # dbt types as non-string (port, threads, …). rendered_connection is computed
+    # once here; render=True reuses it as the returned target instead of rendering
+    # a second time (see the `render` docstring above for why a second render is
+    # unsafe).
+    rendered_connection = render_dbt_jinja_in_dict(dict(connection))
     try:
         credentials_cls = load_plugin(typename)
-        credentials_cls.validate(
-            credentials_cls.translate_aliases(
-                render_dbt_jinja_in_dict(dict(connection))
-            )
-        )
+        credentials_cls.validate(credentials_cls.translate_aliases(rendered_connection))
     except JsonSchemaValidationError as exc:
         raise ValueError(
             f"Profile '{profile_name}' target '{resolved_target}' is not a valid "
@@ -196,6 +202,9 @@ def _read_target_dict(
         raise ValueError(
             f"Profile '{profile_name}' target '{resolved_target}': {exc}"
         ) from exc
+
+    if render:
+        connection = rendered_connection
 
     # dbt accepts several spellings per field; a few of them are read downstream by
     # *dbt charts* under its own name (the BigQuery default_dataset build in
@@ -212,6 +221,9 @@ def _read_target_dict(
     target = connection
     target["type"] = typename
 
+    # Anchoring must read the rendered path (render=True) — an unrendered
+    # env_var()/Jinja literal is never absolute, so it would join onto
+    # dbt_project_path as text and the adapter would open the wrong file.
     raw_path = target.get("path")
     if isinstance(raw_path, str) and raw_path and raw_path != ":memory:":
         path_obj = Path(raw_path)
@@ -408,8 +420,13 @@ class DbtAdapter(BaseAdapter):
                     f"profile_name was provided to DbtAdapter"
                 )
 
+        # This path has no render step of its own downstream, unlike
+        # source_resolver._expand_dbt_profile — see the `render` arg.
         target_dict = _read_target_dict(
-            self.dbt_project_path, self.profile_name, self.target_name
+            self.dbt_project_path,
+            self.profile_name,
+            self.target_name,
+            render=True,
         )
         from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
 

@@ -8,7 +8,6 @@ from typing import Any, Literal
 from dbt_charts.core.compile.config import get_chart_rendering
 from dbt_charts.core.compile.format import resolve_format_for_values
 from dbt_charts.core.compile.merge import merge_onto_base
-from dbt_charts.core.compile.models.chart.authored import ChartTotal
 from dbt_charts.core.compile.models.chart.normalized import (
     PieChart,
     TableChart,
@@ -63,6 +62,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 )
 from dbt_charts.core.compile.resolve.style.palette import resolve_dark_companion_stops
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.text.predefined_formats import PredefinedNumberFormat
 
 __all__ = [
     "_resolve_pie",
@@ -169,13 +169,28 @@ def _resolve_pie(
     )
 
     total = normalized.total
-    if total is not None and total.format is not None:
-        total = ChartTotal(
-            visible=total.visible,
-            label=total.label,
-            format=resolve_format_for_values(
-                total.format, chart_style_context.formats, format_vote_values
-            ),
+
+    # Donut center value format: style-cascade field (pie.total.value.format),
+    # resolved the same way and against the same vote set as the slice tooltip
+    # so the two never disagree about the same sub-$1 value. A donut whose
+    # cascade never authored a format still defaults to plain integers -- the
+    # same fallback the field used to get from normalize-time auto-injection,
+    # moved here because the cascade isn't resolved yet at normalize time.
+    is_donut_shape = pie.inner_radius is not None and pie.inner_radius > 0
+    raw_total_format = pie.total.value.format
+    if raw_total_format is None and is_donut_shape:
+        raw_total_format = str(PredefinedNumberFormat.integer)
+    total_style = pie.total
+    if raw_total_format is not None:
+        resolved_total_format = resolve_format_for_values(
+            raw_total_format, chart_style_context.formats, format_vote_values
+        )
+        total_style = pie.total.model_copy(
+            update={
+                "value": pie.total.value.model_copy(
+                    update={"format": resolved_total_format}
+                )
+            }
         )
 
     label_font_family = resolved_labels.font.family
@@ -271,6 +286,11 @@ def _resolve_pie(
                 {
                     "header": {"visible": False},
                     "pagination": {"enabled": False},
+                    # Explicit null (not an absent key) so this clears the
+                    # theme's inherited stripe rather than letting it win:
+                    # a wedge legend is a key, not a dense data table, and
+                    # striping a 2-row key reads as a selection, not texture.
+                    "row": {"stripe": {"color": None}},
                     "columns": plan.columns,
                 }
             ),
@@ -328,7 +348,7 @@ def _resolve_pie(
                 chart_style_context.formats,
                 format_vote_values,
             ),
-            total_style=pie.total,
+            total_style=total_style,
             title_font=_tf,
         ),
         dark_companion_stops=dark_stops,

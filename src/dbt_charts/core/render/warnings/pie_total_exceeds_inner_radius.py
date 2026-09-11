@@ -114,19 +114,12 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             and not isinstance(row[theta_field], bool)
         )
 
-        fmt = chart.total.format
-        if fmt is None:
-            # No authored format: measure what VL's default label shows, not
-            # Python's float repr — whole numbers without .0, non-integral sums
-            # at d3's default precision (Vega's empty format type is `.12~g`).
-            theta_int = int(theta_sum)
-            formatted = (
-                str(theta_int) if theta_sum == theta_int else f"{theta_sum:.12g}"
-            )
-        else:
-            # resolve_format() narrows every resolved pie's total.format to str.
-            assert isinstance(fmt, str), type(fmt)
-            formatted = format_d3(theta_sum, fmt)
+        # A donut (inner_radius > 0, guarded above) always resolves a format --
+        # _resolve_pie defaults it to the integer preset when the cascade left
+        # it unset, so this slot is never None in production.
+        fmt = chart.style.total_style.value.format
+        assert isinstance(fmt, str), type(fmt)
+        formatted = format_d3(theta_sum, fmt)
 
         font = chart.style.total_style.value.font
         # font.size is guaranteed non-None by the theme cascade (_base.yaml:754-758).
@@ -145,8 +138,8 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             Diagnostic.from_code(
                 WARN_PIE_TOTAL_EXCEEDS_INNER_RADIUS,
                 chart=chart_id,
-                path=f"charts.{chart_id}.total.format",
-                field="total",
+                path=f"charts.{chart_id}.style.total.value.format",
+                field="format",
                 message=WARN_PIE_TOTAL_EXCEEDS_INNER_RADIUS.message_template.format(
                     chart_id=chart_id,
                     formatted_value=formatted,

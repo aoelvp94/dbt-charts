@@ -2,6 +2,7 @@
   "schemas": [
     {
       "version": "0.3.0",
+      "status": "RELEASED",
       "released_at": "2026-07-31",
       "file": "0.3.0.json",
       "sha256": "7d693edf0d1bbbedd132d6f87e2148cf7289c04de95126064f78d5dc95e87b94",
@@ -9,6 +10,7 @@
     },
     {
       "version": "0.3.1",
+      "status": "RELEASED",
       "released_at": "2026-08-04",
       "file": "0.3.1.json",
       "sha256": "469e90a26d415caef4be7a306a5f225c0edca62ab382f7448fcd3c9883d98e48",
@@ -16,6 +18,7 @@
     },
     {
       "version": "0.4.0",
+      "status": "RELEASED",
       "released_at": "2026-08-07",
       "file": "0.4.0.json",
       "sha256": "6f61fddccb1cea14f8be35ddcd61f01aee6ca884ddbca90fe3d18f762fe93d4c",
@@ -23,6 +26,7 @@
     },
     {
       "version": "0.5.0",
+      "status": "RELEASED",
       "released_at": "2026-08-21",
       "file": "0.5.0.json",
       "sha256": "a274d9c4595df8e2afcaeffc415e042568c6013e72383e44a1cb7d89251ba713",
@@ -30,10 +34,27 @@
     },
     {
       "version": "0.6.0",
+      "status": "RELEASED",
       "released_at": "2026-09-08",
       "file": "0.6.0.json",
       "sha256": "93e3ffa9d073ea5249de25c2dd8818c51eeaaf30d13af9faae67172d14d2f10d",
       "predecessor": "0.5.0"
+    },
+    {
+      "version": "0.7.0",
+      "status": "RELEASED",
+      "released_at": "2026-09-10",
+      "file": "0.7.0.json",
+      "sha256": "155581419cd161b329e1de13e628385481438709ef768e0c9c5e47b6e492ad43",
+      "predecessor": "0.6.0"
+    },
+    {
+      "version": "0.8.0",
+      "status": "DEV",
+      "released_at": null,
+      "file": null,
+      "sha256": null,
+      "predecessor": "0.7.0"
     }
   ]
 }

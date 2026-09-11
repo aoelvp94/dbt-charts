@@ -1,5 +1,5 @@
 ---
-name: dct-mcp-setup
+name: mcp-setup
 kind: workflow
 surfaces: [cli]
 description: >
@@ -8,8 +8,8 @@ description: >
   Claude Desktop, VS Code, Codex, Copilot, or any MCP-compatible client,
   or troubleshooting MCP connection issues like 'server not starting',
   'tools not appearing', 'MCP requires additional dependencies'. Do NOT
-  use for building dashboards (use board-build). Do NOT
-  use for dashboard errors (use dct-troubleshooting).
+  use for building dashboards (use {{ s_skill_name_build }}). Do NOT
+  use for dashboard errors (use {{ s_skill_name_troubleshooting }}).
 metadata:
   author: fivetran
 ---
@@ -161,7 +161,7 @@ After configuration, test by asking your AI assistant:
 - "Show me the database schema" → should invoke `schema(source=...)`
 - "Validate this dashboard YAML file" → should invoke `validate_board`
 
-If the assistant doesn't recognize these tools, the MCP server isn't connected — check the troubleshooting steps above.
+If the assistant doesn't recognize these tools, the MCP server isn't connected — check the Troubleshooting steps above.
 
 ## Authoring Metadata Convention
 

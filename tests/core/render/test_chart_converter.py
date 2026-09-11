@@ -29,12 +29,18 @@ def _noop_register_fonts(vlc_module: object) -> None:
 
 def test_render_vega_spec_raises_format_error_when_vlconvert_missing() -> None:
     """render_vega_spec must raise FormatError (not ImportError) when vl-convert is absent."""
+    from dbt_charts.core.diagnostics.codes_render import (
+        ERR_FORMAT_CONVERTER_UNAVAILABLE,
+    )
+
     # Block the import so render_vega_spec hits the except branch.
     with mock.patch.dict(sys.modules, {"vl_convert": None}):
         # Re-import to get a fresh call that hits the guarded import.
         from dbt_charts.core.render.converters.chart import render_vega_spec
 
-        with pytest.raises(FormatError, match="vl-convert-python is required"):
+        with pytest.raises(
+            FormatError, match="pip install vl-convert-python"
+        ) as exc_info:
             render_vega_spec(
                 {"$schema": "..."},
                 "svg",
@@ -44,6 +50,7 @@ def test_render_vega_spec_raises_format_error_when_vlconvert_missing() -> None:
                 False,
                 chart_id="chart",
             )
+        assert exc_info.value.code is ERR_FORMAT_CONVERTER_UNAVAILABLE
 
 
 @pytest.mark.parametrize(
@@ -419,6 +426,71 @@ def test_correct_concat_overshoot_raises_on_nonpositive_width(
         chart_converter._correct_concat_overshoot(
             spec, target_width, None, fake_vlc, None, "chart"
         )
+
+
+def test_stamp_value_label_layers_raises_when_no_matching_group() -> None:
+    """Every index in ``$df_value_label_layers`` must name a real mark-text
+    group -- bare, facet ``child_``, or concat ``concat_N_`` prefixed. A miss
+    means the sentinel and vl_convert's own group naming have diverged: a
+    wiring bug to raise on, not a legitimate empty case to skip past.
+    """
+    from dbt_charts.core.diagnostics.chart_data import ChartDataError
+    from dbt_charts.core.render.converters import chart as chart_converter
+
+    svg = '<g class="mark-text role-mark layer_5_marks"></g>'
+
+    with pytest.raises(ChartDataError, match="layer 2"):
+        chart_converter._stamp_value_label_layers(svg, [2], "chart")
+
+
+def test_stamp_value_label_layers_does_not_raise_on_a_real_zero_row_layer() -> None:
+    """A real zero-row value-label layer must not trip the wiring-bug raise.
+
+    ``features/value_labels.py::build_line_text_layers`` splits a band-edge
+    caption into an ``anchored`` layer (filtered off the edge) and a ``top``
+    ``fallback`` layer (filtered onto it) whenever the position names a band
+    edge. On a single-category ``curve: step`` line the only labeled row IS
+    that edge, so ``anchored``'s filter matches zero rows -- vl_convert still
+    emits that layer's mark-text group (self-closing, no children), which is
+    what keeps this from being the wiring bug the sibling test above pins.
+    """
+    from .._svg_render import render_board_to_svg
+
+    svg = render_board_to_svg("""
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, target: 45, cap: Pace}
+charts:
+  c1:
+    query: q
+    type: line
+    x: month
+    y: target
+    style:
+      marks:
+        line:
+          curve: step
+          connect: false
+          labels:
+            visible: true
+            field: cap
+            position: left
+rows:
+  - c1
+""")
+    stamped_groups = re.findall(
+        r'<g class="mark-text role-mark layer_\d+_marks"'
+        r' data-dbt-value-label="true"[^>]*>',
+        svg,
+    )
+    assert len(stamped_groups) == 2
+    self_closing = [g for g in stamped_groups if g.endswith("/>")]
+    assert len(self_closing) == 1, (
+        "the empty anchored layer's group must still be present, self-closing"
+    )
 
 
 def test_hconcat_subtitle_bounded_before_overshoot_probe(

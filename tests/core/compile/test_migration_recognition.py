@@ -26,7 +26,6 @@ from dbt_charts.core.compile.migrations import (
     prepare_board_mapping,
 )
 from dbt_charts.core.compile.migrations.migrations import (
-    _CURRENT,
     _board_migration_context,
     _recognize,
     _schema_has_tail,
@@ -437,7 +436,7 @@ def test_a_current_document_is_never_probed(monkeypatch: pytest.MonkeyPatch) -> 
         },
     )
 
-    assert _recognize(board, catalog, registry) == _CURRENT
+    assert _recognize(board, catalog, registry) == catalog.dev.version
 
 
 def test_an_expired_grammar_is_announced_not_raised(
@@ -453,12 +452,35 @@ def test_an_expired_grammar_is_announced_not_raised(
     """
     from dbt_charts.core.compile.migrations import migrations as _impl
 
+    dev = "0.3.0"
     schemas = {V1: flat_schema("old", "keep"), V2: flat_schema("new", "keep")}
     entries = (
-        YamlSchemaEntry(V2, released(1), f"{V2}.json", "test", None),
-        YamlSchemaEntry(V1, released(400), f"{V1}.json", "test", None),
+        YamlSchemaEntry(
+            dev,
+            status="DEV",
+            released_at=None,
+            filename=None,
+            sha256=None,
+            predecessor=V2,
+        ),
+        YamlSchemaEntry(
+            V2,
+            status="RELEASED",
+            released_at=released(1),
+            filename=f"{V2}.json",
+            sha256="test",
+            predecessor=V1,
+        ),
+        YamlSchemaEntry(
+            V1,
+            status="RELEASED",
+            released_at=released(400),
+            filename=f"{V1}.json",
+            sha256="test",
+            predecessor=None,
+        ),
     )
-    catalog = YamlSchemaCatalog(entries, schemas, schemas[V2])
+    catalog = YamlSchemaCatalog(entries, {**schemas, dev: schemas[V2]}, schemas[V2])
     registry = MigrationRegistry([Move(V1, V2, ("old",), ("new",))], catalog=catalog)
     monkeypatch.setattr(_impl, "_board_has_historical_schemas", lambda: True)
     monkeypatch.setattr(_impl, "_board_migration_context", lambda: (catalog, registry))
@@ -528,6 +550,12 @@ def test_no_retired_path_survives_into_the_current_grammar() -> None:
     still exist globally (e.g. ``conditional_formatting`` on ``table``/``kpi``)
     as long as it is gone from the scoped family's own branch.
 
+    An unscoped ``Deletion`` narrows it a third way, to the document root's own
+    branch: ``style.color`` is gone from a board's style block while every chart
+    family keeps its own, so the tail survives globally and the anchored path
+    does not. ``_live_declares_tail`` is what confines the firing to the
+    positions that lost it.
+
     An identity-path Move (``old_path == new_path``, e.g. dbt charts'
     `theme:` sugar) cannot satisfy that precondition at all -- its whole
     point is a key that survives every transition unrenamed. Key presence is
@@ -560,6 +588,7 @@ def test_no_retired_path_survives_into_the_current_grammar() -> None:
             if deletion.chart_type is not None
             else _schema_has_tail(catalog.current_schema, deletion.path)
         )
+        and _schema_path_exists(catalog.current_schema, deletion.path)
     ]
 
     assert survivors == []
@@ -664,12 +693,12 @@ def test_a_post_freeze_key_nested_below_the_firing_node_is_still_forgiven() -> N
 
 
 def _pending_boundary_context() -> tuple[YamlSchemaCatalog, MigrationRegistry]:
-    """A catalog with a pending ``latest.version -> _CURRENT`` boundary.
+    """A catalog with a pending ``latest_released -> DEV`` boundary.
 
-    Models the real ``versions/current.py`` shape ``migrate_yaml_text``'s
-    ``stop_target`` exists to cap: ``V2`` (the frozen "latest") is the source
-    of a Move that only lands once the next, unreleased version ships. The
-    live schema also declares ``_schema_version`` -- the field the capped
+    Models the real DEV-entry shape ``migrate_yaml_text``'s ``stop_target``
+    exists to cap: ``V2`` (the frozen "latest released") is the source of a
+    Move that only lands once the next, unreleased version ships. The live
+    schema also declares ``_schema_version`` -- the field the capped
     on-disk rewrite stamps -- mirroring the real catalog: the live/current
     schema knows the field, older frozen schemas do not.
     """
@@ -678,7 +707,7 @@ def _pending_boundary_context() -> tuple[YamlSchemaCatalog, MigrationRegistry]:
         flat_schema("new", "keep", "_schema_version"),
     )
     registry = MigrationRegistry(
-        [Move(V2, _CURRENT, ("old",), ("new",))],
+        [Move(V2, catalog.dev.version, ("old",), ("new",))],
         catalog=catalog,
     )
     return catalog, registry
@@ -722,7 +751,7 @@ def test_migrate_yaml_text_stop_target_never_stamps_an_already_current_file() ->
     migrate rewrite every already-current board in a project, and stamp a
     value the frozen version it names may not itself declare, purely for the
     stamp. The stamp is written only alongside a real structural change.
-    Exercises the early ``identifier == _CURRENT`` return specifically.
+    Exercises the early ``identifier == catalog.dev.version`` return specifically.
     """
     catalog, registry = _pending_boundary_context()
     yaml_text = "keep: k\n"
@@ -737,7 +766,7 @@ def test_migrate_yaml_text_stop_target_never_stamps_an_already_current_file() ->
 def test_migrate_yaml_text_stop_target_never_crashes_on_a_flow_style_root() -> None:
     """A flow-style-root board with nothing to migrate is valid YAML the text
     writer never attempts to edit -- it is byte-identical input to the early
-    ``identifier == _CURRENT`` return, which touches nothing regardless of
+    ``identifier == catalog.dev.version`` return, which touches nothing regardless of
     shape. Pins that recognition itself handles flow-style syntax cleanly
     (no crash), not a stamp-degradation mechanism -- there is none once
     nothing is written.

@@ -92,7 +92,7 @@ def test_inert_border_fields_stripped_from_authored_board(
 
 def test_registry_declares_the_0_5_0_border_deletions() -> None:
     """Declared at the 0.5.0 -> 0.6.0 boundary, now frozen -- not at
-    ``catalog.latest.version``, which is 0.6.0 itself post-freeze."""
+    ``catalog.latest_released.version``, which is 0.6.0 itself post-freeze."""
     _, registry = _board_migration_context()
     deletions = registry.deletions_from("0.5.0")
 

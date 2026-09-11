@@ -150,6 +150,34 @@ Chart {chart_id!r} (area): `style.stack: {stack}` with axis_y.scale.type: log is
 
 Fired when a stacked area chart (`style.stack: zero/normalize/center`) is combined with `axis_y.scale.type: log`. A cumulative stack top is meaningless on a log scale. Use `stack: none`, or drop the log scale.
 
+### ERR-AREA-STACKED-MARK-STYLE-CLEARED: marks.area.stacked was cleared to null
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} (area): `marks.area.stacked` resolved to null. Stacked and single-series area charts both need this recipe -- a single-series area takes it in full even when the chart itself isn't stacked -- but a board or chart in this chart's style cascade authored `marks.area.stacked: null` explicitly, which clears the inherited theme default instead of leaving it alone. Remove that null override.
+```
+
+Fired when `marks.area.stacked` resolves to null after the style cascade. Every built-in theme declares this key, so the only way to reach null is a board or chart explicitly authoring `marks.area.stacked: null` -- which clears the inherited value rather than leaving it untouched. Remove the null override.
+
+### ERR-AREA-STACKED-STROKE-INCOMPLETE: marks.area.stacked.stroke is missing cap or join
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} (area): `marks.area.stacked.stroke` must declare both `cap` and `join`. Stacked and single-series area charts replace `marks.line.stroke` with it wholesale, so a property it omits is dropped rather than inherited and the edge falls back to SVG butt/miter, spiking each vertex. Set both explicitly (`cap: butt` for the renderer's own default).
+```
+
+Fired when the area stacked recipe's stroke is missing a cap or a join, usually because a board or chart authored one of them as null. The recipe's stroke replaces the top-edge line stroke wholesale rather than merging into it, so an omitted property is not inherited. Set both cap and join explicitly.
+
 ### ERR-AXIS-COLUMN-REQUIRES-TABULAR-FONT: A column-forming quantitative axis needs a tabular label font
 
 - **Level:** error
@@ -386,7 +414,7 @@ Fired when a `style.formats` key collides with an engine-owned predefined format
 Rows with {x_field!r} values {value_a!r} and {value_b!r} both collapse to the {time_unit!r} bucket {bucket!r}{dim_desc}. Aggregate to {time_unit} grain in the query before rendering.
 ```
 
-Fired when gap-filling an ordinal bucketed-time axis finds two rows whose x-values round to the same bucket (e.g. two timestamps on the same calendar day under a `yearmonthdate` grain). A last-wins merge would silently discard one row; aggregate to the bucket grain in the query before rendering.
+Fired when gap-filling an ordinal bucketed-time axis finds two rows whose x-values fall inside the same bucket: two timestamps on one calendar day under `yearmonthdate`, or a finer-grained series under a coarser authored `time_unit` (monthly rows under `yearquarter`, daily rows under `yearmonth`). A coarser grain places rows in buckets; it does not combine them, and a last-wins merge would silently discard all but one. Aggregate to the bucket grain in the query before rendering.
 
 ### ERR-HISTOGRAM-NON-NUMERIC: Histogram x field is not numeric
 
@@ -1146,6 +1174,34 @@ File not found: {path}
 ```
 
 Fired when a file path given to a dbt charts verb does not exist on the filesystem. Check for typos in the path and ensure the file exists.
+
+### ERR-FORMAT-CONVERSION-FAILED: Format conversion failed
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+{format!r} export failed while converting the rendered board ({detail}). Try exporting {alt_formats} instead, or split the board into smaller boards.
+```
+
+Fired when the vl-convert-python converter raises while turning a rendered board into PNG or PDF bytes. On PDF exports, the most common permanent cause is the PDF format's own 28-level graphics-state nesting limit: a sufficiently large or deeply nested board can exceed it. Try a different export format, or split the board into smaller boards. The underlying converter message is preserved in the diagnostic detail.
+
+### ERR-FORMAT-CONVERTER-UNAVAILABLE: Format conversion library is not installed
+
+- **Level:** error
+- **Domain:** render
+- **Suppressible:** no
+
+**Message template:**
+
+```
+{format!r} rendering requires vl-convert-python. Install it with: pip install vl-convert-python
+```
+
+Fired when a PNG or PDF export (or any render path that needs vl-convert-python to turn a Vega-Lite spec into SVG/PNG/PDF) runs in an environment where vl-convert-python is not installed. Install it: `pip install vl-convert-python`.
 
 ### ERR-FORMAT-UNSUPPORTED: Unknown render format
 

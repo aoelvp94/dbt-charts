@@ -16,6 +16,7 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     JsonObject,
     YamlSchemaCatalog,
     YamlSchemaEntry,
+    next_minor,
 )
 
 
@@ -50,17 +51,33 @@ def flat_schema(*keys: str) -> JsonObject:
 def synthetic_catalog(
     schemas: dict[str, JsonObject], current: JsonObject | None = None
 ) -> YamlSchemaCatalog:
-    """Build a catalog from *schemas* given oldest-first.
+    """Build a catalog from *schemas* given oldest-first, plus an auto-appended DEV entry.
 
     ``current`` is the live schema. It defaults to the newest frozen one, which
     is what a real catalog looks like between releases; pass it to model the
     state this module exists to test — unreleased model changes in flight, so
     the live grammar knows keys no frozen grammar has seen.
+
+    Every entry in *schemas* stays RELEASED; a DEV entry named
+    ``next_minor(newest)`` is appended automatically, mirroring the real
+    catalog's always-newest DEV entry, so ``catalog.dev`` resolves at all
+    call sites without changing any of them. Raises if the computed DEV name
+    collides with a version already in *schemas* -- silently resolving it
+    would make an unretained version indistinguishable from the live one.
     """
     versions = tuple(reversed(schemas))
-    entries = tuple(
+    newest = versions[0]
+    dev_version = next_minor(newest)
+    if dev_version in schemas:
+        raise ValueError(
+            f"synthetic_catalog computed DEV version {dev_version!r}, which "
+            "collides with a version already in schemas."
+        )
+    live_schema = schemas[newest] if current is None else current
+    released_entries = tuple(
         YamlSchemaEntry(
             version=version,
+            status="RELEASED",
             released_at=released(index),
             filename=f"{version}.json",
             sha256="test",
@@ -68,6 +85,15 @@ def synthetic_catalog(
         )
         for index, version in enumerate(versions)
     )
+    dev_entry = YamlSchemaEntry(
+        version=dev_version,
+        status="DEV",
+        released_at=None,
+        filename=None,
+        sha256=None,
+        predecessor=newest,
+    )
+    entries = (dev_entry, *released_entries)
     return YamlSchemaCatalog(
-        entries, schemas, schemas[versions[0]] if current is None else current
+        entries, {**schemas, dev_version: live_schema}, live_schema
     )

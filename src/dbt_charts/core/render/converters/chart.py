@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_CONCAT_OVERSHOOT_NONPOSITIVE,
+    ERR_FORMAT_CONVERTER_UNAVAILABLE,
 )
 from dbt_charts.core.render.chart.title_overflow import (
     apply_title_overflow_to_spec,
@@ -244,6 +245,67 @@ def _stamp_axis_title_kinds(svg: str, kind_by_axis: dict[str, str] | None) -> st
         pos = end
     out.append(svg[pos:])
     return "".join(out)
+
+
+def _stamp_value_label_layers(svg: str, layer_indices: list[int], chart_id: str) -> str:
+    """Tag each value-label text-mark GROUP with a JS selection hook.
+
+    ``layer_indices`` (``$df_value_label_layers``, stamped in vega_lite.py's
+    ``_stamp_value_label_layer_sentinel``) names the ``vl["layer"]`` position
+    of every text sublayer that is genuinely a mark's own printed value (empty
+    when the chart has none; the sentinel is only written when one exists) --
+    vl_convert names a flat layer array's mark group by that same position,
+    so the position IS the join key; no scenegraph correspondence needed here,
+    unlike ``_stamp_legend_series_key`` above. But the class string vl_convert
+    writes around that position is not one fixed shape: a plain unit spec gets
+    the bare ``layer_N_marks``, a facet's inner spec gets ``child_layer_N_marks``
+    (repeated once per panel -- every occurrence must be stamped, not just the
+    first), and the endpoint-label right-pane/top-rail concat wrapper
+    (``translate.py``'s ``_wrap_hconcat_label_pane``/``_wrap_vconcat_label_rail``)
+    qualifies its main pane's own groups ``concat_N_layer_N_marks``. Facet and
+    that concat wrapper never nest -- not because either module checks for
+    the other (structurally they would), but because
+    ``ERR_MULTIPLES_ENDPOINT_LABELS`` (raised in ``features/facet.py`` and
+    ``features/mirror_axis.py``) refuses the small-multiples + endpoint-label
+    combination outright. If that guard is ever relaxed, the prefix regex
+    above goes incomplete.
+
+    chart_interactivity.js's ``recedableMarks()`` reads this attribute to
+    scope its twin search to marked layers only -- a bar's own printed value
+    still recedes with its bar, while a pie's center total and outside
+    labels (never marked; built directly in emitters/pie.py) stay lit
+    unconditionally. See that function's docstring.
+
+    A layer index with zero matching groups is a wiring bug, not a
+    legitimate empty case: vl_convert emits a layer's mark-text group at that
+    index even when the layer's own filter drops every row (self-closing, no
+    children) -- ``test_stamp_value_label_layers_does_not_raise_on_a_real_zero_row_layer``
+    (``tests/core/render/test_chart_converter.py``) pins exactly that shape,
+    a single-category ``curve: step`` line whose only labeled row is the band
+    edge.
+    """
+    for index in layer_indices:
+        marker_re = re.compile(
+            rf'class="mark-text role-mark (?:child_|concat_\d+_)?layer_{index}_marks"'
+        )
+        matches = list(marker_re.finditer(svg))
+        if not matches:
+            raise ChartDataError(
+                f"value-label layer {index} has no matching mark-text group in "
+                "the rendered SVG (checked the bare, facet child_, and concat_N_ "
+                "prefixes) -- the value-label sentinel and vl_convert's own group "
+                "naming have diverged",
+                chart_id=chart_id,
+            )
+        out: list[str] = []
+        pos = 0
+        for match in matches:
+            out.append(svg[pos : match.end()])
+            out.append(' data-dbt-value-label="true"')
+            pos = match.end()
+        out.append(svg[pos:])
+        svg = "".join(out)
+    return svg
 
 
 # Joins a mark to its legend entry on the raw series value baked into the
@@ -766,9 +828,8 @@ def render_vega_spec(
     try:
         import vl_convert as vlc
     except ImportError:
-        raise FormatError(
-            f"vl-convert-python is required for {format} rendering. "
-            "Install with: pip install vl-convert-python",
+        raise FormatError.from_code(
+            ERR_FORMAT_CONVERTER_UNAVAILABLE, format=format
         ) from None
 
     register_vl_convert_fonts(vlc)
@@ -812,6 +873,7 @@ def render_vega_spec(
     endpoint_label_cascade = spec.pop("$df_endpoint_label_cascade", None)
     title_style_dict = spec.pop("$df_title_style", None)
     axis_label_kinds = spec.pop("$df_axis_label_kinds", None)
+    value_label_layers = spec.pop("$df_value_label_layers", [])
     title_style = (
         TitleStyle.model_validate(title_style_dict)
         if title_style_dict is not None
@@ -900,6 +962,7 @@ def render_vega_spec(
     svg_result = _fix_chart_click_hrefs(svg_result)
     svg_result = _stamp_chart_title_kind(svg_result)
     svg_result = _stamp_axis_title_kinds(svg_result, axis_label_kinds)
+    svg_result = _stamp_value_label_layers(svg_result, value_label_layers, chart_id)
     svg_result = _stamp_series_keys(svg_result, spec, vlc, chart_id)
     if _spec_has_encoding(spec, ["strokeDash"]):
         svg_result = _fix_legend_symbol_linecap(svg_result)

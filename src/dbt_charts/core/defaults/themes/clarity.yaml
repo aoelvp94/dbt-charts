@@ -137,6 +137,11 @@ style:
       swatch:
         radius: 3.0
       active_marker: fill
+    # One scaffold rung past this theme's own measure gridline, at twice
+    # that gridline's width -- reads as structure, not as another series.
+    hover_emphasis:
+      drop_line_color: dbt-grays.disabled
+      drop_line_width: 3.0
     kpi:
       # KPI value font is a serif on clarity-voiced themes — narrative type
       # for the headline number while the body and support-row stay on

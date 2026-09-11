@@ -27,6 +27,8 @@ import yaml
 from importlib_resources import files
 from pydantic import BaseModel, ConfigDict, Field
 
+from dbt_charts.core.utils import YAML_LOADER
+
 # Anchored on the top-level `dbt_charts` package, matching skills.py — anchoring
 # on `dbt_charts.ai` would force-import that package from here.
 _EXAMPLES_DIR = files("dbt_charts") / "ai" / "examples"
@@ -82,7 +84,7 @@ def _parse_specimen(slug: str, text: str) -> ExampleDetail:
     """Build an ExampleDetail from one specimen's YAML. Raises ValueError on a
     board that can't describe itself — a listing with a blank title is worse
     than a loud packaging failure."""
-    parsed = yaml.safe_load(text)
+    parsed = yaml.load(text, Loader=YAML_LOADER)
     if not isinstance(parsed, dict):
         raise ValueError(f"{slug}: specimen is not a YAML mapping")
     title = parsed.get("title")

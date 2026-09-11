@@ -112,17 +112,21 @@ def quantitative_tick_labels(
     own d3-format implementation, not dbt charts'.
 
     When ``tick_label.prefix`` is set (the ``ruler is None`` non-compacting
-    case), the anchor tick additionally gets the currency prefix (mirroring
-    ``inject_axis_numeral_expr``'s labelExpr) so the gutter is sized for the
-    widest label.
+    case), the anchor tick additionally gets the currency prefix -- or, when
+    ``tick_label.anchor_at_start`` is ``None`` (non-column-forming), every
+    non-zero tick does (mirroring ``inject_axis_numeral_expr``'s labelExpr) --
+    so the gutter is sized for the widest label.
 
     When ``ruler`` is not None, VL does **not** paint from the literal spec
     at all -- ``inject_axis_numeral_expr`` composes a ``labelExpr`` from the
     same decision instead. Mirror that composition exactly: divide by the
     magnitude, gate the suffix on ``ruler.mode`` (already the *effective*
     mode -- a non-column-forming axis was baked to REPEAT regardless of
-    what the bare ladder would otherwise select) -- the anchor is
-    ``ruler.anchor_at_start`` (which END of the ladder is the
+    what the bare ladder would otherwise select), gate the currency prefix
+    on ``ruler.prefix_repeats`` instead (independent of ``mode`` -- a
+    column-forming axis can land in REPEAT mode for its own, magnitude-driven
+    reason and still anchor the prefix) -- the anchor position, for either,
+    is ``ruler.anchor_at_start`` (which END of the ladder is the
     magnitude-extreme, not the tick's raw value). A non-suffix tick trails
     with ``ruler.reservation`` when ``ruler.reserve``.
 
@@ -139,14 +143,18 @@ def quantitative_tick_labels(
         pad_table = tick_label.decimal_pad_table
 
         if prefix:
-            # Anchor tick only. Use with_symbol so d3-format's sign-before-symbol
-            # ordering applies (format("$,.0f")(-500) -> "-$500", not "$-500").
-            # Mirrors inject_axis_numeral_expr's labelExpr so gutter and paint agree.
-            anchor_pos = 0 if anchor_at_start else len(tick_values) - 1
+            # Mirrors inject_axis_numeral_expr's labelExpr (see this
+            # function's docstring). Use with_symbol so d3-format's
+            # sign-before-symbol ordering applies (format("$,.0f")(-500) ->
+            # "-$500", not "$-500").
             anchor_spec = with_symbol(format_spec, prefix)
+            anchor_pos = None
+            if anchor_at_start is not None:
+                anchor_pos = 0 if anchor_at_start else len(tick_values) - 1
             prefixed_labels = []
             for i, v in enumerate(tick_values):
-                spec = anchor_spec if i == anchor_pos else format_spec
+                is_prefixed = v != 0 and (anchor_pos is None or i == anchor_pos)
+                spec = anchor_spec if is_prefixed else format_spec
                 digits = d3_format(spec, v)
                 if pad_table:
                     digits += decimal_pad_for(pad_table, digits)
@@ -171,11 +179,15 @@ def quantitative_tick_labels(
     labels: list[str] = []
     for position, value in enumerate(tick_values):
         is_anchor = position == anchor_position
+        # Suffix follows mode, prefix follows prefix_repeats -- independent
+        # gates, see this function's docstring.
         carries_suffix = value != 0 and (ruler.mode is SuffixMode.REPEAT or is_anchor)
-        # Use the symbol-inclusive spec on anchor ticks so d3-format's sign-before-symbol
-        # ordering applies (format("$,.1~f")(-500) -> "-$500", not "$-500").
+        carries_prefix = value != 0 and (ruler.prefix_repeats or is_anchor)
+        # Use the symbol-inclusive spec on any prefix-carrying tick so
+        # d3-format's sign-before-symbol ordering applies
+        # (format("$,.1~f")(-500) -> "-$500", not "$-500").
         scaled = value / magnitude
-        digits = d3_format(anchor_digit_spec if is_anchor else digit_spec, scaled)
+        digits = d3_format(anchor_digit_spec if carries_prefix else digit_spec, scaled)
         if pad_table:
             digits += decimal_pad_for(pad_table, digits)
         tail = suffix_text if carries_suffix else ruler.reservation

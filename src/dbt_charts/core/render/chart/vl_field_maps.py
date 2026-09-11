@@ -514,8 +514,13 @@ def inject_axis_numeral_expr(
     edge it is composing for). It already folds in every gate that used to
     be re-checked here (does the ladder compact, is the format SI-shaped,
     is ``label.expr`` unauthored) and the column-forming override (a
-    horizontal ruler is baked to REPEAT mode and narrative register, and
-    ``reserve=False``, at resolve -- render never re-declares orientation).
+    horizontal ruler is baked to REPEAT mode and narrative register,
+    ``reserve=False``, and ``prefix_repeats=True``, at resolve -- render
+    never re-declares orientation). ``mode`` and ``prefix_repeats`` are
+    independent facts: ``mode`` also follows REPEAT on a column-forming axis
+    whose ladder's own magnitude calls for a narrative suffix register, but
+    ``prefix_repeats`` stays keyed on column_forming alone -- a currency
+    prefix has no such magnitude-driven register to it.
 
     Falls back to ``tick_label`` -- ``ruler``'s non-compacting sibling --
     when ``ruler`` is None. The two are mutually exclusive by construction
@@ -541,12 +546,18 @@ def inject_axis_numeral_expr(
 
     ``tick_label.prefix`` / ``tick_label.anchor_at_start`` parallel the
     structure of ``ruler.prefix`` / ``ruler.anchor_at_start`` for the
-    non-compacting case: when the format has a currency symbol, the prefix
-    appears on the anchor tick only. Integer place-value alignment is
-    automatic under text-anchor=end; fractional/decimal tail alignment is
-    not -- when ``tick_label.decimal_pad_table`` is set, a pad string is
-    appended to each trimmed-decimal value so all labels have equal rendered
-    advance.
+    non-compacting case: when the format has a currency symbol and
+    ``anchor_at_start`` is a bool (column-forming, baked at resolve), the
+    prefix appears on the anchor tick only. When ``anchor_at_start`` is
+    ``None`` instead (non-column-forming), the prefix repeats on every tick
+    -- mirrors ``ruler``'s ``prefix_repeats``, not its ``mode`` (see above:
+    the two decisions are independent). Either way a zero-valued
+    tick never carries the symbol (mirrors ``ruler``'s ``suffix_present``): a
+    "$0" baseline is no more informative than a bare "0". Integer place-value
+    alignment is automatic under text-anchor=end; fractional/decimal tail
+    alignment is not -- when ``tick_label.decimal_pad_table`` is set, a pad
+    string is appended to each trimmed-decimal value so all labels have
+    equal rendered advance.
 
     The anchor semantics differ between the two: ``ruler.anchor_at_start``
     is magnitude-based (the tick furthest from zero, regardless of sign,
@@ -568,22 +579,27 @@ def inject_axis_numeral_expr(
         trimmed_e = f"format(datum.value,{json.dumps(tick_label.format)})"
         text_e = _apply_decimal_pad(trimmed_e, tick_label.decimal_pad_table)
         if tick_label.prefix:
-            # Anchor tick only. Use with_symbol so d3-format's sign-before-symbol
-            # ordering applies: format("$,.0f")(-500) -> "-$500", not "$-500".
-            # Integer place-value is automatic under text-anchor=end; decimal
-            # padding is handled by _apply_decimal_pad below (missing-length
-            # math is symbol-invariant, so the plain tick_label.format spec is
-            # what's passed for that, not anchor_spec).
-            vega_anchor_idx = 0 if tick_label.anchor_at_start else 1
-            anchor_test = f"datum.index === {vega_anchor_idx}"
+            # Use with_symbol so d3-format's sign-before-symbol ordering
+            # applies: format("$,.0f")(-500) -> "-$500", not "$-500". Integer
+            # place-value is automatic under text-anchor=end; decimal padding
+            # is handled by _apply_decimal_pad below (missing-length math is
+            # symbol-invariant, so the plain tick_label.format spec is what's
+            # passed for that, not anchor_spec).
             anchor_spec = with_symbol(tick_label.format, tick_label.prefix)
             anchor_e = _apply_decimal_pad(
                 f"format(datum.value,{json.dumps(anchor_spec)})",
                 tick_label.decimal_pad_table,
             )
+            if tick_label.anchor_at_start is None:
+                prefix_present = "datum.value !== 0"
+            else:
+                vega_anchor_idx = 0 if tick_label.anchor_at_start else 1
+                prefix_present = (
+                    f"datum.value !== 0 && datum.index === {vega_anchor_idx}"
+                )
             return {
                 **ax_vl,
-                "labelExpr": f"({anchor_test} ? {anchor_e} : {text_e})",
+                "labelExpr": f"({prefix_present} ? {anchor_e} : {text_e})",
             }
         return {**ax_vl, "labelExpr": text_e}
 
@@ -615,23 +631,32 @@ def inject_axis_numeral_expr(
     else:
         suffix_present = "datum.value !== 0"
 
-    # For currency prefix: use with_symbol on the anchor tick so d3-format's own
-    # sign-before-symbol ordering applies (format("$,.1~f")(-500) -> "-$500",
-    # not "$" + format(",.1~f")(-500) -> "$-500"). Non-anchor ticks are bare.
-    # ruler.reservation is baked at resolve (compose_suffix_reservation,
-    # core/font_measure.py) from the same suffix_text this function reads --
-    # quantitative_tick_labels (_measured_label_padding.py) reads the identical
-    # baked string, so paint and the gutter measurement can never disagree.
-    # Decimal padding (fractional-tail alignment) is handled by
-    # ruler.decimal_pad_table via _apply_decimal_pad below -- the same table
-    # quantitative_tick_labels reads, so the two are always in sync. Its
-    # missing-length math is computed from the plain digit_spec (never
-    # anchor_digit_spec), which is correct for both branches of the ternary
-    # (a currency symbol adds equal length to both sides of the length-diff).
+    # For currency prefix: use with_symbol on the qualifying tick(s) so
+    # d3-format's own sign-before-symbol ordering applies (format("$,.1~f")(-500)
+    # -> "-$500", not "$" + format(",.1~f")(-500) -> "$-500"). Gated on
+    # ruler.prefix_repeats, not ruler.mode/suffix_present -- see this
+    # function's docstring. ruler.reservation is baked at
+    # resolve (compose_suffix_reservation, core/font_measure.py) from the
+    # same suffix_text this function reads -- quantitative_tick_labels
+    # (_measured_label_padding.py) reads the identical baked string, so
+    # paint and the gutter measurement can never disagree. Decimal padding
+    # (fractional-tail alignment) is handled by ruler.decimal_pad_table via
+    # _apply_decimal_pad below -- the same table quantitative_tick_labels
+    # reads, so the two are always in sync. Its missing-length math is
+    # computed from the plain digit_spec (never anchor_digit_spec), which is
+    # correct for both branches of the ternary (a currency symbol adds equal
+    # length to both sides of the length-diff).
     if prefix:
         anchor_digit_spec = with_symbol(digit_spec, prefix)
         anchor_digits_expr = numeral_vega_expr(value_expr, anchor_digit_spec)
-        digit_expr_combined = f"({anchor_test} ? {anchor_digits_expr} : {digits_expr})"
+        prefix_present = (
+            "datum.value !== 0"
+            if ruler.prefix_repeats
+            else f"datum.value !== 0 && {anchor_test}"
+        )
+        digit_expr_combined = (
+            f"({prefix_present} ? {anchor_digits_expr} : {digits_expr})"
+        )
     else:
         digit_expr_combined = digits_expr
 

@@ -225,6 +225,12 @@ style:
       swatch:
         radius: 3.0
       active_marker: fill
+    # Inverts the "away from background" rule the other themes follow: neon's
+    # canvas is dbt-grays.void (near-black), so a step AWAY from it is
+    # lighter, not darker.
+    hover_emphasis:
+      drop_line_color: dbt-grays.subtitle
+      drop_line_width: 2.0
     pie:
       total:
         value:

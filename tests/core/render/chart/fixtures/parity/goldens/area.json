@@ -173,21 +173,8 @@
       "encoding": {},
       "mark": {
         "aria": false,
-        "clip": true,
-        "stroke": "#FFFFFF",
-        "strokeCap": "round",
-        "strokeJoin": "round",
-        "strokeWidth": 8.0,
-        "tooltip": false,
-        "type": "line"
-      }
-    },
-    {
-      "encoding": {},
-      "mark": {
-        "aria": false,
         "fill": "#23467f",
-        "fillOpacity": 0.16,
+        "fillOpacity": 1.0,
         "opacity": 1,
         "strokeOpacity": 0,
         "tooltip": true,
@@ -233,10 +220,10 @@
       "encoding": {},
       "mark": {
         "aria": false,
-        "stroke": "#23467f",
+        "stroke": "#FFFFFF",
         "strokeCap": "round",
         "strokeJoin": "round",
-        "strokeWidth": 4.0,
+        "strokeWidth": 1.0,
         "tooltip": true,
         "type": "line"
       }

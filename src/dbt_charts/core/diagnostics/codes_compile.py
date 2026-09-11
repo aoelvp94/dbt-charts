@@ -649,6 +649,58 @@ ERR_AREA_LOG_SCALE_INDEPENDENT_MULTIPLES = REGISTRY.register(
     )
 )
 
+ERR_AREA_STACKED_MARK_STYLE_CLEARED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-AREA-STACKED-MARK-STYLE-CLEARED",
+        domain="compile",
+        title="marks.area.stacked was cleared to null",
+        message_template=(
+            "Chart {chart_id!r} (area): `marks.area.stacked` resolved to "
+            "null. Stacked and single-series area charts both need this "
+            "recipe -- a single-series area takes it in full even when the "
+            "chart itself isn't stacked -- but a board or chart in this "
+            "chart's style cascade authored `marks.area.stacked: null` "
+            "explicitly, which clears the inherited theme default instead "
+            "of leaving it alone. Remove that null override."
+        ),
+        doc=(
+            "Fired when `marks.area.stacked` resolves to null after the "
+            "style cascade. Every built-in theme declares this key, so the "
+            "only way to reach null is a board or chart explicitly "
+            "authoring `marks.area.stacked: null` -- which clears the "
+            "inherited value rather than leaving it untouched. Remove the "
+            "null override."
+        ),
+        summary="Fired when a board or chart clears the area stacked recipe to null.",
+        docs_topic="charts",
+    )
+)
+
+ERR_AREA_STACKED_STROKE_INCOMPLETE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-AREA-STACKED-STROKE-INCOMPLETE",
+        domain="compile",
+        title="marks.area.stacked.stroke is missing cap or join",
+        message_template=(
+            "Chart {chart_id!r} (area): `marks.area.stacked.stroke` must "
+            "declare both `cap` and `join`. Stacked and single-series area "
+            "charts replace `marks.line.stroke` with it wholesale, so a "
+            "property it omits is dropped rather than inherited and the edge "
+            "falls back to SVG butt/miter, spiking each vertex. Set both "
+            "explicitly (`cap: butt` for the renderer's own default)."
+        ),
+        doc=(
+            "Fired when the area stacked recipe's stroke is missing a cap or "
+            "a join, usually because a board or chart authored one of them as "
+            "null. The recipe's stroke replaces the top-edge line stroke "
+            "wholesale rather than merging into it, so an omitted property is "
+            "not inherited. Set both cap and join explicitly."
+        ),
+        summary="Fired when the area stacked recipe's stroke omits cap or join.",
+        docs_topic="charts",
+    )
+)
+
 ERR_FILE_NOT_FOUND = REGISTRY.register(
     ErrorCode(
         code="ERR-FILE-NOT-FOUND",

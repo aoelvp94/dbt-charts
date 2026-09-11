@@ -817,6 +817,63 @@ def test_combo_overlay_label_falls_back_to_the_column_name():
     assert not any("Target" in lb for lb in labels), labels
 
 
+_COMBO_OVERLAY_COLOR_DATA = [
+    {"month": "2024-01", "revenue": 100.0, "series": "A", "pct": 0.31},
+    {"month": "2024-01", "revenue": 100.0, "series": "B", "pct": 0.30},
+    {"month": "2024-02", "revenue": 150.0, "series": "A", "pct": 0.35},
+    {"month": "2024-02", "revenue": 150.0, "series": "B", "pct": 0.33},
+]
+
+
+def _dedup_key(label: str) -> str:
+    """Mirror chart_interactivity.js's ``collectMatchingMarks`` dedup key:
+    the header text, plus the bare series-row text when one is present.
+    Two marks under the SAME header that reduce to the SAME key collide --
+    ``collectMatchingMarks`` keeps only the first and silently drops the
+    other's row from the hover bubble."""
+    header_start = label.index(ROLE_HEADER) + 1
+    header_end = label.index(";", header_start)
+    header = label[header_start:header_end]
+    if ROLE_SERIES not in label:
+        return header
+    series_start = label.index(ROLE_SERIES) + 1
+    series_end = label.find(";", series_start)
+    series = (
+        label[series_start:series_end] if series_end != -1 else label[series_start:]
+    )
+    return f"{header}|{series}"
+
+
+def test_combo_overlay_layer_color_promotes_per_datum_series_row():
+    """A ``layer.color`` field with cardinality > 1 must earn its own
+    per-datum series row on each mark, and that row's dedup key must never
+    collide with another mark's under the same header -- including the
+    BASE chart's own mark, when base and layer split on the SAME color
+    field (the archetypal combo shape: bars by category plus a rate line by
+    the same category). Regression: ``_layer_tooltip_description`` baked the
+    layer's own y-column label as a literal series identity shared by every
+    mark in the layer, so same-header marks collapsed onto one dedup key and
+    ``collectMatchingMarks`` (chart_interactivity.js) silently dropped all
+    but one."""
+    chart = BarChart(
+        id="t",
+        type="bar",
+        x="month",
+        y="revenue",
+        color="series",
+        layers=[{"type": "line", "y": "pct", "color": "series"}],
+    )
+    labels = _render(chart, _COMBO_OVERLAY_COLOR_DATA)
+    feb_labels = [lb for lb in labels if f"{ROLE_HEADER}Feb 2024" in lb]
+    keys = [_dedup_key(lb) for lb in feb_labels]
+    assert len(keys) == len(set(keys)), (keys, feb_labels)
+
+    overlay_a = next(lb for lb in feb_labels if "revenue" not in lb and "pct: A" in lb)
+    overlay_b = next(lb for lb in feb_labels if "revenue" not in lb and "pct: B" in lb)
+    assert "0.35" in overlay_a, overlay_a
+    assert "0.33" in overlay_b, overlay_b
+
+
 _PIE_DATA = [
     {"plan": "starter_monthly", "user_count": 8.5},
     {"plan": "pro_monthly", "user_count": 3.3},
@@ -949,6 +1006,50 @@ def test_colored_scatter_series_leads_as_swatched_header():
     assert "cost: 10" in row, row
     assert row.index(ROLE_HEADER_SWATCHED) < row.index("revenue") < row.index("cost")
     assert not any(ROLE_SERIES in lb for lb in labels), labels
+
+
+def test_scatter_labeled_bucket_x_row_reads_the_bucket_not_epoch_ms():
+    """A labeled-bucket x ("Q1 2024") resolves temporal in scatter's emitter,
+    so Vega coerces the field to epoch-ms at runtime; the x row must read the
+    bucket label the axis shows, not the coerced integer."""
+    chart = ScatterChart(id="t", type="scatter", x="quarter", y="revenue")
+    data = [
+        {"quarter": "Q1 2024", "revenue": 10.0},
+        {"quarter": "Q2 2024", "revenue": 20.0},
+        {"quarter": "Q3 2024", "revenue": 15.0},
+    ]
+    labels = _render(chart, data)
+    for quarter in ("Q1 2024", "Q2 2024", "Q3 2024"):
+        assert any(f"quarter: {quarter}" in lb for lb in labels), labels
+
+
+def test_scatter_month_date_x_row_reads_its_grain():
+    """A genuine month-grain date x reads at the grain the axis labels, not
+    as a full day."""
+    chart = ScatterChart(id="t", type="scatter", x="month", y="revenue")
+    data = [
+        {"month": "2024-01-01", "revenue": 10.0},
+        {"month": "2024-02-01", "revenue": 20.0},
+        {"month": "2024-03-01", "revenue": 15.0},
+    ]
+    labels = _render(chart, data)
+    for month in ("Jan 2024", "Feb 2024", "Mar 2024"):
+        assert any(f"month: {month}" in lb for lb in labels), labels
+
+
+def test_scatter_year_band_measure_x_row_stays_a_number():
+    """Scatter's emitter plots a numeric x as a quantitative measure even when
+    its values sit in the 1900-2100 year band, so the x row must format it as
+    the number the axis shows -- never a date the axis doesn't."""
+    chart = ScatterChart(id="t", type="scatter", x="score", y="revenue")
+    data = [
+        {"score": 1950, "revenue": 10.0},
+        {"score": 1990, "revenue": 20.0},
+        {"score": 2050, "revenue": 15.0},
+    ]
+    labels = _render(chart, data)
+    for score in ("1,?950", "1,?990", "2,?050"):
+        assert any(re.search(rf"score: {score}\b", lb) for lb in labels), labels
 
 
 _NEGATIVE_STACK_DATA = [

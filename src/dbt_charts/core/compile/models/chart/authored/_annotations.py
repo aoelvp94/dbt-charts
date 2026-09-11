@@ -6,9 +6,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from dbt_charts.core.compile.models.markers import DisplayText, Format
-from dbt_charts.core.compile.models.primitives import FormatConfig
-from dbt_charts.core.compile.models.schema_names import FormatAlias
+from dbt_charts.core.compile.models.markers import DisplayText
 
 
 class ChartSort(BaseModel):
@@ -37,8 +35,4 @@ class ChartTotal(BaseModel):
     )
     label: Annotated[str | None, DisplayText()] = Field(
         default=None, description="Caption text displayed below the center total value."
-    )
-    format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
-        default=None,
-        description="How the number is written: a D3 spec, a preset name, or a format block.",
     )

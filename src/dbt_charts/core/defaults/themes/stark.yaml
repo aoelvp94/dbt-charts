@@ -158,6 +158,14 @@ style:
         radius: 0.0
       active_marker: triangle
 
+    # Deliberately the SAME color as this theme's own gridline: stark's
+    # gridline already sits one rung below the ceiling the single-series ink
+    # owns, so there is no color headroom left -- the drop line carries the
+    # distinction on weight alone (double the gridline width).
+    hover_emphasis:
+      drop_line_color: dbt-grays.heading
+      drop_line_width: 3.5
+
     kpi:
       font:
         family: '''dbt Sans Tabular'', Inter, system-ui, sans-serif'

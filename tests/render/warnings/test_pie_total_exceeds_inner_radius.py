@@ -28,18 +28,19 @@ from ...core._board_utils import make_test_resolved_board, make_test_resolved_ch
 
 def _make_donut(total_format: str | None = "integer", **kwargs: object) -> Chart:
     total: ChartTotal | None = (
-        ChartTotal(visible=True, format=total_format)
-        if total_format is not None
-        else None
+        ChartTotal(visible=True) if total_format is not None else None
     )
     # Use model_validate to avoid pyright's TYPE_CHECKING stub requiring all
     # PieChartStyle fields — at runtime build_patch_model makes every field optional.
     # Slice labels off by default so the fixture's plot widths stay the
     # geometry under test (the label-reach deduction has its own test below).
+    total_value: dict[str, Any] = {"font": {"size": 18}}
+    if total_format is not None:
+        total_value["format"] = total_format
     style = PieChartStylePatch.model_validate(
         {
             "inner_radius": 0.6,
-            "total": {"value": {"font": {"size": 18}}},
+            "total": {"value": total_value},
             "marks": {"slice": {"labels": {"where": "false"}}},
         }
     )
@@ -89,6 +90,9 @@ def test_fires_when_total_overflows_hole() -> None:
     assert w.code == WARN_PIE_TOTAL_EXCEEDS_INNER_RADIUS.code
     assert w.chart == "c1"
     assert "113,135" in w.message
+    # The editor anchor must name the field an author can actually set.
+    assert w.path == "charts.c1.style.total.value.format"
+    assert w.field == "format"
 
 
 def test_no_fire_when_total_fits() -> None:
@@ -104,8 +108,10 @@ def test_no_fire_for_solid_pie() -> None:
         type="pie",
         query_name="q",
         theta="amount",
-        style=PieChartStylePatch.model_validate({"inner_radius": 0.0}),
-        total=ChartTotal(visible=True, format="integer"),
+        style=PieChartStylePatch.model_validate(
+            {"inner_radius": 0.0, "total": {"value": {"format": "integer"}}}
+        ),
+        total=ChartTotal(visible=True),
     )
     assert detector.detect(_make_ctx(chart, _NARROW_ROWS, 88, 240)) == []
 
@@ -121,8 +127,10 @@ def test_no_fire_when_total_not_visible() -> None:
         type="donut",
         query_name="q",
         theta="amount",
-        style=PieChartStylePatch.model_validate({"inner_radius": 0.6}),
-        total=ChartTotal(visible=False, format="integer"),
+        style=PieChartStylePatch.model_validate(
+            {"inner_radius": 0.6, "total": {"value": {"format": "integer"}}}
+        ),
+        total=ChartTotal(visible=False),
     )
     assert detector.detect(_make_ctx(chart, _NARROW_ROWS, 88, 240)) == []
 
@@ -180,9 +188,13 @@ def test_fires_with_decimal_theta_values() -> None:
     )
 
 
-def test_no_spurious_float_suffix_on_unformatted_total() -> None:
-    """When total.format is None, the detector must not measure a Python float repr.
-    VL renders whole-number sums without a trailing .0 (d3 default trims it)."""
+def test_unauthored_total_measures_the_resolve_time_default_format() -> None:
+    """A donut with no format authored anywhere in the cascade still gets one:
+    _resolve_pie defaults style.total.value.format to the integer preset for
+    any donut shape (see test_donut_auto_total_defaults_format_to_integer_preset
+    in test_new_compiler.py). The detector must measure that resolved,
+    comma-grouped text -- never a raw Python float repr, and never the bare
+    digit string a since-closed unformatted branch used to fall back to."""
     chart = PieChart(
         id="c1",
         type="donut",
@@ -191,17 +203,12 @@ def test_no_spurious_float_suffix_on_unformatted_total() -> None:
         style=PieChartStylePatch.model_validate(
             {"inner_radius": 0.6, "total": {"value": {"font": {"size": 18}}}}
         ),
-        total=ChartTotal(
-            visible=True
-        ),  # format=None — author wrote `total: {visible: true}`
+        total=ChartTotal(visible=True),  # no format authored anywhere
     )
-    # At 88×240, hole ≈ 47px; "1000000" (7 chars) at 18px overflows.
     warnings = detector.detect(_make_ctx(chart, _MILLION_ROWS, 88, 240))
     assert len(warnings) == 1
-    assert "1000000.0" not in warnings[0].message, (
-        "detector must not use Python float repr — VL renders '1000000' without .0"
-    )
-    assert "1000000" in warnings[0].message
+    assert "1,000,000" in warnings[0].message
+    assert "1000000.0" not in warnings[0].message
 
 
 def test_fires_for_attached_table_donut() -> None:

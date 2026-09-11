@@ -52,7 +52,6 @@ from dbt_charts.core.compile.support_table import apply_measure_format_to_suppor
 from dbt_charts.core.compile.template.jinja import extract_variable_dependencies
 from dbt_charts.core.diagnostics.codes_compile import ERR_MULTIPLES_SELF_CROSSED
 from dbt_charts.core.text.case import apply_case, inferred_display_name
-from dbt_charts.core.text.predefined_formats import PredefinedNumberFormat
 
 _AUTHORED_CHART_ADAPTER: TypeAdapter[AuthoredChart] = TypeAdapter(AuthoredChart)
 
@@ -364,18 +363,14 @@ def normalize_chart(
                 )
 
                 pie_style = PieChartStylePatch(inner_radius=0.6)  # type: ignore[call-arg]
-            # Donut center total auto-injection. Label and format fill
-            # independently, so authoring one never costs the other: a
-            # `total: {format: ",d"}` keeps the derived caption, and a
-            # `total: {label: "Sessions"}` keeps the non-abbreviating format.
+            # Donut center total label auto-injection. The value's format
+            # defaults separately, at resolve time (compile/resolve/chart/pie.py),
+            # once it's a style-cascade field and the full theme/board/chart-local
+            # merge is available.
             total = authored.total
             inner_radius = pie_style.inner_radius if pie_style is not None else None
             is_donut_shape = isinstance(inner_radius, (int, float)) and inner_radius > 0
-            if (
-                is_donut_shape
-                and theta
-                and (total is None or total.label is None or total.format is None)
-            ):
+            if is_donut_shape and theta and (total is None or total.label is None):
                 slug = inferred_display_name(theta)
                 auto_label = (
                     slug
@@ -386,18 +381,10 @@ def normalize_chart(
                     auto_label = f"Total {auto_label}"
                 from dbt_charts.core.compile.models.chart.authored import ChartTotal
 
-                auto_format = str(PredefinedNumberFormat.integer)
                 if total is None:
-                    total = ChartTotal(
-                        visible=True, label=auto_label, format=auto_format
-                    )
+                    total = ChartTotal(visible=True, label=auto_label)
                 else:
-                    fill: dict[str, str] = {}
-                    if total.label is None:
-                        fill["label"] = auto_label
-                    if total.format is None:
-                        fill["format"] = auto_format
-                    total = total.model_copy(update=fill)
+                    total = total.model_copy(update={"label": auto_label})
             return PieChart(
                 **base,
                 **shared,

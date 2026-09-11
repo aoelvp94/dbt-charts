@@ -196,7 +196,7 @@ def test_support_table_per_series_format_alias_resolves():
 
 
 def test_pie_total_format_alias_resolves():
-    """Pie total.format: 'number' must resolve to '.3~s' in VL encoding.text.format."""
+    """style.total.value.format: 'number' must resolve to '.3~s' in VL encoding.text.format."""
     chart = TypeAdapter(Chart).validate_python(
         {
             "id": "t",
@@ -205,7 +205,8 @@ def test_pie_total_format_alias_resolves():
             "color": "category",
             "query": SqlQuery(sql="SELECT 1", source="test_db"),
             "query_name": "q",
-            "total": {"format": _ALIAS_COMPACT},
+            "total": {},
+            "style": {"total": {"value": {"format": _ALIAS_COMPACT}}},
         }
     )
     _rc = resolve(chart, _PIE_DATA, chart_style_context=_BOARD_CONTEXT)

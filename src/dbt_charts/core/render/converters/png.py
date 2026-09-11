@@ -4,6 +4,10 @@ Stage: RENDER
 Purpose: Convert SVG output to PNG using vl-convert.
 """
 
+from dbt_charts.core.diagnostics.codes_render import (
+    ERR_FORMAT_CONVERSION_FAILED,
+    ERR_FORMAT_CONVERTER_UNAVAILABLE,
+)
 from dbt_charts.core.render.errors import FormatError
 from dbt_charts.core.render.font_support import (
     normalize_svg_font_families_for_vl_convert,
@@ -31,11 +35,15 @@ def to_png(svg_content: str, scale: float = 1.0) -> bytes:
         normalized_svg = normalize_svg_font_families_for_vl_convert(svg_content)
         return vlc.svg_to_png(normalized_svg, scale=scale)
     except ImportError:
-        raise FormatError(
-            "PNG export requires vl-convert-python: pip install vl-convert-python",
-            "png",
+        raise FormatError.from_code(
+            ERR_FORMAT_CONVERTER_UNAVAILABLE, format="png"
         ) from None
     except FormatError:
         raise
     except Exception as e:
-        raise FormatError(f"PNG conversion failed: {e}", "png") from e
+        raise FormatError.from_code(
+            ERR_FORMAT_CONVERSION_FAILED,
+            format="png",
+            detail=str(e),
+            alt_formats="HTML",
+        ) from e

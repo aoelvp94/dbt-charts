@@ -44,7 +44,7 @@ def test_axis_grid_zero_color_flat_rejected() -> None:
     before the threshold sub-block existed at all) is rejected
     (extra='forbid'). Pins a past-release shape -- not this task's
     zero -> threshold rename, which is a separate, already-migrated grammar
-    change (see compile/migrations/versions/current.py)."""
+    change (see compile/migrations/versions/v0_7_0.py)."""
     with pytest.raises(ValidationError):
         BaseAxisGridStyle.model_validate({"zero_color": "#ff0000"})
 

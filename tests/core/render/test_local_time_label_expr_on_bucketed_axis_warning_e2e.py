@@ -37,6 +37,13 @@ _ROWS = [
 ]
 
 
+_QUARTERLY_ROWS = [
+    {"month": "2024-02-15 00:00:00", "val": 10},
+    {"month": "2024-05-15 00:00:00", "val": 20},
+    {"month": "2024-08-15 00:00:00", "val": 30},
+]
+
+
 _COLOR_ROWS = [
     {"month": "2024-04-15 00:00:00", "seg": "a", "val": 10},
     {"month": "2024-05-15 00:00:00", "seg": "a", "val": 20},
@@ -110,11 +117,15 @@ def test_fires_for_timeformat_on_yearmonth_bucketed_axis() -> None:
 
 
 def test_fires_for_timeformat_on_yearquarter_bucketed_axis() -> None:
-    """A second grain -- the boundary arithmetic differs from yearmonth."""
+    """A second grain -- the boundary arithmetic differs from yearmonth.
+
+    Quarter-grained rows: ``_ROWS`` is monthly, and three months inside one
+    quarter is a bucket collision, not one point per bucket.
+    """
     yaml_source = _board_yaml(
         time_unit="yearquarter", expr="timeFormat(datum.value, 'Q%q %Y')"
     )
-    warnings = _render(yaml_source)
+    warnings = _render(yaml_source, _QUARTERLY_ROWS)
     codes = {w.code for w in warnings}
     assert _CODE in codes, codes
 

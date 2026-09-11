@@ -553,8 +553,9 @@ def with_symbol(digit_spec: str, symbol: str) -> str:
     Inverts the symbol-removal done by ``ruler_digit_format``/``plain_digit_format``
     so d3-format's own sign-before-symbol placement applies:
     ``format("$,.0f")(-500)`` → ``"-$500"``, not ``"$" + format(",.0f")(-500)``
-    → ``"$-500"``.  Call only at the anchor tick; non-anchor ticks have no
-    symbol and are already correct.
+    → ``"$-500"``.  Call only on a tick that carries the symbol (the anchor
+    tick, or every non-zero tick in repeat mode); a tick that doesn't is
+    already correct without it.
     """
     return str(dataclasses.replace(_d3_parse(digit_spec), symbol=symbol))
 

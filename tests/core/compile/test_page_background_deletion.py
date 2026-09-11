@@ -1,6 +1,6 @@
 """Migration coverage for the style.page removal.
 
-See ``current.py``'s module docstring and the ``("style", "page")`` entry in
+See ``v0_7_0.py``'s module docstring and the ``("style", "page")`` entry in
 ``DELETED_TAILS`` for the removal's rationale and tail-shape derivation.
 This file pins that behavior: the Deletion is registered, all three legal
 ``page:`` shapes migrate and compile, and the deletion reason reaches the
@@ -44,10 +44,7 @@ def _migrate(raw: dict[str, Any], catalog: YamlSchemaCatalog) -> dict[str, Any]:
 
 def test_registry_declares_the_deletion() -> None:
     _, registry = _board_migration_context()
-    catalog = load_yaml_schema_catalog()
-    deletions = registry.deletions_from(catalog.latest.version)
-
-    declared = {d.path for d in deletions}
+    declared = {d.path for d in registry.deletions_from("0.6.0")}
     assert ("style", "page") in declared
 
 
@@ -60,7 +57,7 @@ def test_tail_was_in_the_released_grammar_and_is_gone_from_the_live_one(
     what stops the tail stripping a slot that still works.
     """
     tail = ("style", "page")
-    assert _schema_has_tail(catalog.schema_for(catalog.latest.version), tail)
+    assert _schema_has_tail(catalog.schema_for("0.6.0"), tail)
     assert not _schema_has_tail(catalog.current_schema, tail)
 
 

@@ -56,7 +56,7 @@ default:
 # Setup
 # ============================================
 
-# Install all dependencies (every warehouse adapter, mcp, lsp, server extras)
+# Install all dependencies (every warehouse adapter, mcp, server extras)
 # --locked: uv.lock is a committed artifact of the monorepo export, so a lock
 # that no longer matches pyproject.toml is a bug to surface, not to re-resolve.
 install:
@@ -211,7 +211,8 @@ gen-references:
     echo "✓ $docs_dir/{yaml,error,warning}-reference.md"
 
 # Freeze a changed YAML grammar under the same version as its dbt charts
-# release. Existing snapshots are verified, never rewritten; unchanged
-# candidates are a no-op.
+# release. Existing snapshots are verified and never rewritten; an unchanged
+# grammar renumbers the DEV entry to the next predicted version instead of
+# freezing one.
 freeze-yaml-schema version released_at:
     uv run python -m dbt_charts.schema_release {{version}} {{released_at}}

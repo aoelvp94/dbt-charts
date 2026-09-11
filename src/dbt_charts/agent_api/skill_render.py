@@ -2,11 +2,16 @@
 
 Skill markdown is authored once with ``{{ s_<key> }}`` tokens. On the shared
 tool-call surface the ``tool`` side of the alias renders; on the CLI surface
-the ``dct`` side renders. The alias table lives in ``surface_aliases.yaml`` next
-to this module so every wheel skill and every surface points at the same source
-of truth.
+(``dct skills``, ``get_skill``/``list_skills`` called with ``surface="cli"``)
+the ``dct`` side renders. A third surface, ``install``, renders only when a
+skill is written to disk by ``dct init skills``: the one place a skill's
+bare registry name (``board-build``) becomes its ``dct-``-prefixed on-disk
+name (``dct-board-build``). ``cli`` stays bare so ``dct skills <name>``
+resolves what it prints. The alias table lives in ``surface_aliases.yaml``
+next to this module so every wheel skill and every surface points at the
+same source of truth.
 
-Skills that should never appear on one surface (e.g. ``dct-mcp-setup`` is
+Skills that should never appear on one surface (e.g. ``mcp-setup`` is
 CLI-only) declare ``surfaces:`` in their frontmatter; the registry hides them
 from the wrong surface entirely. Skills shown on both surfaces use ``{{ s_key }}``
 wherever they reference a tool/command so the prose reads naturally to both
@@ -25,7 +30,7 @@ from typing import Literal
 
 import yaml
 
-SkillSurface = Literal["tool", "cli"]
+SkillSurface = Literal["tool", "cli", "install"]
 
 _ALIASES_PATH = files("dbt_charts.agent_api").joinpath("surface_aliases.yaml")
 
@@ -43,7 +48,13 @@ _IF_TOOL_RE = re.compile(
 
 @cache
 def _aliases() -> dict[str, dict[str, str]]:
-    """Load and validate ``surface_aliases.yaml`` once per process."""
+    """Load and validate ``surface_aliases.yaml`` once per process.
+
+    ``install`` is optional per entry and defaults to the ``dct`` value. The
+    two surfaces render identically except for the bare-name family, which is
+    the only content that differs between an on-disk directory name and a
+    `dct skills` lookup.
+    """
     raw = yaml.safe_load(_ALIASES_PATH.read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
         raise ValueError(f"{_ALIASES_PATH}: top level must be a mapping")
@@ -51,7 +62,7 @@ def _aliases() -> dict[str, dict[str, str]]:
     for key, entry in raw.items():
         if not isinstance(entry, dict):
             raise ValueError(f"{_ALIASES_PATH}: entry {key!r} must be a mapping")
-        unknown = set(entry) - {"tool", "dct"}
+        unknown = set(entry) - {"tool", "dct", "install"}
         if unknown:
             raise ValueError(
                 f"{_ALIASES_PATH}: entry {key!r} has unknown keys {sorted(unknown)!r}"
@@ -62,7 +73,12 @@ def _aliases() -> dict[str, dict[str, str]]:
             raise ValueError(
                 f"{_ALIASES_PATH}: entry {key!r} must have string `tool` and `dct` values"
             )
-        out[key] = {"tool": tool, "dct": dct}
+        install = entry.get("install", dct)
+        if not isinstance(install, str):
+            raise ValueError(
+                f"{_ALIASES_PATH}: entry {key!r} must have a string `install` value"
+            )
+        out[key] = {"tool": tool, "dct": dct, "install": install}
     return out
 
 
@@ -84,8 +100,8 @@ def render_skill_body(
     callers that don't declare a tool set (CLI, MCP, full chat) are unaffected.
     Blocks are non-nested.
 
-    Each ``{{ s_key }}`` resolves to the ``tool`` or ``dct`` side of the alias
-    table based on the active surface. Unknown keys raise ``MissingSurfaceAlias``
+    Each ``{{ s_key }}`` resolves to the ``tool``, ``dct``, or ``install`` side
+    of the alias table based on the active surface. Unknown keys raise ``MissingSurfaceAlias``
     so a typo fails the surface fan-out test rather than shipping an unexpanded
     token into an agent's context window.
 
@@ -102,7 +118,7 @@ def render_skill_body(
     gated = _IF_TOOL_RE.sub(gate, body)
 
     aliases = _aliases()
-    side = "tool" if surface == "tool" else "dct"
+    side = {"tool": "tool", "cli": "dct", "install": "install"}[surface]
 
     def repl(match: re.Match[str]) -> str:
         key = match.group(1)

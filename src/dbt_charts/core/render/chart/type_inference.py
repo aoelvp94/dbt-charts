@@ -13,6 +13,7 @@ from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.vl_field_maps import emit_resolved_scale_vl
 from dbt_charts.core.text.format_d3 import is_time_format
+from dbt_charts.core.utils import vega_infers_quantitative
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.resolved import (
@@ -181,15 +182,19 @@ def resolve_cartesian_x_type(
 ) -> tuple[str, str, DetectedTimeUnit]:
     """Return the emitted VL x type, data type, and calendar bucket grain.
 
-    An auto-detected fine grain (yearweek/yearmonthdate) is additionally
-    gated by ``ordinal_scaffold_within_budget``: past the budget the data is
-    sparser than its detected grain, so the bar branch resolves temporal
-    instead of ordinal, and the grain itself is dropped (returned time_unit
-    None) so no caller bands mark widths or label cadences to a bucket the
-    data doesn't actually have. The gate is scoped to the families that band
-    mark widths — line/area/scatter never band, so their grain and labels
-    resolve exactly as before at any sparsity. An authored ``time_unit`` is
-    an instruction, not a guess — never gated.
+    Any auto-detected bucketed grain is additionally gated by
+    ``ordinal_scaffold_within_budget``: past the budget the data is sparser
+    than its detected grain, so the bar branch resolves temporal instead of
+    ordinal, and the grain itself is dropped (returned time_unit None) so no
+    caller bands mark widths or label cadences to a bucket the data doesn't
+    actually have. Grain drives more than mark banding — it also paints one
+    gridline and label per bucket — so line/area/scatter consult the same
+    gate bar does, not just the families that band mark widths. (heatmap
+    returns above the gate.) A coarse grain is no exemption: a decade-spaced
+    series names ``year`` honestly and still owes ten empty bands per bar,
+    which the coarse branch's row count cannot see — it counts only the bars
+    that exist. An authored ``time_unit`` is an instruction, not a guess —
+    never gated.
 
     ``panel_fields`` names the chart's partition (small-multiples) columns.
     The scaffold is built per panel, so the budget must be measured per
@@ -239,15 +244,11 @@ def resolve_cartesian_x_type(
         # labelExpr/tick-thinning enrichment the ordinal branch gives bar.
         return "nominal", x_type_from_data, time_unit
 
-    # line/area/scatter never band mark widths, so the scaffold budget has
-    # nothing to protect there — skip the verdict, not just the drop below.
     scaffold_ok = (
         ordinal_scaffold_within_budget(
             _paneled_x_values(data, x_field, panel_fields), time_unit
         )
-        if authored_time_unit is None
-        and time_unit in FINE_BUCKET_UNITS
-        and mark_type not in ("line", "area", "scatter")
+        if authored_time_unit is None and time_unit in BUCKETED_CALENDAR_UNITS
         else True
     )
 
@@ -269,18 +270,19 @@ def resolve_cartesian_x_type(
         else:
             n_buckets = len({row.get(x_field) for row in data if x_field in row})
             max_ordinal = get_chart_rendering().type_inference.max_ordinal_buckets
-            vl_type = "temporal" if n_buckets > max_ordinal else "ordinal"
+            vl_type = (
+                "ordinal" if scaffold_ok and n_buckets <= max_ordinal else "temporal"
+            )
     else:
         vl_type = x_type_from_data
 
-    # A continuous scale carrying an over-budget fine grain must not keep the
+    # A continuous scale carrying an over-budget grain must not keep the
     # grain either: the bar emitter bands mark widths to the timeUnit (a
     # "daily" bar is one sub-pixel day wide on a multi-year span) and the
-    # label ladder paints one tick per bucket. Dropping it hands the axis to
-    # VL's own continuous-temporal defaults. `scaffold_ok` is only ever False
-    # for the families that band mark widths (the guard above), so
-    # line/area/scatter keep their grain — the timeUnit's UTC day-flooring
-    # and the curated label ladder — exactly as it resolves today.
+    # label ladder paints one tick per bucket — line/area/scatter don't band
+    # mark widths, but the same gridline/label-per-bucket cost applies to
+    # them too. Dropping it hands the axis to VL's own continuous-temporal
+    # defaults for every family.
     if vl_type == "temporal" and not scaffold_ok:
         time_unit = None
 
@@ -415,9 +417,10 @@ def _reads_as_number(value: Any) -> bool:  # type-state: explicit_any — a raw 
       contribution") and excludes ``bool``, a contract this question does not
       share — d3 reads ``+true`` as ``1`` and paints ``0``/``1`` over a boolean
       dimension rather than NaN.
-    - ``is_vega_numeric_value`` (below) is the "what VL type is this column"
-      rule and deliberately rejects numeric *strings*. d3 coerces those, so
-      rejecting them here would refuse a column that formats perfectly.
+    - ``is_vega_numeric_value`` (``core/utils.py``) is the "what VL type is
+      this column" rule and deliberately rejects numeric *strings*. d3
+      coerces those, so rejecting them here would refuse a column that
+      formats perfectly.
 
     Do not consolidate this into either of them: each rejection above is a
     board that renders today.
@@ -561,10 +564,12 @@ def build_cartesian_x_encoding(
 
     mark_type distinguishes bar/column (ordinal bucketed bands, gated by
     ``chart_rendering.type_inference.max_ordinal_buckets``) from line/area/scatter
-    (always continuous temporal for a BUCKETED_CALENDAR_UNITS grain — none of
-    the three has a per-bucket gridline problem, and a scatter point needs its
-    real continuous position, not a band-snapped one) when no authored type
-    forces the decision either way. ``curve`` is the
+    (always continuous temporal for a BUCKETED_CALENDAR_UNITS grain — a
+    scatter point needs its real continuous position, not a band-snapped one)
+    when no authored type forces the decision either way. All three still
+    share bar's per-bucket gridline/label cost and the same scaffold-budget
+    gate (``resolve_cartesian_x_type``) that drops an over-budget grain
+    before it reaches here. ``curve`` is the
     authored line/area curve style; a band-aware ``step`` curve requires a band
     (nominal/ordinal) x-scale (see ``step_band.py``) unconditionally, at any
     bucket count — it overrides both the line/area always-temporal rule and
@@ -1158,31 +1163,6 @@ def is_zero_anchored(scale: ResolvedScaleStyle | None) -> bool:
     return (cont.zero if cont is not None else None) is True
 
 
-def is_vega_numeric_value(
-    value: int | float | Decimal | bool | str | dt.date | dt.datetime,
-) -> bool:
-    """Whether ``value`` counts as numeric for Vega-Lite type inference.
-
-    The single source of truth for "is this cell numeric" as far as deciding
-    a color/measure encoding's VL type goes — ``infer_vega_type_from_data``
-    below and ``_channels.py``'s ``_numeric_extent`` both call this so they
-    cannot independently drift onto different numeric rules (that drift once
-    caused a real bug: a numeric-*string* column got a numeric domain baked
-    onto a scale VL was rendering nominal, since a looser string-coercing
-    rule was used to compute the domain). Deliberately does NOT accept numeric
-    strings — a `"77"` cell is nominal data VL cannot compare against a raw
-    number, no matter how a downstream consumer feels about coercing it. Also
-    deliberately does NOT exclude ``bool`` (unlike ``coerce_numeric_cell``,
-    which does, for a different, render-formatting-cell contract): a boolean
-    series field must reach the quantitative "no reorder" skip path (see
-    test_shared_spatial_series_order), and ``bool`` is an ``int`` subclass, so
-    counting it as numeric is the natural default of the isinstance check.
-    Includes ``Decimal`` so warehouse NUMERIC/DECIMAL columns (BigQuery,
-    DuckDB) are not misclassified nominal.
-    """
-    return isinstance(value, (int, float, Decimal))
-
-
 def infer_vega_type_from_data(data: list[dict[str, Any]], field: str) -> str:
     """Infer the most appropriate Vega-Lite type for a field."""
     if not data or field not in data[0]:
@@ -1194,15 +1174,22 @@ def infer_vega_type_from_data(data: list[dict[str, Any]], field: str) -> str:
     if not sample_values:
         return "nominal"
 
-    all_numeric = True
+    # vega_infers_quantitative (core/utils.py) re-derives this exact verdict
+    # from the same first-10-rows sample -- the shared leaf predicate
+    # compile/resolve/chart/_channels.py's compile-time magnitude gate calls
+    # too, so the two can no longer independently drift on what counts as
+    # numeric. Checked first and returned early: the temporal/date-like scan
+    # below is wasted work once a column is already quantitative, since a
+    # column can never be both.
+    if vega_infers_quantitative(data, field):
+        return "quantitative"
+
     all_temporal = True
     all_date_like = True
 
     for value in sample_values:
         if value is None:
             continue
-        if not is_vega_numeric_value(value):
-            all_numeric = False
         if isinstance(value, (dt.date, dt.datetime)):
             # date/datetime objects are always temporal; date_like too
             pass
@@ -1223,8 +1210,6 @@ def infer_vega_type_from_data(data: list[dict[str, Any]], field: str) -> str:
             all_temporal = False
             all_date_like = False
 
-    if all_numeric:
-        return "quantitative"
     if all_temporal:
         return "temporal"
     if all_date_like:

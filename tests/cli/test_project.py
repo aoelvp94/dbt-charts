@@ -220,8 +220,8 @@ def test_resolve_skill_install_root_uses_git_root_over_dbt_charts_yml(
     subproject.mkdir()
     (subproject / "dbt_charts.yml").write_text("")
 
-    result = resolve_skill_install_root(subproject)
-    assert result == git_root.resolve()
+    result = resolve_skill_install_root(subproject, walk_to_git_root=True)
+    assert result.root == git_root.resolve()
 
 
 def test_resolve_skill_install_root_falls_back_to_project_root_without_git(
@@ -232,13 +232,48 @@ def test_resolve_skill_install_root_falls_back_to_project_root_without_git(
     project.mkdir()
     (project / "dbt_charts.yml").write_text("")
 
-    result = resolve_skill_install_root(project)
-    assert result == project.resolve()
+    result = resolve_skill_install_root(project, walk_to_git_root=True)
+    assert result.root == project.resolve()
 
 
 def test_resolve_skill_install_root_no_project_no_git(tmp_path: Path) -> None:
     """No project, no git → returns start.resolve()."""
     bare = tmp_path / "bare"
     bare.mkdir()
-    result = resolve_skill_install_root(bare)
-    assert result == bare.resolve()
+    result = resolve_skill_install_root(bare, walk_to_git_root=True)
+    assert result.root == bare.resolve()
+
+
+def test_resolve_skill_install_root_explicit_project_dir_skips_git_walk(
+    tmp_path: Path,
+) -> None:
+    """An explicit --project-dir names the destination outright; the git root
+    above it (or above anything else) must not override that choice."""
+    git_root = tmp_path / "repo"
+    git_root.mkdir()
+    (git_root / ".git").mkdir()
+    subproject = git_root / "sub"
+    subproject.mkdir()
+    (subproject / "dbt_charts.yml").write_text("")
+
+    result = resolve_skill_install_root(subproject, walk_to_git_root=False)
+    assert result.root == subproject.resolve()
+    assert result.nearest_root is None
+
+
+def test_resolve_skill_install_root_explicit_project_dir_errors_without_marker(
+    tmp_path: Path,
+) -> None:
+    """A dbt charts project above the named directory (but not at it) must not
+    silently win: the explicit --project-dir names the destination outright,
+    so a missing marker there is an error, not a walk-up."""
+    git_root = tmp_path / "repo"
+    git_root.mkdir()
+    (git_root / ".git").mkdir()
+    (git_root / "dbt_project.yml").write_text("")
+    named = git_root / "newproj"
+    named.mkdir()
+
+    result = resolve_skill_install_root(named, walk_to_git_root=False)
+    assert result.root is None
+    assert result.nearest_root == git_root.resolve()

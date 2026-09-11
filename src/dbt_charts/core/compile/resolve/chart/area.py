@@ -94,6 +94,8 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_AREA_ENCODING_SWAPPED,
     ERR_AREA_LOG_SCALE_INDEPENDENT_MULTIPLES,
     ERR_AREA_STACKED_LOG_SCALE_NOT_SUPPORTED,
+    ERR_AREA_STACKED_MARK_STYLE_CLEARED,
+    ERR_AREA_STACKED_STROKE_INCOMPLETE,
 )
 from dbt_charts.core.text.format_d3 import is_d3_si_spec
 from dbt_charts.core.utils import (
@@ -448,12 +450,13 @@ def _resolve_area(
         zero_anchored_area = _az is True or (_az is None and min(_area_floats) >= 0.0)
     else:
         zero_anchored_area = True
+    is_stacked = resolved_stack not in (None, "none")
     x_field_area = normalized.x if isinstance(normalized.x, str) else None
     if resolved_stack == "normalize":
         # normalize-stack domain is always [0,1].
         area_ticks = _CartesianTickResolution((), None)
         ay_merged = _bake_normalize_domain(ay_merged)
-    elif resolved_stack not in (None, "none") and x_field_area and _log_y_fields:
+    elif is_stacked and x_field_area and _log_y_fields:
         # Stacked area ladders against the cumulative column total, not the raw
         # per-series range. Without this a chart whose columns sum to 154 labels
         # an axis that stops at 70, leaving two thirds of the plot unlabeled —
@@ -488,9 +491,8 @@ def _resolve_area(
     # domain_max/min stay None for stacked area: Vega-Lite owns the stacked
     # domain, and baking a nice-rounded ladder rung as domainMax would clip
     # marks above it. Headroom on area remains single-series-only.
-    _non_stacked_area = resolved_stack in (None, "none")
-    area_domain_max = area_ticks.domain_max if _non_stacked_area else None
-    area_domain_min = area_ticks.domain_min if _non_stacked_area else None
+    area_domain_max = area_ticks.domain_max if not is_stacked else None
+    area_domain_min = area_ticks.domain_min if not is_stacked else None
     # Area's x is always a bottom-orient temporal/ordinal axis — no left/right edge.
     # No tick_values on the categorical axis -- the non-compacting bake
     # can't fire regardless, but format_authored is required, not defaulted
@@ -529,7 +531,7 @@ def _resolve_area(
         # different door -- render's gate fires on colorless layers too.
         endpoint_rail_may_discard_domain=(
             endpoint_labels.visible
-            and _non_stacked_area
+            and not is_stacked
             and (
                 normalized.color is not None
                 or wide_measure_series
@@ -548,12 +550,26 @@ def _resolve_area(
     # mark). The chart's stack mode is known at compile time, so the selection
     # is baked here rather than branched at render; the emitter still consults
     # ``chart.stack`` to choose *composition* (single perimeter-stroked layer
-    # vs. halo+top-line).
+    # vs. halo+top-line). A single unstacked series takes the whole recipe
+    # too: translucency signals overlap and there is nothing to overlap with,
+    # and a trend line on a solid fill reads as a band taller than its value.
+    # ``chart.stack`` stays "none" for it, so the emitter keeps the
+    # halo+top-line composition: the recipe's ``halo_multiplier: 0`` is what
+    # suppresses that path's halo, and its top-edge line draws the separator.
+    # Band count is the question, not y's spelling: a one-element wide list
+    # draws one band, so it takes the same fill weight as the scalar y.
+    is_single_series = not (
+        normalized.color is not None
+        or bool(normalized.layers)
+        or (isinstance(normalized.y, list) and len(normalized.y) > 1)
+    )
+    on_stacked_recipe = is_stacked or is_single_series
     stacked_mark = area_mark_merged.stacked
-    if resolved_stack not in (None, "none"):
+    if on_stacked_recipe:
         if stacked_mark is None:
-            raise ValueError(
-                "area.marks.area.stacked is None after cascade — check theme defaults"
+            raise CompilationError.from_code(
+                ERR_AREA_STACKED_MARK_STYLE_CLEARED,
+                chart_id=normalized.id,
             )
         if stacked_mark.opacity is not None:
             area_mark_merged = area_mark_merged.model_copy(
@@ -571,20 +587,17 @@ def _resolve_area(
             # This REPLACES marks.line.stroke rather than merging into it, so
             # any geometry the stacked recipe omits is simply gone — the
             # emitter then writes strokeCap/strokeJoin as None, Vega drops the
-            # attributes, and the perimeter separator falls back to SVG
-            # butt/miter, spiking each band vertex. Scoped to this branch on
-            # purpose: on the non-stacked path marks.line.stroke survives
-            # intact, and an authored `cap: null` there is a legal state
-            # (ResolvedStrokeStyle documents None as "use the VL default").
+            # attributes, and the separator falls back to SVG butt/miter,
+            # spiking each vertex. Scoped to this branch on purpose: a
+            # multi-series overlap keeps marks.line.stroke intact, where an
+            # authored `cap: null` is a legal state (ResolvedStrokeStyle
+            # documents None as "use the VL default").
             if stacked_mark.stroke is not None and (
                 stacked_mark.stroke.cap is None or stacked_mark.stroke.join is None
             ):
-                raise ValueError(
-                    "marks.area.stacked.stroke must declare both cap and join: it "
-                    "replaces marks.line.stroke wholesale for stacked charts, so "
-                    "anything it omits is dropped rather than inherited. Set them "
-                    "explicitly (cap: butt for the renderer's own default) "
-                    f"(chart '{normalized.id}')"
+                raise CompilationError.from_code(
+                    ERR_AREA_STACKED_STROKE_INCOMPLETE,
+                    chart_id=normalized.id,
                 )
             line_mark_merged = line_mark_merged.model_copy(update=line_overrides)
     axis_is_house = (
@@ -614,9 +627,10 @@ def _resolve_area(
         and _primary_area_marks.line.stroke is not None
         and _primary_area_marks.line.stroke.width is not None
     )
-    # Stacked charts route the perimeter stroke through marks.area.stacked.stroke;
-    # if the author set it there, that is an author pin too.
-    if not _area_line_stroke_authored and resolved_stack not in (None, "none"):
+    # Charts on the stacked recipe -- stacked and single-series alike -- route
+    # their edge stroke through marks.area.stacked.stroke; if the author set it
+    # there, that is an author pin too.
+    if not _area_line_stroke_authored and on_stacked_recipe:
         _stacked_patch = (
             _primary_area_marks.area.stacked
             if _primary_area_marks is not None and _primary_area_marks.area is not None
@@ -637,16 +651,21 @@ def _resolve_area(
             normalized.multiples,
             bool(ay.mirror),
         )
-    # Stacked / streamgraph: the top edge is a band SEPARATOR, not a trend line.
-    # The thick-at-sparse half of the formula is a line-presence rule that does
-    # not fit a separator (the fills carry the weight), so cap the BASE edge at
-    # the theme fallback — never thicker — while still letting it thin with
-    # density for crisp boundaries between many bands. Overlay layers get the
-    # uncapped value: a line/area layer is its own trend mark, not a separator.
+    # On the stacked recipe the edge is a SEPARATOR, not a trend line. The
+    # thick-at-sparse half of the formula is a line-presence rule that does not
+    # fit a separator (the fills carry the weight), so cap the BASE edge at the
+    # theme fallback — never thicker — while still letting it thin with density
+    # for crisp boundaries. Single-series takes the same cap for a sharper
+    # reason: its edge is background-colored, so an uncapped width would knock
+    # visible pixels off the top of the band and understate every value. With
+    # the default theme the adaptive floor exceeds the separator width, so the
+    # cap always wins and the edge is the recipe's width.
+    # Overlay layers get the uncapped value: a line/area layer is its own trend
+    # mark, not a separator.
     _area_baked_stroke = _area_adaptive_stroke
     if (
         _area_baked_stroke > 0
-        and resolved_stack not in (None, "none")
+        and on_stacked_recipe
         and line_mark_merged.stroke is not None
         and line_mark_merged.stroke.width is not None
     ):

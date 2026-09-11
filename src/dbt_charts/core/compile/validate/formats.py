@@ -118,7 +118,7 @@ _VEGA_PAINTED_PARENTS = frozenset(
         "mirror",
         "labels",  # MarkLabelsStyle / BarLabelsStyle / PointLabelsStyle
         "total_label",  # BarTotalLabelStyle: bar stack total label
-        "total",  # ChartTotal: donut center total (pie.py → Vega text-mark encoding)
+        "total",  # TotalStyle: donut center total (pie.py → Vega text-mark encoding)
         "tooltip",  # TooltipStyle: Vega-Lite tooltip format across all chart families
         "support_table",  # ChartSupportTableSource/Aggregate/PerSeries: _vl_format_calc emits into Vega calculate transform
     }

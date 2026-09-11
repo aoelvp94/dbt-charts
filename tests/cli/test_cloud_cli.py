@@ -2260,8 +2260,8 @@ class TestConnections:
                 "code": "connection_test_failed",
                 "message": (
                     "bigquery: Could not open the warehouse: Unable to load PEM"
-                    " file. The connection was not saved. Fix the credential and"
-                    " run the same command again."
+                    " file. The connection was not saved. You can run the same"
+                    " command again."
                 ),
                 "field_errors": {},
             },
@@ -2286,6 +2286,49 @@ class TestConnections:
         assert result.exit_code == 1
         assert "Unable to load PEM file" in out(result)
         assert "was not saved" in out(result)
+
+    def test_an_inconclusive_create_is_a_loud_error_that_names_the_fix(
+        self, api: FakeApi
+    ) -> None:
+        """A create whose test could not complete in time is still a non-zero
+        exit (never silently treated as success), but the row was NOT
+        discarded — unlike test_a_failing_create_is_a_loud_error above — so
+        the message must say so and name the verb that resolves it, not
+        invite a bare retry that would collide on the derived slug."""
+        api.add(
+            "POST",
+            "/api/orgs/acme-data/connections",
+            {
+                "code": "connection_test_inconclusive",
+                "message": (
+                    "Could not verify your warehouse connection in time. The"
+                    " connection was saved as 'warehouse'. Once the warehouse"
+                    " answers, run `dct cloud connection test warehouse` to"
+                    " confirm it works."
+                ),
+                "field_errors": {},
+            },
+            status=422,
+        )
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "connection",
+                "create",
+                "--org",
+                "acme-data",
+                "--type",
+                "postgres",
+                "--password-stdin",
+                "--set",
+                "host=db.example",
+            ],
+            input="hunter2\n",
+        )
+        assert result.exit_code == 1
+        assert "was saved as 'warehouse'" in out(result)
+        assert "dct cloud connection test warehouse" in out(result)
 
     def test_a_failing_test_is_a_loud_error(self, api: FakeApi) -> None:
         api.add(

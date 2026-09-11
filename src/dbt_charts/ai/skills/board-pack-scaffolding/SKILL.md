@@ -7,7 +7,7 @@ description: >
   propose a folder structure, review with the user, then apply through the
   Python agent API. Use only when explicitly evaluating pack-level scaffolding
   for a data source or project. Do NOT use for a single-dashboard request
-  (use board-build). Do NOT use for normal CLI guidance, chart edits, or
+  (use {{ s_skill_name_build }}). Do NOT use for normal CLI guidance, chart edits, or
   bug fixes in one board file.
 metadata:
   author: fivetran
@@ -24,7 +24,7 @@ Never apply without the user seeing and approving the proposal first.
 
 ## When NOT to fire
 
-- A single-dashboard request ("add a revenue chart") → use `board-build`
+- A single-dashboard request ("add a revenue chart") → use `{{ s_skill_name_build }}`
 - A chart edit or layout fix on an existing board
 - A bug fix in one board file
 - A request for public CLI help or installation guidance

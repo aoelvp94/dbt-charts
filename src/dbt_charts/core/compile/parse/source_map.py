@@ -27,6 +27,7 @@ from dbt_charts.core.diagnostics.diagnostic import (
     RelatedLocation,
     SourceRange,
 )
+from dbt_charts.core.utils import YAML_LOADER
 
 
 class LiteralBlock(NamedTuple):
@@ -70,7 +71,7 @@ def build_source_index(yaml_content: str, file: str) -> SourceIndex:
     if not yaml_content:
         return SourceIndex({}, {}, frozenset())
     try:
-        root = yaml.compose(yaml_content, Loader=yaml.SafeLoader)
+        root = yaml.compose(yaml_content, Loader=YAML_LOADER)
     except yaml.YAMLError:
         return SourceIndex({}, {}, frozenset())
     if root is None:

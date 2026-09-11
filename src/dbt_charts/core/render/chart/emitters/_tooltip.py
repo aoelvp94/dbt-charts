@@ -100,6 +100,18 @@ class TooltipField:
     # lookup. A combo overlay layer's own identity ("Target") is a Python-side
     # label cascade result, not a query column, so it has no field to read.
     literal: bool = False
+    # Literal text prepended before a bare SERIES row's value, "" for none
+    # (same empty-string-means-unset convention as `format`). Never set this
+    # on a header row -- `header_tooltip_field`'s own docstring documents why
+    # the header string must match the base's EXACTLY. A per-datum series row
+    # that reads the SAME color field a sibling mark elsewhere in the chart
+    # also promotes (e.g. an overlay layer sharing the base chart's own
+    # `color:` field) would otherwise render an IDENTICAL bare value for the
+    # same category -- colliding on chart_interactivity.js's
+    # `header + '|' + series-value` dedup key and silently dropping one of
+    # the two marks. A prefix (the layer's own label) keeps the two sources'
+    # series identities distinct without changing which column drives the row.
+    prefix: str = ""
 
 
 @dataclass(frozen=True)
@@ -203,7 +215,10 @@ def _row_expr(tf: TooltipField, marker: str = "") -> str:
 
 def _bare_row_expr(tf: TooltipField, marker: str) -> str:
     """Role-tagged value with no field label — the header/series rows."""
-    return f"{json.dumps(marker)} + ({_value_expr(tf)})"
+    value = _value_expr(tf)
+    if tf.prefix:
+        value = f"{json.dumps(tf.prefix)} + ({value})"
+    return f"{json.dumps(marker)} + ({value})"
 
 
 def build_structured_tooltip_expr(

@@ -135,6 +135,36 @@ class TestSkillDescription:
     def test_unknown_name_returns_empty_string_not_raise(self) -> None:
         assert skill_description("no-such-skill-xyz") == ""
 
+    def test_description_renders_sibling_macro_per_surface(self) -> None:
+        """board-build's description references board-design: bare on both
+        tool and cli. `dct skills` resolves names against the bare registry,
+        so the cli-rendered description must not print a name it would then
+        reject."""
+        tool_description = get_skill("board-build", surface="tool").description
+        cli_description = get_skill("board-build", surface="cli").description
+        assert "board-design" in tool_description
+        assert "dct-board-design" not in tool_description
+        assert "board-design" in cli_description
+        assert "dct-board-design" not in cli_description
+
+    def test_skill_description_helper_also_renders(self) -> None:
+        assert (
+            skill_description("board-build", surface="cli")
+            == get_skill("board-build", surface="cli").description
+        )
+
+    def test_search_skills_matches_description_only_via_macro_rendering(self) -> None:
+        """board-visual-review's raw frontmatter description embeds
+        `{{ s_skill_name_structural_review }}` inside a sentence found nowhere
+        in its body — the phrase below only exists once rendered. If
+        search_skills scores the raw, unrendered description, this hit is
+        unreachable even though the rendered text is what the agent reads."""
+        result = search_skills(
+            "data-shape problems (use board-structural-review)", surface="tool"
+        )
+
+        assert [hit.name for hit in result.hits] == ["board-visual-review"]
+
 
 def _write_project_skill(
     root: Path,
@@ -213,6 +243,20 @@ class TestProjectSkills:
         result = list_skills(project=project)
 
         assert "my-metric" in {s.name for s in result.skills}
+
+    def test_dct_prefixed_project_dir_is_skipped(self, tmp_path: Path) -> None:
+        """`dct init skills` writes `dct-board-build/SKILL.md` with
+        `name: dct-board-build` into `.claude/skills/`: the project-skill
+        scanner must not re-read its own file-install output as a second,
+        distinct registry entry."""
+        _write_project_skill(
+            tmp_path, ".claude/skills/dct-board-build", name="dct-board-build"
+        )
+        project = FilesystemProject(tmp_path)
+
+        result = list_skills(project=project)
+
+        assert "dct-board-build" not in {s.name for s in result.skills}
 
     def test_project_skill_overrides_builtin_of_same_name(self, tmp_path: Path) -> None:
         _write_project_skill(
@@ -363,6 +407,28 @@ class TestProjectSkills:
         skill = get_skill("my-metric", project=project)
 
         assert "{{ s_curve }}" in skill.body
+
+    def test_project_skill_description_with_macro_shaped_text_does_not_crash_list_skills(
+        self, tmp_path: Path
+    ) -> None:
+        """The description twin of the two body tests above:
+        `_rendered_description` carries the identical `source != "builtin"`
+        guard as `_rendered_body`, so it needs the same proof — a
+        macro-shaped description must never raise MissingSurfaceAlias and
+        take down list_skills for every skill, built-ins included."""
+        _write_project_skill(
+            tmp_path,
+            "skills/my-metric",
+            name="my-metric",
+            description="Use the {{ s_totally_unknown_key }} approach.",
+        )
+        project = FilesystemProject(tmp_path)
+
+        result = list_skills(project=project)
+
+        by_name = {s.name: s for s in result.skills}
+        assert "my-metric" in by_name
+        assert "{{ s_totally_unknown_key }}" in by_name["my-metric"].description
 
     def test_project_skill_body_with_macro_shaped_text_does_not_crash_search_skills(
         self, tmp_path: Path
@@ -652,18 +718,19 @@ def test_packaged_skill_renders_cleanly_on_each_surface(
 
 
 def test_mcp_setup_is_cli_only() -> None:
-    """`dct-mcp-setup` is CLI-only — invisible to tool-call agents."""
-    cli_skill = get_skill("dct-mcp-setup", surface="cli")
-    assert cli_skill.name == "dct-mcp-setup"
+    """`mcp-setup` is CLI-only — invisible to tool-call agents. Registry name
+    stays bare; the `dct-` prefix is introduced only on the CLI install surface."""
+    cli_skill = get_skill("mcp-setup", surface="cli")
+    assert cli_skill.name == "mcp-setup"
     assert "cli" in cli_skill.surfaces
 
     with pytest.raises(SkillNotFound):
-        get_skill("dct-mcp-setup", surface="tool")
+        get_skill("mcp-setup", surface="tool")
 
     cli_names = {s.name for s in list_skills(surface="cli").skills}
     tool_names = {s.name for s in list_skills(surface="tool").skills}
-    assert "dct-mcp-setup" in cli_names
-    assert "dct-mcp-setup" not in tool_names
+    assert "mcp-setup" in cli_names
+    assert "mcp-setup" not in tool_names
 
 
 def test_dashboard_pack_scaffolding_is_tool_only() -> None:

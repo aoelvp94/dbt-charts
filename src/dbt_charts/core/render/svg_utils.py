@@ -151,6 +151,20 @@ def padded_authoring_content(
     )
 
 
+def card_box(
+    width: float, height: float, inset: dict[str, float] | None
+) -> tuple[float, float, float, float]:
+    """``(x, y, width, height)`` of a card rect for content rendered at the
+    inner ``width`` × ``height``: with ``inset``, the rect reaches back out over
+    the padding ``padded_authoring_content`` will translate the content in by,
+    so the card fills the outer box the way a Vega chart's background does.
+    """
+    if inset is None:
+        return 0.0, 0.0, width, height
+    left, top = inset["left"], inset["top"]
+    return -left, -top, width + left + inset["right"], height + top + inset["bottom"]
+
+
 def border_dash_attrs(border: "BorderStyle") -> str:
     """SVG stroke-dasharray/-linecap/-dashoffset attributes for a dashed border.
 

@@ -712,7 +712,7 @@ All chart types accept the channels and style fields below — but each type rej
 | `stroke` | object | `{color, width}` — each accepts field/scale/when |
 | `theta` | string | Angular field (pie/donut/arc) |
 | `style.inner_radius` | float 0–1 | Donut hole ratio (hole/outer disk; pie/donut only); `type: donut` sets it to `0.6` automatically |
-| `total` | object | `{label, format}` — center total for donut |
+| `total` | object | `{label}` — center total for donut; format lives at `style.total.value.format` |
 | `style.marks.slice.labels` | object | `{template, where}` — per-row Jinja annotations near slice callouts |
 | `x_label` | string | X-axis title override |
 | `y_label` | string | Y-axis title override |
@@ -858,9 +858,11 @@ style:
     slice:
       labels:
         template: "{{ segment }}\n{{ revenue | format(',.0f') }}"
+  total:
+    value:
+      format: integer
 total:
   label: Total
-  format: integer
 
 # kpi — requires exactly 1 row; value: is a column reference
 type: kpi

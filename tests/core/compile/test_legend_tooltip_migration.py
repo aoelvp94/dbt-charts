@@ -207,8 +207,8 @@ def test_kpi_tooltip_stripped_at_chart_level(catalog: YamlSchemaCatalog) -> None
 # Text-rewrite path (migrate_yaml_text / dct migrate)
 # The tests above only exercise the in-memory path (migrate_mapping).
 # The following tests verify that dct migrate rewrites the YAML source file
-# correctly, which requires _delete_tail_in_yaml_text to remove the entire
-# nested block under a mapping-valued key, not just the single key line.
+# correctly, which requires the whole nested block under a mapping-valued key
+# to go, not just the single key line.
 # ---------------------------------------------------------------------------
 
 

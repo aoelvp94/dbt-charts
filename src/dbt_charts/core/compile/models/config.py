@@ -328,6 +328,14 @@ class ChartRenderingConfig(ConfigNode):
         row_height_px: float
         chrome_height_px: float
 
+    class HoverEmphasisConfig(ConfigNode):
+        # Strength for hover emphasis. Engine config, not a theme value:
+        # there is no wide range of settings that read well, so we tune it
+        # rather than the author. Themes keep only the on/off switch
+        # (style.charts.hover_emphasis.visible) -- one feature, one noun, on
+        # both surfaces.
+        dimmed_opacity: float = Field(gt=0, lt=1)
+
     pie: PieConfig
     bar: BarConfig
     plot_height_floor: PlotHeightFloorConfig
@@ -340,6 +348,7 @@ class ChartRenderingConfig(ConfigNode):
     endpoint_labels: EndpointLabelsConfig
     gradient: GradientConfig
     legend: LegendConfig
+    hover_emphasis: HoverEmphasisConfig
 
 
 class InspectorConfig(ConfigNode):

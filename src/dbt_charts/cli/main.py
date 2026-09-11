@@ -19,7 +19,7 @@ from dbt_charts.cli._console import is_plain_output
 from dbt_charts.cli._error_format import print_warning
 from dbt_charts.cli._extras import require_extras
 from dbt_charts.cli._parsing import parse_kv_pairs
-from dbt_charts.cli._project import has_charts_marker
+from dbt_charts.cli._project import has_charts_marker, project_dir_was_typed
 from dbt_charts.cli._workspace_guard import detect_workspace_mismatch
 from dbt_charts.cli.commands import (
     board_artifact as board_artifact_cmd,
@@ -302,6 +302,7 @@ def init_default(
         return
     init_cmd.run_wizard(
         project_dir=project_dir,
+        project_dir_explicit=project_dir_was_typed(ctx),
         force=force,
         yes=yes,
         skills=skills,
@@ -341,6 +342,7 @@ def init_vscode() -> None:
 # `dct init skills [target]` — file-based workflow skill install.
 @init_app.command("skills")
 def init_skills(
+    ctx: typer.Context,
     target: Annotated[
         str | None,
         typer.Argument(
@@ -371,10 +373,6 @@ def init_skills(
             ),
         ),
     ] = False,
-    force: Annotated[
-        bool,
-        typer.Option("--force", "-f", help="Overwrite existing skill files"),
-    ] = False,
     check: Annotated[
         bool,
         typer.Option(
@@ -386,12 +384,15 @@ def init_skills(
 ) -> None:
     """Install dbt charts workflow skills for file-based agent auto-discovery.
 
-    Writes CLI-rendered skill files to ``.agents/skills/`` (Cursor, Codex,
+    Writes CLI-rendered skill files, namespaced under a ``dct-`` prefix
+    (``dct-board-build/``, ...), to ``.agents/skills/`` (Cursor, Codex,
     Copilot) and/or ``.claude/skills/`` (Claude Code) inside the current
     repository. Pass ``--global`` to install into your user-level directories
     instead (``~/.claude/skills/``, ``~/.agents/skills/``), so any new project
     on this machine picks up the skills without a per-repo install. Does not
-    configure MCP or modify AGENTS.md / CLAUDE.md.
+    configure MCP or modify AGENTS.md / CLAUDE.md. Always overwrites an
+    existing ``dct-*`` install; re-run after every upgrade to pick up new
+    skill bodies.
 
     \b
     Examples:
@@ -402,16 +403,15 @@ def init_skills(
       dct init skills --dir PATH      # Explicit destination
       dct init skills --global        # ~/.claude/skills and/or ~/.agents/skills
       dct init skills --check         # Dry run
-      dct init skills -f              # Overwrite existing files
     """
     _skills_run_init(
         target=target,
         all_targets=all_targets,
         dir_override=dir_override,
         global_install=global_install,
-        force=force,
         check=check,
         project_dir=project_dir,
+        project_dir_explicit=project_dir_was_typed(ctx),
     )
 
 

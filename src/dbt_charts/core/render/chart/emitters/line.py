@@ -354,6 +354,7 @@ def _build_line_top_encoding(
     style: ResolvedLineStyle,
     box: RenderBox,
     x_domain: list[Any] | None,  # type-state: explicit_any — raw x values
+    panel_fields: tuple[str, ...],
 ) -> tuple[VLDict, bool, str | None, str | None]:
     """Build the VL encoding dict, has_color_enc flag, and resolved x VL type
     (None when the chart has no x channel at all) for a line chart.
@@ -375,6 +376,7 @@ def _build_line_top_encoding(
             overlay_uses_band_step(chart.layers),
             x_domain,
             reserved_width=resolve_endpoint_rail_span(chart, data, box.width),
+            panel_fields=panel_fields,
         )
         if chart.x
         else CartesianXResolution("nominal", {}, {})
@@ -420,6 +422,7 @@ def _emit_folded_line(
     chart: ResolvedLineChart,
     data: list[dict[str, Any]],
     box: RenderBox,
+    panel_fields: tuple[str, ...],
 ) -> ChartSpec:
     """Emit a fold-based unit spec for a multi-metric (y: [a, b, ...]) line chart.
 
@@ -441,6 +444,7 @@ def _emit_folded_line(
             chart.id,
             "line",
             reserved_width=resolve_endpoint_rail_span(chart, data, box.width),
+            panel_fields=panel_fields,
         )
         if chart.x
         else CartesianXResolution("nominal", {}, {})
@@ -555,10 +559,11 @@ class LineEmitter:
         data, transformed, base_x_authored_temporal = _normalize_line_data(
             chart, dataset, data
         )
+        panel_fields = tuple(axis.field for axis in dataset.axes)
         if chart.wide_measures:
             # A folded (wide-measures) chart returns before chart.layers ever
             # applies (below) — no union to compute here.
-            spec = _emit_folded_line(chart, data, box)
+            spec = _emit_folded_line(chart, data, box, panel_fields)
             if transformed:
                 spec.data = normalize_data_types(data)
             return spec
@@ -583,7 +588,7 @@ class LineEmitter:
             else None
         )
         top_encoding, has_color_enc, x_type, y_plain = _build_line_top_encoding(
-            chart, data, style, box, x_domain
+            chart, data, style, box, x_domain, panel_fields
         )
         step_band_data = _apply_line_step_band(
             chart, data, top_encoding, style.line_mark, x_type

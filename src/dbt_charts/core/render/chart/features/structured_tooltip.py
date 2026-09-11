@@ -58,6 +58,7 @@ from dbt_charts.core.render.chart.emitters._tooltip import (
 from dbt_charts.core.render.chart.emitters.pie import PIE_PCT_FIELD, PIE_TOTAL_FIELD
 from dbt_charts.core.render.chart.feature import chart_rows
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
+from dbt_charts.core.render.chart.time_unit_detect import normalize_labeled_temporal
 from dbt_charts.core.render.chart.type_inference import infer_vega_type_from_data
 from dbt_charts.core.text.case import default_axis_title, format_display_text
 
@@ -88,9 +89,8 @@ def _value_tooltip_field(
     """One dependent/peer VALUE row honoring the datum's inferred VL type.
 
     Quantitative applies the theme's ``tooltip_format``; temporal/nominal
-    pass the raw value through. Shared by scatter's two peer value rows
-    (`_scatter_roles`), whose x/y can each independently be a measure, a
-    date, or a category (dot-plot).
+    pass the raw value through. Builds scatter's y row (`_scatter_roles`),
+    which can be a measure, a date, or a category (dot-plot).
     """
     field_type = infer_vega_type_from_data(data, field)
     if field_type == "quantitative":
@@ -157,7 +157,25 @@ def _cartesian_roles(
     header: tuple[TooltipField, ...] = ()
     if chart.x is not None:
         x_title = chart.x_label or default_axis_title(chart.x)
-        header = (header_tooltip_field(chart.x, x_title, data),)
+        # The base emitter (bar/line/area) already ran this canonicalization
+        # on its OWN copy of chart.x before deciding the x encoding's type and
+        # grain -- a year-shaped integer column becomes an ISO date, which VL
+        # then encodes as temporal and coerces every runtime reference to
+        # (our own description expr's datum lookup included) to epoch-ms.
+        # StructuredTooltipFeature reads a FRESH, unmutated copy of the rows
+        # (see the module docstring), so the header must run the same
+        # canonicalization or its kind decision diverges from what the field
+        # actually evaluates to at render time.
+        #
+        # This CAN raise on mixed label families. It doesn't here because
+        # `applies_to` excludes histogram -- the one bar branch that returns
+        # ahead of its own normalize call. Line and area normalize
+        # unconditionally, so the emitter made this identical call on these
+        # identical values first and any raise already escaped before features
+        # run. Drop that histogram gate and this line becomes a crash inside a
+        # tooltip feature.
+        header_data = normalize_labeled_temporal(data, chart.x)
+        header = (header_tooltip_field(chart.x, x_title, header_data),)
 
     # Wide charts (y: [m1, m2, ...]) are folded client-side by VL: at render
     # time datum[WIDE_VALUE_FIELD] = the measure value and
@@ -332,10 +350,20 @@ def _scatter_roles(
     fmt = style.tooltip_format
     x_title = chart.x_label or default_axis_title(chart.x)
     y_title = chart.y_label or default_axis_title(chart.y)
-    values = [
-        _value_tooltip_field(chart.y, y_title, data, fmt),
-        _value_tooltip_field(chart.x, x_title, data, fmt),
-    ]
+    # Mirrors the scatter emitter's x gate, decided on the same raw rows: a
+    # quantitative x stays a measure (canonicalizing it would misread a
+    # 1900-2100 numeric column as years); anything else the emitter runs
+    # through normalize_labeled_temporal before encoding, so Vega coerces a
+    # labeled bucket ("Q1 2024") to epoch-ms. The row must format that same
+    # canonical value with its grain, as the cartesian header does. The call
+    # cannot raise here: the emitter made it on these identical values first,
+    # under the identical gate, and `applies_to` excludes layers and multiples.
+    if infer_vega_type_from_data(data, chart.x) == "quantitative":
+        x_row = TooltipField(chart.x, x_title, kind="quantitative", format=fmt)
+    else:
+        x_data = normalize_labeled_temporal(data, chart.x)
+        x_row = header_tooltip_field(chart.x, x_title, x_data)
+    values = [_value_tooltip_field(chart.y, y_title, data, fmt), x_row]
 
     color_ch = chart.resolved_channels.get("color")
     if color_ch is not None and color_ch.data_field:

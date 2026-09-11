@@ -381,7 +381,6 @@ charts:
     color: plan
     total:
       label: "Total bookings"
-      format: "$,.0f"
     style:
       # Wedge labels carry the legend — hide the auto-rendered one.
       legend:
@@ -395,6 +394,9 @@ charts:
             offset: 4
             font:
               size: 10
+      total:
+        value:
+          format: "$,.0f"
 
   # ── Multi-line: win rate by source over time ───────────────────────────
   win_rate_trend:

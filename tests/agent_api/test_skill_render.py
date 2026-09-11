@@ -55,6 +55,33 @@ class TestSurfaceSelection:
         assert out == expected
 
 
+class TestBareNameAliasFamily:
+    """`s_skill_name_*` renders a bare skill name on `tool` and `cli`, the
+    dct-prefixed install name only on `install`: for prose that names a
+    skill, not one that tells the reader to run it (that's the existing
+    `s_skill_*` invocation family). `cli` stays bare because `dct skills`
+    resolves names against the bare registry, not the file-install directory."""
+
+    def test_bare_name_renders_unprefixed_on_tool(self) -> None:
+        out = render_skill_body("{{ s_skill_name_design_board }}", surface="tool")
+        assert out == "board-design"
+
+    def test_bare_name_renders_unprefixed_on_cli(self) -> None:
+        out = render_skill_body("{{ s_skill_name_design_board }}", surface="cli")
+        assert out == "board-design"
+
+    def test_bare_name_renders_prefixed_on_install(self) -> None:
+        out = render_skill_body("{{ s_skill_name_design_board }}", surface="install")
+        assert out == "dct-board-design"
+
+    def test_command_macro_identical_on_cli_and_install(self) -> None:
+        """Non-name macros (commands, prose) don't vary between `cli` and
+        `install`: only the bare-name family does."""
+        cli_out = render_skill_body("{{ s_render_board }}", surface="cli")
+        install_out = render_skill_body("{{ s_render_board }}", surface="install")
+        assert cli_out == install_out == "dct render"
+
+
 class TestUnknownKey:
     @pytest.mark.parametrize("surface", ["tool", "cli"])
     def test_unknown_key_raises(self, surface: str) -> None:
@@ -148,4 +175,38 @@ class TestNoStaleDashboardVocabularyInSkills:
             text = skill_md.read_text(encoding="utf-8")
             if _OLD_SKILL_ID_RE.search(text):
                 offenders.append(str(skill_md))
+        assert offenders == []
+
+
+class TestNoBareInstallSetNameInSkillBodies:
+    """A sibling reference must be a `{{ s_skill_name_* }}` macro, not a literal
+    install-set skill name — the macro is what makes the CLI-installed body read
+    `dct-board-design` while the tool-call body reads `board-design`. `dct://guide/`
+    resource URIs are exempt: registry addresses, not filesystem paths."""
+
+    def test_no_bare_install_set_name_outside_guide_uri(self) -> None:
+        from dbt_charts.agent_api.skill_install import skills_for_file_install
+
+        install_names = sorted(
+            (s.name for s in skills_for_file_install()), key=len, reverse=True
+        )
+        name_re = re.compile(
+            r"(?<![\w-])("
+            + "|".join(re.escape(n) for n in install_names)
+            + r")(?![\w-])"
+        )
+        skills_root = files("dbt_charts.ai.skills")
+        offenders: list[str] = []
+        for entry in skills_root.iterdir():  # type: ignore[attr-defined]
+            skill_md = entry / "SKILL.md"
+            if not skill_md.is_file():
+                continue
+            # Frontmatter `description:` is a separate rendering pass — checked
+            # by test_skills.py's description-rendering coverage, not here.
+            body = skill_md.read_text(encoding="utf-8").split("---", 2)[2]
+            for line in body.splitlines():
+                if "dct://guide/" in line:
+                    continue
+                if name_re.search(line):
+                    offenders.append(f"{skill_md}: {line.strip()}")
         assert offenders == []

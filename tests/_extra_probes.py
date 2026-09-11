@@ -28,8 +28,6 @@ EXTRA_PROBES: dict[str, str] = {
         "create_server(DbtChartsAIContext(project_session=session))\n"
         "print('ok')\n"
     ),
-    # The exact import dbt_charts_lsp/__main__.py uses — a pygls-2.x-only path.
-    "lsp": "from pygls.lsp.server import LanguageServer\nprint('ok')\n",
 }
 
 # Declared extras deliberately not probed here, and why. Every entry needs a

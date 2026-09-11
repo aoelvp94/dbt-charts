@@ -91,6 +91,7 @@ def test_resolve_cartesian_x_returns_named_fields() -> None:
         chart_width=600.0,
         chart_id="c1",
         mark_type="line",
+        panel_fields=(),
     )
     assert isinstance(result, CartesianXResolution)
     assert result.vl_type

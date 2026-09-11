@@ -66,6 +66,7 @@ from dbt_charts.core.project import (
 from dbt_charts.core.project_roots import find_dct_root, find_repo_root
 from dbt_charts.core.render.dir_context import lazy_dir_context
 from dbt_charts.core.render.errors import RenderError
+from dbt_charts.core.utils import YAML_LOADER
 from dbt_charts.integrations.highlighting import highlight_board_yaml
 
 logger = logging.getLogger("dbt_charts.integrations.markdown")
@@ -316,7 +317,10 @@ def _load_external_query_definition(
         if not candidate_file.exists():
             continue
 
-        raw = yaml.safe_load(candidate_file.read_text(encoding="utf-8")) or {}
+        raw = (
+            yaml.load(candidate_file.read_text(encoding="utf-8"), Loader=YAML_LOADER)
+            or {}
+        )
         queries = raw.get("queries", {}) if isinstance(raw, dict) else {}
         if query_name in queries:
             return query_name, queries[query_name]
@@ -336,7 +340,7 @@ def _inline_playground_queries(
     source_base_dir: Path | None,
 ) -> str:
     """Rewrite external query refs into local inline queries for playground URLs."""
-    doc = yaml.safe_load(yaml_source)
+    doc = yaml.load(yaml_source, Loader=YAML_LOADER)
     if not isinstance(doc, dict):
         return yaml_source
 

@@ -117,8 +117,8 @@ class TestInitDoesNotWriteAgentMarkdown:
             catch_exceptions=False,
         )
         assert result.exit_code == 0, result.output
-        assert (dbt_dir / ".agents/skills/board-build/SKILL.md").exists()
-        assert (dbt_dir / ".claude/skills/board-build/SKILL.md").exists()
+        assert (dbt_dir / ".agents/skills/dct-board-build/SKILL.md").exists()
+        assert (dbt_dir / ".claude/skills/dct-board-build/SKILL.md").exists()
         assert not (dbt_dir / "AGENTS.md").exists()
         assert not (dbt_dir / "CLAUDE.md").exists()
 
@@ -575,6 +575,67 @@ class TestInitWizardFlags:
         assert (repo_root / "charts").is_dir()
         assert not (subdir / "charts").exists()
 
+    def test_skills_install_at_git_root_for_nested_project_without_project_dir_flag(
+        self, bare_git_subdir: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No --project-dir given: skills must land at the git root even though
+        the dct project itself lives in a nested subdirectory.
+
+        Regression: the wizard forwarded its already-resolved scaffold root
+        (the nested project) to run_init_skills unconditionally, which made
+        skills_init treat every wizard run as if --project-dir had been passed
+        explicitly, and install skills next to the nested project instead of
+        the git root.
+        """
+        repo_root, subdir = bare_git_subdir
+        (subdir / "dbt_project.yml").write_text("name: nested_project\n")
+        monkeypatch.chdir(subdir)
+        runner = CliRunner()
+        result = runner.invoke(
+            app,
+            [
+                "init",
+                "--yes",
+                "--no-mcp",
+                "--no-with-playground",
+                "--no-vscode",
+                "--no-cursor",
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0, result.output
+        assert (repo_root / ".agents/skills/dct-board-build/SKILL.md").exists()
+        assert (repo_root / ".claude/skills/dct-board-build/SKILL.md").exists()
+        assert not (subdir / ".agents/skills").exists()
+        assert not (subdir / ".claude/skills").exists()
+
+    def test_skills_install_at_explicit_project_dir_not_git_root(
+        self, bare_git_subdir: tuple[Path, Path]
+    ) -> None:
+        """--project-dir given: skills install into the named directory, not
+        the enclosing git root — the wizard must forward the user's raw
+        --project-dir, not its own already-resolved scaffold root."""
+        repo_root, subdir = bare_git_subdir
+        (subdir / "dbt_project.yml").write_text("name: nested_project\n")
+        runner = CliRunner()
+        result = runner.invoke(
+            app,
+            [
+                "init",
+                "--project-dir",
+                str(subdir),
+                "--yes",
+                "--no-mcp",
+                "--no-with-playground",
+                "--no-vscode",
+                "--no-cursor",
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0, result.output
+        assert (subdir / ".claude/skills/dct-board-build/SKILL.md").exists()
+        assert not (repo_root / ".claude").exists()
+
     def test_existing_dbt_charts_project_above_cwd_uses_project_root(
         self, bare_git_subdir: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -662,7 +723,7 @@ class TestInitPreservesExistingAgentMarkdown:
         assert result.exit_code == 0, result.output
         assert (dbt_dir / "AGENTS.md").read_text() == "# Pre-existing content\n"
         assert "AGENTS.md" not in result.output
-        assert (dbt_dir / ".agents/skills/board-build/SKILL.md").exists()
+        assert (dbt_dir / ".agents/skills/dct-board-build/SKILL.md").exists()
 
     def test_existing_claude_md_is_not_modified(self, dbt_dir: Path) -> None:
         (dbt_dir / "CLAUDE.md").write_text("@AGENTS.md\n# Custom\n")
@@ -684,7 +745,7 @@ class TestInitPreservesExistingAgentMarkdown:
         assert result.exit_code == 0, result.output
         assert (dbt_dir / "CLAUDE.md").read_text() == "@AGENTS.md\n# Custom\n"
         assert "CLAUDE.md" not in result.output
-        assert (dbt_dir / ".claude/skills/board-build/SKILL.md").exists()
+        assert (dbt_dir / ".claude/skills/dct-board-build/SKILL.md").exists()
 
     def test_ide_detection_both_found(self, dbt_dir: Path) -> None:
         def _which(cmd: str) -> str | None:

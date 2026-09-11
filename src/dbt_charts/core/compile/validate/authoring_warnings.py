@@ -15,6 +15,7 @@ from dbt_charts.core.diagnostics import (
     Diagnostic,
 )
 from dbt_charts.core.text.case import inferred_display_name
+from dbt_charts.core.utils import YAML_LOADER
 
 # Beyond this many unsized *growable* cells, a flat `cols:` row loses layout
 # predictability: each cell inherits the row's full vertical budget, so a wide flat
@@ -46,7 +47,7 @@ _VARIABLE_DEFAULTS: dict[str, object] = {
 
 def detect_authoring_warnings(yaml_content: str) -> list[Diagnostic]:
     """Return non-fatal warnings for redundant authored YAML."""
-    raw = yaml.safe_load(yaml_content)
+    raw = yaml.load(yaml_content, Loader=YAML_LOADER)
     if not isinstance(raw, dict):
         return []
 

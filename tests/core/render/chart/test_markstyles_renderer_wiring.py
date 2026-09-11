@@ -35,6 +35,12 @@ def reset():
 
 
 SAMPLE_DATA = [{"month": "Jan", "revenue": 100}, {"month": "Feb", "revenue": 200}]
+MULTI_SERIES_DATA = [
+    {"month": "Jan", "revenue": 100, "segment": "a"},
+    {"month": "Feb", "revenue": 200, "segment": "a"},
+    {"month": "Jan", "revenue": 50, "segment": "b"},
+    {"month": "Feb", "revenue": 90, "segment": "b"},
+]
 
 
 def _base_line_mark():
@@ -160,11 +166,16 @@ def _board_with_global_line_stroke(**stroke_overrides):
 
 
 def _board_with_global_area_stroke(**stroke_overrides):
-    """Override the top-edge stroke area charts share with the line family.
+    """Override the top-edge stroke a multi-series (overlap-recipe) area
+    chart shares with the line family.
 
-    Area's top-edge stroke is a genuine separate line mark (Vega-Lite itself
-    compiles it that way) — its geometry lives on the global marks.line
-    tier, not marks.area (fill-only: opacity/curve).
+    A colorless/layerless area now takes the stacked recipe wholesale (see
+    ``_board_with_stacked_area_stroke``), so this override only reaches a
+    chart's top edge when the chart is genuinely multi-series (color/wide
+    y/layers) and stays on the overlap recipe. Area's top-edge stroke there
+    is a genuine separate line mark (Vega-Lite itself compiles it that
+    way) — its geometry lives on the global marks.line tier, not marks.area
+    (fill-only: opacity/curve).
     """
     compiled = get_theme_style("clarity")
     line_mark = compiled.charts.marks.line
@@ -188,19 +199,26 @@ def _board_no_halo_line(**stroke_overrides):
     return resolve_style_and_context(compiled.model_copy(update={"charts": charts}))
 
 
-def _board_no_halo_area(**stroke_overrides):
-    """Area board with halo_multiplier=0 so spec uses a single mark dict.
+def _board_with_stacked_area_stroke(**stroke_overrides):
+    """Override the top-edge separator stroke a colorless/layerless area
+    chart takes via the stacked recipe.
 
-    Area's top-edge stroke/halo geometry lives on the global marks.line
-    tier (a genuine separate line mark), not marks.area (fill-only).
+    A single-series area is now treated like a stack: it
+    routes its edge stroke through marks.area.stacked.stroke with
+    halo_multiplier already 0.0 by default, not the global marks.line tier
+    the overlap recipe uses. The spec emits a single line mark for the
+    edge (there is no halo layer to switch off).
     """
     compiled = get_theme_style("clarity")
-    line_mark = compiled.charts.marks.line
-    new_stroke = line_mark.stroke.model_copy(update=stroke_overrides)
-    new_line_mark = line_mark.model_copy(
-        update={"stroke": new_stroke, "halo_multiplier": 0.0}
+    stacked = compiled.charts.marks.area.stacked
+    assert stacked is not None
+    assert stacked.stroke is not None
+    new_stroke = stacked.stroke.model_copy(update=stroke_overrides)
+    new_stacked = stacked.model_copy(update={"stroke": new_stroke})
+    new_area_mark = compiled.charts.marks.area.model_copy(
+        update={"stacked": new_stacked}
     )
-    new_marks = compiled.charts.marks.model_copy(update={"line": new_line_mark})
+    new_marks = compiled.charts.marks.model_copy(update={"area": new_area_mark})
     charts = compiled.charts.model_copy(update={"marks": new_marks})
     return resolve_style_and_context(compiled.model_copy(update={"charts": charts}))
 
@@ -239,13 +257,15 @@ class TestLineNoHaloPath:
 class TestAreaNoHaloPath:
     """stroke.color / stroke.dasharray reach the fg line mark when halo is off.
 
-    After the fill/stroke split, even without a halo the area chart emits a
-    separate line mark (type: "line") for the top-edge stroke. The area fill
-    layer suppresses its own border stroke via strokeOpacity=0.
+    A colorless/layerless area now always takes the stacked recipe, whose
+    halo_multiplier defaults to 0.0 -- there is no separate halo path to
+    force off for this shape. It still emits a separate line mark
+    (type: "line") for the top-edge separator stroke; the area fill layer
+    suppresses its own border stroke via strokeOpacity=0.
     """
 
     def test_stroke_color_in_single_mark(self, make_chart):
-        board = _board_no_halo_area(color="#cd5678")
+        board = _board_with_stacked_area_stroke(color="#cd5678")
         chart = make_chart("area", x="month", y="revenue")
         spec = generate_vega_lite_spec(
             chart, SAMPLE_DATA, board_style=board[0], chart_style_context=board[1]
@@ -256,7 +276,7 @@ class TestAreaNoHaloPath:
         )
 
     def test_stroke_dasharray_in_single_mark(self, make_chart):
-        board = _board_no_halo_area(dasharray="5 5")
+        board = _board_with_stacked_area_stroke(dasharray="5 5")
         chart = make_chart("area", x="month", y="revenue")
         spec = generate_vega_lite_spec(
             chart, SAMPLE_DATA, board_style=board[0], chart_style_context=board[1]
@@ -319,13 +339,28 @@ class TestLineHaloPath:
 
 
 class TestAreaHaloPath:
-    """stroke.color / stroke.dasharray reach the fg line mark when halo is on."""
+    """stroke.color / stroke.dasharray reach the fg line mark when halo is on.
+
+    Only a genuinely multi-series area (color/wide y/layers) still uses the
+    overlap recipe's halo path -- a colorless/layerless area takes the
+    stacked recipe instead (see TestAreaNoHaloPath), so these charts author
+    ``color`` to stay on the recipe under test.
+    """
 
     def test_stroke_color_on_foreground_area_line(self, make_chart):
         board = _board_with_global_area_stroke(color="#0044ff", width=3.0)
-        chart = make_chart("area", x="month", y="revenue")
+        chart = make_chart(
+            "area",
+            x="month",
+            y="revenue",
+            color="segment",
+            style={"endpoint_labels": {"visible": False}},
+        )
         spec = generate_vega_lite_spec(
-            chart, SAMPLE_DATA, board_style=board[0], chart_style_context=board[1]
+            chart,
+            MULTI_SERIES_DATA,
+            board_style=board[0],
+            chart_style_context=board[1],
         )
         fg_line = _fg_area_line(spec)
         assert fg_line.get("stroke") == "#0044ff", (
@@ -334,9 +369,18 @@ class TestAreaHaloPath:
 
     def test_stroke_dasharray_on_foreground_area_line(self, make_chart):
         board = _board_with_global_area_stroke(dasharray="3 3", width=2.0)
-        chart = make_chart("area", x="month", y="revenue")
+        chart = make_chart(
+            "area",
+            x="month",
+            y="revenue",
+            color="segment",
+            style={"endpoint_labels": {"visible": False}},
+        )
         spec = generate_vega_lite_spec(
-            chart, SAMPLE_DATA, board_style=board[0], chart_style_context=board[1]
+            chart,
+            MULTI_SERIES_DATA,
+            board_style=board[0],
+            chart_style_context=board[1],
         )
         fg_line = _fg_area_line(spec)
         assert fg_line.get("strokeDash") == [

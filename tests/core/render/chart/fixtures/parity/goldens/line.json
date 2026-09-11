@@ -172,6 +172,7 @@
     },
     {
       "mark": {
+        "aria": false,
         "fill": "#FFFFFF",
         "fillOpacity": 1,
         "filled": true,
@@ -211,6 +212,7 @@
     },
     {
       "mark": {
+        "aria": false,
         "clip": true,
         "fill": "#23467f",
         "filled": true,

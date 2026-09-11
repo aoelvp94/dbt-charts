@@ -12,6 +12,12 @@ Detection rule (v1, name-match only):
     _pct, _percent, _percentage, _rate, _share
   or contains the substring: percent.
 
+  Either set also matches a bare field name (no prefix) that reliably implies
+  money/percent standalone — currency: usd, dollars, revenue, price, gmv, arr,
+  mrr; percent: pct, percent, percentage, share. Generic nouns that only
+  signal a kind when prefixed (value, amount, rate, cost, spend) are excluded
+  from the bare set; only their `_`-prefixed suffix form still matches.
+
   Fire when a matching field's effective y-axis format does not suit its kind.
   Every format source (chart-root ``format:``, authored ``style.axis_y.labels.format``,
   whole-chart ``style.number_format``, the theme default) is baked into the single
@@ -89,6 +95,14 @@ _PERCENT_SUFFIXES: frozenset[str] = frozenset(
 # Percent: substring signals.
 _PERCENT_SUBSTRINGS: frozenset[str] = frozenset({"percent"})
 
+# Bare-name signals (curated, not derived — see module docstring).
+_CURRENCY_BARE_NAMES: frozenset[str] = frozenset(
+    {"usd", "dollars", "revenue", "price", "gmv", "arr", "mrr"}
+)
+_PERCENT_BARE_NAMES: frozenset[str] = frozenset(
+    {"pct", "percent", "percentage", "share"}
+)
+
 
 def _classify(field_name: str) -> str | None:
     """Return 'currency', 'percent', or None for the given field name."""
@@ -99,12 +113,16 @@ def _classify(field_name: str) -> str | None:
     for sub in _CURRENCY_SUBSTRINGS:
         if sub in name:
             return "currency"
+    if name in _CURRENCY_BARE_NAMES:
+        return "currency"
     for suffix in _PERCENT_SUFFIXES:
         if name.endswith(suffix):
             return "percent"
     for sub in _PERCENT_SUBSTRINGS:
         if sub in name:
             return "percent"
+    if name in _PERCENT_BARE_NAMES:
+        return "percent"
     return None
 
 

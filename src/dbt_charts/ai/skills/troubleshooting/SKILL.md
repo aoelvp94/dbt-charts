@@ -1,5 +1,5 @@
 ---
-name: dct-troubleshooting
+name: troubleshooting
 kind: workflow
 description: >
   Diagnose and fix dbt charts dashboard errors. Use when validation, query
@@ -8,8 +8,8 @@ description: >
   or when the user says 'fix this error', 'debug this dashboard', 'why is this
   broken', 'chart shows no data'. Covers YAML validation failures, SQL
   execution errors, rendering issues, and variable misconfiguration. Do NOT
-  use for building new dashboards from scratch (use board-build). Do NOT
-  use for design quality review (use board-design).
+  use for building new dashboards from scratch (use {{ s_skill_name_build }}). Do NOT
+  use for design quality review (use {{ s_skill_name_design_board }}).
 metadata:
   author: fivetran
 ---

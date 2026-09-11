@@ -1513,12 +1513,17 @@ rows:
         )
 
     def test_donut_auto_total_defaults_format_to_integer_preset(self):
-        """Auto-filled donut center total must carry the ``integer`` preset
-        name (resolves to ``,.0f``) so the rendered value keeps full
-        precision with thousands separators (``68,473``) instead of losing
-        digits to a 3-significant-figure SI abbreviation (``68.5k``). The
-        donut hole has room for the whole number; abbreviating it discards
-        precision the source data has.
+        """Auto-filled donut center total must resolve to the ``integer``
+        preset spec (``,.0f``) so the rendered value keeps full precision
+        with thousands separators (``68,473``) instead of losing digits to a
+        3-significant-figure SI abbreviation (``68.5k``). The donut hole has
+        room for the whole number; abbreviating it discards precision the
+        source data has.
+
+        Unlike ``chart.total.label`` (chart-root copy, visible right after
+        compile()), the format default is a style-cascade concern and only
+        resolves once the theme/board/chart-local style cascade completes --
+        see ``compile/resolve/chart/pie.py``'s ``_resolve_pie``.
         """
         yaml_content = """
 queries:
@@ -1536,21 +1541,18 @@ charts:
 rows:
   - my_donut
 """
-        result = compile(yaml_content)
-
-        assert result.success, f"Compilation failed: {result.errors}"
-        chart = result.board.charts["my_donut"]
-        assert chart.total is not None
-        assert chart.total.format == "integer", (
-            f"auto-filled donut total must default format to the 'integer' "
-            f"preset (full precision, thousands separators); got "
-            f"{chart.total.format!r}"
+        resolved, _ = self._resolved_chart(yaml_content, "my_donut")
+        assert resolved.style.total_style.value.format == ",.0f", (
+            f"auto-filled donut total must default its format to the "
+            f"'integer' preset (full precision, thousands separators); got "
+            f"{resolved.style.total_style.value.format!r}"
         )
 
     def test_donut_authored_total_format_wins_over_auto_default(self):
-        """Authored ``chart.total.format`` must survive — the auto-fill only
-        supplies the fields the author left unset. This pins the contract
-        so a future refactor doesn't accidentally stomp authored formats.
+        """Authored ``style.total.value.format`` must survive — the
+        resolve-time default only fills in when nothing in the cascade set
+        one. This pins the contract so a future refactor doesn't
+        accidentally stomp authored formats.
         """
         yaml_content = """
 queries:
@@ -1567,26 +1569,26 @@ charts:
     color: bucket
     total:
       label: "Custom Label"
-      format: ",.0f"
+    style:
+      total:
+        value:
+          format: ",.1f"
 rows:
   - my_donut
 """
-        result = compile(yaml_content)
-
-        assert result.success, f"Compilation failed: {result.errors}"
-        chart = result.board.charts["my_donut"]
-        assert chart.total is not None
-        assert chart.total.label == "Custom Label"
-        assert chart.total.format == ",.0f", (
-            f"authored chart.total.format must win over the auto-fill default; "
-            f"got {chart.total.format!r}"
+        resolved, _ = self._resolved_chart(yaml_content, "my_donut")
+        assert resolved.total is not None
+        assert resolved.total.label == "Custom Label"
+        assert resolved.style.total_style.value.format == ",.1f", (
+            f"authored style.total.value.format must win over the "
+            f"resolve-time default; got {resolved.style.total_style.value.format!r}"
         )
 
     def test_donut_authored_format_only_still_auto_fills_label(self):
         """An author fixing the center-total format (``total: {format: ...}``)
         without authoring a ``label`` must still get the auto-derived caption
-        — the auto-fill guard must not be all-or-nothing on the presence of
-        *any* ``total:`` block. Only the label is filled in; the author's
+        — chart.total's label auto-fill is independent of whether the style
+        cascade set a format. Only the label is filled in; the author's
         format is preserved untouched.
         """
         yaml_content = """
@@ -1602,29 +1604,30 @@ charts:
     type: donut
     theta: value
     color: bucket
-    total:
-      format: ",d"
+    style:
+      total:
+        value:
+          format: ",d"
 rows:
   - my_donut
 """
-        result = compile(yaml_content)
-
-        assert result.success, f"Compilation failed: {result.errors}"
-        chart = result.board.charts["my_donut"]
-        assert chart.total is not None
-        assert chart.total.format == ",d", (
-            f"authored format must be preserved untouched; got {chart.total.format!r}"
+        resolved, _ = self._resolved_chart(yaml_content, "my_donut")
+        assert resolved.style.total_style.value.format == ",d", (
+            f"authored format must be preserved untouched; got "
+            f"{resolved.style.total_style.value.format!r}"
         )
-        assert chart.total.label == "Total Value", (
+        assert resolved.total is not None
+        assert resolved.total.label == "Total Value", (
             f"omitted label must still be auto-derived even though the "
-            f"author authored a total: block for format; got "
-            f"{chart.total.label!r}"
+            f"author set a style.total.value.format; got "
+            f"{resolved.total.label!r}"
         )
 
     def test_donut_authored_label_only_still_auto_fills_format(self):
         """The mirror of the format-only case: an author who names the caption
-        but no format must still get the non-abbreviating default rather than
-        an unformatted raw number. Label and format fill independently.
+        but authors no style format must still get the non-abbreviating
+        default rather than an unformatted raw number. Label and format
+        fill independently.
         """
         yaml_content = """
 queries:
@@ -1644,18 +1647,15 @@ charts:
 rows:
   - my_donut
 """
-        result = compile(yaml_content)
-
-        assert result.success, f"Compilation failed: {result.errors}"
-        chart = result.board.charts["my_donut"]
-        assert chart.total is not None
-        assert chart.total.label == "Sessions", (
-            f"authored label must be preserved untouched; got {chart.total.label!r}"
+        resolved, _ = self._resolved_chart(yaml_content, "my_donut")
+        assert resolved.total is not None
+        assert resolved.total.label == "Sessions", (
+            f"authored label must be preserved untouched; got {resolved.total.label!r}"
         )
-        assert chart.total.format == "integer", (
+        assert resolved.style.total_style.value.format == ",.0f", (
             f"omitted format must still auto-fill to the 'integer' preset, or "
             f"the center renders an unformatted raw number; got "
-            f"{chart.total.format!r}"
+            f"{resolved.style.total_style.value.format!r}"
         )
 
     def test_donut_auto_label_preserves_acronyms_and_unit_suffixes(self):

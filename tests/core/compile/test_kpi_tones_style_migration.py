@@ -1,12 +1,9 @@
-"""Migration test for the 0.5.0 -> current KpiTonesStyle Move.
+"""Migration test for the 0.5.0 -> 0.6.0 KpiTonesStyle Move.
 
 ``style.charts.kpi.tones`` moved to board-level ``style.tones`` (a sibling of
 ``style.palettes``) — declared as a ``Move`` in
-``compile/migrations/versions/current.py``. An authored board (or theme
-patch) using the pre-move path migrates transparently; ``style.color`` (the
-other change in the same task) has no Move — its tail collides with the live
-``style.color`` on every other chart family, so it fails loud instead (see
-``current.py``'s module docstring).
+``compile/migrations/versions/v0_6_0.py``. An authored board (or theme
+patch) using the pre-move path migrates transparently.
 
 The Move covers exactly two positions: the root-anchored
 ``style.charts.kpi.tones`` and the per-tab
@@ -14,7 +11,7 @@ The Move covers exactly two positions: the root-anchored
 Any ``rows``/``cols``/``grid.items.*.item`` self-nesting below the root is
 uncovered — ``_relative_field_paths`` checks its ``seen`` ancestor set on
 entry, so a self-referential model's fields are never walked a second time
-along the same path (see ``current.py``'s module docstring for the full
+along the same path (see ``v0_6_0.py``'s module docstring for the full
 rationale and what remains uncovered).
 
 ``migrate_mapping`` (in-memory, used when compiling/loading an old board)

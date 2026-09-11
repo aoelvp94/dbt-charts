@@ -2,11 +2,12 @@
 
 Heatmap's axes are both nominal — it has no quantitative axis for
 ``axis_quantitative`` to style. The board-level slot
-(``style.charts.heatmap.axis_quantitative``) was accepted by the 0.5.0
-grammar and is auto-stripped by ``dct migrate``. The chart-local position
-(``charts.<id>.style.axis_quantitative``) cannot ship a Deletion — its only
-available tail is still live on the other five cartesian families — so it
-fails loud instead (covered by ``test_yaml_error_formatter.py``).
+(``style.charts.heatmap.axis_quantitative``) is a plain tail anchored at
+``charts``. The chart-local position (``charts.<id>.style.axis_quantitative``)
+carries no family segment of its own, so its only available tail is still live
+on the other five cartesian families: it is scoped to ``chart_type="heatmap"``
+and confined by ``_live_declares_tail``. Both halves are pinned here, each
+against the sibling family that keeps its own.
 """
 
 from __future__ import annotations
@@ -62,7 +63,7 @@ def _board(style: dict[str, Any]) -> dict[str, Any]:
 
 def test_registry_declares_the_theme_level_deletion() -> None:
     """The removal was declared at the 0.5.0 -> 0.6.0 boundary, now frozen --
-    not at ``catalog.latest.version``, which is 0.6.0 itself post-freeze."""
+    not at ``catalog.latest_released.version``, which is 0.6.0 itself post-freeze."""
     _, registry = _board_migration_context()
     deletions = registry.deletions_from("0.5.0")
 
@@ -78,7 +79,7 @@ def test_tail_was_in_the_released_grammar_and_is_gone_from_the_live_one(
     Source-present is what makes the key worth migrating; target-absent is
     what stops the tail stripping a slot that still works. Source is pinned
     to 0.5.0, the grammar the tail actually shipped in -- not
-    ``catalog.latest.version``, which is 0.6.0 post-freeze and never had it.
+    ``catalog.latest_released.version``, which is 0.6.0 post-freeze and never had it.
     """
     tail = ("charts", "heatmap", "axis_quantitative")
     assert _schema_has_tail(catalog.schema_for("0.5.0"), tail)
@@ -127,11 +128,74 @@ def test_live_sibling_family_axis_quantitative_survives_migration(
     AuthoredBoard.model_validate(migrated)
 
 
-def test_chart_local_position_is_not_migrated_and_fails_loud() -> None:
-    """The chart-local half ships no Deletion, by necessity -- assert the
-    tail the mechanism would need is still live, so the registry would reject
-    it. The author-facing error for this position is covered by
-    test_yaml_error_formatter.py.
+def test_chart_local_position_migrates_and_bar_keeps_its_own(
+    catalog: YamlSchemaCatalog,
+) -> None:
+    """The chart-local half, and the collision that makes it interesting.
+
+    The bare tail is live on five other cartesian families, so an over-fire
+    here is silent data loss on a working key -- both sides asserted in one
+    board.
     """
-    catalog = load_yaml_schema_catalog()
     assert _schema_has_tail(catalog.current_schema, ("style", "axis_quantitative"))
+    raw = {
+        "charts": {
+            "grid": {
+                "type": "heatmap",
+                "query": "counts",
+                "x": "month",
+                "y": "category",
+                "style": {"axis_quantitative": {"scale": {"round": True}}},
+            },
+            "bars": {
+                "type": "bar",
+                "query": "counts",
+                "x": "month",
+                "y": "n",
+                "style": {"axis_quantitative": {"scale": {"round": True}}},
+            },
+        },
+        "rows": ["grid", "bars"],
+    }
+
+    migrated = _migrate(raw, catalog)
+
+    assert "style" not in migrated["charts"]["grid"]
+    assert migrated["charts"]["bars"]["style"]["axis_quantitative"] == {
+        "scale": {"round": True}
+    }
+
+
+def test_theme_level_strip_tells_the_author_what_to_use(
+    catalog: YamlSchemaCatalog,
+) -> None:
+    """The board-level slot, same obligation as the chart-local one below."""
+    _, registry = _board_migration_context()
+    raw = _board(
+        {"charts": {"heatmap": {"axis_quantitative": {"scale": {"round": True}}}}}
+    )
+
+    with pytest.warns(SchemaMigrationWarning, match="style.charts.heatmap.axis_band"):
+        migrate_mapping(raw, catalog=catalog, registry=registry)
+
+
+def test_chart_local_strip_tells_the_author_what_to_use(
+    catalog: YamlSchemaCatalog,
+) -> None:
+    """The key styled nothing, but the successor is real -- say so."""
+    _, registry = _board_migration_context()
+    raw = {
+        "charts": {
+            "grid": {
+                "type": "heatmap",
+                "query": "counts",
+                "x": "month",
+                "y": "category",
+                "style": {"axis_quantitative": {"scale": {"round": True}}},
+            }
+        },
+        "rows": ["grid"],
+    }
+
+    with pytest.warns(SchemaMigrationWarning, match="style.axis_band"):
+        migrate_mapping(raw, catalog=catalog, registry=registry)

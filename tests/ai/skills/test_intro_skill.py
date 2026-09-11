@@ -43,6 +43,9 @@ def test_disambiguates_from_dbt_labs_cloud(body: str) -> None:
 
 
 def test_routes_to_every_other_cli_workflow_skill(body: str) -> None:
+    """On the `cli` surface, a sibling reference renders as the bare registry
+    name: what `dct skills <name>` accepts, the same table this skill's own
+    body points readers to."""
     workflows = {
         s.name
         for s in list_skills(surface="cli").skills

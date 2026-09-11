@@ -6,14 +6,14 @@ description: >
   pass when needed, and merges both into one ranked findings list. Use for
   'review this dashboard', 'is this dashboard good', or before delivering a board
   you just built. Do NOT use when one pass is enough — invoke
-  board-structural-review or board-visual-review directly.
+  {{ s_skill_structural_review }} or {{ s_skill_visual_review }} directly.
 metadata:
   author: fivetran
 ---
 
 # Dashboard Review
 
-Orchestrate `board-structural-review` and `board-visual-review` into a
+Orchestrate `{{ s_skill_name_structural_review }}` and `{{ s_skill_name_visual_review }}` into a
 single ranked findings list. This is the default entry point — most "review"
 requests should land here, not on either leaf skill.
 
@@ -33,12 +33,12 @@ requests should land here, not on either leaf skill.
 
 ### Step 1: Always run structural review
 
-Invoke `board-structural-review` first. It's cheap (no rendering, no
+Invoke `{{ s_skill_structural_review }}` first. It's cheap (no rendering, no
 vision tokens) and catches every problem that's visible in the YAML.
 
 ### Step 2: Decide whether to run visual review
 
-Run `board-visual-review` when **any** of the following is true:
+Run `{{ s_skill_visual_review }}` when **any** of the following is true:
 
 - The user asked for visual review explicitly ("how does it look", "review the
   rendered output", "visual review", "check the design")

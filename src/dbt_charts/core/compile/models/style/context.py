@@ -63,6 +63,7 @@ from dbt_charts.core.compile.models.style.theme import (
     GlobalMarksStyle,
     HeatmapChartStyle,
     HistogramChartStyle,
+    HoverEmphasisStyle,
     KpiChartStyle,
     KpiTonesStyle,
     LineChartStyle,
@@ -216,6 +217,9 @@ class ChartStyleContext:
 
     # --- Board/board chrome carried for the VL config mapper ---
     tooltip: TooltipStyle
+    # Hover-emphasis switch — board-wide, read by the JS runtime the same
+    # way it reads tooltip above.
+    hover_emphasis: HoverEmphasisStyle
     font_family: str | None  # root font.family; emitted as top-level VL `font`
     title: TitleStyle
     pagination: PaginationConfig | None

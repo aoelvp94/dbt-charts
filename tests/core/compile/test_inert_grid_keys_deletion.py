@@ -4,9 +4,10 @@
 ignored, so they leave through the ``Deletion`` boundary declared in
 ``versions/v0_6_0.py`` (0.5.0 -> 0.6.0) -- authored boards migrate clean.
 
-``gap`` cannot: its tail still matches the live ``style.layout.grid.gap``, so a
-Deletion would both fail registry validation and strip the working style key.
-It is removed fail-loud instead, with a hint naming the replacement.
+``gap`` is declarable but unconverted: its tail also matches the live
+``style.layout.grid.gap``, so it is legal only root-anchored (``_validate``'s
+``retired_at_root``), with ``_live_declares_tail`` holding the firing off the
+layout slot. Today it is fail-loud, with a hint naming the replacement.
 """
 
 from __future__ import annotations
@@ -66,7 +67,7 @@ def _grid_board(**grid_keys: Any) -> dict[str, Any]:
 
 def test_registry_declares_the_0_5_0_grid_deletions() -> None:
     """Declared at the 0.5.0 -> 0.6.0 boundary, now frozen -- not at
-    ``catalog.latest.version``, which is 0.6.0 itself post-freeze."""
+    ``catalog.latest_released.version``, which is 0.6.0 itself post-freeze."""
     _, registry = _board_migration_context()
     deletions = registry.deletions_from("0.5.0")
 
@@ -112,14 +113,15 @@ def test_nested_board_grid_keys_stripped(catalog: YamlSchemaCatalog) -> None:
     AuthoredBoard.model_validate(migrated)
 
 
-def test_a_gap_deletion_is_rejected_by_the_registry(
+def test_a_gap_deletion_is_rejected_on_the_dev_boundary(
     catalog: YamlSchemaCatalog,
 ) -> None:
-    """Why ``gap`` is fail-loud: its tail still matches the live style key.
+    """Root ``grid.gap`` is already gone from 0.6.0, so it has nothing left to
+    retire on the 0.6.0 -> 0.7.0 boundary and ``retired_at_root`` does not
+    apply.
 
-    This is the constraint the whole treatment rests on — declaring the
-    Deletion anyway would both fail here and, if it did not, strip the working
-    ``style.layout.grid.gap`` off real boards.
+    Scoped to that boundary: the same tail is accepted at 0.5.0 -> 0.6.0, which
+    is where a conversion would go.
     """
     _, registry = _board_migration_context()
 
@@ -128,7 +130,11 @@ def test_a_gap_deletion_is_rejected_by_the_registry(
             registry.moves,
             (
                 *registry.deletions,
-                Deletion(catalog.latest.version, "current", ("grid", "gap")),
+                Deletion(
+                    catalog.latest_released.version,
+                    catalog.dev.version,
+                    ("grid", "gap"),
+                ),
             ),
             registry.conditional_moves,
             catalog=catalog,
@@ -155,7 +161,7 @@ def test_authoring_a_deleted_grid_key_is_rejected(key: str) -> None:
 
 
 def test_authoring_grid_gap_is_rejected() -> None:
-    """No Deletion for ``gap`` -- the tail collides with the live style key."""
+    """``gap`` ships no Deletion today, so the key still fails loud."""
     with pytest.raises(ValidationError, match="extra_forbidden|Extra inputs"):
         AuthoredBoard.model_validate(_grid_board(gap="md"))
 

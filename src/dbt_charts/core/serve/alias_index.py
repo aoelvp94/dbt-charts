@@ -28,6 +28,7 @@ from dbt_charts.core.project import (
     INDEX_CANDIDATE_NAMES,
     ProjectDirectory,
 )
+from dbt_charts.core.utils import YAML_LOADER
 
 if TYPE_CHECKING:
     from dbt_charts.core.project import Project, ProjectPath
@@ -46,7 +47,7 @@ def read_aliases_from_file(board_path: ProjectPath) -> list[str]:
 
     if board_path.is_yaml:
         try:
-            raw = yaml.safe_load(board_path.read_text())
+            raw = yaml.load(board_path.read_text(), Loader=YAML_LOADER)
         except yaml.YAMLError:
             # The compile/render path reports parse errors with full context.
             # Skipping here avoids a second, lower-quality error from index build.
@@ -75,7 +76,7 @@ def read_aliases_from_file(board_path: ProjectPath) -> list[str]:
         # exclusively under `board:` — every other frontmatter key is document
         # metadata. Reading the top level instead would make a markdown claim
         # resolve here and nowhere else that compiles the same file.
-        board_config = yaml.safe_load(board_yaml)
+        board_config = yaml.load(board_yaml, Loader=YAML_LOADER)
         if not isinstance(board_config, dict):
             return []
         aliases_raw = board_config.get("aliases")

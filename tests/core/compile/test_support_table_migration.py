@@ -189,7 +189,7 @@ def test_per_family_style_charts_bar_data_table_migrates_to_support_table(
 #: under ``rows``/``cols``/``grid`` that declares its own ``charts:`` map is not
 #: reached, because ``_relative_field_paths`` returns ``()`` on re-entry into
 #: ``AuthoredBoard``. That is the pre-existing self-nesting limitation
-#: ``TONES_RENAMES`` already ships with, documented in ``current.py``.
+#: ``TONES_RENAMES`` already ships with, documented in ``v0_6_0.py``.
 EXPECTED_DATA_TABLE_MOVES = (
     "charts.*.data_table",
     "charts.*.style.data_table",

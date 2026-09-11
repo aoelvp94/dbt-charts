@@ -293,10 +293,10 @@ class PieEmitter:
                 "x": {"value": {"expr": "width / 2"}},
                 "y": {"value": {"expr": "height / 2"}},
             }
-            # chart.total.format is already the resolved-and-floored d3 spec
-            # (resolve_format_for_values, baked in _resolve_pie); consume it
-            # directly — no compile-time reach-back.
-            total_fmt = chart.total.format
+            # total_style.value.format is already the resolved-and-floored d3
+            # spec (resolve_format_for_values, baked in _resolve_pie); consume
+            # it directly — no compile-time reach-back.
+            total_fmt = total_style.value.format
             if total_fmt:
                 value_enc["text"]["format"] = total_fmt
 

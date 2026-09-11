@@ -269,8 +269,8 @@ def build_resolved_axis(
     the rendered chart — true for every vertical ruler (the default: every
     cartesian y-axis except a horizontal bar's measure axis, which renders on
     VL's x channel and passes ``column_forming=False``). It is folded into
-    the baked ``ruler`` decision below (and nowhere else — render never
-    re-declares it) and gates the tabular-font guarantee: only a
+    the baked ``ruler`` and ``tick_label`` decisions below (and nowhere else
+    — render never re-declares it) and gates the tabular-font guarantee: only a
     column-forming axis reserves the suffix field (a padding string composed
     from measured space characters, ``font_measure.compose_suffix_reservation``),
     so only one is required to resolve a tabular label font.
@@ -484,7 +484,12 @@ def build_resolved_axis(
         # guard is `_si_format is not None`), narrowed to str for the caller.
         prefix, digit_spec, precision = plain_digit_format(_si_format, step)
         anchor_at_start_plain = None
-        if prefix:
+        if prefix and column_forming:
+            # anchor_at_start_plain stays None below when not column_forming
+            # -- inject_axis_numeral_expr reads a None here (with prefix set)
+            # as the repeat signal, not "no anchor decided yet". Mirrors
+            # _build_ruler's effective_mode override (scale.py).
+            #
             # Sign-aware anchor: prefer the largest positive tick so the
             # prefix lands on the most prominent value. A "$" has no scale
             # dependency (unlike a shared "K"/"M" suffix, whose magnitude

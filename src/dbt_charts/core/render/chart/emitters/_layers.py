@@ -131,6 +131,7 @@ def _hover_target_point(
     single_series_color: str,
     has_color_encoding: bool,
     pin_child_colors: bool,
+    announce: bool,
 ) -> ChartSpec:
     """Invisible large-target point overlay so hover/tooltip work on thin marks.
 
@@ -140,6 +141,13 @@ def _hover_target_point(
     The overlay is invisible today, but it still needs the chart's ink: with no
     fill Vega-Lite stamps its own default on the mark, which is the wrong color
     the moment this layer gains any opacity. Mirrors ``_area_point_sublayers``.
+
+    ``announce=False`` when a visible sibling point already carries each datum's
+    description — a second labeled mark makes a screen reader read every value
+    twice. The overlay still takes the pointer either way: the hover runtime
+    resolves an unlabeled hit inside a mark group to the nearest labeled mark.
+    When no sibling point is drawn the overlay must stay labeled, since the
+    runtime only hovers labeled marks.
     """
     mark_props: VLDict = {
         **CLIP_TO_PLOT,
@@ -148,6 +156,8 @@ def _hover_target_point(
         "opacity": 0,
         "tooltip": True,
     }
+    if not announce:
+        mark_props["aria"] = False
     if not has_color_encoding:
         mark_props["fill"] = single_series_color
     return ChartSpec(
@@ -167,6 +177,18 @@ def _hover_target_point(
 
 
 # ── line ──────────────────────────────────────────────────────────────────────
+
+
+def _cap_join(cap: str | None, join: str | None) -> VLDict:
+    """``strokeCap``/``strokeJoin`` props with any None left out.
+
+    ``null`` is not in Vega-Lite's strokeCap/strokeJoin enum, and the spec is a
+    shipped artifact under ``--format json``, so an authored ``cap: null``
+    must omit the key rather than write it -- on a halo as on its fg line.
+    """
+    return {
+        k: v for k, v in (("strokeCap", cap), ("strokeJoin", join)) if v is not None
+    }
 
 
 def _line_halo_sublayers(
@@ -196,8 +218,7 @@ def _line_halo_sublayers(
             mark_props={
                 **CLIP_TO_PLOT,
                 "strokeWidth": halo_width,
-                "strokeCap": fg_cap,
-                "strokeJoin": fg_join,
+                **_cap_join(fg_cap, fg_join),
                 # Halo must trace the same curve as the fg line.
                 "interpolate": fg_interp,
                 "stroke": halo_color,
@@ -227,6 +248,7 @@ def _line_halo_sublayers(
                     "fillOpacity": 1,
                     "strokeOpacity": 1,
                     "tooltip": False,
+                    "aria": False,
                 },
                 encoding=_sublayer_encoding(
                     tooltip,
@@ -386,7 +408,7 @@ def emit_line_layer(
         pin_child_colors,
         series_encoding,
     )
-    layers += _line_fg_sublayers(
+    fg_layers = _line_fg_sublayers(
         stroke_width,
         fg_props,
         has_color_encoding,
@@ -398,6 +420,7 @@ def emit_line_layer(
         inherit_parent_color,
         series_encoding,
     )
+    layers += fg_layers
     if band_step:
         # order:False must travel with BAND_STEP_INTERPOLATE on every line
         # sub-layer (halo included) — see step_band.py's module docstring.
@@ -406,7 +429,11 @@ def emit_line_layer(
                 sub.mark_props["order"] = False
     layers.append(
         _hover_target_point(
-            tooltip, single_series_color, has_color_encoding, pin_child_colors
+            tooltip,
+            single_series_color,
+            has_color_encoding,
+            pin_child_colors,
+            announce=not any(sub.mark == "point" for sub in fg_layers),
         )
     )
     return layers
@@ -628,8 +655,7 @@ def _area_halo_layers(
                     **CLIP_TO_PLOT,
                     "stroke": halo_color,
                     "strokeWidth": halo_width,
-                    "strokeCap": fg_cap,
-                    "strokeJoin": fg_join,
+                    **_cap_join(fg_cap, fg_join),
                     "tooltip": False,
                     "aria": False,
                 },
@@ -770,7 +796,11 @@ def _area_fg_layers(
         )
     layers.append(
         _hover_target_point(
-            tooltip, single_series_color, has_color_encoding, pin_child_colors
+            tooltip,
+            single_series_color,
+            has_color_encoding,
+            pin_child_colors,
+            announce=True,
         )
     )
     return layers
@@ -957,7 +987,11 @@ def emit_area_layer(
                 series_encoding,
             ),
             _hover_target_point(
-                tooltip, single_series_color, has_color_encoding, pin_child_colors
+                tooltip,
+                single_series_color,
+                has_color_encoding,
+                pin_child_colors,
+                announce=True,
             ),
         ]
     else:

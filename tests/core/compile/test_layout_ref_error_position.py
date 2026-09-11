@@ -131,6 +131,69 @@ class TestNestedLayoutRefPosition:
         assert error.range is not None
         assert error.range.start_line == _line_of(yaml_content, "missing_in_tab")
 
+    def test_nested_board_tabs_ref_resolves_a_range(self) -> None:
+        """A bad reference inside a nested board's `tabs:` must not fall
+        through to the normalizer's pathless raise."""
+        yaml_content = "\n".join(
+            [
+                "title: My Dashboard",
+                "queries:",
+                "  q1:",
+                "    sql: SELECT 1 AS a",
+                "    source: db",
+                "charts:",
+                "  real_chart:",
+                "    type: bar",
+                "    query: q1",
+                "rows:",
+                "  - real_chart",
+                "  - title: Nested",
+                "    tabs:",
+                "      items:",
+                "        - title: A",
+                "          rows:",
+                "            - missing_in_nested_tab",
+            ]
+        )
+        result = compile(yaml_content, file="f.yaml")
+
+        assert result.errors
+        error = result.errors[0]
+        assert error.range is not None, "nested tabs ref carries no position"
+        assert error.range.start_line == _line_of(yaml_content, "missing_in_nested_tab")
+
+    def test_nested_board_grid_ref_resolves_a_range(self) -> None:
+        """A bad reference inside a nested board's `grid:` must not fall
+        through to the normalizer's pathless raise."""
+        yaml_content = "\n".join(
+            [
+                "title: My Dashboard",
+                "queries:",
+                "  q1:",
+                "    sql: SELECT 1 AS a",
+                "    source: db",
+                "charts:",
+                "  real_chart:",
+                "    type: bar",
+                "    query: q1",
+                "rows:",
+                "  - real_chart",
+                "  - title: Nested",
+                "    grid:",
+                "      columns: 12",
+                "      items:",
+                "        - item: missing_in_nested_grid",
+            ]
+        )
+        result = compile(yaml_content, file="f.yaml")
+
+        assert result.errors
+        error = result.errors[0]
+        assert error.range is not None, "nested grid ref carries no position"
+        assert error.range.start_line == _line_of(
+            yaml_content, "missing_in_nested_grid"
+        )
+
 
 class TestGlobalChartRegistryIsHonored:
     """Validation must resolve against the same namespace the compiler does.

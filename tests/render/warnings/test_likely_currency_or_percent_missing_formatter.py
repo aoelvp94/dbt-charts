@@ -6,10 +6,14 @@ Detection rule:
     carries '%', currency carries '$'; the SI default '~s' suits neither).
 
 Currency name signals: ends in _usd, _dollars, _revenue, _amount, _price,
-  _cost, _spend, _value, _gmv, _arr, _mrr; contains 'revenue', 'dollars', 'usd'.
+  _cost, _spend, _value, _gmv, _arr, _mrr; contains 'revenue', 'dollars', 'usd';
+  or is bare 'usd'/'dollars'/'revenue'/'price'/'gmv'/'arr'/'mrr'.
 
 Percent name signals: ends in _pct, _percent, _percentage, _rate, _share;
-  contains 'percent'.
+  contains 'percent'; or is bare 'pct'/'percent'/'percentage'/'share'.
+
+Bare 'value'/'amount'/'rate'/'cost'/'spend' do NOT match (no unit meaning on
+their own) — only their `_`-prefixed suffix form does.
 
 Skip: charts whose type implies no y-axis (kpi, table, callout, text, markdown, pivot).
 For layered charts the shared y-axis format is checked once per layer; one warning
@@ -232,3 +236,42 @@ def test_currency_field_with_number_format_no_warning() -> None:
         vega_specs={resolved.id: {"mark": "bar"}},
     )
     assert detector.detect(ctx) == []
+
+
+# ---------------------------------------------------------------------------
+# Test 9: Bare field names (no prefix/underscore) must classify too — "share"
+# is a realistic column name that previously slipped past the suffix-only
+# match (`"share".endswith("_share")` is False).
+# ---------------------------------------------------------------------------
+
+
+def test_bare_percent_field_name_no_format_fires() -> None:
+    """Bar chart with y=share (bare, no underscore) and no format must fire."""
+    chart = _make_chart(y="share")
+    ctx = _make_ctx(chart)
+    warnings = detector.detect(ctx)
+
+    assert len(warnings) == 1
+    assert warnings[0].field == "share"
+    assert "percent" in (warnings[0].fix or "").lower()
+
+
+def test_bare_currency_field_name_no_format_fires() -> None:
+    """Bar chart with y=mrr (bare) and no format must fire."""
+    # "mrr" (not "revenue") to exercise the bare-name path, not the substring one.
+    chart = _make_chart(y="mrr")
+    ctx = _make_ctx(chart)
+    warnings = detector.detect(ctx)
+
+    assert len(warnings) == 1
+    assert warnings[0].field == "mrr"
+    assert "currency" in (warnings[0].fix or "").lower()
+
+
+def test_bare_generic_metric_names_no_warning() -> None:
+    """Bare value/amount/rate/cost/spend must NOT fire; only their
+    `_`-prefixed suffix form (`_value`, `_amount`, ...) still matches."""
+    for name in ("value", "amount", "rate", "cost", "spend"):
+        chart = _make_chart(y=name)
+        ctx = _make_ctx(chart)
+        assert detector.detect(ctx) == [], f"{name!r} must not fire bare"

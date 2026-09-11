@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.6.1.dev80",
+  "version": "0.6.1.dev174",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -416,7 +416,7 @@
             }
           ],
           "default": null,
-          "description": "Recipe override applied when the chart's stack mode is non-false: solid fill + full-perimeter background-color stroke."
+          "description": "Recipe override applied when the chart is stacked or has a single series: solid fill + background-color separator stroke."
         }
       },
       "title": "AreaMarkStyle",
@@ -424,7 +424,7 @@
     },
     "AreaStackedMarkStyle": {
       "additionalProperties": false,
-      "description": "Stacked / streamgraph area recipe override: solid fill + perimeter stroke.\n\nApplied instead of AreaMarkStyle's overlap recipe when a chart's stack\nmode is non-false (zero/normalize/center). A dedicated type rather than a\nself-typed ``AreaMarkStyle`` field: the generated authored-patch factory\n(``build_patch_model_ext``) has no cycle guard for a compiled model that\ncontains itself, so a literal self-reference blows the recursion limit\nwhen the authored ``AreaMarkStylePatch`` is synthesized at import time.\n\nAll fields None = \"not set at this tier; inherit from global\".",
+      "description": "Stacked / streamgraph area recipe override: solid fill + perimeter stroke.\n\nApplied instead of AreaMarkStyle's overlap recipe when a chart is stacked\n(zero/normalize/center) or is a single unstacked series (no color, no\nlayers, at most one y measure). A dedicated type rather than a\nself-typed ``AreaMarkStyle`` field: the generated authored-patch factory\n(``build_patch_model_ext``) has no cycle guard for a compiled model that\ncontains itself, so a literal self-reference blows the recursion limit\nwhen the authored ``AreaMarkStylePatch`` is synthesized at import time.\n\nAll fields None = \"not set at this tier; inherit from global\".",
       "properties": {
         "opacity": {
           "anyOf": [
@@ -3510,12 +3510,17 @@
           "title": "Variable Dependencies",
           "type": "array",
           "uniqueItems": true
+        },
+        "magnitude_colored": {
+          "title": "Magnitude Colored",
+          "type": "boolean"
         }
       },
       "required": [
         "chart_type",
         "defined_in_other_file",
         "id",
+        "magnitude_colored",
         "notes",
         "query_name",
         "source_path",
@@ -3828,40 +3833,6 @@
           "default": null,
           "description": "Caption text displayed below the center total value.",
           "title": "Label"
-        },
-        "format": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/FormatConfig"
-            },
-            {
-              "enum": [
-                "currency",
-                "currency_full",
-                "currency_whole",
-                "date_short",
-                "delta",
-                "integer",
-                "number",
-                "number_full",
-                "percent",
-                "percent_delta",
-                "percent_whole",
-                "time_short",
-                "year"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            },
-            {
-              "type": "string"
-            }
-          ],
-          "default": null,
-          "description": "How the number is written: a D3 spec, a preset name, or a format block.",
-          "title": "Format"
         }
       },
       "title": "ChartTotal",
@@ -6172,6 +6143,34 @@
         "bin_maxbins"
       ],
       "title": "HistogramChartStyle",
+      "type": "object"
+    },
+    "HoverEmphasisStyle": {
+      "additionalProperties": false,
+      "description": "Whether a chart visually answers \"what am I pointing at\", beyond the tooltip.\n\nHovering a mark recedes the others so the one under the cursor stands out.\nBar, histogram, pie/donut, and heatmap charts recede their other marks;\nline, area, and scatter instead draw a datum marker plus a drop line down\nto the axis, since receding a stroke reads as an interruption rather than\nemphasis. A family that does not yet answer the question ignores the\nswitch rather than half-answering it. Named for what it does rather than\nfor the trigger, which would read as gating the tooltip beside it (it\ndoes not).\n\nStrength is engine config, not a theme value: there is no wide range of\nsettings that read well, so we tune it rather than the author. The\nline/area drop line's color and width ARE theme values: each theme picks\na neutral one scaffold rung past its own measure gridline, at twice that\ngridline's width, so the line reads as structure rather than as another\ndata series.\n\nRuntime-only, deliberately: nothing about it reaches the rendered SVG, so\na board renders the same file either way.",
+      "properties": {
+        "visible": {
+          "description": "Whether hovering a mark visually emphasizes it; theme always provides this.",
+          "title": "Visible",
+          "type": "boolean"
+        },
+        "drop_line_color": {
+          "description": "Color of the vertical drop line from a hovered line/area datum down to its axis.",
+          "title": "Drop Line Color",
+          "type": "string"
+        },
+        "drop_line_width": {
+          "description": "Width, in pixels, of the vertical drop line from a hovered line/area datum down to its axis.",
+          "title": "Drop Line Width",
+          "type": "number"
+        }
+      },
+      "required": [
+        "drop_line_color",
+        "drop_line_width",
+        "visible"
+      ],
+      "title": "HoverEmphasisStyle",
       "type": "object"
     },
     "HttpQuery": {
@@ -11410,6 +11409,9 @@
         "tooltip": {
           "$ref": "#/$defs/TooltipStyle"
         },
+        "hover_emphasis": {
+          "$ref": "#/$defs/HoverEmphasisStyle"
+        },
         "font_family": {
           "anyOf": [
             {
@@ -11470,6 +11472,7 @@
         "geoshape",
         "heatmap",
         "histogram",
+        "hover_emphasis",
         "kpi",
         "label_usable_ratio",
         "legend",
@@ -14887,7 +14890,7 @@
         },
         "total_style": {
           "$ref": "#/$defs/TotalStyle",
-          "description": "Donut center total font styles (value number + caption label)."
+          "description": "Donut center total paint: value number (font + resolved format) and caption label (font)."
         },
         "title_font": {
           "anyOf": [
@@ -15361,6 +15364,10 @@
           "title": "Reserve",
           "type": "boolean"
         },
+        "prefix_repeats": {
+          "title": "Prefix Repeats",
+          "type": "boolean"
+        },
         "prefix": {
           "title": "Prefix",
           "type": "string"
@@ -15391,6 +15398,7 @@
         "exponent",
         "mode",
         "prefix",
+        "prefix_repeats",
         "reservation",
         "reserve"
       ],
@@ -17231,6 +17239,11 @@
           ],
           "default": null,
           "title": "Fallback Scale"
+        },
+        "quantitative_data": {
+          "default": false,
+          "title": "Quantitative Data",
+          "type": "boolean"
         }
       },
       "required": [
@@ -22784,8 +22797,8 @@
       "description": "Donut center total paint: value (the number) and label (the caption).",
       "properties": {
         "value": {
-          "$ref": "#/$defs/TotalSlotStyle",
-          "description": "Style for the donut center value (the number)."
+          "$ref": "#/$defs/TotalValueSlotStyle",
+          "description": "Style for the donut center value (the number), including its format."
         },
         "label": {
           "$ref": "#/$defs/TotalSlotStyle",
@@ -22797,6 +22810,52 @@
         "value"
       ],
       "title": "TotalStyle",
+      "type": "object"
+    },
+    "TotalValueSlotStyle": {
+      "additionalProperties": false,
+      "description": "Theme slot for the donut center value (the number): paint plus its format.",
+      "properties": {
+        "font": {
+          "$ref": "#/$defs/FontStyle",
+          "description": "Donut center total element font style overrides."
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FormatConfig"
+            },
+            {
+              "enum": [
+                "currency",
+                "currency_full",
+                "currency_whole",
+                "date_short",
+                "delta",
+                "integer",
+                "number",
+                "number_full",
+                "percent",
+                "percent_delta",
+                "percent_whole",
+                "time_short",
+                "year"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": null,
+          "description": "How the donut center value is written: a D3 spec, a preset name, or a format block.",
+          "title": "Format"
+        }
+      },
+      "title": "TotalValueSlotStyle",
       "type": "object"
     },
     "ValuesQuery": {

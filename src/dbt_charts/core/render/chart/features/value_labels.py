@@ -46,11 +46,10 @@ from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.feature import chart_rows
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.step_band import STEP_BAND_EDGE_FIELD, is_band_step
-from dbt_charts.core.render.chart.type_inference import is_vega_numeric_value
 from dbt_charts.core.render.chart.x_domain import rendered_x_domain
 from dbt_charts.core.render.numeral_expr import numeral_vega_expr
 from dbt_charts.core.render.utils import DomainValue, ordered_distinct_values
-from dbt_charts.core.utils import Rows
+from dbt_charts.core.utils import Rows, is_vega_numeric_value
 
 # ---------------------------------------------------------------------------
 # Position → VL mark dict maps (mirrors v1 oracle exactly)
@@ -1071,6 +1070,7 @@ def text_layer_spec(text_layer: VLDict) -> ChartSpec:
         mark_props={k: v for k, v in text_layer["mark"].items() if k != "type"},
         encoding=dict(text_layer["encoding"]),
         transforms=list(transforms),
+        value_label=True,
     )
 
 
@@ -1394,6 +1394,7 @@ class ValueLabelFeature:
                 mark="text",
                 mark_props={k: v for k, v in text_layer["mark"].items() if k != "type"},
                 encoding=enc,
+                value_label=True,
             )
         )
 

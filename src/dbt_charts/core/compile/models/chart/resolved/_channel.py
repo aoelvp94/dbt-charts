@@ -27,3 +27,14 @@ class ResolvedStyleChannel:
     # threshold rule matches.  Enables Looker-style "scale with rule override"
     # where threshold rules take priority and scale shows through otherwise.
     fallback_scale: ResolvedScaleTarget | None = None
+    # True when the bound field's rows are numeric even though mode stayed
+    # "series" -- a bare `color: <field>` authoring never inspects data, so
+    # mode alone cannot tell a categorical color from a continuous measure
+    # rendered as one. Every cartesian family's bare, undecorated color
+    # authoring can hit this case: channel_to_encoding independently
+    # re-infers the same fact from data at emit time
+    # (infer_vega_type_from_data) to decide the VL encoding type. Set
+    # generically for every cartesian family by _flag_quantitative_color
+    # (compile/resolve/chart/_channels.py); False for every other mode and
+    # for every family that never binds a data-backed color channel.
+    quantitative_data: bool = False

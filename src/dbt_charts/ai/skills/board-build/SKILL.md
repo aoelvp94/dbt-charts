@@ -5,8 +5,8 @@ description: >
   Build-test-iterate workflow for dbt charts boards and reports: edit board YAML,
   add charts, write parameterized queries, duplicate an existing board. Use for
   'build a dashboard', 'add a chart', 'duplicate this dashboard'. Do NOT use for
-  errors after something breaks (dct-troubleshooting) or for chart-type and
-  layout choices (board-design).
+  errors after something breaks ({{ s_skill_name_troubleshooting }}) or for chart-type and
+  layout choices ({{ s_skill_name_design_board }}).
 metadata:
   author: fivetran
 ---

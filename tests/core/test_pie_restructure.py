@@ -360,9 +360,35 @@ rows:
 
 
 class TestTotalCopyVsPaint:
-    """chart.total holds copy (label/format); style.total holds paint (font)."""
+    """chart.total holds copy (label only); style.total.value holds paint + format."""
 
-    def test_chart_root_total_label_and_format_compile(self):
+    def test_chart_root_total_label_compiles(self):
+        result = _compile_yaml(
+            """
+queries:
+  q:
+    columns: [cat, val]
+    values: [[A, 40]]
+charts:
+  c:
+    query: q
+    type: pie
+    theta: val
+    color: cat
+    total:
+      label: "Total"
+rows:
+  - c
+"""
+        )
+        assert result.success
+        chart = result.board.charts["c"]
+        assert chart.total is not None
+        assert chart.total.label == "Total"
+
+    def test_chart_root_total_format_migrates_to_style(self):
+        """The old chart-root total.format grammar still compiles -- migrated in
+        memory to style.total.value.format, not rejected outright."""
         result = _compile_yaml(
             """
 queries:
@@ -386,12 +412,32 @@ rows:
         chart = result.board.charts["c"]
         assert chart.total is not None
         assert chart.total.label == "Total"
+        assert chart.style is not None
+        assert chart.style.total.value.format == "$,.0f"
+
+    def test_total_format_rejected_on_chart_total_model(self):
+        """format: no longer belongs on ChartTotal -- it's a style field now."""
+        from dbt_charts.core.compile.models.chart.authored import ChartTotal
+
+        with pytest.raises(ValueError, match="format"):
+            ChartTotal.model_validate({"label": "Total", "format": "$,.0f"})
 
     def test_style_total_font_is_paint_slot(self):
         """style.total.font is the paint slot for the donut center (flat per-family shape)."""
         _patch(
             style={"total": {"value": {"font": {"size": 24}}}},
         )  # must not raise
+
+    def test_style_total_value_format_is_paint_slot(self):
+        """style.total.value.format is where the donut center format lives now."""
+        _patch(
+            style={"total": {"value": {"format": "currency"}}},
+        )  # must not raise
+
+    def test_style_total_label_format_rejected(self):
+        """The label slot has no format field -- it's caption text, never numeric."""
+        with pytest.raises(ValueError, match="format"):
+            _patch(style={"total": {"label": {"format": "currency"}}})
 
     def test_style_total_flows_through_cascade(self):
         """style.total.value.font.size reaches effective.pie.total.value.font.size."""
@@ -425,6 +471,51 @@ rows:
         rc = resolve(chart, [{"cat": "A", "val": 1}], chart_style_context=ctx)
         assert rc.style.total_style.value.font.size == pytest.approx(99.0)
 
+    def test_board_tier_total_format_flows_through_cascade(self):
+        """style.charts.pie.total.value.format (board/theme tier) reaches
+        the resolved chart -- the whole point of moving format into style is
+        that it gets this cascade tier for free, unlike the old chart-root
+        ChartTotal.format which only ever existed per-chart."""
+        from dbt_charts.core.compile.models.style.authored import StylePatch
+        from dbt_charts.core.compile.resolve.style.board import (
+            resolve_style_and_context,
+        )
+
+        board_patch = StylePatch.model_validate(
+            {"charts": {"pie": {"total": {"value": {"format": ",.1f"}}}}}
+        )
+        _, ctx = resolve_style_and_context(get_theme_style(), board_patch)
+        chart = PieChart(id="t", type="pie", theta="val", color="cat")
+        rc = resolve(chart, [{"cat": "A", "val": 1}], chart_style_context=ctx)
+        assert rc.style.total_style.value.format == ",.1f"
+
+    def test_chart_local_total_format_wins_over_board_tier(self):
+        """A chart-local style.total.value.format overrides the board/theme
+        tier, same precedence chart-local always wins at."""
+        from dbt_charts.core.compile.models.style.authored import (
+            PieChartStylePatch,
+            StylePatch,
+        )
+        from dbt_charts.core.compile.resolve.style.board import (
+            resolve_style_and_context,
+        )
+
+        board_patch = StylePatch.model_validate(
+            {"charts": {"pie": {"total": {"value": {"format": ",.1f"}}}}}
+        )
+        _, ctx = resolve_style_and_context(get_theme_style(), board_patch)
+        chart = PieChart(
+            id="t",
+            type="pie",
+            theta="val",
+            color="cat",
+            style=PieChartStylePatch.model_validate(
+                {"total": {"value": {"format": ",.2f"}}}
+            ),
+        )
+        rc = resolve(chart, [{"cat": "A", "val": 1}], chart_style_context=ctx)
+        assert rc.style.total_style.value.format == ",.2f"
+
 
 # ---------------------------------------------------------------------------
 # 7. total.format theme-alias resolution
@@ -432,16 +523,17 @@ rows:
 
 
 class TestTotalFormatResolution:
-    """total.format routes through resolve_format so aliases work."""
+    """style.total.value.format routes through resolve_format so aliases work."""
 
     def test_total_format_currency_alias_resolves_in_spec(self):
-        """total.format: 'currency' must produce a resolved format string, not literal."""
+        """style.total.value.format: 'currency' must resolve to a format string, not literal."""
         from dbt_charts.core.compile.config import (
             get_theme_style,
         )
         from dbt_charts.core.compile.models.chart.authored import ChartTotal
         from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.compile.models.style.authored import PieChartStylePatch
         from dbt_charts.core.compile.resolve.style.board import (
             resolve_chart_style_context,
         )
@@ -452,7 +544,10 @@ class TestTotalFormatResolution:
             type="pie",
             theta="val",
             color="cat",
-            total=ChartTotal.model_validate({"label": "Total", "format": "currency"}),
+            total=ChartTotal.model_validate({"label": "Total"}),
+            style=PieChartStylePatch.model_validate(
+                {"total": {"value": {"format": "currency"}}}
+            ),
             query=SqlQuery(sql="SELECT 1", source="src"),
             query_name="q",
         )
@@ -469,7 +564,7 @@ class TestTotalFormatResolution:
         value_layer = mapped.layers[1]
         emitted_format = value_layer.encoding["text"].get("format")
         assert emitted_format != "currency", (
-            "total.format: 'currency' must resolve via theme aliases, not pass raw"
+            "style.total.value.format: 'currency' must resolve via theme aliases, not pass raw"
         )
         assert emitted_format is not None
 
@@ -481,6 +576,7 @@ class TestTotalFormatResolution:
         from dbt_charts.core.compile.models.chart.authored import ChartTotal
         from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.compile.models.style.authored import PieChartStylePatch
         from dbt_charts.core.compile.resolve.style.board import (
             resolve_chart_style_context,
         )
@@ -491,7 +587,10 @@ class TestTotalFormatResolution:
             type="pie",
             theta="val",
             color="cat",
-            total=ChartTotal.model_validate({"format": "$,.2f"}),
+            total=ChartTotal(),
+            style=PieChartStylePatch.model_validate(
+                {"total": {"value": {"format": "$,.2f"}}}
+            ),
             query=SqlQuery(sql="SELECT 1", source="src"),
             query_name="q",
         )
@@ -519,7 +618,10 @@ class TestTotalFormatResolution:
         from dbt_charts.core.compile.models.chart.authored import ChartTotal
         from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.compile.models.style.authored import StylePatch
+        from dbt_charts.core.compile.models.style.authored import (
+            PieChartStylePatch,
+            StylePatch,
+        )
         from dbt_charts.core.compile.resolve.style.board import (
             resolve_style_and_context,
         )
@@ -536,7 +638,10 @@ class TestTotalFormatResolution:
             type="pie",
             theta="cents",
             color="cat",
-            total=ChartTotal.model_validate({"label": "Total", "format": "currency"}),
+            total=ChartTotal.model_validate({"label": "Total"}),
+            style=PieChartStylePatch.model_validate(
+                {"total": {"value": {"format": "currency"}}}
+            ),
             query=SqlQuery(sql="SELECT 1", source="src"),
             query_name="q",
         )
@@ -570,18 +675,20 @@ class TestTotalFormatResolution:
 
 
 # ---------------------------------------------------------------------------
-# 8. total.format accepts FormatConfig
+# 8. style.total.value.format accepts FormatConfig
 # ---------------------------------------------------------------------------
 
 
 class TestTotalFormatConfig:
-    """total.format accepts FormatConfig (not just plain strings)."""
+    """style.total.value.format accepts FormatConfig (not just plain strings)."""
 
     def test_total_format_as_format_config_is_accepted(self):
-        from dbt_charts.core.compile.models.chart.authored import ChartTotal
+        from dbt_charts.core.compile.models.style.theme import TotalValueSlotStyle
 
-        total = ChartTotal.model_validate({"format": {"spec": ",.2s", "prefix": "▲ "}})
-        assert total.format is not None
+        value = TotalValueSlotStyle.model_validate(
+            {"format": {"spec": ",.2s", "prefix": "▲ "}}
+        )
+        assert value.format is not None
 
     def test_total_format_config_prefix_propagates_to_spec(self):
         """FormatConfig with prefix reaches the VL encoding."""
@@ -591,6 +698,7 @@ class TestTotalFormatConfig:
         from dbt_charts.core.compile.models.chart.authored import ChartTotal
         from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
+        from dbt_charts.core.compile.models.style.authored import PieChartStylePatch
         from dbt_charts.core.compile.resolve.style.board import (
             resolve_chart_style_context,
         )
@@ -601,8 +709,9 @@ class TestTotalFormatConfig:
             type="pie",
             theta="val",
             color="cat",
-            total=ChartTotal.model_validate(
-                {"format": {"spec": ",.2s", "prefix": "▲ "}}
+            total=ChartTotal(),
+            style=PieChartStylePatch.model_validate(
+                {"total": {"value": {"format": {"spec": ",.2s", "prefix": "▲ "}}}}
             ),
             query=SqlQuery(sql="SELECT 1", source="src"),
             query_name="q",

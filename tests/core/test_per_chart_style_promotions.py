@@ -146,6 +146,16 @@ def _board_with_point(chart_type: str, **point_overrides):
 
 SAMPLE_DATA = [{"month": "Jan", "revenue": 100}, {"month": "Feb", "revenue": 200}]
 
+# Multi-series area data for opacity-cascade tests -- keeps those charts off
+# the single-series recipe swap (area.py) that would otherwise overwrite an
+# authored opacity override with the theme's stacked-recipe value.
+_MULTI_SERIES_DATA = [
+    {"month": "Jan", "revenue": 100, "segment": "A"},
+    {"month": "Feb", "revenue": 200, "segment": "A"},
+    {"month": "Jan", "revenue": 50, "segment": "B"},
+    {"month": "Feb", "revenue": 80, "segment": "B"},
+]
+
 
 class TestLineStylePromotion:
     """LineStyle fields come from theme YAML (no Python defaults)."""
@@ -374,10 +384,24 @@ class TestAreaStylePromotion:
         return spec.get("mark", {})
 
     def test_opacity_propagates(self, make_chart):
+        # Multi-series (color) so the single-series recipe swap
+        # (area.py: solid opacity, nothing to overlap with at one series)
+        # doesn't override this authored opacity with the theme's stacked
+        # value; endpoint labels off so the spec stays a single layer list
+        # instead of the endpoint-label rail's hconcat wrapper.
         board, board_context = _board_with_mark("area", "area", opacity=0.11)
-        chart = make_chart("area", x="month", y="revenue")
+        chart = make_chart(
+            "area",
+            x="month",
+            y="revenue",
+            color="segment",
+            style={"endpoint_labels": {"visible": False}},
+        )
         spec = generate_vega_lite_spec(
-            chart, SAMPLE_DATA, board_style=board, chart_style_context=board_context
+            chart,
+            _MULTI_SERIES_DATA,
+            board_style=board,
+            chart_style_context=board_context,
         )
         # With halo, the fg area uses fillOpacity for the tint; mark-level opacity=1.
         fg = self._fg_area_mark(spec)
@@ -389,27 +413,39 @@ class TestAreaStylePromotion:
         # marks.area (fill-only: opacity/curve).
         # Author stroke at the chart level (primary.marks.line.stroke.width) so
         # the authored-pin check bypasses density-adaptive stroke baking.
+        # Multi-series (color) so the single-series recipe swap (area.py: the
+        # full stacked recipe, including stroke) doesn't replace this authored
+        # marks.line.stroke wholesale; endpoint labels off so the spec stays a
+        # single layer list instead of the endpoint-label rail's hconcat wrapper.
         chart_a = make_chart(
             "area",
             x="month",
             y="revenue",
-            style={"marks": {"line": {"stroke": {"width": 1.0}}}},
+            color="segment",
+            style={
+                "marks": {"line": {"stroke": {"width": 1.0}}},
+                "endpoint_labels": {"visible": False},
+            },
         )
         chart_b = make_chart(
             "area",
             x="month",
             y="revenue",
-            style={"marks": {"line": {"stroke": {"width": 7.0}}}},
+            color="segment",
+            style={
+                "marks": {"line": {"stroke": {"width": 7.0}}},
+                "endpoint_labels": {"visible": False},
+            },
         )
         spec_a = generate_vega_lite_spec(
             chart_a,
-            SAMPLE_DATA,
+            _MULTI_SERIES_DATA,
             board_style=_BOARD_STYLE,
             chart_style_context=_BOARD_CONTEXT,
         )
         spec_b = generate_vega_lite_spec(
             chart_b,
-            SAMPLE_DATA,
+            _MULTI_SERIES_DATA,
             board_style=_BOARD_STYLE,
             chart_style_context=_BOARD_CONTEXT,
         )
@@ -551,7 +587,12 @@ class TestChartTypePatchCascade:
         assert _mark(spec)["interpolate"] == "monotone"
 
     def test_area_patch_opacity_cascades(self, make_chart):
-        """chart.style.area.marks.area.opacity reaches the fg area's fillOpacity via cascade."""
+        """chart.style.area.marks.area.opacity reaches the fg area's fillOpacity via cascade.
+
+        Multi-series (color) so the single-series recipe swap (area.py) --
+        solid opacity, nothing to overlap with at one series -- doesn't
+        override this authored opacity with the theme's stacked value.
+        """
         from dbt_charts.core.compile.models.style.authored import (
             AreaChartStylePatch,
         )
@@ -560,10 +601,14 @@ class TestChartTypePatchCascade:
             "area",
             x="month",
             y="revenue",
-            style=AreaChartStylePatch(marks={"area": {"opacity": 0.22}}),
+            color="segment",
+            style=AreaChartStylePatch(
+                marks={"area": {"opacity": 0.22}},
+                endpoint_labels={"visible": False},
+            ),
         )
-        _rc = resolve(chart, SAMPLE_DATA, chart_style_context=_BOARD_CONTEXT)
-        spec = generate_vega_lite_spec(chart, SAMPLE_DATA)
+        _rc = resolve(chart, _MULTI_SERIES_DATA, chart_style_context=_BOARD_CONTEXT)
+        spec = generate_vega_lite_spec(chart, _MULTI_SERIES_DATA)
         # With halo, the fg area mark uses fillOpacity for the tint.
         layers = spec.get("layer", [])
         fg = next(

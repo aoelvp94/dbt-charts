@@ -6,7 +6,7 @@ description: >
   existing work, pick the response shape, verify the answer, then deliver it with a
   written read — observations plus where to look next. Use at the start of an
   analytical request ("show me…", "why did X change") and again when handing the work
-  back. Not for chart-type or layout decisions (use board-design).
+  back. Not for chart-type or layout decisions (use {{ s_skill_name_design_board }}).
 metadata:
   author: fivetran
 ---
@@ -91,7 +91,7 @@ formatting or layout edit. Keep it well shorter than the dashboard.
 
 ## Analysis-method patterns
 
-Methods, not layouts (layout lives in board-design). Reach for the right shape:
+Methods, not layouts (layout lives in {{ s_skill_name_design_board }}). Reach for the right shape:
 
 - **Retention / cohort.** Group entities by their first-activity period (the cohort),
   then measure the active fraction at each later period. Anchor on the cohort, not the

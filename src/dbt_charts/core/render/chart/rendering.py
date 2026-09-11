@@ -627,9 +627,11 @@ def _wrap_rendered_chart_svg(
 
     # SVG-family (table/kpi/spark_bar) content was rendered at the padding-
     # shrunk inner size; wrap it in a translate so it sits inset inside the
-    # padded outer box the tag now carries. Vega families already render at the
-    # outer size with padding baked into their own spec — no wrap, and the outer
-    # box is the measured size (Vega auto-sizes height).
+    # padded outer box the tag now carries. A card rect the family paints
+    # (svg_utils.card_box) already reaches back out over the same inset, so it
+    # fills the outer box. Vega families already render at the outer size with
+    # padding baked into their own spec — no wrap, and the outer box is the
+    # measured size (Vega auto-sizes height).
     #
     # `inset` is the caller's own answer to "did I shrink this?" — present means
     # yes, and carries by how much. Shrinking and wrapping are two halves of one
@@ -696,6 +698,14 @@ def _wrap_rendered_chart_svg(
         attrs_parts.append(f'data-chart-notes="{escaped_notes}"')
     if var_attrs:
         attrs_parts.append(var_attrs)
+    # A JS selection hook, not a visual property (stripped in normalize_svg
+    # alongside data-dbt-series / data-dbt-value-label): chart_interactivity.js's
+    # hover-emphasis reads this off the wrapper instead of sniffing the
+    # rendered legend for a gradient node, which misses a hidden legend and a
+    # faceted chart's legend-outside-every-panel shape alike. Absence means
+    # safe to recede, so it is only ever emitted, never emitted as "false".
+    if identity.magnitude_colored:
+        attrs_parts.append('data-dbt-magnitude-colored="true"')
 
     attrs_str = " " + " ".join(attrs_parts)
     return f"<g{attrs_str}>{boundary}</g>", actual_height

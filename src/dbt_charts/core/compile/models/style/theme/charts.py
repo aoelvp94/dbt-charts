@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dbt_charts.core.compile.models.markers import (
+    Color,
     Inherit,
     InheritSlot,
     Merge,
@@ -80,6 +81,42 @@ from dbt_charts.core.compile.models.style.theme.table import (
     SupportTableStyle,
     TableChartStyle,
 )
+
+
+class HoverEmphasisStyle(BaseModel):
+    """Whether a chart visually answers "what am I pointing at", beyond the tooltip.
+
+    Hovering a mark recedes the others so the one under the cursor stands out.
+    Bar, histogram, pie/donut, and heatmap charts recede their other marks;
+    line, area, and scatter instead draw a datum marker plus a drop line down
+    to the axis, since receding a stroke reads as an interruption rather than
+    emphasis. A family that does not yet answer the question ignores the
+    switch rather than half-answering it. Named for what it does rather than
+    for the trigger, which would read as gating the tooltip beside it (it
+    does not).
+
+    Strength is engine config, not a theme value: there is no wide range of
+    settings that read well, so we tune it rather than the author. The
+    line/area drop line's color and width ARE theme values: each theme picks
+    a neutral one scaffold rung past its own measure gridline, at twice that
+    gridline's width, so the line reads as structure rather than as another
+    data series.
+
+    Runtime-only, deliberately: nothing about it reaches the rendered SVG, so
+    a board renders the same file either way.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    visible: bool = Field(
+        description="Whether hovering a mark visually emphasizes it; theme always provides this."
+    )
+    drop_line_color: Annotated[str, Color()] = Field(
+        description="Color of the vertical drop line from a hovered line/area datum down to its axis."
+    )
+    drop_line_width: float = Field(
+        description="Width, in pixels, of the vertical drop line from a hovered line/area datum down to its axis."
+    )
 
 
 class ChartsStyle(_PaintedChartStyleBase):
@@ -178,6 +215,13 @@ class ChartsStyle(_PaintedChartStyleBase):
     # board-wide JS tooltip runtime) read this path; per-family tooltip overrides
     # were added as scaffolding and never wired to anything.
     tooltip: TooltipStyle = Field(description="Board-wide chart tooltip style.")
+
+    # Hover emphasis — one authoritative slot, declared exactly like tooltip
+    # above: no per-family class redeclares it, and the JS runtime reads it
+    # board-wide via ChartStyleContext / ResolvedChartDefaults.
+    hover_emphasis: HoverEmphasisStyle = Field(
+        description="Board-wide switch for hover emphasis on charts."
+    )
 
     # Global dash palette for line-family marks. None means "no strokeDash encoding";
     # themes that want dash-based categorical distinction set this. Global-only sentinel

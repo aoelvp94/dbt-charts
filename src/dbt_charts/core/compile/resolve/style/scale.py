@@ -170,6 +170,7 @@ def _build_ruler(
         exponent=raw_scale.exponent,
         mode=effective_mode,
         reserve=reserve,
+        prefix_repeats=not column_forming,
         prefix=prefix,
         digit_spec=digit_spec,
         anchor_at_start=anchor_at_start,

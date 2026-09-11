@@ -97,9 +97,86 @@ skill_review:
   tool: "get_skill('board-review')"
   dct: "dct skills board-review"
 
+skill_structural_review:
+  tool: "get_skill('board-structural-review')"
+  dct: "dct skills board-structural-review"
+
+skill_visual_review:
+  tool: "get_skill('board-visual-review')"
+  dct: "dct skills board-visual-review"
+
 skill_troubleshooting:
-  tool: "get_skill('dct-troubleshooting')"
-  dct: "dct skills dct-troubleshooting"
+  tool: "get_skill('troubleshooting')"
+  dct: "dct skills troubleshooting"
+
+# ---- Bare skill-name references (naming a skill in prose, not invoking it) -
+#
+# `tool` and `dct` are both the bare registry name: `dct skills <name>`
+# resolves names against the bare registry, so the CLI reader must see the
+# same name a tool-call reader does. `install` is the file-installed,
+# dct-prefixed directory name, and renders nowhere except the on-disk
+# SKILL.md `dct init skills` writes. Different from the `skill_*` family
+# above, whose `dct` side is a `dct skills <name>` command.
+
+skill_name_analyst_runbook:
+  tool: "analyst-runbook"
+  dct: "analyst-runbook"
+  install: "dct-analyst-runbook"
+
+skill_name_build:
+  tool: "board-build"
+  dct: "board-build"
+  install: "dct-board-build"
+
+skill_name_design_board:
+  tool: "board-design"
+  dct: "board-design"
+  install: "dct-board-design"
+
+skill_name_replicate_board:
+  tool: "board-replicate"
+  dct: "board-replicate"
+  install: "dct-board-replicate"
+
+skill_name_review:
+  tool: "board-review"
+  dct: "board-review"
+  install: "dct-board-review"
+
+skill_name_structural_review:
+  tool: "board-structural-review"
+  dct: "board-structural-review"
+  install: "dct-board-structural-review"
+
+skill_name_visual_review:
+  tool: "board-visual-review"
+  dct: "board-visual-review"
+  install: "dct-board-visual-review"
+
+skill_name_cloud_setup:
+  tool: "cloud-setup"
+  dct: "cloud-setup"
+  install: "dct-cloud-setup"
+
+skill_name_data_exploration:
+  tool: "data-exploration"
+  dct: "data-exploration"
+  install: "dct-data-exploration"
+
+skill_name_mcp_setup:
+  tool: "mcp-setup"
+  dct: "mcp-setup"
+  install: "dct-mcp-setup"
+
+skill_name_design_report:
+  tool: "report-design"
+  dct: "report-design"
+  install: "dct-report-design"
+
+skill_name_troubleshooting:
+  tool: "troubleshooting"
+  dct: "troubleshooting"
+  install: "dct-troubleshooting"
 
 # ---- Sentence-level shared phrases (same intent, different vocabulary) ----
 

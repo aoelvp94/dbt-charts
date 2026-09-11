@@ -18,7 +18,6 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.compiler import compile, compile_file
 from dbt_charts.core.compile.migrations import prepare_board_mapping
 from dbt_charts.core.compile.migrations.migrations import (
-    _CURRENT,
     Move,
     _apply_move,
 )
@@ -66,7 +65,7 @@ class TestRetiredThemeNamesMigrateInMemory:
         an identity-path Move rewrites the value back under the *same*
         `theme:` key. `THEME_VALUE_MAP`, which backs this Move, is total
         over both the retired names and every current `ThemeName` value
-        (see its comment in `versions/current.py`).
+        (see its comment in `versions/v0_6_0.py`).
         """
         result = compile(_board(f"title: t\ntheme: {retired_name}"))
 
@@ -203,16 +202,17 @@ def test_unmapped_theme_value_is_left_untouched_by_the_move() -> None:
     surfaces later as the ordinary ERR-UNKNOWN-THEME (see
     test_unknown_theme_errors.py) instead of an internal migration error.
     """
+    schema_catalog = load_yaml_schema_catalog()
     move = Move(
         source_schema="0.5.0",
-        target_schema=_CURRENT,
+        target_schema=schema_catalog.dev.version,
         old_path=("theme",),
         new_path=("theme",),
         value_map=THEME_VALUE_MAP,
     )
     mapping: dict[str, Any] = {"theme": "totally-fake-theme"}
 
-    _apply_move(mapping, move, load_yaml_schema_catalog())
+    _apply_move(mapping, move, schema_catalog)
 
     assert mapping == {"theme": "totally-fake-theme"}
 
@@ -441,7 +441,7 @@ def test_retired_theme_name_in_a_nested_sub_board_fails_loud() -> None:
     """Neither `_apply_identity_moves` nor `_retired_theme_redirect` walks
     the document tree -- `theme:`'s Move is hand-declared at the document
     root only, and `_resolve_entry` only ever sees entries its own caller's
-    extends chain hands it (see `versions/current.py`'s module docstring).
+    extends chain hands it (see `versions/v0_6_0.py`'s module docstring).
     A retired name authored on a nested sub-board's own `theme:` therefore
     reaches neither mechanism: it fails loud as an ordinary unknown theme,
     with no migration warning telling the author anything was attempted.

@@ -407,6 +407,8 @@ def resolve_cartesian_x(
     band_doubled: bool = False,
     domain_values: list[Any] | None = None,  # type-state: explicit_any — raw x values
     reserved_width: float = 0.0,
+    *,
+    panel_fields: tuple[str, ...],
 ) -> CartesianXResolution:
     """Resolve x encoding type, axis VL dict, and x scale for a cartesian x field.
 
@@ -434,15 +436,21 @@ def resolve_cartesian_x(
     ``chart_width`` before the label-fit walk measures against it, so
     ``label_usable_ratio`` is applied to the chart's real plot width instead
     of its full outer slot.
+
+    ``panel_fields`` is the chart's small-multiples partition columns,
+    forwarded verbatim to ``resolve_cartesian_x_type`` and
+    ``build_cartesian_x_encoding`` so both the ordinal/temporal verdict and
+    the scaffold-budget gate measure per panel, not pooled across panels
+    (see ``resolve_cartesian_x_type``'s docstring). Keyword-only with no
+    default: line/area/scatter now consult the same gate bar does, so
+    a caller that forgot small multiples would silently pool the span and
+    flip a chart with individually-dense panels to continuous — the exact
+    failure ``ordinal_scaffold_within_budget`` exists to prevent.
     """
     from dbt_charts.core.render.chart.step_band import BAND_STEP_CURVE
 
-    # `()` is correct rather than merely convenient: this helper is reached
-    # only by line/area/scatter, which the scaffold gate excludes outright, so
-    # no panel-aware measurement is owed. Passing it explicitly is the point of
-    # the parameter having no default.
     vl_type, _, _ = resolve_cartesian_x_type(
-        data, x_field, ax, mark_type, curve == BAND_STEP_CURVE, ()
+        data, x_field, ax, mark_type, curve == BAND_STEP_CURVE, panel_fields
     )
     label_layout = resolve_axis_x_overlap(
         ax,
@@ -482,7 +490,7 @@ def resolve_cartesian_x(
         domain_values=domain_values,
         outer_chart_width=chart_width,
         plot_width=chart_width - reserved_width,
-        panel_fields=(),  # line/area/scatter only — excluded from the gate
+        panel_fields=panel_fields,
     )
     x_scale.update(cartesian_x_scale_domain(ax.scale, vl_type, chart_id))
     nudge_band_scale_off_range_start(

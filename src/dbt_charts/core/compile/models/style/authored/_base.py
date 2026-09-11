@@ -72,6 +72,7 @@ from dbt_charts.core.compile.models.style.theme import (
     SupportTableStyle as SupportTableStyle,
     TableChartStyle,
     TitleStyle,
+    TotalSlotStyle,
     TotalStyle,
     XScaleStyle,
     _CartesianChartStyle,
@@ -352,6 +353,10 @@ if TYPE_CHECKING:
 else:
     PointMarkStylePatch = build_patch_model(PointMarkStyle)
 
+# Built explicitly (rather than left to TotalStylePatch's recursive nested
+# generation) so yaml_error_formatter can import it by name to anchor the
+# style.total.label text-hint on this exact model.
+TotalSlotStylePatch = build_patch_model(TotalSlotStyle)
 TotalStylePatch = build_patch_model(TotalStyle)
 GlobalMarksStylePatch = build_patch_model(GlobalMarksStyle)
 

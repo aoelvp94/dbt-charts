@@ -144,15 +144,62 @@ def resolve_mcp_project_dir(
     )
 
 
-def resolve_skill_install_root(start: Path) -> Path:
+@dataclass(frozen=True)
+class SkillInstallRootResolution:
+    """Result of ``resolve_skill_install_root``.
+
+    ``root`` is ``None`` only when an explicit ``--project-dir`` names a
+    directory with no dbt charts project at or above it; ``nearest_root``
+    then gives the caller a "did you mean" hint (mirrors
+    ``resolve_mcp_project_dir``).
+    """
+
+    root: Path | None
+    nearest_root: Path | None = None
+
+
+def resolve_skill_install_root(
+    start: Path, *, walk_to_git_root: bool
+) -> SkillInstallRootResolution:
     """Return the directory where skills should be installed.
 
-    Skills are agent tooling that belong at the git root so monorepos with nested
-    dct projects don't accumulate divergent skill copies.
+    ``walk_to_git_root=True`` is the cwd-derived default: skills are agent
+    tooling that belong at the git root so monorepos with nested dct projects
+    don't accumulate divergent skill copies. There is no project marker to
+    validate here — a bare ``dct init skills`` is the documented bootstrap
+    path for a repo that has none yet.
+
+    ``walk_to_git_root=False`` is for an explicit ``--project-dir``, which
+    names the install destination outright and must not be overridden by a
+    git root above it. It also must not silently normalize to a dbt charts
+    project found by walking *up* from that directory — the named directory
+    is validated the same way ``resolve_mcp_project_dir`` validates an
+    explicit MCP project dir, and a mismatch is an error, not a fallback.
     """
+    if not walk_to_git_root:
+        resolved = start.resolve()
+        nearest = find_dct_root(resolved)
+        if nearest != resolved:
+            return SkillInstallRootResolution(root=None, nearest_root=nearest)
+        return SkillInstallRootResolution(root=resolved)
+
     project_root = find_dct_root(start) or start.resolve()
     git_root = find_repo_root(project_root)
-    return git_root if git_root is not None else project_root
+    return SkillInstallRootResolution(
+        root=git_root if git_root is not None else project_root
+    )
+
+
+def project_dir_was_typed(ctx: typer.Context) -> bool:
+    """True when ``--project-dir`` came from argv rather than ``DCT_PROJECT_DIR``.
+
+    The env var is a documented default; only a typed flag is an instruction,
+    and only an instruction overrides where skills install.
+    """
+    source = ctx.get_parameter_source("project_dir")
+    if source is None:
+        raise RuntimeError("project_dir is not a declared parameter on this command")
+    return source.name == "COMMANDLINE"
 
 
 def with_project(func: Callable[..., R]) -> Callable[..., R]:

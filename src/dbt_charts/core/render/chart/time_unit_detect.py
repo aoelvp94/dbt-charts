@@ -190,10 +190,12 @@ BUCKETED_CALENDAR_UNITS: frozenset[str] = frozenset(
     {"year", "yearquarter", "yearmonth", "yearweek", "yearmonthdate"}
 )
 
-# The fine-grain subset whose auto-detected banding is additionally gated by
-# ordinal_scaffold_within_budget: day/week buckets accumulate ~52-365 slots
-# per year of span, so data sparser than its detected grain (quarterly rows
-# plus two stray mid-month dates reading as "daily") explodes the scaffold.
+# Day/week buckets accumulate ~52-365 slots per year of span, so a fine grain
+# is either within the scaffold budget or it is not — there is no second,
+# row-count question worth asking of it. Coarse grains need both: the budget
+# (a decade-spaced series names "year" honestly and still owes ten empty
+# bands per bar) and a plain cap on how many distinct values a band axis may
+# carry.
 FINE_BUCKET_UNITS: frozenset[str] = frozenset({"yearweek", "yearmonthdate"})
 
 # Cyclic time-part units that remain temporal (not ordinal).
@@ -629,11 +631,89 @@ def epoch_ms(
     return midnight.timestamp() * 1000.0
 
 
+# Nominal bucket lengths in days, coarsest first — the ladder _detect_cadence
+# walks. Weeks are absent on purpose: the same-weekday branch above already
+# owns weekly detection, and a yearweek bucket is anchored to whatever weekday
+# the data uses (see _floor_to_bucket_start), so a series with no consistent
+# weekday has no week bucket to be assigned to.
+_CADENCE_PERIOD_DAYS: tuple[tuple[str, float], ...] = (
+    ("year", 365.25),
+    ("yearquarter", 91.31),
+    ("yearmonth", 30.44),
+)
+# How far a gap may sit from a whole number of periods. Month lengths swing
+# 28–31 days, so a Jan→Feb step is 0.08 of a period short of nominal — the
+# widest wobble a real calendar cadence produces (quarters reach 0.015, years
+# 0.001). Dates that merely happen to land one per month deviate ~0.25 and up.
+_CADENCE_TOLERANCE = 0.15
+
+# The grains whose bucket boundaries move with ``fiscal_year_start_month``.
+_ANCHOR_SENSITIVE_UNITS: frozenset[str] = frozenset({"year", "yearquarter"})
+
+
+def _detect_cadence(dates: list[dt.date]) -> str | None:
+    """Coarsest grain whose period the gaps between *dates* are multiples of.
+
+    Cadence, not calendar position: a value's day-of-month says nothing about
+    its grain (month ends, quarter ends and the 15th of the month are all
+    monthly-or-coarser), but the distance to its neighbor says everything.
+
+    A grain is accepted on two conditions. The MEDIAN gap must sit within
+    ``_CADENCE_TOLERANCE`` of a whole number of periods, so one late report
+    or a skipped month does not disqualify an otherwise obvious rhythm. And
+    every value must floor to a bucket of its own: downstream gap-fill
+    refuses to guess which of two values a shared bucket means
+    (ERR-GAP-FILL-BUCKET-COLLISION), which is a fair answer to an authored
+    ``time_unit`` and not to a board that authored nothing, so the collision
+    is settled here by declining the grain and trying a finer one.
+
+    A fiscal offset moves year and quarter boundaries, and downstream
+    gap-fill keys rows through the axis's own ``fiscal_year_start_month``,
+    which detection — a pure function of the values, which is the only reason
+    its call sites all agree on one grain — never sees. So those two rungs
+    must keep the values apart under EVERY anchor, not just the calendar one.
+    That costs a real cadence nothing: values a whole period apart cannot
+    share a bucket wherever the boundaries fall. It declines the grain
+    exactly when two values sit less than a period apart, which is where
+    banding them together was the wrong answer anyway.
+
+    Returns None when no rung fits — the caller keeps the daily fallthrough.
+    """
+    ordered = sorted(dates)
+    gaps = [(ordered[i] - ordered[i - 1]).days for i in range(1, len(ordered))]
+    # One interval is a measurement, not a rhythm: nothing has repeated yet.
+    if len(gaps) < 2:
+        return None
+    distinct_count = len(set(ordered))
+    for unit, period in _CADENCE_PERIOD_DAYS:
+        # Clamped at 1: a sub-period gap is a whole period off its nearest
+        # real multiple, and rounding it to a 0-step would score it as a
+        # near-perfect fit for every grain.
+        steps = [max(1, round(gap / period)) for gap in gaps]
+        deviations = [
+            abs(gap / period - step) for gap, step in zip(gaps, steps, strict=True)
+        ]
+        if statistics.median(deviations) > _CADENCE_TOLERANCE:
+            continue
+        anchors = range(1, 13) if unit in _ANCHOR_SENSITIVE_UNITS else (1,)
+        if all(
+            len({_floor_to_bucket_start(d, unit, anchor) for d in ordered})
+            == distinct_count
+            for anchor in anchors
+        ):
+            return unit
+    return None
+
+
 def detect_time_unit(values: list[Any]) -> str | None:
     """Detect VL timeUnit from distinct non-null x-field values.
 
     Returns one of: "year", "yearquarter", "yearmonth", "yearweek",
     "yearmonthdate", or None (sub-daily continuous or insufficient data).
+
+    Coarse grains are reached two ways: values sitting on a bucket start
+    (the position predicates below), or values spaced a bucket apart
+    (``_detect_cadence``).
 
     Raises ValueError when ≥10% of distinct values are unparseable strings.
     """
@@ -693,22 +773,50 @@ def detect_time_unit(values: list[Any]) -> str | None:
         if statistics.median(gaps) <= 14:
             return "yearweek"
         # Same weekday but non-weekly spacing — no recognizable bucket grain.
+        # Every 7-day-multiple cadence lands here (28-day, 4-5-4 retail), which
+        # is why _detect_cadence below never has to reason about them.
         return None
+    cadence = _detect_cadence(dates)
+    if cadence is not None:
+        return cadence
     return "yearmonthdate"
+
+
+# A bucket ladder is either a month ladder or a day ladder; these are its
+# step sizes. Between them they cover BUCKETED_CALENDAR_UNITS exactly, which
+# is what lets _bucket_index be total without a fallback.
+_MONTH_LADDER_STEP: dict[str, int] = {"year": 12, "yearquarter": 3, "yearmonth": 1}
+_DAY_LADDER_STEP: dict[str, int] = {"yearweek": 7, "yearmonthdate": 1}
+
+
+def _bucket_index(bucket_start: dt.date, time_unit: str) -> int:
+    """Position of a floored bucket start on its grain's ladder.
+
+    Consecutive buckets differ by exactly 1, so the band count of a span is a
+    subtraction. ``bucket_start`` must already be floored — the caller floors
+    through ``_floor_to_bucket_start``, which is also what rejects a unit
+    neither ladder covers. ``yearweek`` has no absolute boundary to floor to,
+    so its ladder is a fixed 7-day step from wherever the data starts.
+    """
+    if time_unit in _MONTH_LADDER_STEP:
+        months = bucket_start.year * 12 + bucket_start.month - 1
+        return months // _MONTH_LADDER_STEP[time_unit]
+    return bucket_start.toordinal() // _DAY_LADDER_STEP[time_unit]
 
 
 def ordinal_scaffold_within_budget(
     panels: list[list[Any]],  # type-state: explicit_any — raw x cells
     time_unit: str,
 ) -> bool:
-    """Whether banding *panels*' values at a fine grain keeps a legible band axis.
+    """Whether banding *panels*' values at *time_unit* keeps a legible band axis.
 
     A banded bucketed-time x owes the axis one slot per grain bucket across
     its [min, max] span (``complete_ordinal_time_series`` synthesizes the
     missing ones), so the rendered band count is the SPAN, not the row count.
-    For day/week grains the two can diverge wildly — quarterly data plus two
-    stray mid-month dates detects as "daily" and would enumerate ~90 slots
-    per real bar, each band sub-pixel.
+    The two diverge whenever data is sparser than its own grain, at any
+    grain: ten dates 45 days apart detect as "daily" and would enumerate ~45
+    slots per real bar, and twelve readings a decade apart honestly detect as
+    "year" and still enumerate ten empty bands per real bar.
 
     The span is measured PER PANEL and summed, because that is what
     ``fill_one_panel`` materializes: each panel enumerates only its own
@@ -731,7 +839,6 @@ def ordinal_scaffold_within_budget(
     occupy a slot nor extend a span. ``detect_time_unit`` already raised at
     ≥10% unparseable, so what is left cannot move the verdict far.
     """
-    step_days = 7 if time_unit == "yearweek" else 1
     spans: list[tuple[int, int]] = []
     occupied: set[dt.date] = set()
     for values in panels:
@@ -744,12 +851,11 @@ def ordinal_scaffold_within_budget(
             distinct.add(_floor_to_bucket_start(d, time_unit, 1))
         if not distinct:
             continue
-        # Bucket starts are already floored, so bucket indices are plain
-        # day/week arithmetic — the same slots _enumerate_buckets would
-        # materialize, without allocating a date per bucket on data whose
+        # Index the floored starts rather than walking _enumerate_buckets:
+        # the same slots, without allocating a date per bucket on data whose
         # defining property is a span pathologically larger than its row count.
-        lo = min(distinct).toordinal() // step_days
-        hi = max(distinct).toordinal() // step_days
+        lo = _bucket_index(min(distinct), time_unit)
+        hi = _bucket_index(max(distinct), time_unit)
         spans.append((lo, hi))
         occupied |= distinct
     # Merge the panels' ranges before counting: the band scale is SHARED, so a
@@ -984,7 +1090,7 @@ def _next_bucket(date: dt.date, time_unit: str) -> dt.date:
             return dt.date(date.year + 1, new_month - 12, 1)
         return dt.date(date.year, new_month, 1)
     if time_unit == "year":
-        return dt.date(date.year + 1, 1, 1)
+        return dt.date(date.year + 1, date.month, 1)
     raise ValueError(f"Unsupported time_unit for bucket stepping: {time_unit!r}")
 
 
@@ -1011,15 +1117,14 @@ def _floor_to_bucket_start(date: dt.date, time_unit: str, start_month: int) -> d
 
     Only `year` and `yearquarter` grains have configurable anchoring — a
     fiscal offset shifts which month opens the year/quarter. `yearmonth`
-    buckets always start on day 1 (detect_time_unit requires day == 1 for
-    every value in the yearmonth predicate), so flooring to day 1 is a safe
-    no-op for real data and a correct floor for synthetic/authored min dates.
-    `yearmonthdate` (daily) has no coarser boundary to floor to. `yearweek`
-    has NO universal "day 1" the way months do — detect_time_unit accepts any
-    consistent weekday as a week anchor (Sunday-start data is common, not just
-    ISO Monday-start), so flooring to the ISO Monday would shift a
-    Sunday-anchored week's bucket dates by up to 6 days. yearweek's bucket
-    start is whatever weekday the data already uses — trust min_date as-is.
+    buckets always start on day 1. `yearmonthdate` (daily) has no coarser
+    boundary to floor to. `yearweek` has NO universal "day 1" the way months
+    do — detect_time_unit accepts any consistent weekday as a week anchor
+    (Sunday-start data is common, not just ISO Monday-start), so flooring to
+    the ISO Monday would shift a Sunday-anchored week's bucket dates by up to
+    6 days. yearweek's bucket start is whatever weekday the data already uses,
+    so this returns the date unchanged and ``_enclosing_bucket`` — which knows
+    where the ladder starts — steps a row onto it.
     """
     if time_unit == "year":
         return _floor_to_period_start(date, 12, start_month)
@@ -1045,6 +1150,29 @@ def _enumerate_buckets(
         buckets.append(current)
         current = _next_bucket(current, time_unit)
     return buckets
+
+
+def _enclosing_bucket(
+    date: dt.date, time_unit: str, fiscal_year_start_month: int, week_anchor: dt.date
+) -> dt.date:
+    """The ``_enumerate_buckets`` slot *date* falls inside.
+
+    The row-side twin of ``_enumerate_buckets``: a scaffold enumerates bucket
+    STARTS, so a row must be looked up by the start of the bucket that
+    CONTAINS it, not by its own value. Every cadence that reports a period by
+    its last instant — ``LAST_DAY(month)`` month-ends, quarter-ends, year-ends,
+    a fiscal year's March 31 — otherwise matches no enumerated bucket and
+    vanishes from the chart while the axis still draws the full ladder.
+
+    ``week_anchor`` is the ladder's first bucket. ``yearweek`` is the one grain
+    with no absolute boundary to floor to (Sunday- and Monday-anchored weeks
+    are both ordinary), so its ladder is defined by where the data starts and
+    a row belongs to the 7-day step it lands in. Every other grain has an
+    absolute boundary and ignores the anchor.
+    """
+    if time_unit == "yearweek":
+        return week_anchor + dt.timedelta(days=7 * ((date - week_anchor).days // 7))
+    return _floor_to_bucket_start(date, time_unit, fiscal_year_start_month)
 
 
 _GAP_FILL_HANDLINGS = frozenset(
@@ -1169,6 +1297,13 @@ def complete_ordinal_time_series(
     between the dataset's min and max so the ordinal x-axis has a slot for
     each period. Without this, missing buckets simply disappear from the axis.
 
+    A row is placed by the bucket it falls INSIDE (``_enclosing_bucket``), not
+    by whether its value already sits on a bucket start — the scaffold and the
+    lookup must derive their keys from the same function or a month-end,
+    quarter-end or fixed-day-of-month series matches nothing and every row is
+    replaced by a synthesized null. Placing is not aggregating: two rows in one
+    bucket raise rather than merge (see Raises).
+
     Args:
         data: rows from the query (non-empty; caller must guard empty datasets).
         x_field: the x-encoding column name (must be ISO date strings or
@@ -1194,10 +1329,12 @@ def complete_ordinal_time_series(
         sorted by the same key. If data is empty, returns data unchanged.
 
     Raises:
-        ChartDataError: (ERR-GAP-FILL-BUCKET-COLLISION) when two rows collapse
-            to the same (bucket, *dim_vals) key — e.g. two timestamps on the
-            same calendar day under a yearmonthdate grain. Can't happen on
-            legitimately grain-aligned data.
+        ChartDataError: (ERR-GAP-FILL-BUCKET-COLLISION) when two rows fall in
+            the same (bucket, *dim_vals) — two timestamps on one calendar day
+            under yearmonthdate, or a finer series under a coarser authored
+            grain (monthly rows under yearquarter). There is no one value to
+            plot for that bucket and combining them would be an aggregation
+            the query layer owns; can't happen on grain-aligned data.
     """
     if not data:
         return data
@@ -1248,11 +1385,27 @@ def complete_ordinal_time_series(
     # second pass (_apply_gap_fill_handling) overwrites them for interior gaps.
     fill_value = 0 if fill == "zero" else None
 
+    # min_date's own enclosing bucket, so the ladder is never empty and
+    # all_buckets[0] is always the anchor yearweek's step arithmetic needs.
+    week_anchor = all_buckets[0]
+
+    def _bucket_key(
+        value: Any,  # type-state: explicit_any — raw query cell, _parse_date's domain
+    ) -> str:
+        parsed = _parse_date(value)
+        if parsed is None:
+            # Unparseable or null x. Keyed through str() so it matches no
+            # enumerated bucket: such a value has no bucket to belong to, and
+            # it was already excluded from the [min, max] span above.
+            return _ordinal_bucket_key(value)
+        date = parsed.date() if isinstance(parsed, dt.datetime) else parsed
+        return _enclosing_bucket(
+            date, time_unit, fiscal_year_start_month, week_anchor
+        ).isoformat()
+
     # Build lookup from (bucket_str, *dim_vals) → row
     def _row_key(row: dict[str, Any]) -> tuple[Any, ...]:
-        return (_ordinal_bucket_key(row.get(x_field)),) + tuple(
-            row.get(d) for d in dim_fields
-        )
+        return (_bucket_key(row.get(x_field)),) + tuple(row.get(d) for d in dim_fields)
 
     existing: dict[tuple[Any, ...], dict[str, Any]] = {
         _row_key(row): row for row in data

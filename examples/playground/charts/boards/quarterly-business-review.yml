@@ -360,7 +360,10 @@ charts:
     color: status
     total:
       label: Total tickets
-      format: ",.0f"
+    style:
+      total:
+        value:
+          format: ",.0f"
 
 rows:
   - text: |

@@ -189,6 +189,9 @@ style:
       swatch:
         radius: 3.0
       active_marker: fill
+    hover_emphasis:
+      drop_line_color: dbt-grays.disabled
+      drop_line_width: 2.0
   variables:
     font:
       color: *mid

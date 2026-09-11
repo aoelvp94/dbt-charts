@@ -79,6 +79,28 @@ class TestQuantitativeTickLabelsEndAnchoredPrefix:
                 f"non-anchor label should not have prefix: {label!r}"
             )
 
+    def test_anchor_at_start_none_repeats_prefix_on_every_nonzero_tick(self) -> None:
+        """Non-column-forming companion (``anchor_at_start=None``): every
+        non-zero tick carries the prefix, mirroring
+        ``inject_axis_numeral_expr``'s labelExpr -- reached in production via
+        ``features/mirror_axis.py``, which passes a horizontal measure axis's
+        resolved ``tick_label`` through with no reachability gate.
+        """
+        ticks = (0.0, 2_000.0, 4_000.0, 6_000.0, 8_000.0)
+        format_spec = ",.0f"
+        prefix = "$"
+
+        labels = quantitative_tick_labels(
+            ticks,
+            format_spec,
+            ruler=None,
+            tick_label=ResolvedTickLabel(
+                format=format_spec, prefix=prefix, anchor_at_start=None
+            ),
+        )
+
+        assert labels == ["0", "$2,000", "$4,000", "$6,000", "$8,000"]
+
     def test_anchor_label_is_wider_than_non_anchor(self) -> None:
         """Anchor with prefix must produce a wider gutter measurement than
         the bare non-anchor labels -- the gutter is sized for the widest label.
@@ -165,6 +187,7 @@ class TestQuantitativeTickLabelsWithRuler:
             exponent=3,
             mode=SuffixMode.ANCHOR,
             reserve=True,
+            prefix_repeats=False,
             prefix="$",
             digit_spec=",.1~f",
             anchor_at_start=False,
@@ -183,10 +206,15 @@ class TestQuantitativeTickLabelsWithRuler:
         ]
 
     def test_repeat_mode_900k_ladder_matches_the_real_render(self) -> None:
+        """A column-forming axis (``reserve=True``): REPEAT is the ladder's
+        own magnitude-driven suffix register, independent of the prefix,
+        which still anchors on one tick (``prefix_repeats=False``).
+        """
         ruler = ResolvedRulerAxis(
             exponent=3,
             mode=SuffixMode.REPEAT,
             reserve=True,
+            prefix_repeats=False,
             prefix="$",
             digit_spec=",.1~f",
             anchor_at_start=False,
@@ -204,11 +232,40 @@ class TestQuantitativeTickLabelsWithRuler:
             "$1,000k",
         ]
 
+    def test_repeat_mode_900k_ladder_non_column_forming_repeats_the_prefix(
+        self,
+    ) -> None:
+        """The non-column-forming companion: same ladder, ``reserve=False``
+        and ``prefix_repeats=True`` -- the prefix now repeats on every
+        non-zero tick.
+        """
+        ruler = ResolvedRulerAxis(
+            exponent=3,
+            mode=SuffixMode.REPEAT,
+            reserve=False,
+            prefix_repeats=True,
+            prefix="$",
+            digit_spec=",.1~f",
+            anchor_at_start=False,
+            reservation="",
+        )
+        ticks = (0.0, 200_000.0, 400_000.0, 600_000.0, 800_000.0, 1_000_000.0)
+        labels = quantitative_tick_labels(ticks, "$.3~s", ruler=ruler)
+        assert labels == [
+            "0",
+            "$200k",
+            "$400k",
+            "$600k",
+            "$800k",
+            "$1,000k",
+        ]
+
     def test_zero_reserves_even_when_it_is_the_only_other_tick(self) -> None:
         ruler = ResolvedRulerAxis(
             exponent=3,
             mode=SuffixMode.ANCHOR,
             reserve=True,
+            prefix_repeats=False,
             prefix="",
             digit_spec=",.1~f",
             anchor_at_start=False,
@@ -227,6 +284,7 @@ class TestQuantitativeTickLabelsWithRuler:
             exponent=3,
             mode=SuffixMode.REPEAT,
             reserve=False,
+            prefix_repeats=True,
             prefix="$",
             digit_spec=",.1~f",
             anchor_at_start=False,
@@ -234,7 +292,7 @@ class TestQuantitativeTickLabelsWithRuler:
         )
         ticks = (0.0, 200_000.0, 400_000.0, 600_000.0, 800_000.0, 1_000_000.0)
         labels = quantitative_tick_labels(ticks, "$.3~s", ruler=ruler)
-        assert labels == ["0", "200k", "400k", "600k", "800k", "$1,000k"]
+        assert labels == ["0", "$200k", "$400k", "$600k", "$800k", "$1,000k"]
 
     def test_ruler_negative_anchor_renders_sign_before_symbol(self) -> None:
         """Regression: compacting (ruler) path with a currency prefix and a
@@ -244,6 +302,7 @@ class TestQuantitativeTickLabelsWithRuler:
             exponent=3,
             mode=SuffixMode.ANCHOR,
             reserve=True,
+            prefix_repeats=False,
             prefix="$",
             digit_spec=",.1~f",
             anchor_at_start=True,
@@ -273,6 +332,7 @@ class TestQuantitativeTickLabelsWithRuler:
             exponent=3,
             mode=SuffixMode.ANCHOR,
             reserve=True,
+            prefix_repeats=False,
             prefix="",
             digit_spec=",.1~f",
             anchor_at_start=True,

@@ -8,7 +8,7 @@ description: >
   and render — driven by `dct cloud status` until it reports done. Use when
   the user says 'set me up with dbt charts cloud', 'deploy my dashboards to
   cloud', 'connect this repo to dbtcharts.com', or 'get my boards live'. Do
-  NOT use for authoring boards (use board-build) or for deleting/removing an
+  NOT use for authoring boards (use {{ s_skill_name_build }}) or for deleting/removing an
   org, project, or connection — this skill never runs a destructive verb.
 metadata:
   author: fivetran
@@ -198,7 +198,7 @@ session.
 
 This skill connects a repo and a warehouse; it doesn't author boards. If the
 repo has no boards the user actually authored — an empty `charts/`, or only
-the starter board `dct init` scaffolds — hand off to the board-build skill
+the starter board `dct init` scaffolds — hand off to the {{ s_skill_name_build }} skill
 first: inspect the warehouse schema, author board YAML, validate and render
 locally, commit, push, then publish the push (Step 8). Don't render the
 starter board as if it were the user's own board.
@@ -235,10 +235,19 @@ process list, so the connect verb refuses it).
 | Postgres / Redshift | If your own credentials allow it, create a read-only role via `psql` and use its password. | Ask the user to supply or approve a read-only credential. |
 
 Create the connection with the minted (or user-supplied) credential. The
-create call also tests it, and a failing test saves nothing: the command exits
-non-zero and prints the warehouse's own error. Fix the credential and re-run
-the same command rather than moving on; there is no leftover connection to
-delete first, and no need to invent a different alias.
+create call also tests it, and a test that fails outright saves nothing: the
+command exits non-zero and prints the warehouse's own error. Read that error,
+fix the cause it names, and re-run the same command rather than moving on; there
+is no leftover connection to delete first, and no need to invent a different
+alias.
+
+A test that could not finish in time is the exception, and it is not a
+credential problem. The warehouse may still be starting up, so nothing was
+disproved and the connection **is** saved. The command still exits non-zero,
+and the error names the slug. Re-run the check with
+`dct cloud connection test <slug>` and carry on when it passes. Do not mint a
+new credential and do not re-run `connection create`: the slug is already
+taken, so the create would collide, and clearing it needs an org admin.
 
 Later verbs address the connection by its slug. Pass `--name` to choose it, or
 let it default to the field that names the warehouse (BigQuery's `project`,
@@ -282,11 +291,13 @@ answer any admin-only verb gives them.
 
 `dct cloud boards` reports `blocked` when a connection the project's sources
 map to has not passed its last test — it failed, or nobody has run it. Neither
-re-rendering nor `--force` clears it, because the credential is the problem:
+re-rendering nor `--force` clears it, because the connection is the problem:
 the `error` names the source, and names the connection and the exact test
 command when your token may list connections at all. It does not carry the
-warehouse's own error text: run that command to see it. Fix the credential,
-confirm it with `dct cloud connection test <slug>`, then render. `dct cloud
+warehouse's own error text: run that command to see it, and let it tell you
+what to fix — a rejected credential and an unreachable warehouse read the same
+from here. Fix that, confirm with `dct cloud connection test <slug>`, then
+render. `dct cloud
 render` on such a project says so rather than reporting a bare count of zero.
 
 ## Step 8: Publish the commit, and prove it is the one being served
@@ -393,7 +404,9 @@ Hand off to the user, rather than guessing or working around it, whenever:
   warehouse identity cannot perform (an IAM grant, a Cloud org-admin action
   outside your scope).
 - A connection test keeps failing after a credential retry — don't keep
-  minting new ones speculatively; report the failure and ask.
+  minting new ones speculatively; report the failure and ask. A test that
+  could not finish in time is not this case: re-run
+  `dct cloud connection test <slug>` on the saved connection first.
 
 ## When you're done
 

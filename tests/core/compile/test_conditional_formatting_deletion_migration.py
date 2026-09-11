@@ -1,10 +1,10 @@
-"""Migration tests for the 0.6.0 -> current conditional_formatting retirement.
+"""Migration tests for the 0.6.0 -> 0.7.0 conditional_formatting retirement.
 
 ``conditional_formatting:`` retired from 11 ``type:`` literals (bar,
 histogram, line, area, scatter, pie, donut, map, geoshape, point_map,
 bubble_map), kept unchanged on ``table``/``kpi`` — declared as 11
-chart_type-scoped ``Deletion`` entries in
-``compile/migrations/versions/current.py`` (``CONDITIONAL_FORMATTING_RETIRED_CHART_TYPES``).
+chart_type-scoped ``Deletion`` entries in the DEV boundary module
+``compile/migrations/versions/v0_7_0.py`` (``CONDITIONAL_FORMATTING_RETIRED_CHART_TYPES``).
 See ``Deletion.chart_type``'s docstring in ``migrations.py`` for why a bare
 per-path deletion cannot express "retired on this family, kept on that one".
 
@@ -17,7 +17,7 @@ ways" rule asks for, for one representative family (bar):
 2. ``compile()``-level — an old-grammar board authoring
    ``conditional_formatting`` on a bar chart compiles clean end to end.
 3. ``dct migrate``'s underlying rewriter (``migrate_yaml_text``, called
-   directly with no ``stop_target`` so the walk reaches ``_CURRENT`` — see
+   directly with no ``stop_target`` so the walk reaches the DEV version — see
    the round-trip tests' own docstrings for why ``migrate_board_yaml_text``
    itself, capped at the latest *released* schema, cannot reach a
    deletion declared on the still-pending boundary) round-trip, using a
@@ -26,10 +26,7 @@ ways" rule asks for, for one representative family (bar):
    survives, in both authoring shapes a real board uses: inline ``rows:``
    list items and ``charts:`` mapping entries (``momentum.yml``'s own
    shape). A bar-only fixture, or a fixture covering only one shape, would
-   pass even with the text-scanner gap ``Deletion.chart_type``'s docstring
-   describes — ``_delete_tail_in_yaml_text`` matches on the key chain alone
-   with no schema position to disambiguate, so without its own chart_type
-   gate a mixed table+bar file would have table's block stripped too.
+   pass even if the scope were dropped entirely.
 """
 
 from __future__ import annotations
@@ -45,7 +42,7 @@ from dbt_charts.core.compile.migrations import (
     migrate_yaml_text,
 )
 from dbt_charts.core.compile.migrations.migrations import _board_migration_context
-from dbt_charts.core.compile.migrations.versions.current import (
+from dbt_charts.core.compile.migrations.versions.v0_7_0 import (
     CONDITIONAL_FORMATTING_RETIRED_CHART_TYPES,
 )
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
@@ -174,14 +171,13 @@ def test_mixed_table_and_bar_conditional_formatting_round_trip_inline_rows_shape
 
     Bar's conditional_formatting block is gone; table's survives untouched.
     Calls migrate_yaml_text directly (not migrate_board_yaml_text / dct
-    migrate) with no stop_target, reaching _CURRENT: this Deletion is
-    declared on the pending 0.6.0 -> current boundary in
-    versions/current.py, which dct migrate's on-disk writer deliberately
-    caps short of (it never writes syntax no released dbt charts recognizes
-    yet) -- unrelated to the chart_type gate under test here. The full walk
-    to _CURRENT is what the framework fix actually needs to prove: that the
-    Deletion.chart_type gate applies correctly when the text writer *does*
-    reach it.
+    migrate) with no stop_target, reaching the DEV version: this Deletion is
+    declared on the pending 0.6.0 -> 0.7.0 boundary in versions/v0_7_0.py,
+    which dct migrate's on-disk writer deliberately caps short of (it never
+    writes syntax no released dbt charts recognizes yet) -- unrelated to the
+    chart_type gate under test here. The full walk to the DEV version is what
+    the framework fix actually needs to prove: that the Deletion.chart_type
+    gate applies correctly when the text writer *does* reach it.
     """
     text = (
         "title: T\n"

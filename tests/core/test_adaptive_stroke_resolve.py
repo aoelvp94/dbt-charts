@@ -135,10 +135,21 @@ def _area_chart(
 
     chart = TypeAdapter(Chart).validate_python(chart_dict)
 
-    if color is not None:
+    if color is not None and multiples_columns is not None:
+        # Two facet panels, each carrying its own two-series overlap -- color
+        # keeps the chart on the (uncapped) overlap recipe so density-adaptive
+        # differences between panel widths stay visible; a colorless area is
+        # capped at the stacked recipe's fallback width regardless of density.
         data: list[dict[str, Any]] = [
-            {"x": i, "y": float(i), "series": "A"} for i in range(n_points)
-        ] + [{"x": i, "y": float(i) * 2, "series": "B"} for i in range(n_points)]
+            {"x": i, "y": float(i), "series": s, "facet": f}
+            for f in ("cat0", "cat1")
+            for s in ("A", "B")
+            for i in range(n_points)
+        ]
+    elif color is not None:
+        data = [{"x": i, "y": float(i), "series": "A"} for i in range(n_points)] + [
+            {"x": i, "y": float(i) * 2, "series": "B"} for i in range(n_points)
+        ]
     elif multiples_columns is not None:
         # Two facet panels each with n_points sharing the same x values — the bug
         # path (full card width) gives the same stroke as non-faceted; the fix
@@ -644,15 +655,31 @@ class TestLineChartAdaptiveStroke:
 
 class TestAreaChartAdaptiveStroke:
     def test_monotonic_nonincreasing_as_n_rises(self) -> None:
-        """Same monotonicity contract as line."""
-        strokes = [_resolved_area_stroke(n, width=600.0) for n in [5, 20, 100]]
+        """Same monotonicity contract as line.
+
+        Colored (2-series) so the chart stays on the overlap recipe -- a
+        colorless area is now capped at the stacked recipe's fallback width
+        regardless of density, which would hide the density-adaptive formula
+        this test targets (see TestFacetedAreaChartAdaptiveStroke, which
+        applies the same fix for the same reason)."""
+        strokes = [
+            _resolved_area_stroke(n, width=600.0, color="series") for n in [5, 20, 100]
+        ]
         for a, b in zip(strokes, strokes[1:], strict=False):
             assert a >= b
 
     def test_author_pin_area_stroke_bypasses_adaptive(self) -> None:
-        """Explicit area line stroke → verbatim, no adaptive override."""
-        pinned = 1.0
-        chart, data, w = _area_chart(50, width=600.0, stroke_width=pinned)
+        """Explicit area line stroke → verbatim, no adaptive override.
+
+        Colored (2-series) so the chart stays on the overlap recipe -- a
+        colorless area is capped at the stacked recipe's fallback width, so a
+        pin at or below that fallback would pass even if the pin were
+        silently ignored. Pinned width (3.7) deliberately avoids coinciding
+        with any theme literal."""
+        pinned = 3.7
+        chart, data, w = _area_chart(
+            50, width=600.0, color="series", stroke_width=pinned
+        )
         resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE, width=w)
         assert resolved.style.line_mark.stroke.width == pinned
 
@@ -716,15 +743,22 @@ class TestFacetedAreaChartAdaptiveStroke:
         The fixed path uses the per-panel width (≈ half the card width) → smaller
         px/pt → strictly thinner stroke.  50 points at 600px stays well below the
         4.0 ceiling so the two paths produce distinct values.
+
+        Colored (2-series) so the chart stays on the overlap recipe -- a
+        colorless area is now capped at the stacked recipe's fallback width
+        regardless of density, which would hide the per-panel-width effect
+        this test targets.
         """
         n = 50
         card_width = 600.0
 
         # Non-faceted reference: full card_width / n → some stroke value
-        stroke_nonfacet = _resolved_area_stroke(n, width=card_width)
+        stroke_nonfacet = _resolved_area_stroke(n, width=card_width, color="series")
 
         # Faceted (2 panels, same n x-values per panel)
-        chart, data, w = _area_chart(n, width=card_width, multiples_columns="facet")
+        chart, data, w = _area_chart(
+            n, width=card_width, color="series", multiples_columns="facet"
+        )
         resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE, width=w)
         stroke_facet = resolved.style.line_mark.stroke.width
 

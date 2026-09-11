@@ -811,7 +811,7 @@ def test_non_compacting_ladder_bakes_tick_label_when_format_is_an_authored_alias
     gate so an alias-sourced SI format bakes plain digits below the
     compaction threshold exactly like the unauthored theme default does.
     Reproduces the bug report's ``hero_bookings`` case: an 8,000-topping
-    ladder authored via ``currency`` must write ``$0, $2,000, ...``,
+    ladder authored via ``currency`` must write ``0, $2,000, ...``,
     not stay permanently SI-compacted.
     """
     ay_merged = _merged_axis_y()
@@ -840,6 +840,32 @@ def test_non_compacting_ladder_bakes_tick_label_when_format_is_an_authored_alias
     assert ay.tick_label.prefix + d3_format_apply(ay.tick_label.format, 8_000.0) == (
         "$8,000"
     )
+
+
+def test_non_compacting_ladder_bakes_tick_label_repeat_when_not_column_forming():
+    """A horizontal bar's measure axis (``column_forming=False``) has no
+    vertical digit column for an anchor-only prefix to disambiguate against
+    -- ``anchor_at_start_plain`` stays unset (``None``) even though the
+    format carries a currency prefix, mirroring ``_build_ruler``'s
+    ``effective_mode`` override (``scale.py``) for the same orientation.
+    """
+    ay_merged = _merged_axis_y()
+    ay_currency = ay_merged.model_copy(
+        update={"labels": ay_merged.labels.model_copy(update={"format": "$~s"})}
+    )
+    ticks = (0.0, 2_000.0, 4_000.0, 6_000.0, 8_000.0)
+    ay = build_resolved_axis(
+        ay_currency,
+        tick_values=ticks,
+        format_authored=True,
+        format_is_alias=True,
+        column_forming=False,
+        chart_id="test",
+    )
+    assert ay.ruler is None
+    assert ay.tick_label.format == ",.0~f"
+    assert ay.tick_label.prefix == "$"
+    assert ay.tick_label.anchor_at_start is None
 
 
 def test_non_compacting_ladder_leaves_a_literal_authored_format_untouched():
@@ -889,10 +915,12 @@ def test_end_to_end_authored_alias_bakes_plain_digits_through_real_resolve():
     production resolve() pipeline, not just the isolated
     ``build_resolved_axis`` call above.
 
-    The stark theme puts the y-axis on the LEFT edge (end-anchored). The
-    prefix IS split out (anchor-only) -- text-anchor=end provides automatic
-    place-value alignment without padding, but the prefix still anchors so
-    ``$8,000 / 6,000 / ...`` renders instead of ``$8,000 / $6,000 / ...``.
+    A string x column ("month") makes this bar resolve to horizontal
+    orientation (``_bar_orientation``), so its measure axis renders on VL's
+    x channel and is non-column-forming -- the prefix repeats on every tick
+    (``anchor_at_start is None``) rather than baking an anchor-only bool.
+    See ``test_end_to_end_authored_alias_right_edge_splits_prefix`` for the
+    column-forming companion (a LineChart, whose y-axis is always vertical).
     """
 
     board = resolve_chart_style_context(get_theme_style())
@@ -904,10 +932,10 @@ def test_end_to_end_authored_alias_bakes_plain_digits_through_real_resolve():
     ay = resolved.style.axis_y
     assert ay.labels.format == "$.3~s"
     assert ay.ruler is None
-    # Left-edge (end-anchored): prefix is split out, digit spec is in tick_label.format.
     assert ay.tick_label.format == ",.0~f"
     assert ay.tick_label.prefix == "$"
-    assert ay.tick_label.anchor_at_start is not None
+    # Non-column-forming: repeat mode, not an anchor-only bool.
+    assert ay.tick_label.anchor_at_start is None
     assert d3_format_apply(ay.tick_label.format, 8_000.0) == "8,000"
 
 

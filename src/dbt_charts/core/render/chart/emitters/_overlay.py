@@ -59,6 +59,7 @@ from dbt_charts.core.render.chart.emitters._tooltip import (
     TooltipField,
     build_structured_tooltip_expr,
     header_tooltip_field,
+    series_row_promoted,
 )
 from dbt_charts.core.render.chart.features.value_labels import (
     BandLabelAnchor,
@@ -733,7 +734,12 @@ def _layer_series_color(layer: ResolvedLayer) -> str | None:
 
 
 def _layer_tooltip_description(
-    x_enc: VLDict, rows: list[_Row], y_field: str, label: str, tooltip_format: str
+    x_enc: VLDict,
+    rows: list[_Row],
+    y_field: str,
+    label: str,
+    tooltip_format: str,
+    color_field: str | None,
 ) -> str:
     """Build this overlay layer's own structured-tooltip description expr.
 
@@ -755,12 +761,21 @@ def _layer_tooltip_description(
     own ``title`` is never rendered (bare-value header rows drop the field
     label), so an absent x carries no title to look up either.
 
-    Series: the layer's own label (``literal=True`` — a Python-side label
-    cascade result, not a query column) as a bare, swatched identity row. This
-    is what makes the overlay row's own (header, series) dedup key DISTINCT
-    from the base's own mark(s) — without it, a single-series base (no series
-    row of its own) and this overlay would collide on the same dedup key and
-    ``collectMatchingMarks`` would silently drop one of them.
+    Series: when this layer's own ``color:`` field distinguishes rows
+    (cardinality > 1, ``series_row_promoted``), the identity is read
+    per-datum off that field — mirroring how the base chart's own
+    structured tooltip promotes a bound color channel
+    (``features/structured_tooltip.py``) — so each mark in a multi-series
+    overlay layer carries its own distinct series value. The per-datum value
+    is prefixed with the layer's own label (``TooltipField.prefix``):
+    without it, an overlay layer sharing the base's OWN ``color:`` field
+    would render the identical bare value the base's own promoted series row
+    already emits, colliding on ``collectMatchingMarks``'s dedup key and
+    dropping the base's or the overlay's row for that category. Otherwise
+    (no promoted color) this falls back to the layer's own label
+    (``literal=True`` — a Python-side label cascade result, not a query
+    column) as a bare, swatched identity row — what keeps a single-series
+    base (no series row of its own) from colliding with this overlay.
 
     No total: an overlay reference (a different unit/series than the base's
     own commensurable parts) is never folded into the base's own group-total
@@ -770,7 +785,12 @@ def _layer_tooltip_description(
     header: tuple[TooltipField, ...] = ()
     if "field" in x_enc:
         header = (header_tooltip_field(x_enc["field"], "", rows),)
-    series = (TooltipField(label, label, literal=True),)
+    if color_field is not None and series_row_promoted(color_field, rows):
+        series = (
+            TooltipField(color_field, color_field, kind="nominal", prefix=f"{label}: "),
+        )
+    else:
+        series = (TooltipField(label, label, literal=True),)
     values = [TooltipField(y_field, label, kind="quantitative", format=tooltip_format)]
     return build_structured_tooltip_expr("line", header, series, values)
 
@@ -1516,7 +1536,12 @@ def render_cartesian_overlay(
         # stamps `.tooltip_description` when this is truthy.
         layer_tooltip_description = (
             _layer_tooltip_description(
-                layer_x_enc, rows_for_layer, y_field, label, layer_value_format
+                layer_x_enc,
+                rows_for_layer,
+                y_field,
+                label,
+                layer_value_format,
+                layer.color,
             )
             if base_mark_type in _STRUCTURED_TOOLTIP_BASE_FAMILIES
             else ""

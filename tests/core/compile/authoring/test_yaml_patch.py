@@ -849,9 +849,14 @@ class TestASequenceSeparatedFromItsKey:
         assert "# keep me" in set_board_values(board, {"rows.0.title": "B"})
 
     def test_but_the_leaf_still_refuses_to_claim_across_the_gap(self) -> None:
-        """The markdown hazard is the leaf branch's, and it stays closed."""
+        """The markdown hazard is the leaf branch's, and it stays closed.
+
+        Matches the key the self-check names explicitly, not whatever the
+        underlying YAML parser's error text happens to mention — libyaml and
+        the pure-Python scanner word this differently.
+        """
         board = "rows:\n# a comment\n- a\n- b\n"
-        with pytest.raises(ValueError, match=r"rows"):
+        with pytest.raises(ValueError, match=r"editing rows"):
             set_board_values(board, {"rows": ["x"]})
 
 

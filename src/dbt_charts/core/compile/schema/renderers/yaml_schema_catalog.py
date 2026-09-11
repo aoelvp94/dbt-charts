@@ -34,12 +34,21 @@ class _SchemaResource(Protocol):
 
 @dataclass(frozen=True)
 class YamlSchemaEntry:
-    """One immutable board-YAML grammar snapshot."""
+    """One board-YAML grammar snapshot: a frozen release, or the live DEV entry.
+
+    ``status`` has no default -- see ``load_yaml_schema_catalog_from`` for why
+    every entry must name it explicitly. A ``RELEASED`` entry always has
+    ``released_at``/``filename``/``sha256`` set; the single ``DEV`` entry
+    always has them null, since it names a version that has not shipped yet
+    and whose schema is not written to disk (``schema_for`` resolves it to
+    the live Pydantic-generated schema instead).
+    """
 
     version: str
-    released_at: date
-    filename: str
-    sha256: str
+    status: Literal["RELEASED", "DEV"]
+    released_at: date | None
+    filename: str | None
+    sha256: str | None
     predecessor: str | Literal[None]
 
     @classmethod
@@ -51,16 +60,18 @@ class YamlSchemaEntry:
             )
         return cls(
             version=_manifest_string(value, "version"),
-            released_at=_manifest_date(value, "released_at"),
-            filename=_manifest_string(value, "file"),
-            sha256=_manifest_string(value, "sha256"),
+            status=_manifest_status(value),
+            released_at=_manifest_optional_date(value, "released_at"),
+            filename=_manifest_optional_string(value, "file"),
+            sha256=_manifest_optional_string(value, "sha256"),
             predecessor=predecessor,
         )
 
     def as_json(self) -> JsonObject:
         return {
             "version": self.version,
-            "released_at": self.released_at.isoformat(),
+            "status": self.status,
+            "released_at": self.released_at.isoformat() if self.released_at else None,
             "file": self.filename,
             "sha256": self.sha256,
             "predecessor": self.predecessor,
@@ -76,6 +87,10 @@ class YamlSchemaCatalog:
     latest frozen snapshot when unreleased model changes are in flight.  Use it wherever
     "what does the current grammar accept?" is the question (recognition, migration
     target check), not "what does a specific release accept?"
+
+    The newest entry (``entries[0]``) is always the single ``DEV`` entry --
+    named for the predicted next minor version, with ``schema_for`` resolving
+    it to ``current_schema``. Every other entry is ``RELEASED``.
     """
 
     entries: tuple[YamlSchemaEntry, ...]
@@ -83,8 +98,18 @@ class YamlSchemaCatalog:
     current_schema: JsonObject
 
     @property
-    def latest(self) -> YamlSchemaEntry:
-        return self.entries[0]
+    def dev(self) -> YamlSchemaEntry:
+        for entry in self.entries:
+            if entry.status == "DEV":
+                return entry
+        raise ValueError("dbt charts YAML schema catalog has no DEV entry.")
+
+    @property
+    def latest_released(self) -> YamlSchemaEntry:
+        for entry in self.entries:
+            if entry.status == "RELEASED":
+                return entry
+        raise ValueError("dbt charts YAML schema catalog has no RELEASED entry.")
 
     @property
     def versions(self) -> tuple[str, ...]:
@@ -101,13 +126,42 @@ def _manifest_string(value: JsonObject, key: str) -> str:
     return result
 
 
-def _manifest_date(value: JsonObject, key: str) -> date:
+def _manifest_optional_string(value: JsonObject, key: str) -> str | None:
+    result = value.get(key)
+    if result is None:
+        return None
+    if not isinstance(result, str):
+        raise ValueError(
+            f"dbt charts YAML schema manifest {key} must be a string or null."
+        )
+    return result
+
+
+def _manifest_optional_date(value: JsonObject, key: str) -> date | None:
+    result = value.get(key)
+    if result is None:
+        return None
+    if not isinstance(result, str):
+        raise ValueError(
+            f"dbt charts YAML schema manifest {key} must be an ISO date or null."
+        )
     try:
-        return date.fromisoformat(_manifest_string(value, key))
+        return date.fromisoformat(result)
     except ValueError as error:
         raise ValueError(
             f"dbt charts YAML schema manifest {key} must be an ISO date."
         ) from error
+
+
+def _manifest_status(value: JsonObject) -> Literal["RELEASED", "DEV"]:
+    result = value.get("status")
+    if result == "RELEASED":
+        return "RELEASED"
+    if result == "DEV":
+        return "DEV"
+    raise ValueError(
+        'dbt charts YAML schema manifest status must be "RELEASED" or "DEV".'
+    )
 
 
 _DOTTED_VERSION_RE = re.compile(r"^(\d{1,9})\.(\d{1,9})\.(\d{1,9})\Z", re.ASCII)
@@ -132,6 +186,23 @@ def parse_dotted_version(value: str) -> tuple[int, int, int] | None:
     if match is None:
         return None
     return (int(match[1]), int(match[2]), int(match[3]))
+
+
+def next_minor(version: str) -> str:
+    """Return the next minor version: ``X.Y.Z`` -> ``X.(Y+1).0``.
+
+    Names a manifest's DEV entry after the release it is predicted to ship
+    in -- one minor ahead of whatever version it currently follows. Raises
+    on a malformed version rather than guessing; callers always hold a real
+    manifest version here, never untrusted input.
+    """
+    parsed = parse_dotted_version(version)
+    if parsed is None:
+        raise ValueError(
+            f"dbt charts version must be MAJOR.MINOR.PATCH, got {version!r}."
+        )
+    major, minor, _patch = parsed
+    return f"{major}.{minor + 1}.0"
 
 
 def canonical_schema_bytes(schema: JsonObject) -> bytes:
@@ -171,6 +242,35 @@ def load_yaml_schema_catalog_from(
     if len({entry.version for entry in entries}) != len(entries):
         raise ValueError("dbt charts YAML schema manifest has duplicate versions.")
 
+    dev_count = sum(1 for entry in entries if entry.status == "DEV")
+    if dev_count != 1:
+        raise ValueError(
+            "dbt charts YAML schema manifest must have exactly one DEV entry, "
+            f"found {dev_count}."
+        )
+    if entries[-1].status != "DEV":
+        raise ValueError(
+            "dbt charts YAML schema manifest DEV entry must be the newest entry."
+        )
+    previous_version_key: tuple[int, int, int] | None = None
+    previous_entry_version: str | None = None
+    for entry in entries:
+        version_key = parse_dotted_version(entry.version)
+        if version_key is None:
+            raise ValueError(
+                f"dbt charts YAML schema manifest entry {entry.version!r} must "
+                "be MAJOR.MINOR.PATCH."
+            )
+        if previous_version_key is not None and version_key <= previous_version_key:
+            label = "DEV entry" if entry.status == "DEV" else "entry"
+            raise ValueError(
+                f"dbt charts YAML schema manifest {label} {entry.version} must "
+                f"be numerically newer than {previous_entry_version}."
+            )
+        previous_version_key = version_key
+        previous_entry_version = entry.version
+
+    current_schema = _compute_current_schema()
     schemas: dict[str, JsonObject] = {}
     predecessor: str | Literal[None] = None
     previous_date: date | Literal[None] = None
@@ -180,28 +280,48 @@ def load_yaml_schema_catalog_from(
                 f"dbt charts YAML schema {entry.version} has predecessor "
                 f"{entry.predecessor!r}, expected {predecessor!r}."
             )
-        if previous_date is not None and entry.released_at < previous_date:
-            raise ValueError(
-                "dbt charts YAML schema manifest release dates must be chronological."
-            )
-        contents = directory.joinpath(entry.filename).read_bytes()
-        digest = hashlib.sha256(contents).hexdigest()
-        if digest != entry.sha256:
-            raise ValueError(
-                f"dbt charts YAML schema {entry.filename} sha256 does not match its manifest."
-            )
-        schema: JsonValue = json.loads(contents)
-        if not isinstance(schema, dict):
-            raise ValueError(
-                f"dbt charts YAML schema {entry.filename} must be an object."
-            )
-        schemas[entry.version] = schema
+        if entry.status == "DEV":
+            if (
+                entry.released_at is not None
+                or entry.filename is not None
+                or entry.sha256 is not None
+            ):
+                raise ValueError(
+                    f"dbt charts YAML schema DEV entry {entry.version} must not "
+                    "set released_at, file, or sha256."
+                )
+            schemas[entry.version] = current_schema
+        else:
+            if (
+                entry.released_at is None
+                or entry.filename is None
+                or entry.sha256 is None
+            ):
+                raise ValueError(
+                    f"dbt charts YAML schema {entry.version} is RELEASED and must "
+                    "set released_at, file, and sha256."
+                )
+            if previous_date is not None and entry.released_at < previous_date:
+                raise ValueError(
+                    "dbt charts YAML schema manifest release dates must be chronological."
+                )
+            contents = directory.joinpath(entry.filename).read_bytes()
+            digest = hashlib.sha256(contents).hexdigest()
+            if digest != entry.sha256:
+                raise ValueError(
+                    f"dbt charts YAML schema {entry.filename} sha256 does not "
+                    "match its manifest."
+                )
+            schema: JsonValue = json.loads(contents)
+            if not isinstance(schema, dict):
+                raise ValueError(
+                    f"dbt charts YAML schema {entry.filename} must be an object."
+                )
+            schemas[entry.version] = schema
+            previous_date = entry.released_at
         predecessor = entry.version
-        previous_date = entry.released_at
 
-    return YamlSchemaCatalog(
-        tuple(reversed(entries)), schemas, _compute_current_schema()
-    )
+    return YamlSchemaCatalog(tuple(reversed(entries)), schemas, current_schema)
 
 
 def _compute_current_schema() -> JsonObject:

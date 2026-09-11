@@ -221,12 +221,12 @@ Changes in this release:
 
   ``gap`` was removed from GridLayout for the same reason (the normalized value
   is discarded at resolve, which reads ``style.layout.grid.gap`` instead) but is
-  not expressible as a ``Deletion``: the ``("grid", "gap")`` tail still matches
-  the live ``style.layout.grid.gap``, so the registry rejects it and applying it
-  would strip the working style key. Removed fail-loud instead — the parser
-  raises an unknown-field error hinting at ``style.layout.grid.gap``, which is
-  the better outcome anyway, since unlike the other three this key has a
-  replacement to point at and the enum → pixel mapping is not lossless.
+  fail-loud: the parser raises an unknown-field error hinting at
+  ``style.layout.grid.gap``. Declarable but unconverted — the tail also matches
+  that live key, so it is legal only root-anchored (``_validate``'s
+  ``retired_at_root``), with ``_live_declares_tail`` holding the firing off the
+  layout slot. The enum → pixel mapping is not lossless either way, so the
+  successor is a hint rather than a value a migration could carry over.
 
 - ``width``/``color``/``dash_array``/``line_cap``/``dash_offset`` removed from
   four ``border:`` slots that typed the full ``BorderStyle`` but whose renderer
@@ -248,7 +248,8 @@ Changes in this release:
   Patch class as the board-level ``style.charts.spark_bar.border`` slot but has
   no ``spark_bar`` segment in its own path, so it cannot be slot-qualified
   without also matching every other chart-local ``style.border.<field>``.
-  Removed fail-loud instead, same as ``grid.gap`` above.
+  Fail-loud, and declarable but unconverted like ``grid.gap`` above:
+  ``chart_type="spark_bar"`` is the scope it needs.
 
 - KPI text styling reconciliation (task: kpi-text-styling-style-color-is-a-
   family-outlier-tones-live-in-the-wrong-family-and-align-is-hardcoded).
@@ -303,25 +304,22 @@ Changes in this release:
     ``tones:`` by hand. ``test_kpi_tones_style_migration.py`` pins all of
     these outcomes.
   - ``kpi.style.color`` (the family's sole bare-string ``color`` — every
-    other family types ``style.color`` as an object) is deleted, **not**
-    declared as a ``Deletion``. Same ``GridLayout.gap`` situation as above:
-    the tail — ``("style", "color")`` / ``("color",)`` — still matches the
-    live ``style.color`` on bar, line, area, scatter, heatmap, pie, table,
-    and geo, so registering it would strip the working key from every one of
-    those families. Removed fail-loud instead: an authored ``kpi.style.color``
-    now raises ``extra_forbidden`` naming the offending path. That is a better
-    outcome than a silent Deletion that strips the key from eight other
-    families — but note the error names what was authored, not the
-    ``style.value.font.color`` replacement.
+    other family types ``style.color`` as an object) is a ``Deletion`` scoped
+    to ``chart_type="kpi"`` (``DELETED_CHART_FAMILY_TAILS``). The tail
+    ``("style", "color")`` still matches the live ``style.color`` on bar,
+    line, area, scatter, heatmap, pie, table, and geo, so the scope is what
+    makes the declaration legal; ``_live_declares_tail`` is what keeps the
+    walk off those families' working keys. It carries a ``reason`` naming the
+    ``style.value.font.color`` replacement, since the value is dropped rather
+    than relocated (``font.color`` is live, so redirecting a bare kpi color
+    onto it would change the render rather than preserve it).
 
     The theme-level ``style.charts.kpi.color`` (a *different* field —
     ``KpiChartStylePatch.color`` in 0.5.0, not the chart-root sugar above) is
-    also removed and also not a ``Deletion``, but for a different reason: its
-    tail collides with nothing live, so a ``Deletion`` here would silently
-    drop a real theme color override rather than surface it — the same
-    silent-data-loss risk a ``Move`` with no value transform would have.
-    Failing loud (``extra_forbidden``, no migration) is consistent with the
-    chart-level case above rather than a gap in it.
+    a plain ``Deletion`` in ``DELETED_TAILS``, anchored at ``charts``: its
+    tail collides with nothing live. It is not an inert key — it painted the
+    value text — so it carries a ``reason`` naming both the successor and the
+    fact that the board's kpi text changes color until an author moves it.
 
 - ``font``/``border`` removed from the seven board-level chart-family style
   slots that have no per-chart card to paint them onto: ``charts.bar``,
@@ -349,10 +347,11 @@ Changes in this release:
   classes but has no family segment in its own path, so the only available
   tails are ``("style", "font")`` and ``("style", "border")`` — both still
   live (the board-frame ``style.border``, and ``style.font`` on kpi/table/
-  callout), so the registry rejects them and applying either would strip a
-  working key. Removed fail-loud instead, same as ``grid.gap`` and the
-  spark_bar chart-local border above: the parser raises an unknown-field error
-  naming the field and saying it is unsupported on that chart family.
+  callout). Fail-loud, and declarable but unconverted like ``grid.gap`` and the
+  spark_bar chart-local border above: per-family ``chart_type`` scoping is what
+  confines these — the gate never sees them, since the ``type:`` check short-
+  circuits first. The parser raises an unknown-field error naming the field and
+  saying it is unsupported on that chart family.
 
 - ``axis_quantitative`` removed from heatmap's per-family style surface (task:
   surface-accepts-axis-fields-a-family-cannot-honor). Heatmap's axes are both
@@ -369,14 +368,14 @@ Changes in this release:
   ``style.charts.<family>.axis_quantitative`` slot on the five other
   cartesian families). Auto-stripped by ``dct migrate``.
 
-  The **chart-level** slot (``charts.<id>.style.axis_quantitative``) cannot
-  be expressed the same way, same ``kpi.style.color`` situation as above:
-  it shares the narrowed per-family Patch class but carries no family segment
-  of its own, so the only available tail — ``("style", "axis_quantitative")``
-  — still matches every other cartesian family's live chart-local override.
-  Removed fail-loud instead: the parser raises an unknown-field error naming
-  ``axis_band`` as the field to use instead, since (unlike a plain removal)
-  there is a real replacement for an author to reach for.
+  The **chart-level** slot (``charts.<id>.style.axis_quantitative``) carries
+  no family segment of its own, so its only available tail — ``("style",
+  "axis_quantitative")`` — still matches every other cartesian family's live
+  chart-local override. Same shape as ``kpi.style.color`` above and declared
+  the same way: ``chart_type="heatmap"`` in ``DELETED_CHART_FAMILY_TAILS``,
+  with a ``reason`` naming ``axis_band``, the field an author reaches for
+  instead. The parser's unknown-field hint for the position stays — it is
+  what an author sees where migration cannot finish.
 
 - ``description:`` renamed to ``notes:`` on every object that carried
   non-rendering prose — board, chart (every family that carried it;
@@ -552,8 +551,8 @@ THEME_RENAMES: dict[MappedScalar, MappedScalar] = {
 # positional gate that fires it (`move_source_locations`) only checks that the
 # `theme` key is present, never what value it holds. A board already authoring
 # a *current* name (`theme: vivid`) is normally never routed through this Move
-# at all -- `_recognize` short-circuits to `current` before checking any
-# transition once the whole document already validates. But a board carrying
+# at all -- `_recognize` short-circuits to the DEV version before checking
+# any transition once the whole document already validates. But a board carrying
 # `theme: vivid` *and* some unrelated retired construct (an old `data_table:`,
 # say) is recognized at the "0.5.0" boundary for that unrelated reason, and
 # every Move declared for that boundary runs, this one included. Without an
@@ -625,11 +624,27 @@ DELETED_TAILS: tuple[YamlKeyPath, ...] = (
     ("charts", "heatmap", "border"),
     ("charts", "pie", "font"),
     ("charts", "pie", "border"),
-    # Theme-level style.charts.heatmap.axis_quantitative — heatmap has no
+    # Theme-level style.charts.heatmap.axis_quantitative -- heatmap has no
     # quantitative axis (both axes are nominal). Anchored at `charts` so the
     # tail can't also strip the live style.charts.<family>.axis_quantitative
     # slot on the five other cartesian families (see the module docstring).
     ("charts", "heatmap", "axis_quantitative"),
+    # Theme-level style.charts.kpi.color — KpiChartStylePatch.color, the
+    # family's own slot, not the chart-root sugar below. Anchored at
+    # ``charts`` for the same reason as the tails above.
+    ("charts", "kpi", "color"),
+)
+
+# Tails retired on one chart family while a same-named sibling stays live on
+# the others. `Deletion.chart_type` scopes the declaration; `_live_declares_tail`
+# is what stops the walk stripping the families that kept theirs.
+DELETED_CHART_FAMILY_TAILS: tuple[tuple[YamlKeyPath, str], ...] = (
+    # kpi's sole bare-string `color` — every other family types style.color as
+    # an object. Replaced by style.value.font.color.
+    (("style", "color"), "kpi"),
+    # heatmap has no quantitative axis (both are nominal); the five other
+    # cartesian families keep their chart-local override.
+    (("style", "axis_quantitative"), "heatmap"),
 )
 
 # KpiTonesStyle moved from charts.kpi.tones to board-level tones, shared with
@@ -727,6 +742,30 @@ def _card_style_deletion_reason(tail: YamlKeyPath) -> str | None:
     )
 
 
+_RETIRED_PAINT_REASONS: dict[YamlKeyPath, str] = {
+    ("style", "color"): (
+        "kpi's style.color is gone; style.value.font.color paints the value "
+        "text instead. Every other chart family keeps its own style.color, "
+        "which types as an object rather than a bare color string."
+    ),
+    ("style", "axis_quantitative"): (
+        "heatmap has no quantitative axis to style: both of its axes are "
+        "nominal, and the magnitude lives on the color channel. Use "
+        "style.axis_band for the axes it does have."
+    ),
+    ("charts", "heatmap", "axis_quantitative"): (
+        "heatmap has no quantitative axis to style: both of its axes are "
+        "nominal. Use style.charts.heatmap.axis_band for the axes it does "
+        "have."
+    ),
+    ("charts", "kpi", "color"): (
+        "style.charts.kpi.color is gone; style.charts.kpi.value.font.color "
+        "paints the value text instead. This was a real theme override, so "
+        "the board's kpi text takes its inherited color until you move it."
+    ),
+}
+
+
 def deletions(
     source_schema: str, target_schema: str, *, catalog: YamlSchemaCatalog
 ) -> tuple[Deletion, ...]:
@@ -736,7 +775,17 @@ def deletions(
             source_schema,
             target_schema,
             tail,
-            reason=_card_style_deletion_reason(tail),
+            reason=_card_style_deletion_reason(tail)
+            or _RETIRED_PAINT_REASONS.get(tail),
         )
         for tail in DELETED_TAILS
+    ) + tuple(
+        Deletion(
+            source_schema,
+            target_schema,
+            tail,
+            reason=_RETIRED_PAINT_REASONS[tail],
+            chart_type=chart_type,
+        )
+        for tail, chart_type in DELETED_CHART_FAMILY_TAILS
     )

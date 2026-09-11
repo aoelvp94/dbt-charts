@@ -84,6 +84,8 @@ Comments in this package are about this library only — never about how it is h
 
 **Render-layer invariants live in `src/dbt_charts/core/render/chart/AGENTS.md`** — re-read its `## Implementation philosophy` before adding anything to the render layer that touches data shape.
 
+**Board text is parsed by libyaml's `CSafeLoader`, and only by it.** `core/utils.py`'s `YAML_LOADER` is the one loader every parse of board text in this library goes through (`UniqueKeyLoader`, the source map, the error formatter, authoring edits, the serve-time alias index, `agent_api`'s listings). The two scanners do not accept the same language, so a `yaml.safe_load` on board text anywhere is a bug, not a style choice. A PyYAML build without libyaml is unsupported: `core/utils.py` raises `ImportError` with the install hint, never a silent fallback to the pure-Python scanner. The loader also refuses text nested past `MAX_YAML_NESTING` before composing it: libyaml's C composer segfaults at ~25k levels rather than raising, and no caller can catch that.
+
 **Don't pin theme/default values in tests.** Theme values (`page_canvas == "#fafafa"`, `bar.size == 20`, `compiled_style.border.radius == 8`) and chart defaults are tunable. Patterns like `assert page_canvas == "#fafafa"` fail on any legitimate default tweak and add zero signal beyond what existing behavior tests catch. Test structure, presence, behavior under override, and pipeline correctness instead.
 
 **Also don't assert deletion or absence of Python symbols.** `assert not hasattr(...)`, source-grep for removed functions — that's testing Python, not our logic.
@@ -164,3 +166,5 @@ Two surfaces, two conventions — keep them straight:
 ### Authoring a product skill
 
 Skills carry `kind: workflow | pattern` frontmatter and follow an `<object>-<action>` naming standard; shared surface names are macro-expanded from `agent_api/surface_aliases.yaml` (`{{ s_X }}`). Read an existing skill in `dbt_charts/ai/skills/` before adding one.
+
+Source directory names, frontmatter `name:`, and the registry all stay bare (`board-build`, `troubleshooting`). `dct init skills` namespaces a file-installed copy under a `dct-` prefix (`dct-board-build/`) so it never collides with a project's or another tool's skills — that prefix exists only there, never in the source tree, Cloud's slash commands, or MCP `get_skill`. Full authoring detail (the `s_skill_name_*` bare-name macro family, the naming standard): `docs/contributing/product-skills-authoring.md`.

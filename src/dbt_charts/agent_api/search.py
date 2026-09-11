@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from dbt_charts.agent_api.boards import board_declaring_keys
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.project import CHARTS_SUBDIR, Project, posix_relpath
+from dbt_charts.core.utils import YAML_LOADER
 
 MAX_SEARCH_LIMIT = 50
 #: Cap on named chart-title match reasons per hit — keeps match_reasons compact.
@@ -234,7 +235,7 @@ def _build_index(project: Project, under: str) -> list[dict[str, Any]]:
         if not pf.is_yaml or pf.is_meta:
             continue
         try:
-            content = yaml.safe_load(pf.read_text())
+            content = yaml.load(pf.read_text(), Loader=YAML_LOADER)
         except (yaml.YAMLError, OSError):
             continue
         if not isinstance(content, dict):

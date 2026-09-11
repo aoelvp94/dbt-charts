@@ -62,7 +62,11 @@ from dbt_charts.core.render.chart.title_overflow import (
     resolve_title_overflow,
 )
 from dbt_charts.core.render.format_utils import format_kpi_parts
-from dbt_charts.core.render.svg_utils import authored_kind_attr, border_dash_attrs
+from dbt_charts.core.render.svg_utils import (
+    authored_kind_attr,
+    border_dash_attrs,
+    card_box,
+)
 from dbt_charts.core.render.utils import resolve_tone_color
 from dbt_charts.core.utils import coerce_numeric_cell
 
@@ -441,13 +445,18 @@ def _resolve_support_weight(kpi_config: Any) -> str | None:
 
 
 def _emit_card_chrome(
-    palette: _KpiColors, kpi_config: Any, w: float, h: float
+    palette: _KpiColors,
+    kpi_config: KpiChartStyle,
+    w: float,
+    h: float,
+    inset: dict[str, float] | None,
 ) -> str | None:
     """Emit the card background rect, or ``None`` when no chrome to draw."""
     if palette.card_fill is None and palette.border_color is None:
         return None
+    x, y, w, h = card_box(w, h, inset)
     rect = (
-        f'<rect x="0" y="0" width="{w}" height="{h}" '
+        f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" '
         f'rx="{kpi_config.border.radius:g}" '
         f'fill="{palette.card_fill or "none"}"'
     )
@@ -834,6 +843,7 @@ def _render_kpi_svg_core(
     width: float | None,
     height: float | None,
     data: ChartRenderData,
+    inset: dict[str, float] | None,
 ) -> str:
     """Mechanical KPI SVG assembly.
 
@@ -939,6 +949,7 @@ def _render_kpi_svg_core(
             body_font_family=body_font_family,
             kpi_config=kpi_config,
             layout=layout,
+            inset=inset,
         )
     if chart.variant == "compact":
         return _emit_kpi_compact(
@@ -955,6 +966,7 @@ def _render_kpi_svg_core(
             value_font_family=value_font_family,
             body_font_family=body_font_family,
             kpi_config=kpi_config,
+            inset=inset,
         )
     return _emit_kpi_stacked(
         chart=chart,
@@ -968,6 +980,7 @@ def _render_kpi_svg_core(
         value_font_family=value_font_family,
         body_font_family=body_font_family,
         kpi_config=kpi_config,
+        inset=inset,
     )
 
 
@@ -978,6 +991,7 @@ def render_kpi_svg(
     height: float | None = None,
     *,
     board_style: ResolvedStyle,
+    inset: dict[str, float] | None = None,
 ) -> str:
     """Render a KPI from the typed ``ResolvedKpiChart`` model.
 
@@ -1012,6 +1026,7 @@ def render_kpi_svg(
         width=width,
         height=height,
         data=data,
+        inset=inset,
     )
 
 
@@ -1027,13 +1042,14 @@ def _emit_kpi_stacked(
     value_font_family: str,
     body_font_family: str,
     kpi_config: KpiChartStyle,
+    inset: dict[str, float] | None,
 ) -> str:
     """Mechanical SVG assembly given pre-resolved layout/palette/support."""
     from dbt_charts.core.font_measure import get_font_measurer  # noqa: PLC0415
 
     parts: list[str] = []
 
-    chrome = _emit_card_chrome(palette, kpi_config, layout.width, layout.height)
+    chrome = _emit_card_chrome(palette, kpi_config, layout.width, layout.height, inset)
     if chrome is not None:
         parts.append(chrome)
 
@@ -1208,6 +1224,7 @@ def _emit_kpi_inline(
     body_font_family: str,
     kpi_config: Any,
     layout: _KpiLayout,
+    inset: dict[str, float] | None,
 ) -> str:
     """Inline variant — value, label, support baseline-aligned on a single row.
 
@@ -1301,10 +1318,11 @@ def _emit_kpi_inline(
             value_font_family=value_font_family,
             body_font_family=body_font_family,
             kpi_config=kpi_config,
+            inset=inset,
         )
 
     parts: list[str] = []
-    chrome = _emit_card_chrome(palette, kpi_config, requested_w, requested_h)
+    chrome = _emit_card_chrome(palette, kpi_config, requested_w, requested_h, inset)
     if chrome is not None:
         parts.append(chrome)
 
@@ -1526,6 +1544,7 @@ def _emit_kpi_compact(
     value_font_family: str,
     body_font_family: str,
     kpi_config: Any,
+    inset: dict[str, float] | None,
 ) -> str:
     """Compact variant — 2-column with bottom right baseline-aligned to value.
 
@@ -1685,7 +1704,7 @@ def _emit_kpi_compact(
     top_baseline = value_baseline - top_line_dy
 
     parts: list[str] = []
-    chrome = _emit_card_chrome(palette, kpi_config, requested_w, requested_h)
+    chrome = _emit_card_chrome(palette, kpi_config, requested_w, requested_h, inset)
     if chrome is not None:
         parts.append(chrome)
 

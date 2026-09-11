@@ -97,6 +97,14 @@ def _measure_role_marks(root: ET.Element) -> list[tuple[str, float, float]]:
     Other mark families (e.g. ``mark-symbol`` hover points on line charts) are
     legitimately opacity=0 in their initial static state and must still be
     counted so their charts are not mistakenly flagged as blank.
+
+    A ``<path>`` carrying no ``d`` at all counts as a zero-extent mark rather
+    than an unmeasurable one. That is the shape vl_convert emits for a line
+    layer whose every datum is null: geometry read exactly, not geometry the
+    measurer failed to read. Abstaining would leave the vote empty, and an
+    empty vote reads as "not degenerate", so a board that painted nothing
+    would report success. Only ``<path>`` is treated this way; ``<g>``/``<a>``
+    wrappers under the same group are containers, not marks.
     """
     marks: list[tuple[str, float, float]] = []
     for node in root.iter():
@@ -108,6 +116,8 @@ def _measure_role_marks(root: ET.Element) -> list[tuple[str, float, float]]:
             if is_rect_group and child.get("opacity") == "0":
                 continue
             box = _path_extent(child)
+            if box is None and child.tag == f"{SVG}path" and child.get("d") is None:
+                box = (0.0, 0.0)
             if box is not None:
                 marks.append((mark_class, box[0], box[1]))
     return marks
@@ -161,6 +171,12 @@ def all_marks_degenerate(svg: str) -> bool:
     measurer has a gap, not evidence the chart is blank. Firing on that would
     replace a healthy render with an error card — worse than staying silent
     for a shape the measurer doesn't yet understand.
+
+    The one exception is a ``<path>`` carrying no ``d`` at all: that is not an
+    unreadable shape but an explicitly empty one (what an all-null line layer
+    emits), so it votes degenerate rather than abstaining. Abstaining left the
+    vote empty, and an empty vote read as "not degenerate" — a blank chart
+    that raised nothing.
     """
     root = ET.fromstring(svg)
     if not any("role-mark" in _str_attr(node, "class") for node in root.iter()):

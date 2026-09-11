@@ -68,6 +68,9 @@ class ErrorCode(str, enum.Enum):
     VALIDATION_FAILED = "validation_failed"
     CONFLICT = "conflict"
     CONNECTION_TEST_FAILED = "connection_test_failed"
+    # Distinct from CONNECTION_TEST_FAILED: a create that hits this keeps the
+    # row it saved, where a real failure discards it (connections/service.py).
+    CONNECTION_TEST_INCONCLUSIVE = "connection_test_inconclusive"
     UNAVAILABLE = "unavailable"
     RATE_LIMITED = "rate_limited"
 

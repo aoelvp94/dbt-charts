@@ -110,7 +110,7 @@ def test_layer_axis_y_label_and_own_label_coexist_and_migrate_independently(
 #: Deliberately absent: a sub-board nested under ``rows``/``cols``/
 #: ``grid.items.*.item`` that declares its own ``charts:`` map
 #: (``rows.*.charts.*.layers.*.axis_y.label``) — see the module docstring in
-#: ``current.py`` for the ``_relative_field_paths`` self-nesting caveat this
+#: ``v0_6_0.py`` for the ``_relative_field_paths`` self-nesting caveat this
 #: shares with ``TONES_RENAMES``/``SUPPORT_TABLE_RENAMES``.
 EXPECTED_AXIS_Y_LABEL_MOVES = (
     "charts.*.layers.*.axis_y.label",

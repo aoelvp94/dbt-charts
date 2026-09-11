@@ -95,13 +95,13 @@ def _read_yaml(path: Path) -> object:
     traceback out of every ``dct cloud`` verb.
     """
     try:
-        return yaml.load(path.read_text(encoding="utf-8"), Loader=_UniqueKeyLoader)  # noqa: S506 — SafeLoader subclass
+        return yaml.load(path.read_text(encoding="utf-8"), Loader=_UniqueKeyLoader)  # noqa: S506 — CSafeLoader subclass
     except (yaml.YAMLError, OSError, UnicodeDecodeError) as exc:
         raise ValueError(f"{path} could not be read as YAML: {exc}") from None
 
 
-class _UniqueKeyLoader(yaml.SafeLoader):
-    """SafeLoader that refuses a repeated mapping key.
+class _UniqueKeyLoader(yaml.CSafeLoader):
+    """CSafeLoader that refuses a repeated mapping key.
 
     PyYAML's default is last-wins, which would let a file with two
     `published_to:` keys read back as fine here while the project loader
@@ -269,7 +269,7 @@ def set_published_to(text: str, url: str) -> str:
 
 def _assert_declares(text: str, url: str) -> None:
     try:
-        parsed = yaml.load(text, Loader=_UniqueKeyLoader)  # noqa: S506 — SafeLoader subclass
+        parsed = yaml.load(text, Loader=_UniqueKeyLoader)  # noqa: S506 — CSafeLoader subclass
     except yaml.YAMLError as exc:
         raise ValueError(
             f"Setting published_to would produce invalid YAML: {exc}"

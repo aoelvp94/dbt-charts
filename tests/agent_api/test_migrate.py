@@ -154,10 +154,20 @@ def test_migrate_paths_surfaces_deletion_reason_for_a_real_board(
         "properties": board_props,
         "additionalProperties": False,
     }
+    dev = "0.3.0"
     catalog = YamlSchemaCatalog(
         entries=(
             YamlSchemaEntry(
+                dev,
+                status="DEV",
+                released_at=None,
+                filename=None,
+                sha256=None,
+                predecessor=v2,
+            ),
+            YamlSchemaEntry(
                 v2,
+                status="RELEASED",
                 released_at=date.today(),
                 filename="v2.json",
                 sha256="t",
@@ -165,13 +175,14 @@ def test_migrate_paths_surfaces_deletion_reason_for_a_real_board(
             ),
             YamlSchemaEntry(
                 v1,
+                status="RELEASED",
                 released_at=date.today(),
                 filename="v1.json",
                 sha256="t",
                 predecessor=None,
             ),
         ),
-        _schemas={v1: v1_schema, v2: v2_schema},
+        _schemas={v1: v1_schema, v2: v2_schema, dev: v2_schema},
         current_schema=v2_schema,
     )
     reason = (

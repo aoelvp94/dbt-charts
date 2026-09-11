@@ -59,6 +59,10 @@ def _monthly_data() -> list[dict]:
     return [{"month": f"2024-{m:02d}-01", "revenue": m * 100} for m in range(1, 13)]
 
 
+def _quarterly_data() -> list[dict]:
+    return [{"month": f"2024-{m:02d}-01", "revenue": m * 100} for m in (1, 4, 7, 10)]
+
+
 def _sparse_monthly_data() -> list[dict]:
     # Jan, Feb, May — gaps in Mar/Apr
     return [
@@ -105,10 +109,12 @@ class TestDefaultOrdinalForBucketedTime:
         assert x_enc.get("timeUnit") == "utcyearmonth"
 
     def test_explicit_time_unit_override_yearquarter(self) -> None:
-        # Explicit yearquarter → still ordinal by default (no timeUnit in encoding)
+        # Explicit yearquarter → still ordinal by default (no timeUnit in encoding).
+        # Quarter-grained rows: three months in one quarter is a bucket
+        # collision, not one point per bucket.
         style = BarChartStylePatch(axis_x=AxisXStylePatch(time_unit="yearquarter"))
         chart = _bar(style=style)
-        data = _monthly_data()
+        data = _quarterly_data()
         resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
         spec = render_resolved_chart(resolved, data, _BOARD_RS).payload
 

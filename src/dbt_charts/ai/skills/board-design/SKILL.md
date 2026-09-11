@@ -5,7 +5,7 @@ description: >
   Design principles for at-a-glance dbt charts boards: chart selection, information
   hierarchy, layout, color, dashboard vs report. Use for 'what chart type', 'how
   should I lay this out', 'dashboard design'. Do NOT use for narrative analyses
-  (report-design) or the build-test-iterate cycle (board-build).
+  ({{ s_skill_name_design_report }}) or the build-test-iterate cycle ({{ s_skill_name_build }}).
 metadata:
   author: fivetran
 ---
@@ -34,7 +34,7 @@ then build what they asked for.
 | **Charts** | Primary content | Supporting evidence for the narrative |
 | **Interaction** | Scan in seconds | Read in minutes |
 
-If the user needs a narrative analysis, use the `report-design` skill instead.
+If the user needs a narrative analysis, use the `{{ s_skill_name_design_report }}` skill instead.
 
 ## Core Principles
 

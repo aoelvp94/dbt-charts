@@ -9,7 +9,7 @@ description: >
   dashboard', 'check this board', 'is this YAML well-shaped', 'find problems in
   this dashboard', or after editing a board before delivery. Cheap — no
   rendering, no PNG, no LLM judge in the loop. Do NOT use for visual problems
-  that need to be seen (use board-visual-review). Do NOT use as a YAML
+  that need to be seen (use {{ s_skill_name_visual_review }}). Do NOT use as a YAML
   linter substitute — schema validation already covers that.
 metadata:
   author: fivetran
@@ -27,14 +27,14 @@ this is the cheap pass.
 - Post-build sanity check before delivering a new board
 - Post-edit verification after adding charts, queries, or variables
 - Pre-PR review of a board change
-- First pass inside the `board-review` orchestrator
+- First pass inside the `{{ s_skill_name_review }}` orchestrator
 
 ## When NOT to use
 
 - Schema validation alone — `{{ s_validate_board }}`
   is the right tool, this skill calls it
 - Visual problems ("the legend is overlapping the title") — use
-  `board-visual-review`
+  `{{ s_skill_name_visual_review }}`
 - Comparing two versions of a board — use `looker-compare-diff` pattern instead
 
 ## Protocol
@@ -61,7 +61,7 @@ this is the cheap pass.
       breakdowns → detail
 - [ ] Related charts are grouped (same `cols:` row or adjacent rows)
 - [ ] No more than 8 visualizations on one board — unless the user asked for
-      more or the board replicates a larger source (board-replicate)
+      more or the board replicates a larger source ({{ s_skill_name_replicate_board }})
 
 ### Chart-data shape match
 

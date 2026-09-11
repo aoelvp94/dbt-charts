@@ -181,7 +181,7 @@ def test_board_level_slot_gets_the_hint_when_migration_cannot_finish(
     grammar (that half ships no Deletion), so the original mapping is reported
     and the board-level position surfaces as an error after all — which is the
     position that needs the hint. Same shape as the grid.gap block documented
-    in migrations/versions/current.py."""
+    in migrations/versions/v0_6_0.py."""
     result = compile_board(_board_level("bar", field, also_chart_local=True))
 
     assert not result.success

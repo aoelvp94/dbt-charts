@@ -480,7 +480,10 @@ def _drawn_index_transform(
     For a magnitude suffix the zero check is part of "carrying": "0mn" is
     meaningless, so a zero cell cannot be the anchor. For percent and currency-
     prefix-only rows a zero cell carries its affix perfectly well ($0 and 0%
-    are real readings), so the ``!== 0`` gate is omitted there.
+    are real readings), so the ``!== 0`` gate is omitted there. The axis
+    ruler's own currency prefix (``scale.py``'s ``prefix_repeats``,
+    ``axis_cascade.py``'s non-compacting ``tick_label`` branch) makes the
+    opposite call and excludes zero.
 
     When sort_ascending is True (default, temporal path) the window sorts by
     x ascending to match VL's own paint order. When False (sort:null category

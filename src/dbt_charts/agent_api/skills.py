@@ -12,7 +12,7 @@ rejects a SKILL.md that omits it so the genre stays self-documenting as new
 skills land.
 
 ``surfaces`` is an optional list of ``"tool"`` / ``"cli"`` declaring where the
-skill should be exposed. Default is both. ``dct-mcp-setup`` is CLI-only
+skill should be exposed. Default is both. ``mcp-setup`` is CLI-only
 because shipping setup instructions to an already-connected tool-call agent is
 worse than useless.
 
@@ -55,6 +55,12 @@ _SKILLS_DIR = files("dbt_charts") / "ai" / "skills"
 # _SKILLS_DIR (this wheel's own bundled skills), never process-cached: a
 # project's skills vary per tenant/branch, so re-read every call.
 PROJECT_SKILLS_DIRS: tuple[str, ...] = ("skills", ".claude/skills", ".agents/skills")
+
+# On-disk namespace `dct init skills` writes its output under (skill_install.py
+# owns the rest of the install machinery; the constant lives here because the
+# project-skill scanner below also needs it, and skill_install.py already
+# imports from this module).
+INSTALL_NAME_PREFIX = "dct-"
 
 # Cap on an authored (project- or user-written) skill body (chars). Guards
 # against an untrusted body flooding the model's context — via get_skill or the
@@ -338,12 +344,18 @@ def _discover_project_skill_paths(
     that wants ``project`` for ``extra_skill_files`` but not its skills/
     folders (Cloud, when ``honor_agent_instructions`` is off) passes
     ``skill_dirs=()``.
+
+    Skips any directory named ``INSTALL_NAME_PREFIX*``: that namespace is
+    ``dct init skills``'s own file-install output, not an author's project
+    skill, and re-scanning it here would register the same workflow skill
+    twice under two names.
     """
     return [
         relpath
         for base in skill_dirs
         for relpath in project.iter_files(base, recursive=True)
         if PurePosixPath(relpath).name == "SKILL.md"
+        and not PurePosixPath(relpath).parent.name.startswith(INSTALL_NAME_PREFIX)
     ]
 
 
@@ -539,11 +551,21 @@ def _searchable_body(skill: Skill, surface: SkillSurface) -> str:
     return render_skill_body(skill.body, surface=surface)
 
 
+def _rendered_description(skill: Skill, surface: SkillSurface) -> str:
+    """Frontmatter ``description`` for ``surface`` — same macro-or-passthrough
+    split as ``_rendered_body``, for the same reason: an authored description
+    was never written against the ``s_`` macro convention."""
+    if skill.source != "builtin":
+        return skill.description
+    return render_skill_body(skill.description, surface=surface)
+
+
 def _render_for_surface(skill: Skill, surface: SkillSurface) -> Skill:
-    """Return a shallow copy of ``skill`` with body + ``rendered_for`` set."""
+    """Return a shallow copy of ``skill`` with body + description + ``rendered_for`` set."""
     return skill.model_copy(
         update={
             "body": _rendered_body(skill, surface),
+            "description": _rendered_description(skill, surface),
             "rendered_for": surface,
         }
     )
@@ -631,7 +653,7 @@ def get_skill(
     ``project`` and ``extra_skills`` union in as in ``list_skills`` — see
     ``_merged_skills`` for the built-in < project < user precedence rule.
     Raises ``SkillNotFound`` when the skill does not exist *or* is not exposed
-    on the requested surface (e.g. ``dct-mcp-setup`` is CLI-only and is
+    on the requested surface (e.g. ``mcp-setup`` is CLI-only and is
     invisible to tool-call agents).
     """
     merged, _errors = _merged_skills(
@@ -649,20 +671,22 @@ def get_skill(
 
 
 def skill_description(name: str, *, surface: SkillSurface = "tool") -> str:
-    """Return a skill's frontmatter ``description`` without rendering its body.
+    """Return a skill's rendered frontmatter ``description`` without rendering
+    its body.
 
     Cheaper than ``get_skill(name).description`` for callers that only need
     the description — skips the per-call surface-macro render pass over the
-    (often multi-thousand-token) body. Unlike ``get_skill``, which raises
-    ``SkillNotFound``, this returns ``""`` (does not raise) if the skill does
-    not exist or is not exposed on ``surface`` — callers that need a loud
-    failure on a missing name must check the empty-string case themselves
-    (e.g. ``build_skills_index`` in ``dbt_charts.ai.prompts``).
+    (often multi-thousand-token) body, still rendering the much smaller
+    description. Unlike ``get_skill``, which raises ``SkillNotFound``, this
+    returns ``""`` (does not raise) if the skill does not exist or is not
+    exposed on ``surface`` — callers that need a loud failure on a missing
+    name must check the empty-string case themselves (e.g.
+    ``build_skills_index`` in ``dbt_charts.ai.prompts``).
     """
     skill = _load_all().get(name)
     if skill is None or surface not in skill.surfaces:
         return ""
-    return skill.description
+    return _rendered_description(skill, surface)
 
 
 def search_skills(
@@ -697,9 +721,10 @@ def search_skills(
     for skill in merged.values():
         if surface not in skill.surfaces:
             continue
+        rendered_description = _rendered_description(skill, surface)
         if q in skill.name.lower():
             score = 1.0
-        elif q in skill.description.lower():
+        elif q in rendered_description.lower():
             score = 0.8
         elif q in _searchable_body(skill, surface).lower():
             score = 0.5
@@ -708,7 +733,7 @@ def search_skills(
         hits.append(
             SkillSearchHit(
                 name=skill.name,
-                description=skill.description,
+                description=rendered_description,
                 kind=skill.kind,
                 has_examples=skill.has_examples,
                 score=score,

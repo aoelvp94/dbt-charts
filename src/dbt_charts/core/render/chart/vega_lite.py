@@ -17,6 +17,7 @@ if TYPE_CHECKING:
         ResolvedChartDefaults,
         ResolvedStyle,
     )
+    from dbt_charts.core.render.chart.spec import ChartSpec
 
 _log = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ def _trace_vl_spec(chart_id: str, renderer: str, spec: dict[str, Any]) -> None:
     _log.debug("VL spec trace → %s", out)
 
 
+from dbt_charts.core.compile.models.chart.normalized import SVG_LAYOUT_PADDED_TYPES
 from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
 from dbt_charts.core.compile.models.chart.resolved._base import (
     _CartesianResolvedChartFields,
@@ -107,6 +109,9 @@ def _render_vl_artifact(
         width=width,
         height=height,
         is_placeholder=is_placeholder,
+        # The same gate rendering.py shrinks by: only the padded families were
+        # rendered at the inner size, so only they have an inset to grow over.
+        inset=padding if resolved.chart_type in SVG_LAYOUT_PADDED_TYPES else None,
     )
     if svg is not None:
         return RenderArtifact(kind="svg", payload=svg)
@@ -274,6 +279,7 @@ def _render_vl_artifact(
         apply_title_overflow_to_spec(
             vl, resolved.title_style, chart_id=resolved.id, available_width=width
         )
+        _stamp_value_label_layer_sentinel(chart_spec, vl)
         _trace_vl_spec(resolved.id, "v2", vl)
         return RenderArtifact(kind="vega_spec", payload=vl)
     if "hconcat" in vl:
@@ -362,6 +368,7 @@ def _render_vl_artifact(
             size_target, resolved.title_style, chart_id=resolved.id
         )
     _stamp_axis_label_kind_sentinel(resolved, vl)
+    _stamp_value_label_layer_sentinel(chart_spec, vl)
     _trace_vl_spec(resolved.id, "v2", vl)
     return RenderArtifact(kind="vega_spec", payload=vl)
 
@@ -405,6 +412,34 @@ def _stamp_axis_label_kind_sentinel(
         vl["$df_axis_label_kinds"] = {"X": "x_label", "Y": "y_label"}
     elif _field("y") == x_column and _field("x") != x_column:
         vl["$df_axis_label_kinds"] = {"X": "y_label", "Y": "x_label"}
+
+
+def _stamp_value_label_layer_sentinel(
+    chart_spec: ChartSpec,
+    vl: dict[str, Any],  # type-state: explicit_any — foreign VL JSON spec
+) -> None:
+    """Which ``vl["layer"]`` position(s) are a mark's own printed value label.
+
+    ``ChartSpec.value_label`` is set at emission time (features/value_labels.py,
+    and emitters/_overlay.py's own layer-label builder via the same
+    ``text_layer_spec`` helper) on a flat text ChartSpec that IS one mark's
+    own value -- never on a nested "layered" sub-spec (an overlay's own
+    halo/fg/hover trio) or any of pie.py's text layers (center total, outside
+    labels), which never set the flag. translate.py numbers a flat layer
+    array by plain array position, and vl_convert's SVG serializer names a
+    layer's mark group by that same position (``layer_N_marks``) -- so the
+    mapping is exact array arithmetic, not a scenegraph probe like
+    ``_stamp_legend_series_key`` needs for legend text. ``_translate_standard``
+    inserts one extra ``main_layer`` ahead of ``spec.layers``;
+    ``_translate_layered`` does not -- ``chart_spec.mark == "layered"`` is the
+    same dispatch condition translate.py itself branches on.
+    """
+    offset = len(chart_spec.underlays) + (0 if chart_spec.mark == "layered" else 1)
+    indices = [
+        offset + i for i, layer in enumerate(chart_spec.layers) if layer.value_label
+    ]
+    if indices:
+        vl["$df_value_label_layers"] = indices
 
 
 def _apply_facet_layout(

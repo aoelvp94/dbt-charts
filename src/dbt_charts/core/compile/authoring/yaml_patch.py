@@ -18,6 +18,8 @@ from dataclasses import dataclass
 
 import yaml
 
+from dbt_charts.core.utils import YAML_LOADER
+
 # Leaf value types the setter writes; None deletes the key. A list of strings
 # is a leaf here because it is written as one: `y: ["revenue", "cost"]` is a
 # single line, so it splices exactly like a scalar does. Nothing else does —
@@ -221,7 +223,7 @@ def _is_scalar_sequence(
         if item is None or len(item.group(1)) != item_indent:
             return False
         try:
-            parsed = yaml.safe_load(item.group(2))
+            parsed = yaml.load(item.group(2), Loader=YAML_LOADER)
         except yaml.YAMLError:
             return False
         if isinstance(parsed, dict | list):
@@ -611,8 +613,8 @@ def set_board_values(yaml_text: str, updates: dict[str, ScalarLeaf | None]) -> s
     matter) be edited safely: `yaml.safe_load("title: X\\n\\nProse.")` would
     fail, but scoping the load to the front-matter region avoids it.
 
-    The post-edit self-check calls `yaml.safe_load` on the front-matter
-    region only. Malformed YAML *within* that region (e.g. a bad inline
+    The post-edit self-check re-parses the front-matter region with the
+    same `YAML_LOADER`, and only that region. Malformed YAML *within* that region (e.g. a bad inline
     value) surfaces as `ValueError`, like every other unsupported input.
 
     Args:
@@ -678,9 +680,14 @@ def _verify_written_values(result: str, updates: dict[str, ScalarLeaf | None]) -
     # `tail` lands exactly on the boundary where recognized content ends.
     _, boundary = _find_key(lines, 0, len(lines), 0, "\0", "<self-check>")
     try:
-        front_matter = yaml.safe_load("\n".join(lines[:boundary])) or {}
+        front_matter = (
+            yaml.load("\n".join(lines[:boundary]), Loader=YAML_LOADER)
+            or {}  # type-state: silent_fallback — empty front matter is a mapping with no keys
+        )
     except yaml.YAMLError as e:
-        raise ValueError(f"Front matter is not valid YAML after the edit: {e}") from e
+        raise ValueError(
+            f"Front matter is not valid YAML after editing {', '.join(updates)}: {e}"
+        ) from e
     for path, value in updates.items():
         node = front_matter
         missing = False

@@ -11,6 +11,8 @@ from __future__ import annotations
 import dataclasses
 from typing import Any, Literal
 
+import pytest
+
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedAreaChart,
     ResolvedAreaStyle,
@@ -34,6 +36,8 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
 from dbt_charts.core.compile.resolve.chart.label_data import (
     pie_presentation_fingerprint,
 )
+from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.diagnostics.codes_render import ERR_GAP_FILL_BUCKET_COLLISION
 from dbt_charts.core.render.chart.feature import FeaturePipeline
 from dbt_charts.core.render.chart.features.baseline import BaselineFeature
 from dbt_charts.core.render.chart.features.endpoint_labels import EndpointLabelFeature
@@ -1270,11 +1274,15 @@ def test_endpoint_label_line_positions_are_raw_last_per_series(
 
 
 def test_line_emitter_buckets_ordinal_time_unit(line_style: ResolvedLineStyle) -> None:
-    """A line with axis_x.time_unit=yearquarter collapses monthly rows to quarters.
+    """A line with axis_x.time_unit=yearquarter keys quarter-end rows to quarters.
 
-    Regression: V2 rendered every raw monthly point (jagged) instead of V1's
+    Regression: V2 rendered every raw point (jagged) instead of V1's
     one-point-per-bucket. gap_fill_ordinal_time must bucket, and the emitter must
     carry the result on spec.data so the session doesn't restore the raw rows.
+
+    The rows are quarter-ENDS, the ordinary ``LAST_DAY()`` shape: a value
+    inside a bucket belongs to that bucket, so the emitter must key it to the
+    bucket's start rather than looking for a row that already sits there.
     """
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.models.style.authored import AxisXStylePatch
@@ -1332,13 +1340,25 @@ def test_line_emitter_buckets_ordinal_time_unit(line_style: ResolvedLineStyle) -
         style=line_style.model_copy(update={"axis_x": ax, "axis_y": ay}),
     )
     data = [
-        {"month": f"2025-{m:02d}-01", "category": "A", "v": float(m)}
-        for m in range(7, 13)
-    ]  # Jul..Dec 2025 → Q3 + Q4
+        {"month": "2025-09-30", "category": "A", "v": 9.0},
+        {"month": "2025-12-31", "category": "A", "v": 12.0},
+    ]  # Q3 + Q4 2025, reported at each quarter's last day
     spec = get_emitter(chart).emit(chart, _DEFAULT_BOX, regroup((), data))
     assert spec.data is not None
     months = sorted({row["month"] for row in spec.data})
     assert months == ["2025-07-01", "2025-10-01"]
+    assert sorted(row["v"] for row in spec.data) == [9.0, 12.0]
+
+    monthly = [
+        {"month": f"2025-{m:02d}-01", "category": "A", "v": float(m)}
+        for m in range(7, 13)
+    ]
+    with pytest.raises(ChartDataError) as excinfo:
+        get_emitter(chart).emit(chart, _DEFAULT_BOX, regroup((), monthly))
+    # Three months per quarter is not one point per bucket; picking the
+    # quarter's first month and dropping the other two would report July's
+    # value as Q3's.
+    assert excinfo.value.code is ERR_GAP_FILL_BUCKET_COLLISION
 
 
 # ---------------------------------------------------------------------------

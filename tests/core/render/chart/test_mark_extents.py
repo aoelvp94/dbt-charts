@@ -256,3 +256,42 @@ def test_opacity0_symbols_not_excluded_so_line_chart_with_hover_points_passes() 
         "</g>"
     )
     assert not all_marks_degenerate(svg)
+
+
+def test_a_mark_path_with_no_d_attribute_is_degenerate() -> None:
+    """The silent-blank shape: vl_convert emits `<path stroke=… />` with no `d`
+    at all when a line layer's every datum is null.
+
+    Nothing is drawn — that is geometry, read exactly, not geometry the
+    measurer failed to read, so it must vote rather than abstain. Skipping it
+    left the vote empty, and an empty vote reads as "not degenerate": a
+    board that painted nothing reported success.
+    """
+    svg = _svg(
+        '<g class="mark-line role-mark"><path stroke="#000" stroke-width="4"/></g>'
+        '<g class="mark-symbol role-mark"/>'
+    )
+    assert all_marks_degenerate(svg)
+
+
+def test_a_dless_mark_path_alongside_a_real_one_is_not_degenerate() -> None:
+    """A layered line chart's white halo layer can be empty while the data
+    layer paints — one real mark still means the chart is not blank.
+    """
+    svg = _svg(
+        '<g class="mark-line role-mark"><path stroke="#fff"/></g>'
+        '<g class="mark-line role-mark"><path d="M0,0L10,20"/></g>'
+    )
+    assert not all_marks_degenerate(svg)
+
+
+def test_a_non_path_element_with_no_geometry_still_abstains() -> None:
+    """`<g>`/`<a>` wrappers under a role-mark group are containers, not marks —
+    counting them as zero-extent would make every chart look blank.
+    """
+    group = ET.fromstring(
+        f'<g xmlns="{SVG}" class="mark-rect role-mark">'
+        '<g><path d="M0,0h10v20h-10Z"/></g>'
+        "</g>"
+    )
+    assert _measure_role_marks(group) == [("mark-rect role-mark", 10, 20)]

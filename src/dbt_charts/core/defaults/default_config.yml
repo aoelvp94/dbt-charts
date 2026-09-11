@@ -316,9 +316,9 @@ chart_rendering:
     # is the point where individual bars stop being resolvable at typical chart
     # widths — past it, fall back to a continuous temporal scale and let
     # Vega-Lite pick its own sparse "nice" ticks. Also the floor for the
-    # fine-grain scaffold budget: an auto-detected day/week grain keeps its
-    # band scale only while the empty buckets gap-fill would synthesize stay
-    # within max(distinct buckets, this value).
+    # scaffold budget: an auto-detected grain, coarse or fine, survives only
+    # while the empty buckets gap-fill would synthesize stay within
+    # max(distinct buckets, this value).
     max_ordinal_buckets: 60
   frame:
     # Vertical gap between the page footer text and the hairline rule above it.
@@ -416,6 +416,15 @@ chart_rendering:
     # 250-282px) is now caught.
     row_height_px: 16.0
     chrome_height_px: 47.0
+  hover_emphasis:
+    # The share of its own color a receded mark keeps while another mark is
+    # hovered. The runtime writes each receded fill and stroke as a solid
+    # blend of the mark's color at this weight toward the chart background:
+    # exactly the pixels the mark would show at this opacity over that
+    # background, and exactly what painting the chart's own background over
+    # the plot at 0.3 would show. That background weight of 0.3 was chosen
+    # from a rendered comparison at 0.15 / 0.25 / 0.35 / 0.5.
+    dimmed_opacity: 0.7
 
 
 # ============================================================================

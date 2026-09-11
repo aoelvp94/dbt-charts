@@ -22,7 +22,7 @@ from dbt_charts.core.compile.resolve.chart.enrich import (
     first_non_null_samples,
     is_column_discrete_for_bar_orientation,
 )
-from dbt_charts.core.utils import is_year_shaped
+from dbt_charts.core.utils import is_year_shaped, vega_infers_quantitative
 
 __all__ = [
     "_bar_orientation",
@@ -30,6 +30,75 @@ __all__ = [
     "_classify_to_channel_type",
     "_column_numeric_values",
 ]
+
+
+def _flag_quantitative_color(
+    channels: dict[str, ResolvedStyleChannel],
+    data: list[dict[str, Any]],  # type-state: explicit_any — query-row boundary values
+) -> dict[str, ResolvedStyleChannel]:
+    """Mark a bare numeric ``color:`` channel as ``quantitative_data``.
+
+    A bare ``color: <field>`` authoring resolves to mode="series" regardless
+    of the field's own data -- ``normalize_chart_channels`` never inspects
+    rows, so "this chart's color is a magnitude ramp" is otherwise
+    undetectable for the common bare-authoring case by any consumer working
+    off the resolved channel alone (e.g. hover-emphasis's palette gate).
+    ``mode`` itself stays "series" -- ``channel_to_encoding`` dispatches its
+    whole encoding shape on that value, so flipping it to "gradient" here
+    would also require a real ``ch.scale``, taking over the emitter's own
+    gradient-scale construction and changing what actually renders.
+    ``quantitative_data`` is purely additive: nothing but the palette-gate
+    check reads it.
+
+    Shared by every cartesian family through ``_channels_for`` -- a bar,
+    line, area, or scatter colored by a bare numeric field renders exactly
+    the same continuous gradient legend a heatmap does
+    (``infer_vega_type_from_data`` in ``channel_to_encoding`` decides the VL
+    encoding type from the same "is every sampled value numeric" fact), so
+    the flag can't be family-scoped without missing that legend for every
+    family but heatmap.
+
+    Calls ``vega_infers_quantitative`` -- not ``classify_column_type`` -- so
+    this gate applies the emitter's own numeric rule (rejects numeric
+    strings, counts ``bool``) and all-or-nothing threshold over the first 10
+    rows, rather than the old >80%-of-20-samples verdict. That closes the
+    *rule* divergence between the two predicates; a narrower *row-list* one
+    can still remain, since this gate samples resolve-time rows while
+    ``channel_to_encoding`` samples whatever rows reach the emitter, which a
+    render-time transform (gap-fill, reordering) can leave different from
+    the resolve-time list. The old gap diverged in both directions: a
+    numeric string like ``"77"`` was flagged quantitative here but rendered
+    nominal by the emitter (fail-closed -- an unwanted recede-block, not the
+    bug this gate exists to catch); the row-10 cliff (numeric within this
+    gate's sample but not within the emitter's) and an all-null column were
+    unflagged here yet rendered quantitative (fail-open -- the actual bug:
+    hover recedes a mark whose color encodes a value).
+    """
+    color = channels.get("color")
+    if color is None or color.mode != "series" or not color.data_field:
+        return channels
+    if not vega_infers_quantitative(data, color.data_field):
+        return channels
+    return {
+        **channels,
+        # dataclasses.replace()/model_copy() on a Resolved*-typed value is
+        # banned tree-wide (tests/test_no_replace_on_resolved.py) --
+        # rebuilding via the constructor is the sanctioned pattern,
+        # so every field is forwarded explicitly here rather than only the
+        # ones happening to be non-default for mode="series" today, or a
+        # future field added to ResolvedStyleChannel would silently drop out
+        # the moment a bare color channel passed through this gate.
+        "color": ResolvedStyleChannel(
+            channel=color.channel,
+            mode=color.mode,
+            data_field=color.data_field,
+            literal_value=color.literal_value,
+            scale=color.scale,
+            rules=color.rules,
+            fallback_scale=color.fallback_scale,
+            quantitative_data=True,
+        ),
+    }
 
 
 def _channels_for(
@@ -44,7 +113,8 @@ def _channels_for(
     # annotation, so read it structurally.
     style = getattr(normalized, "style", None)
     style_color = getattr(style, "color", None) if style is not None else None
-    return normalize_chart_channels(normalized, available, style_color=style_color)
+    channels = normalize_chart_channels(normalized, available, style_color=style_color)
+    return _flag_quantitative_color(channels, data)
 
 
 def _bar_orientation(

@@ -17,7 +17,6 @@ from dbt_charts.core.compile.migrations import (
     migrate_yaml_text,
 )
 from dbt_charts.core.compile.migrations.migrations import (
-    _CURRENT,
     Move,
     _apply_move,
     _board_migration_context,
@@ -163,13 +162,14 @@ def test_unmapped_value_raises_migration_error() -> None:
     (test_migration_recognition.py::test_a_migration_that_cannot_be_applied_reaches_the_parser_not_the_user).
     Exercised directly here to cover the value_map safety net itself,
     independent of any one field's schema. Sourced from 0.4.0 rather than
-    `_CURRENT` because `_apply_move` is schema-gated: it rewrites a key only
-    where the source grammar declares it, and 0.4.0 is the newest schema that
-    still declares `allow_html`.
+    the DEV version because `_apply_move` is schema-gated: it rewrites a key
+    only where the source grammar declares it, and 0.4.0 is the newest schema
+    that still declares `allow_html`.
     """
+    schema_catalog = load_yaml_schema_catalog()
     move = Move(
         source_schema="0.4.0",
-        target_schema=_CURRENT,
+        target_schema=schema_catalog.dev.version,
         old_path=("allow_html",),
         new_path=("html_policy",),
         value_map={True: "trusted-raw", False: "none"},
@@ -177,7 +177,7 @@ def test_unmapped_value_raises_migration_error() -> None:
     mapping: dict[str, Any] = {"allow_html": "maybe"}
 
     with pytest.raises(MigrationError, match="allow_html"):
-        _apply_move(mapping, move, load_yaml_schema_catalog())
+        _apply_move(mapping, move, schema_catalog)
 
 
 def test_apply_move_rejects_non_scalar_source() -> None:
@@ -185,9 +185,10 @@ def test_apply_move_rejects_non_scalar_source() -> None:
     value as for an unmapped one -- a value_map is declared total over a
     scalar domain, so anything else is a migration author's error to fix,
     not a value to guess through."""
+    schema_catalog = load_yaml_schema_catalog()
     move = Move(
         source_schema="0.4.0",
-        target_schema=_CURRENT,
+        target_schema=schema_catalog.dev.version,
         old_path=("allow_html",),
         new_path=("html_policy",),
         value_map={True: "trusted-raw", False: "none"},
@@ -195,4 +196,4 @@ def test_apply_move_rejects_non_scalar_source() -> None:
     mapping: dict[str, Any] = {"allow_html": ["not", "scalar"]}
 
     with pytest.raises(MigrationError, match="allow_html"):
-        _apply_move(mapping, move, load_yaml_schema_catalog())
+        _apply_move(mapping, move, schema_catalog)

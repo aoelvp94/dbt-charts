@@ -3,16 +3,15 @@ name: board-visual-review
 kind: workflow
 description: >
   Render a dbt charts board to PNG and review the image against a visual-design
-  checklist using the agent's own vision capability. Catches problems that
-  YAML inspection can't see — overlapping text, contrast failures, axis-label
-  collisions, whitespace imbalance, KPI precision mismatches. Use when asked
-  to 'visually review', 'check how it looks', 'is this rendered correctly',
-  'review the rendered output', or when structural review surfaces ambiguous
-  'feels off but I can't say why' findings. More expensive than structural
-  review (rendering time + vision-token cost). Do NOT use for YAML schema or
-  data-shape problems (use board-structural-review). Do NOT use for
-  comparing two versions of the same board (use the looker-compare-diff
-  pattern).
+  checklist using vision. Catches problems YAML inspection can't see —
+  overlapping text, contrast failures, axis-label collisions, whitespace
+  imbalance, KPI precision mismatches. Use when asked to 'visually review',
+  'check how it looks', 'is this rendered correctly', 'review the rendered
+  output', or when structural review surfaces ambiguous 'feels off but I
+  can't say why' findings. More expensive than structural review (render +
+  vision cost). Do NOT use for YAML schema or data-shape problems (use
+  {{ s_skill_name_structural_review }}). Do NOT use for comparing two versions
+  of the same board (use the looker-compare-diff pattern).
 metadata:
   author: fivetran
 ---
@@ -28,11 +27,11 @@ capability — no external API call.
 - Final pre-delivery polish pass
 - When structural review surfaces "feels wrong but I can't say why" findings
 - When the user reports a layout / readability complaint
-- Second pass inside the `board-review` orchestrator after structural
+- Second pass inside the `{{ s_skill_name_review }}` orchestrator after structural
 
 ## When NOT to use
 
-- YAML schema or data-shape problems — use `board-structural-review`
+- YAML schema or data-shape problems — use `{{ s_skill_name_structural_review }}`
 - Comparing two versions of a board — out of scope for this skill
 - Pixel-exact regression testing — vision is the wrong tool; brittle
 
@@ -48,7 +47,7 @@ capability — no external API call.
 2. **Read the PNG** with the agent's image-loading capability.
 
 3. **Evaluate against the checklist below.** Emit findings in the same format
-   as `board-structural-review` so the orchestrator can merge them.
+   as `{{ s_skill_name_structural_review }}` so the orchestrator can merge them.
 
 ## Checklist
 
@@ -94,7 +93,7 @@ capability — no external API call.
 
 ## Output format
 
-Same shape as `board-structural-review` so findings merge cleanly:
+Same shape as `{{ s_skill_name_structural_review }}` so findings merge cleanly:
 
 ```markdown
 **Findings**
@@ -113,7 +112,7 @@ If there are no findings: emit exactly `**No findings.**`.
 
 ## Severity rubric
 
-Use the same tags as `board-structural-review`:
+Use the same tags as `{{ s_skill_name_structural_review }}`:
 
 | Tag | Meaning |
 |---|---|

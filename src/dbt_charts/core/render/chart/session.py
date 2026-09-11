@@ -73,12 +73,22 @@ class BoardRenderSession:
         width: float | None = None,
         height: float | None = None,
         is_placeholder: bool = False,
+        inset: dict[str, int | float] | None = None,
     ) -> str | None:
-        """Non-VL families → SVG string; VL families → None (caller runs emit path)."""
+        """Non-VL families → SVG string; VL families → None (caller runs emit path).
+
+        ``inset`` is the padding the caller shrank ``width``/``height`` by; a
+        family that paints a card rect grows it back out over that padding.
+        """
         match chart:
             case ResolvedKpiChart():
                 return render_kpi_svg(
-                    chart, data, width, height, board_style=self.board_style
+                    chart,
+                    data,
+                    width,
+                    height,
+                    board_style=self.board_style,
+                    inset=inset,
                 )
             case ResolvedTableChart():
                 # No variables= here: render_table_svg reads the board's
@@ -87,7 +97,12 @@ class BoardRenderSession:
                 # works for every caller, not just this one. See
                 # board_variables.py.
                 return render_table_svg(
-                    chart, data, width, height, board_style=self.board_style
+                    chart,
+                    data,
+                    width,
+                    height,
+                    board_style=self.board_style,
+                    inset=inset,
                 )
             case ResolvedSparkBarChart():
                 return render_spark_bar_svg(

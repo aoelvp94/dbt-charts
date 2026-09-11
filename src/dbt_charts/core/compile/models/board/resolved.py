@@ -7,7 +7,10 @@ from dataclasses import dataclass
 
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.chart.normalized import Chart
-from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
+from dbt_charts.core.compile.models.chart.resolved import (
+    ResolvedChart,
+    ResolvedStyleChannel,
+)
 from dbt_charts.core.compile.models.primitives import HtmlPolicy
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
@@ -18,6 +21,31 @@ from dbt_charts.core.compile.models.variable.authored import (
 from dbt_charts.core.diagnostics import Diagnostic
 
 _AnyResolvedChart = ResolvedChart
+
+
+def _is_magnitude_colored(channels: dict[str, ResolvedStyleChannel]) -> bool:
+    """True when this chart's ``color`` channel paints a quantitative value.
+
+    ``"gradient"`` mode is always a continuous sequential/diverging ramp.
+    ``"conditional"`` mode is also unsafe when it carries a continuous
+    ``fallback_scale`` — a Looker-style "scale with rule override" is still a
+    quantitative ramp wherever no threshold rule matches. ``quantitative_data``
+    covers bare, undecorated color authoring (``color: <field>``) that IS a
+    magnitude ramp by data, even though that authoring never sets mode to
+    "gradient" — every cartesian family's own emitter renders exactly this
+    shape as a continuous gradient legend (see
+    ``ResolvedStyleChannel.quantitative_data``, set generically for every
+    family by ``_flag_quantitative_color`` in ``compile/resolve/chart/
+    _channels.py``). Plain rule-based conditional colors (no fallback scale),
+    a genuinely categorical ``"series"``, and ``"literal"`` all stay
+    eligible: rewriting them does not change what any of them mean.
+    """
+    color = channels.get("color")
+    if color is None:
+        return False
+    if color.mode == "gradient" or color.quantitative_data:
+        return True
+    return color.mode == "conditional" and color.fallback_scale is not None
 
 
 @dataclass(frozen=True)
@@ -39,6 +67,7 @@ class ChartIdentity:
     query_name: str | None
     notes: str
     variable_dependencies: frozenset[str]
+    magnitude_colored: bool
 
     @classmethod
     def from_resolved(cls, chart: ResolvedChart) -> "ChartIdentity":
@@ -50,6 +79,7 @@ class ChartIdentity:
             query_name=chart.query_name,
             notes=chart.notes,
             variable_dependencies=chart.variable_dependencies,
+            magnitude_colored=_is_magnitude_colored(chart.resolved_channels),
         )
 
     @classmethod
@@ -61,6 +91,10 @@ class ChartIdentity:
         to what a successful resolve would have stamped. It is safe for the one
         thing the value decides downstream — the ``dbt-chart-callout`` class —
         because no family alias is ever ``"callout"``.
+
+        There is no resolved channel data on this path — resolution never
+        finished — so ``magnitude_colored`` is unconditionally ``False``: an
+        error placard has no marks to recede in the first place.
         """
         return cls(
             chart_type=chart.type,
@@ -70,6 +104,7 @@ class ChartIdentity:
             query_name=chart.query_name,
             notes=chart.notes,
             variable_dependencies=chart.variable_dependencies,
+            magnitude_colored=False,
         )
 
 

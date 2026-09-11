@@ -933,7 +933,6 @@ Donut center total: auto-rendered sum at the center of a donut, with author over
 |-------|------|-------------|
 | `visible` | bool | Whether to render the donut center total. Defaults True; set False to suppress the auto-rendered center on donuts whose theta values aren't a meaningful sum (e.g. pre-aggregated percentage shares). |
 | `label` | str | Caption text displayed below the center total value. |
-| `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | How the number is written: a D3 spec, a preset name, or a format block. |
 
 <a id="piechartstyle"></a>
 ## PieChartStyle
@@ -1263,6 +1262,7 @@ Authored overlay for ChartsStyle. Registry of all chart-type styles plus shared 
 | `border` | [BorderStyle](#borderstyle) | Chart card border style. |
 | `category_colors` | dict[str, [CategoryColorBinding](#categorycolorbinding)] | Board-wide category→color bindings, keyed by data field name. Pins a category to one swatch across every chart on the board. |
 | `tooltip` | [TooltipStyle](#tooltipstyle) | Board-wide chart tooltip style. |
+| `hover_emphasis` | [HoverEmphasisStyle](#hoveremphasisstyle) | Board-wide switch for hover emphasis on charts. |
 | `dashes` | list[list[int]] | Ordered list of Vega-Lite strokeDash arrays for line-family categorical encoding; None disables dash emission. |
 | `default_chart_height` | float | Fallback chart height in pixels when aspect-ratio sizing is unavailable. |
 | `default_table_height` | float | Placeholder table height in pixels; replaced by data-aware row-count sizing at render time. |
@@ -1653,24 +1653,13 @@ Authored overlay for HeatmapChartMarksStyle. Heatmap-family mark overrides.
 | `rect` | [RectMarkStyle](#rectmarkstyle) | Rect mark overrides; inherits from global. |
 | `text` | [TextMarkStyle](#textmarkstyle) | Text mark overrides; None inherits global. |
 
-<a id="formatconfig"></a>
-## FormatConfig
-Format configuration for value display.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `spec` | str | D3 format string (e.g., ',.0f'), preset name (e.g., 'currency'), or Excel pattern. |
-| `prefix` | str | Text placed before the formatted value (e.g., '$'). |
-| `suffix` | str | Text placed after the formatted value (e.g., ' USD', '%'). |
-| `notation` | enum: "analytic", "narrative" | Notation style: 'analytic' for SI-prefix (1 B, 1 M) or 'narrative' for prose-style (1bn, 1mn). |
-
 <a id="totalstyle"></a>
 ## TotalStyle
 Authored overlay for TotalStyle. Donut center total paint: value (the number) and label (the caption).
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `value` | [TotalSlotStyle](#totalslotstyle) | Style for the donut center value (the number). |
+| `value` | [TotalValueSlotStyle](#totalvalueslotstyle) | Style for the donut center value (the number), including its format. |
 | `label` | [TotalSlotStyle](#totalslotstyle) | Style for the donut center label (the caption). |
 
 <a id="piechartmarksstyle"></a>
@@ -1703,6 +1692,17 @@ A single conditional formatting rule.
 | `glyph` | str | Text shown before the cell value when the rule matches. |
 | `glyph_color` | str | Color for the glyph when the rule matches. Requires glyph to be set. |
 | `tone` | enum: "positive", "negative", "warning", "info" | Semantic tone (positive\|negative\|warning\|info) that colors the glyph via the theme's tone palette; the preferred, theme-adaptive alternative to a raw glyph_color. Requires glyph. Explicit glyph_color wins. |
+
+<a id="formatconfig"></a>
+## FormatConfig
+Format configuration for value display.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `spec` | str | D3 format string (e.g., ',.0f'), preset name (e.g., 'currency'), or Excel pattern. |
+| `prefix` | str | Text placed before the formatted value (e.g., '$'). |
+| `suffix` | str | Text placed after the formatted value (e.g., ' USD', '%'). |
+| `notation` | enum: "analytic", "narrative" | Notation style: 'analytic' for SI-prefix (1 B, 1 M) or 'narrative' for prose-style (1bn, 1mn). |
 
 <a id="fontstyle"></a>
 ## FontStyle
@@ -2107,6 +2107,16 @@ Authored overlay for TooltipStyle. Tooltip box style: all cascade keys for the h
 | `shadow` | [TooltipShadowStyle](#tooltipshadowstyle) | Tooltip drop-shadow config; theme always provides this. |
 | `swatch` | [TooltipSwatchStyle](#tooltipswatchstyle) | Series color swatch size/shape; theme always provides this. |
 | `active_marker` | enum: "fill", "triangle" | How the hovered row is marked in a multi-row (x-unified) tooltip: 'fill' tints the row background (default); 'triangle' draws an edge-flush wedge in the box's left padding instead. Theme always provides this. |
+
+<a id="hoveremphasisstyle"></a>
+## HoverEmphasisStyle
+Authored overlay for HoverEmphasisStyle. Whether a chart visually answers "what am I pointing at", beyond the tooltip.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `visible` | bool | Whether hovering a mark visually emphasizes it; theme always provides this. |
+| `drop_line_color` | str | Color of the vertical drop line from a hovered line/area datum down to its axis. |
+| `drop_line_width` | float | Width, in pixels, of the vertical drop line from a hovered line/area datum down to its axis. |
 
 <a id="viewstyle"></a>
 ## ViewStyle
@@ -2583,7 +2593,7 @@ Authored overlay for AreaMarkStyle. Area mark fill opacity and shape.
 | `opacity` | float | Area fill opacity (0–1). |
 | `curve` | enum: "linear", "monotone", "natural", "basis", "cardinal", "step", "step-before", "step-after" | Area interpolation curve, one of a fixed set: 'linear', 'monotone', 'natural', 'basis', 'cardinal', 'step', 'step-before', 'step-after'. On a categorical (nominal/ordinal) x-axis, 'step' draws a full-band-width plateau per x-value instead of VL's centered step; on a continuous (temporal/quantitative) x-axis it passes straight through to VL's native step. Applied to both the fill and its edge line (marks.line) so they trace the same path. |
 | `backdrop` | bool | Whether to paint an opaque fill backdrop behind the area. |
-| `stacked` | [AreaStackedMarkStyle](#areastackedmarkstyle) | Recipe override applied when the chart's stack mode is non-false: solid fill + full-perimeter background-color stroke. |
+| `stacked` | [AreaStackedMarkStyle](#areastackedmarkstyle) | Recipe override applied when the chart is stacked or has a single series: solid fill + background-color separator stroke. |
 
 <a id="arealinestyle"></a>
 ## AreaLineStyle
@@ -2603,6 +2613,15 @@ Authored overlay for RectMarkStyle. Rect mark opacity and stroke.
 |-------|------|-------------|
 | `opacity` | float | Mark opacity (0–1); None means not overridden at this level. |
 | `stroke` | [StrokeStyle](#strokestyle) | Mark stroke style; None means not overridden at this level. |
+
+<a id="totalvalueslotstyle"></a>
+## TotalValueSlotStyle
+Authored overlay for TotalValueSlotStyle. Theme slot for the donut center value (the number): paint plus its format.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `font` | [FontStyle](#fontstyle) | Donut center total element font style overrides. Unset fields fall back to [`style.charts.font`](#chartsstyle). |
+| `format` | str \| [FormatConfig](#formatconfig) \| enum: "currency", "currency_full", "currency_whole", "date_short", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "time_short", "year" | How the donut center value is written: a D3 spec, a preset name, or a format block. |
 
 <a id="totalslotstyle"></a>
 ## TotalSlotStyle

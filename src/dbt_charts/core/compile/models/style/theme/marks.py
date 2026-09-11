@@ -17,6 +17,7 @@ from dbt_charts.core.compile.models.primitives import (
     Curve,
     FontColorStrokeStyle,
     FontStyle,
+    FormatConfig,
     LineCap,
     StrokeStyle,
 )
@@ -86,13 +87,26 @@ class TotalSlotStyle(BaseModel):
     )
 
 
+class TotalValueSlotStyle(TotalSlotStyle):
+    """Theme slot for the donut center value (the number): paint plus its format."""
+
+    # Cascade-managed sentinel: None means "no format authored anywhere in the
+    # cascade" -- resolve_chart falls back to a donut-shape default (or VL's
+    # own default for a non-donut total) rather than a theme-supplied literal,
+    # same shape as BarTotalLabelStyle.format.
+    format: Annotated[FormatAlias | str | FormatConfig | None, Format()] = Field(
+        default=None,
+        description="How the donut center value is written: a D3 spec, a preset name, or a format block.",
+    )
+
+
 class TotalStyle(BaseModel):
     """Donut center total paint: value (the number) and label (the caption)."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    value: TotalSlotStyle = Field(
-        description="Style for the donut center value (the number)."
+    value: TotalValueSlotStyle = Field(
+        description="Style for the donut center value (the number), including its format."
     )
     label: TotalSlotStyle = Field(
         description="Style for the donut center label (the caption)."
@@ -506,8 +520,9 @@ class LineMarkStyle(BaseModel):
 class AreaStackedMarkStyle(BaseModel):
     """Stacked / streamgraph area recipe override: solid fill + perimeter stroke.
 
-    Applied instead of AreaMarkStyle's overlap recipe when a chart's stack
-    mode is non-false (zero/normalize/center). A dedicated type rather than a
+    Applied instead of AreaMarkStyle's overlap recipe when a chart is stacked
+    (zero/normalize/center) or is a single unstacked series (no color, no
+    layers, at most one y measure). A dedicated type rather than a
     self-typed ``AreaMarkStyle`` field: the generated authored-patch factory
     (``build_patch_model_ext``) has no cycle guard for a compiled model that
     contains itself, so a literal self-reference blows the recursion limit
@@ -528,12 +543,13 @@ class AreaStackedMarkStyle(BaseModel):
         default=None, description="Perimeter stroke style for the stacked recipe."
     )
     # Cascade tier sentinel: None means "not specified at this tier".
-    # NB: the stacked emitter path (``is_stacked`` branch in ``_build_area_sub_layers``
-    # and ``_emit_multi_metric_area``) structurally skips halo layers regardless of
-    # this value — stacked bands don't cross, so halos have no purpose.  The field
-    # exists so theme YAML can zero it out in the merged resolved mark; a future
-    # emitter change that reads ``halo_multiplier`` for a stacked chart will
-    # correctly see 0.0 from the recipe rather than the base value of 2.0.
+    # NB: a stacked chart's emitter path (``is_stacked`` branch in
+    # ``emit_area_layer`` and ``_emit_multi_metric_area``) skips halo
+    # layers structurally, so this value is inert there. A single-series area
+    # also takes this recipe but is not stacked (``chart.stack`` stays "none"),
+    # so it keeps the halo composition, whose halo gate is
+    # ``halo_multiplier != 0``: for that chart this value is the only thing
+    # suppressing the halo, and the theme must keep it at 0.
     halo_multiplier: float | None = Field(
         default=None,
         description="Halo stroke width multiplier for the stacked recipe; 0 disables the halo.",
@@ -588,9 +604,9 @@ class AreaMarkStyle(BaseModel):
     # the same toggle produces per-band filled rectangles, which is just a bar
     # chart via the wrong primitive; authors who want per-band target markers
     # should use ``type: bar`` (or a rule with ``x``/``x2``).
-    # Override block applied when the chart's effective stack mode is
-    # non-false (zero/normalize/center): solid fill + a full-perimeter
-    # background-color stroke replaces the overlap translucent-halo recipe
+    # Override block applied when the chart is stacked (zero/normalize/center)
+    # or is a single unstacked series: solid fill + a background-color
+    # separator stroke replaces the overlap translucent-halo recipe
     # (mirrors the bar.border background-knockout idiom for stacked segments).
     # opacity here overrides AreaMarkStyle.opacity; stroke/halo_multiplier
     # override the LINE mark's stroke/halo_multiplier (same edge-is-a-line
@@ -603,8 +619,8 @@ class AreaMarkStyle(BaseModel):
         Field(
             default=None,
             description=(
-                "Recipe override applied when the chart's stack mode is "
-                "non-false: solid fill + full-perimeter background-color stroke."
+                "Recipe override applied when the chart is stacked or has a "
+                "single series: solid fill + background-color separator stroke."
             ),
         )
     )

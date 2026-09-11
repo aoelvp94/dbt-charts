@@ -6,8 +6,8 @@ description: >
   shape before writing dashboard YAML or answering analyst questions. Use when
   the user asks what data exists, where to find a metric/dimension, how tables
   relate, or which columns are available. Do NOT use for dashboard design
-  decisions (use board-design) or error diagnosis after a failed render
-  (use dct-troubleshooting).
+  decisions (use {{ s_skill_name_design_board }}) or error diagnosis after a failed render
+  (use {{ s_skill_name_troubleshooting }}).
 metadata:
   author: fivetran
 ---

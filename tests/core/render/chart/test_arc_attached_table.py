@@ -587,6 +587,65 @@ def test_full_table_render_has_no_labels_no_title_lists_every_slice(make_chart):
         assert name in table_text, f"Full table must list every slice. Missing {name!r}"
 
 
+def test_full_table_two_row_donut_has_no_stripe(make_chart):
+    """A 2-row full_table breakdown (two near-equal slices with long,
+    two-line labels — the plan-mix-donut shape) must not zebra-stripe.
+
+    The attached table is a wedge legend, not a dense data table: striping
+    a 2-row key reads as if the second entry were selected or somehow
+    different in kind from the first, not as row-tracking texture."""
+    chart = make_chart("pie", x="series", y="value")
+    data = [
+        {"series": "Enterprise Annual", "value": 52},
+        {"series": "Mid-Market Annual", "value": 48},
+    ]
+    rs, ctx = resolve_style_and_context(get_theme_style())
+
+    # Positive control. This fixture reaches full_table by clearing a MEASURED
+    # label-width threshold, so a font-metric refresh could flip it to `direct`
+    # -- no table built, no rects emitted, and the stripe assertion below would
+    # pass green while checking nothing. Assert on the resolved model, which is
+    # the brittleness-free half: the opt-out itself, not its rendered absence.
+    resolved = resolve(chart, data, chart_style_context=ctx)
+    assert resolved.attached_table is not None, (
+        "Fixture no longer reaches full_table mode -- the stripe assertion "
+        "below would be vacuous. Re-tune the fixture, don't delete this."
+    )
+    assert resolved.attached_table.style.table.row.stripe.color is None
+
+    svg = render_chart(chart, rs, ctx, data, format="svg", width=600.0)
+
+    row_h = get_theme_style().charts.table.row.height
+    stripe_like = [
+        (x, y, w, h, fill)
+        for x, y, w, h, fill in re.findall(
+            r'<rect x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" '
+            r'height="([\d.]+)" fill="(#[0-9a-fA-F]{6,8})"',
+            svg,
+        )
+        if abs(float(h) - row_h) < 1
+    ]
+    assert not stripe_like, (
+        f"Donut attached table must not render row stripes; found {stripe_like}"
+    )
+
+
+def test_standalone_table_still_stripes(make_chart):
+    """The opt-out must be scoped to the attached table, not to striping.
+
+    This is the contrast that proves the fix landed in the right place: the
+    donut's wedge key stops striping while an ordinary `type: table` on the
+    same theme keeps it. Without this, a future "simplification" that drops
+    the theme's stripe entirely, or gates it inside table.py, would leave the
+    donut test green and silently flatten every real data table.
+    """
+    stripe = get_theme_style().charts.table.row.stripe
+    assert stripe is not None and stripe.color is not None, (
+        "The default theme must still declare a table row stripe -- if this "
+        "fails, striping was removed globally rather than opted out of."
+    )
+
+
 def test_render_attached_table_mode_keeps_standard_arc_height(make_chart):
     """Composed SVG never balloons toward a huge square disk on a wide card.
 

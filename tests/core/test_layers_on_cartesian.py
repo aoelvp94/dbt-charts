@@ -699,7 +699,14 @@ def test_base_area_chart_line_stroke_controls_top_edge() -> None:
     """The exact user-reported bug: `style.marks.line.stroke.width` on `type:
     area` must actually control the rendered top-edge stroke (previously
     validated, cascaded into `resolved.style.line_mark`, and silently never
-    read — the emitter used a since-removed `marks.area.stroke` field)."""
+    read — the emitter used a since-removed `marks.area.stroke` field).
+
+    Wide y (2 bands) keeps this chart on the overlap recipe, where
+    `marks.line.stroke` still governs the edge directly -- a colorless,
+    single-band area now takes the stacked recipe instead, which routes its
+    edge stroke through `marks.area.stacked.stroke` (see
+    `test_single_series_area_authored_stacked_stroke_width_survives_above_adaptive_ceiling` in
+    `tests/core/compile/resolve/test_area_single_series_fill.py`)."""
     from dbt_charts.core.compile.models.chart.normalized import AreaChart as NAreaChart
     from dbt_charts.core.compile.resolve import resolve
 
@@ -707,7 +714,7 @@ def test_base_area_chart_line_stroke_controls_top_edge() -> None:
         id="a1",
         type="area",
         x="month",
-        y="revenue",
+        y=["revenue", "target"],
         query=_sql(),
         query_name="q",
         variable_dependencies=set(),

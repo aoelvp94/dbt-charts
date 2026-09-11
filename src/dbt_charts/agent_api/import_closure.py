@@ -21,6 +21,7 @@ from dbt_charts.core.compile.models.refs import (
     QUERY_REF_RE,
     VAR_REF_RE,
 )
+from dbt_charts.core.utils import YAML_LOADER
 
 if TYPE_CHECKING:
     from dbt_charts.core.project import ProjectPath
@@ -86,7 +87,7 @@ def _load_board_yaml(content: str, relpath: str) -> Any:
             from dbt_charts.core.compile.parse.markdown import parse_markdown_board
 
             content, _metadata = parse_markdown_board(content)
-        return yaml.safe_load(content)
+        return yaml.load(content, Loader=YAML_LOADER)
     except (ValueError, yaml.YAMLError) as exc:
         raise CompilationError(f"Parse error in '{relpath}': {exc}") from exc
 

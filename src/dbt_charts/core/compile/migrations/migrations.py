@@ -14,6 +14,7 @@ from datetime import date, timedelta
 from functools import cache
 from typing import TYPE_CHECKING, Annotated, TypeAlias, cast, get_args, get_origin
 
+import yaml
 from importlib_resources import files
 from jsonschema import Draft7Validator
 from pydantic import BaseModel, ValidationError
@@ -30,26 +31,17 @@ if TYPE_CHECKING:
 
 YamlKeyPath: TypeAlias = tuple[str, ...]
 
+# Where a key actually sits in one document, sequence indices included --
+# unlike `YamlKeyPath`, which is the grammar-level tail a `Deletion` declares.
+# Segments, never a dotted string: a chart id an author chose may contain a
+# dot, and joining would let `charts.a.style.color` also name a chart called
+# `a.style.color`.
+DocumentPath: TypeAlias = tuple[str | int, ...]
+
 # What a value map may map. Narrower than the setter's `ScalarLeaf`, which grew
 # a `list[str]` arm for multi-value controls: a rename maps one spelling of a
 # scalar to another, and `_mapped_value` refuses anything else at runtime.
 MappedScalar: TypeAlias = str | int | float | bool
-
-# Sentinel string returned by _recognize() and used as the loop-exit condition
-# in migrate_mapping/migrate_yaml_text when the mapping already satisfies the
-# live (unreleased) schema.  Also used as the target_schema on pending Deletion/
-# Move entries loaded from versions/current.py.
-_CURRENT = "current"
-
-
-def _resolve_schema(catalog: YamlSchemaCatalog, schema: str) -> JsonObject:
-    """Resolve a schema identifier to its JSON Schema, including ``_CURRENT``.
-
-    ``catalog.current_schema`` is a fully computed live schema (generated the
-    same way as any frozen snapshot), so this is a single place both the
-    ``_CURRENT``-targeting boundary and every frozen boundary go through.
-    """
-    return catalog.current_schema if schema == _CURRENT else catalog.schema_for(schema)
 
 
 class MigrationError(ValueError):
@@ -130,10 +122,11 @@ class Deletion:
     # path stays valid on other families (e.g. `conditional_formatting`
     # retired from `bar` but kept on `table`/`kpi`) -- mirrors
     # `ConditionalMove.chart_type`'s scoping (`_declares_chart_type`), but for
-    # a deletion instead of a relocation. Threaded through all three apply/
-    # recognize consumers (`_delete_tails_recursive`, `_deletion_would_fire`,
-    # `_delete_tail_in_yaml_text`) and `MigrationRegistry._validate`'s
-    # existence checks -- see each for how the scoping is enforced there.
+    # a deletion instead of a relocation. Threaded through both walks
+    # (`_delete_tails_recursive`, `_deletion_would_fire`) and
+    # `MigrationRegistry._validate`'s existence checks -- see each for how the
+    # scoping is enforced there. The text rewriter needs no scope of its own:
+    # it replays the paths the walk struck.
     chart_type: str | None = None
 
 
@@ -230,28 +223,20 @@ class MigrationRegistry:
                     f"{_format_path(move.new_path)!r} references a schema "
                     "that is not retained"
                 )
-            if move.target_schema == _CURRENT:
-                if move.source_schema != self._catalog.latest.version:
-                    raise MigrationError(
-                        f"Move {_format_path(move.old_path)!r} → "
-                        f"{_format_path(move.new_path)!r} targeting 'current' "
-                        "must source from the latest frozen schema"
-                    )
-            else:
-                target_index = positions.get(move.target_schema)
-                if target_index is None:
-                    raise MigrationError(
-                        f"Move {_format_path(move.old_path)!r} → "
-                        f"{_format_path(move.new_path)!r} references a schema "
-                        "that is not retained"
-                    )
-                if target_index != source_index - 1:
-                    raise MigrationError(
-                        f"Move {_format_path(move.old_path)!r} → "
-                        f"{_format_path(move.new_path)!r} must target the "
-                        "immediately succeeding schema"
-                    )
-            target_schema_obj = _resolve_schema(self._catalog, move.target_schema)
+            target_index = positions.get(move.target_schema)
+            if target_index is None:
+                raise MigrationError(
+                    f"Move {_format_path(move.old_path)!r} → "
+                    f"{_format_path(move.new_path)!r} references a schema "
+                    "that is not retained"
+                )
+            if target_index != source_index - 1:
+                raise MigrationError(
+                    f"Move {_format_path(move.old_path)!r} → "
+                    f"{_format_path(move.new_path)!r} must target the "
+                    "immediately succeeding schema"
+                )
+            target_schema_obj = self._catalog.schema_for(move.target_schema)
             if not _schema_path_exists(target_schema_obj, move.new_path):
                 raise MigrationError(
                     f"Move destination path {_format_path(move.new_path)!r} is absent from "
@@ -290,28 +275,20 @@ class MigrationRegistry:
                     f"Deletion at {_format_path(deletion.path)!r} references a schema "
                     "that is not retained"
                 )
-            if deletion.target_schema == _CURRENT:
-                if deletion.source_schema != self._catalog.latest.version:
-                    raise MigrationError(
-                        f"Deletion at {_format_path(deletion.path)!r} targeting 'current' "
-                        "must source from the latest frozen schema"
-                    )
-            else:
-                target_index = positions.get(deletion.target_schema)
-                if target_index is None:
-                    raise MigrationError(
-                        f"Deletion at {_format_path(deletion.path)!r} references a schema "
-                        "that is not retained"
-                    )
-                if target_index != source_index - 1:
-                    raise MigrationError(
-                        f"Deletion at {_format_path(deletion.path)!r} must target the "
-                        "immediately succeeding schema"
-                    )
-            target_schema_obj = _resolve_schema(self._catalog, deletion.target_schema)
-            if not _schema_has_tail(
-                self._catalog.schema_for(deletion.source_schema), deletion.path
-            ):
+            target_index = positions.get(deletion.target_schema)
+            if target_index is None:
+                raise MigrationError(
+                    f"Deletion at {_format_path(deletion.path)!r} references a schema "
+                    "that is not retained"
+                )
+            if target_index != source_index - 1:
+                raise MigrationError(
+                    f"Deletion at {_format_path(deletion.path)!r} must target the "
+                    "immediately succeeding schema"
+                )
+            target_schema_obj = self._catalog.schema_for(deletion.target_schema)
+            source_schema_obj = self._catalog.schema_for(deletion.source_schema)
+            if not _schema_has_tail(source_schema_obj, deletion.path):
                 raise MigrationError(
                     f"Deletion source path {_format_path(deletion.path)!r} is absent from "
                     f"{deletion.source_schema}"
@@ -323,7 +300,19 @@ class MigrationRegistry:
                 if deletion.chart_type is not None
                 else _schema_has_tail(target_schema_obj, deletion.path)
             )
-            if target_still_has_it:
+            # A tail that survives elsewhere can still be genuinely retired at
+            # the document root: the board's own style block lost `color` while
+            # every chart family kept its own. The anchored walk is the proof,
+            # and `_live_declares_tail` confines the firing to the positions
+            # that actually lost it. Not an escape a chart-scoped deletion may
+            # take -- a chart is never at the root, so the root's own retirement
+            # says nothing about the family this one names.
+            retired_at_root = (
+                deletion.chart_type is None
+                and _schema_path_exists(source_schema_obj, deletion.path)
+                and not _schema_path_exists(target_schema_obj, deletion.path)
+            )
+            if target_still_has_it and not retired_at_root:
                 scope = (
                     f" on chart_type={deletion.chart_type!r}"
                     if deletion.chart_type is not None
@@ -331,9 +320,10 @@ class MigrationRegistry:
                 )
                 raise MigrationError(
                     f"Deletion path {_format_path(deletion.path)!r} still exists in "
-                    f"{deletion.target_schema!r}{scope}; the field was not removed in "
-                    "this transition — use a Move if the field was renamed, or remove "
-                    "the Deletion if the field is still valid"
+                    f"{deletion.target_schema!r}{scope}, at the document root "
+                    "included; the field was not removed in this transition — use a "
+                    "Move if the field was renamed, or remove the Deletion if the "
+                    "field is still valid"
                 )
         for cond_move in self.conditional_moves:
             source_index = positions.get(cond_move.source_schema)
@@ -343,26 +333,19 @@ class MigrationRegistry:
                     f"at {_format_path(cond_move.old_tail)!r} references a schema "
                     "that is not retained"
                 )
-            if cond_move.target_schema == _CURRENT:
-                if cond_move.source_schema != self._catalog.latest.version:
-                    raise MigrationError(
-                        f"ConditionalMove at {_format_path(cond_move.old_tail)!r} "
-                        "targeting 'current' must source from the latest frozen schema"
-                    )
-            else:
-                target_index = positions.get(cond_move.target_schema)
-                if target_index is None:
-                    raise MigrationError(
-                        f"ConditionalMove for chart_type={cond_move.chart_type!r} "
-                        f"at {_format_path(cond_move.old_tail)!r} references a schema "
-                        "that is not retained"
-                    )
-                if target_index != source_index - 1:
-                    raise MigrationError(
-                        f"ConditionalMove at {_format_path(cond_move.old_tail)!r} "
-                        "must target the immediately succeeding schema"
-                    )
-            target_schema_obj = _resolve_schema(self._catalog, cond_move.target_schema)
+            target_index = positions.get(cond_move.target_schema)
+            if target_index is None:
+                raise MigrationError(
+                    f"ConditionalMove for chart_type={cond_move.chart_type!r} "
+                    f"at {_format_path(cond_move.old_tail)!r} references a schema "
+                    "that is not retained"
+                )
+            if target_index != source_index - 1:
+                raise MigrationError(
+                    f"ConditionalMove at {_format_path(cond_move.old_tail)!r} "
+                    "must target the immediately succeeding schema"
+                )
+            target_schema_obj = self._catalog.schema_for(cond_move.target_schema)
             if not _schema_has_tail(
                 self._catalog.schema_for(cond_move.source_schema), cond_move.old_tail
             ):
@@ -404,7 +387,7 @@ def suffix_rename_moves(
     its own value mapping belongs in a separate ``suffix_rename_moves`` call.
     """
     old_schema = catalog.schema_for(source_schema)
-    new_schema = _resolve_schema(catalog, target_schema)
+    new_schema = catalog.schema_for(target_schema)
     renames = tuple(renames)
     # `_relative_field_paths` filters to these tails *during* the walk rather
     # than after materializing every field path -- see its docstring. That's
@@ -479,7 +462,7 @@ def _apply_identity_moves(
     string is genuinely ambiguous with a real project board of the same
     name, so it cannot be rewritten unconditionally on the raw mapping the
     way this function does. See ``merge.py``'s ``_retired_theme_redirect``
-    and the module docstring in ``versions/current.py``.
+    and the module docstring in ``versions/v0_6_0.py``.
     """
     mapping_dict: JsonObject = dict(mapping)
     identity_moves = [move for move in registry.moves if move.old_path == move.new_path]
@@ -619,9 +602,9 @@ def prepare_board_mapping(
 def migrate_board_yaml_text(yaml_text: str) -> str:
     """Rewrite one retained board grammar to the latest frozen (released) grammar.
 
-    Capped at ``catalog.latest.version``, never the live schema: this is the
-    on-disk rewrite path (``dct migrate``), so it must never write syntax no
-    released dbt charts recognizes yet. See ``migrate_yaml_text``'s
+    Capped at ``catalog.latest_released.version``, never the live schema: this
+    is the on-disk rewrite path (``dct migrate``), so it must never write
+    syntax no released dbt charts recognizes yet. See ``migrate_yaml_text``'s
     ``stop_target`` docstring.
     """
     catalog, registry = _board_migration_context()
@@ -629,7 +612,7 @@ def migrate_board_yaml_text(yaml_text: str) -> str:
         yaml_text,
         catalog=catalog,
         registry=registry,
-        stop_target=catalog.latest.version,
+        stop_target=catalog.latest_released.version,
     )
 
 
@@ -644,12 +627,13 @@ def _board_migration_context() -> tuple[YamlSchemaCatalog, MigrationRegistry]:
     ``moves()``, ``deletions()``, and/or ``conditional_moves()`` functions own
     the migration strategy; the collector stays agnostic to the mechanism.
 
-    After the frozen-version walk, loads the optional pending module
-    ``versions/current.py`` unconditionally. If present, its ``moves()``,
-    ``deletions()``, and ``conditional_moves()`` functions declare the
-    ``catalog.latest.version → _CURRENT`` boundary for any unreleased renames,
-    key removals, or conditional relocations in flight. At release time the
-    file is renamed to ``versions/v<new_version>.py`` with no content edit.
+    The walk covers the DEV entry too — it is an ordinary ``catalog.entries``
+    member with its own ``predecessor``, so no separate pending-module load is
+    needed. Its module (named for the DEV version, e.g. ``versions/v0_7_0.py``)
+    declares the ``catalog.latest_released.version → catalog.dev.version``
+    boundary for any unreleased renames, key removals, or conditional
+    relocations in flight; a missing module there means no grammar change is
+    pending yet, same as any other boundary.
 
     ``catalog.current_schema`` is a fully computed live schema (see
     ``YamlSchemaCatalog``), generated the same way as any frozen snapshot —
@@ -686,9 +670,15 @@ def retired_theme_renames() -> dict[MappedScalar, MappedScalar]:
     ``extends: <retired-theme-name>`` (``merge.py``'s ``_retired_theme_redirect``)
     needs a retired theme name to keep resolving forever, the same as
     ``theme:``'s Move-based rename already does via ``_apply_identity_moves`` --
-    so this walks the same ``catalog.entries`` + pending-module boundary
-    ``_build_board_migration_context`` does, merging each module's declared
-    table instead of building ``Move``/``Deletion``/``ConditionalMove`` objects.
+    so this walks the same ``catalog.entries`` ``_build_board_migration_context``
+    does -- the DEV entry included, an ordinary member with its own
+    predecessor -- merging each module's declared table instead of building
+    ``Move``/``Deletion``/``ConditionalMove`` objects.
+
+    Walked oldest-first (``catalog.entries`` is newest-first) so a newer
+    module's table overrides an older one on a key collision, ending with
+    the DEV entry applied last -- the newest declaration always wins, never
+    the oldest.
     """
     from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
         load_yaml_schema_catalog,
@@ -696,7 +686,7 @@ def retired_theme_renames() -> dict[MappedScalar, MappedScalar]:
 
     catalog = load_yaml_schema_catalog()
     combined: dict[MappedScalar, MappedScalar] = {}
-    for entry in catalog.entries:
+    for entry in reversed(catalog.entries):
         if entry.predecessor is None:
             continue
         dotted = f"dbt_charts.core.compile.migrations.versions.v{entry.version.replace('.', '_')}"
@@ -707,15 +697,6 @@ def retired_theme_renames() -> dict[MappedScalar, MappedScalar]:
                     module, "THEME_RENAMES", {}
                 )  # type-state: silent_fallback — most frozen versions never touch a theme name; absent THEME_RENAMES means none, not a bug
             )
-    pending = _load_migration_module(
-        "dbt_charts.core.compile.migrations.versions.current"
-    )
-    if pending is not None:
-        combined.update(
-            getattr(
-                pending, "THEME_RENAMES", {}
-            )  # type-state: silent_fallback — same as above: no theme rename pending yet is the common case, not a bug
-        )
     return combined
 
 
@@ -747,24 +728,6 @@ def _build_board_migration_context() -> tuple[YamlSchemaCatalog, MigrationRegist
             all_conditional_moves.extend(
                 module.conditional_moves(
                     entry.predecessor, entry.version, catalog=catalog
-                )
-            )
-    pending = _load_migration_module(
-        "dbt_charts.core.compile.migrations.versions.current"
-    )
-    if pending is not None:
-        if hasattr(pending, "moves"):
-            all_moves.extend(
-                pending.moves(catalog.latest.version, _CURRENT, catalog=catalog)
-            )
-        if hasattr(pending, "deletions"):
-            all_deletions.extend(
-                pending.deletions(catalog.latest.version, _CURRENT, catalog=catalog)
-            )
-        if hasattr(pending, "conditional_moves"):
-            all_conditional_moves.extend(
-                pending.conditional_moves(
-                    catalog.latest.version, _CURRENT, catalog=catalog
                 )
             )
     return catalog, MigrationRegistry(
@@ -823,17 +786,18 @@ def migrate_mapping(
     retained schema.
     """
     identifier = recognized = _recognize(mapping, catalog, registry)
-    if identifier == _CURRENT:
+    if identifier == catalog.dev.version:
         return copy.deepcopy(dict(mapping))
-    # The latest frozen schema is always transparently migratable — it is the
-    # most recent released grammar, and the support window exists to discourage
-    # accumulating decades of silent upgrades, not to penalize the newest format.
-    if not allow_expired and identifier != catalog.latest.version:
+    # The latest released schema is always transparently migratable — it is
+    # the most recent released grammar, and the support window exists to
+    # discourage accumulating decades of silent upgrades, not to penalize the
+    # newest format.
+    if not allow_expired and identifier != catalog.latest_released.version:
         _enforce_support_window(identifier, catalog, today=today)
 
     result = copy.deepcopy(dict(mapping))
     drop_warnings: list[str] = []
-    while identifier != _CURRENT:
+    while identifier != catalog.dev.version:
         moves = registry.transition_from(identifier)
         deletions = registry.deletions_from(identifier)
         cond_moves = registry.conditional_moves_from(identifier)
@@ -841,7 +805,7 @@ def migrate_mapping(
             break
         for move in moves:
             _apply_move(result, move, catalog)
-        drop_warnings.extend(_apply_deletions(result, deletions, catalog))
+        drop_warnings.extend(_apply_deletions(result, deletions, catalog)[0])
         for cond_move in cond_moves:
             drop_warnings.extend(_apply_conditional_move(result, cond_move, catalog))
         identifier = (moves or deletions or cond_moves)[0].target_schema
@@ -926,7 +890,7 @@ def _verify_reachable_via_moves_and_deletions(
     registry: MigrationRegistry,
     identifier: str,
 ) -> tuple[str, ...]:
-    """Continue an in-memory walk from *identifier* to ``_CURRENT``, Move/Deletion only.
+    """Continue an in-memory walk from *identifier* to the DEV version, Move/Deletion only.
 
     Used to verify a capped ``migrate_yaml_text`` result is on a genuinely
     completable path (see its docstring) without pretending the on-disk
@@ -945,7 +909,7 @@ def _verify_reachable_via_moves_and_deletions(
     means genuinely reachable and valid.
     """
     result = copy.deepcopy(mapping)
-    while identifier != _CURRENT:
+    while identifier != catalog.dev.version:
         moves = registry.transition_from(identifier)
         deletions = registry.deletions_from(identifier)
         if not moves and not deletions:
@@ -978,25 +942,25 @@ def migrate_yaml_text(
     board through a YAML dump/load round trip.
 
     ``stop_target``, when given, stops the walk at that frozen version instead
-    of ``_CURRENT`` -- the pending ``catalog.latest.version -> _CURRENT``
-    boundary is never applied. This is how ``dct migrate`` (via
-    ``migrate_board_yaml_text``) avoids writing syntax no released dbt charts
-    recognizes yet; callers that want the full walk to the live schema
-    (recognition tests, in-memory preview) pass nothing. ``stop_target`` also
-    gates the ``_schema_version`` stamp: a file is only ever stamped with a
-    frozen, real version number, never with ``_CURRENT`` -- and only
-    alongside a real structural change (``staged != raw``), never as the
-    sole reason to rewrite an otherwise-untouched file. A structurally
-    current board is always returned byte-identical, stamp included. A
-    written or corrected stamp lands on the file's first line, with a
-    trailing comment naming ``dct migrate`` as the author (see
-    ``_mark_stamp_line_auto_written``).
+    of the DEV version -- the pending
+    ``catalog.latest_released.version -> catalog.dev.version`` boundary is
+    never applied. This is how ``dct migrate`` (via ``migrate_board_yaml_text``)
+    avoids writing syntax no released dbt charts recognizes yet; callers that
+    want the full walk to the live schema (recognition tests, in-memory
+    preview) pass nothing. ``stop_target`` also gates the ``_schema_version``
+    stamp: a file is only ever stamped with a frozen, real version number,
+    never with the DEV version -- and only alongside a real structural change
+    (``staged != raw``), never as the sole reason to rewrite an otherwise-
+    untouched file. A structurally current board is always returned
+    byte-identical, stamp included. A written or corrected stamp lands on the
+    file's first line, with a trailing comment naming ``dct migrate`` as the
+    author (see ``_mark_stamp_line_auto_written``).
 
     The capped result is not itself validated against the frozen target's
     schema -- that schema is closed and predates every field added since the
     freeze (including ``_schema_version`` itself), so a legitimately current
     field would fail it even though nothing is actually wrong. Instead, a
-    throwaway copy is walked the *rest* of the way to ``_CURRENT`` in memory,
+    throwaway copy is walked the *rest* of the way to the DEV version in memory,
     using only Move/Deletion (never ConditionalMove -- see
     ``_verify_reachable_via_moves_and_deletions``, not ``migrate_mapping``:
     the latter also resolves ConditionalMove, which this text writer cannot
@@ -1020,7 +984,7 @@ def migrate_yaml_text(
 
     raw = load_yaml_mapping(yaml_text)
     identifier = recognized = _recognize(raw, catalog, registry)
-    if identifier == _CURRENT:
+    if identifier == catalog.dev.version:
         # A structurally-current file is never touched, stamp included: the
         # stamp is written only alongside a real change (see the end of this
         # function), never as the sole reason to rewrite an otherwise-
@@ -1031,7 +995,7 @@ def migrate_yaml_text(
     removals: set[str] = set()
     deletion_reasons: list[str] = []
     staged = copy.deepcopy(raw)
-    while identifier != _CURRENT and identifier != stop_target:
+    while identifier != catalog.dev.version and identifier != stop_target:
         moves = registry.transition_from(identifier)
         deletions = registry.deletions_from(identifier)
         if not moves and not deletions:
@@ -1081,14 +1045,14 @@ def migrate_yaml_text(
                 if source != destination:
                     removals.add(".".join(source))
             _apply_move(staged, move, catalog)
-        deletion_reasons.extend(_apply_deletions(staged, deletions, catalog))
-        for deletion in deletions:
-            yaml_text = _delete_tail_in_yaml_text(yaml_text, deletion)
+        reasons, struck_paths = _apply_deletions(staged, deletions, catalog)
+        deletion_reasons.extend(reasons)
+        yaml_text = _delete_paths_in_yaml_text(yaml_text, struck_paths)
         identifier = (moves or deletions)[0].target_schema
 
-    # Uncapped, staged already reached _CURRENT: check it directly against
-    # the live schema. Capped, staged deliberately stops short of _CURRENT,
-    # so verify a throwaway copy can still reach one (see
+    # Uncapped, staged already reached the DEV version: check it directly
+    # against the live schema. Capped, staged deliberately stops short of the
+    # DEV version, so verify a throwaway copy can still reach one (see
     # _verify_reachable_via_moves_and_deletions's docstring).
     if stop_target is None:
         current_errors = _current_schema_rejections(staged, catalog)
@@ -1168,11 +1132,18 @@ def _recognize(
     positional gate (shared by ``Deletion`` and ``ConditionalMove``) refuses to
     act on also matches nothing, so this is "no transition applies", not
     "nothing retired is here".
+
+    The DEV version is never a probe candidate: nothing sources a transition
+    from it (it is always the newest entry, with no successor), so it could
+    never match, and a document that already reached it took the early return
+    above.
     """
     current_errors = _current_schema_rejections(mapping, catalog)
     if not current_errors:
-        return _CURRENT
+        return catalog.dev.version
     for identifier in reversed(catalog.versions):
+        if identifier == catalog.dev.version:
+            continue
         if _transition_applies(mapping, identifier, catalog, registry):
             return identifier
     raise _unsupported_schema_error(current_errors[0])
@@ -1257,12 +1228,17 @@ def _deletion_would_fire(
 ) -> bool:
     """Read-only mirror of ``_delete_tails_recursive``: would any deletion actually fire?
 
-    Same schema-position walk (``_matching_positions``, ``_declares_tail``),
-    checked with ``_tail_present`` in place of the pop — nothing here mutates
-    *node*, so the same walk serves as both appliers' dry run. Takes
-    ``Deletion`` objects, not bare paths, for the same ``chart_type`` gate
-    ``_delete_tails_recursive`` applies — see that function's docstring for
-    why a plain path-membership check over-fires across chart families.
+    Same schema-position walk (``_matching_positions``, ``_declares_tail``,
+    ``_live_declares_tail``), checked with ``_tail_present`` in place of the
+    pop — nothing here mutates *node*, so the same walk serves as both
+    appliers' dry run. Takes ``Deletion`` objects, not bare paths, for the same
+    ``chart_type`` gate ``_delete_tails_recursive`` applies — see that
+    function's docstring for why a plain path-membership check over-fires
+    across chart families.
+
+    Both gates matter here, not just when applying: a board carrying only a
+    *live* ``style.color`` on a chart must not be read as predating the
+    grammar that retired the board-level one.
     """
     if isinstance(node, dict):
         matching = _matching_positions(schema, positions, live, live_positions, node)
@@ -1272,8 +1248,10 @@ def _deletion_would_fire(
                 or not _declares_chart_type(schema, matching, deletion.chart_type)
             ):
                 continue
-            if _declares_tail(schema, matching, deletion.path) and _tail_present(
-                node, deletion.path
+            if (
+                _declares_tail(schema, matching, deletion.path)
+                and not _live_declares_tail(live, live_positions, node, deletion.path)
+                and _tail_present(node, deletion.path)
             ):
                 return True
         return any(
@@ -1384,12 +1362,30 @@ def _incomplete_migration_error(
 def _enforce_support_window(
     identifier: str, catalog: YamlSchemaCatalog, *, today: date
 ) -> None:
+    """Raise once *identifier* has aged out of the six-month support window.
+
+    Unreachable with a null ``released_at`` (the DEV version's shape) or an
+    identifier absent from the catalog through the normal ``migrate_mapping``
+    call path -- both are excluded before this is ever called. Raising a
+    clear ``MigrationError`` for either rather than tolerating them (a
+    never-expiring branch, or a bare ``StopIteration``) means a caller that
+    reaches here in error fails loud instead of silently doing the wrong
+    thing.
+    """
+    entry = next((e for e in catalog.entries if e.version == identifier), None)
+    if entry is None:
+        raise MigrationError(
+            f"Schema {identifier} is not a retained grammar; cannot enforce "
+            "the transparent-migration support window."
+        )
+    if entry.released_at is None:
+        raise MigrationError(
+            f"Schema {identifier} has no release date; the DEV version must "
+            "never reach the support-window check."
+        )
     current_date = date.today() if today == date.min else today
     cutoff = _subtract_months(current_date, 6)
-    released_at = next(
-        entry.released_at for entry in catalog.entries if entry.version == identifier
-    )
-    if released_at < cutoff:
+    if entry.released_at < cutoff:
         raise SchemaVersionTooOldError(
             f"Schema {identifier} is older than the transparent-migration cutoff "
             f"{cutoff.isoformat()}; run `dct migrate` to update the file."
@@ -1549,16 +1545,19 @@ def _apply_deletions(
     document: JsonObject,
     deletions: Sequence[Deletion],
     catalog: YamlSchemaCatalog,
-) -> list[str]:
+) -> tuple[list[str], list[DocumentPath]]:
     """Strip every declared deletion in one document walk.
 
     All of a boundary's deletions share its source grammar, so one walk covers
     them: the schema descent is what costs, and re-walking per tail re-expands
     the same ``$ref``/``anyOf``/``allOf`` nodes once per tail.
 
-    Returns one message per deletion that both fired (was actually present in
-    the document, not merely declared by the grammar) and carries a
-    ``reason`` — most deletions are mechanical and carry none.
+    Returns the author-facing messages and the concrete document paths struck.
+    One message per deletion that both fired (was actually present in the
+    document, not merely declared by the grammar) and carries a ``reason`` —
+    most deletions are mechanical and carry none. The paths are what
+    ``_delete_paths_in_yaml_text`` replays; see ``_delete_tails_recursive`` for
+    their shape.
 
     Takes the ``Deletion`` objects themselves, not bare paths: several
     deletions can share one path with different ``chart_type`` scopes (one
@@ -1567,10 +1566,11 @@ def _apply_deletions(
     message and losing the chart_type each deletion needs to gate on.
     """
     if not deletions:
-        return []
+        return [], []
     source_schema = catalog.schema_for(deletions[0].source_schema)
     live = catalog.current_schema
     messages: list[str] = []
+    struck: list[DocumentPath] = []
     _delete_tails_recursive(
         document,
         deletions,
@@ -1579,8 +1579,10 @@ def _apply_deletions(
         live,
         [live],
         messages,
+        struck,
+        (),
     )
-    return messages
+    return messages, struck
 
 
 def _delete_tails_recursive(
@@ -1591,6 +1593,8 @@ def _delete_tails_recursive(
     live: JsonObject,
     live_positions: Sequence[JsonObject],
     messages: list[str],
+    struck: list[DocumentPath],
+    prefix: DocumentPath,
 ) -> None:
     """Delete every declared deletion wherever the source grammar declares it, throughout *node*.
 
@@ -1613,6 +1617,19 @@ def _delete_tails_recursive(
     whole-node validity, not by which specific arm) would let a
     ``chart_type="bar"``-scoped deletion strip the field from every chart
     family that still declares it, table/kpi included.
+
+    A tail the *live* grammar still declares at this position is left alone
+    (``_live_declares_tail``) — a leaf name is routinely retired at one
+    position and live at another, and the source grammar declares it at both.
+    That gate, not the path's shape, is what lets ``("style", "color")`` strip
+    a board's dead override while every chart family keeps its working one.
+
+    ``struck`` collects the concrete document path of every occurrence actually
+    removed — segment tuples, sequence indices included, and the emptied parent
+    rather than the leaf wherever the deletion took one with it. ``dct
+    migrate``'s text rewriter replays exactly these rather than re-deriving
+    them from key names, which is what keeps the two paths one rule instead of
+    two.
 
     ``live_positions`` is the same descent through the *current* grammar, kept
     in step so ``_matching_positions`` can tell a field that is new **here**
@@ -1641,11 +1658,16 @@ def _delete_tails_recursive(
                 continue
             if not _declares_tail(schema, matching, deletion.path):
                 continue
-            if deletion.reason is not None and _tail_present(node, deletion.path):
+            if _live_declares_tail(live, live_positions, node, deletion.path):
+                continue
+            fired = _tail_present(node, deletion.path)
+            if fired and deletion.reason is not None:
                 messages.append(
                     f"`{_format_path(deletion.path)}` was removed: {deletion.reason}"
                 )
             _try_delete_tail(node, deletion.path)
+            if fired:
+                struck.append((*prefix, *_surviving_prefix(node, deletion.path)))
         for key in list(node.keys()):
             child = node[key]
             was_empty_before = isinstance(child, dict) and not child
@@ -1657,16 +1679,71 @@ def _delete_tails_recursive(
                 live,
                 _child_positions(live, live_positions, key),
                 messages,
+                struck,
+                (*prefix, key),
             )
             if isinstance(child, dict) and not child and not was_empty_before:
                 del node[key]
+                struck.append((*prefix, key))
     elif isinstance(node, list):
         item_positions = _item_positions(schema, positions)
         live_items = _item_positions(live, live_positions)
-        for item in node:
+        for index, item in enumerate(node):
             _delete_tails_recursive(
-                item, deletions, schema, item_positions, live, live_items, messages
+                item,
+                deletions,
+                schema,
+                item_positions,
+                live,
+                live_items,
+                messages,
+                struck,
+                (*prefix, index),
             )
+
+
+def _live_declares_tail(
+    live: JsonObject,
+    live_positions: Sequence[JsonObject],
+    node: Mapping[str, JsonValue],
+    tail: YamlKeyPath,
+) -> bool:
+    """Whether the *current* grammar still declares *tail* where this node sits.
+
+    The gate that makes a `Deletion` positional rather than global. A leaf name
+    is routinely retired at one position and live at another — `style.color` is
+    gone from a board's own style block and works on every chart family — and
+    the source grammar declares it at both, so the source-side gate alone
+    cannot tell them apart.
+
+    Identity, not validity (`migrations/AGENTS.md`): a mid-migration node
+    carries retired spellings and fails whole-node validation under the live
+    grammar by construction, so `_matching_positions` would narrow to nothing
+    here and the gate would wave every position through. `_plausible_positions`
+    asks the question a deletion actually needs — is *this* node one of those
+    branches — the same way `move_source_locations` does.
+
+    An unrecognized position yields no plausible branches and reads as "not
+    declared", so the deletion falls back to the source-side gate alone. That
+    is the pre-gate behavior: this check can only ever suppress a firing, never
+    add one.
+    """
+    return _declares_tail(live, _plausible_positions(live, live_positions, node), tail)
+
+
+def _surviving_prefix(node: JsonObject, tail: YamlKeyPath) -> YamlKeyPath:
+    """*tail* truncated after the first segment that is gone from *node*.
+
+    ``_try_delete_tail`` takes an emptied parent with it, so the key the text
+    rewriter has to strike is not always the leaf: deleting ``style.color`` off
+    a board whose ``style:`` held nothing else removes ``style:`` itself.
+    """
+    current: JsonValue = node
+    for index, part in enumerate(tail):
+        if not isinstance(current, dict) or part not in current:
+            return tail[: index + 1]
+        current = current[part]
+    return tail
 
 
 def _tail_present(node: JsonObject, tail: YamlKeyPath) -> bool:
@@ -2097,7 +2174,7 @@ def move_source_locations(
     legal syntax for this field at any schema version) is left alone instead
     of being forced through the map.
     """
-    source_schema = _resolve_schema(catalog, move.source_schema)
+    source_schema = catalog.schema_for(move.source_schema)
     live = catalog.current_schema
     identity_move = move.old_path == move.new_path and move.value_map is not None
     for parent, key, bindings in _source_locations(
@@ -2671,294 +2748,130 @@ def _schema_has_tail_for_chart_type(
     return walk(schema)
 
 
-# Regex for a YAML block-mapping key line: captures (indent, key, optional-inline-value).
-_YAML_KEY_RE = re.compile(r"^( *)([A-Za-z0-9_.\-]+):(?:[ \t]+(\S.*?))?[ \t]*$")
-# Matches blank lines and comment-only lines (both are transparent to parent-chain search).
+# Matches blank lines and comment-only lines; both are transparent to the
+# block-extent scan in `_delete_paths_in_yaml_text`.
 _YAML_BLANK_OR_COMMENT_RE = re.compile(r"^\s*(#.*)?$")
 
 
-def _delete_tail_in_yaml_text(yaml_text: str, deletion: Deletion) -> str:
-    """Remove every line whose key matches the deletion's leaf and whose ancestor chain matches.
+def _delete_paths_in_yaml_text(yaml_text: str, paths: Sequence[DocumentPath]) -> str:
+    """Remove the block-mapping key at each of *paths*, and its nested block.
 
-    Scans every line for the leaf key and verifies the correct ancestor chain
-    by walking backward over lines with strictly lower indentation. This removes
-    *every* match at any depth; ``set_board_values`` edits one addressed path, so
-    the two are not interchangeable even though both now reach into list items.
+    *paths* are the concrete document paths the in-memory walk actually struck
+    (``_apply_deletions``' second return). Replaying them is what makes
+    ``dct migrate`` and the in-memory migration one rule: this rewriter has no
+    schema of its own, and every attempt to re-derive the decision from key
+    names alone over-fires on a leaf that is retired at one position and live
+    at another (``style.color``: dead on a board, working on eight chart
+    families). It is also why there is no ancestor pruning here — the walk
+    reports the emptied parent it removed as a path of its own.
 
-    When deleting a leaf leaves its parent block empty (the leaf was the only
-    child), the orphaned parent key line is also removed — mirroring the
-    in-memory cleanup in ``_delete_tails_recursive``.
+    ``set_board_values`` is not the tool despite addressing the same path
+    grammar: it refuses to delete a key holding a nested mapping, which is most
+    of what a retired grammar leaves behind (``style.page``,
+    ``conditional_formatting``).
 
-    It does **not** mirror that walk's schema gate: this one still matches on the
-    key chain alone, so it can strike a position the in-memory walk correctly
-    leaves alone. Nothing reaches disk that way — the equality check against
-    ``staged`` at the end of ``migrate_yaml_text`` catches the divergence and
-    refuses the file — but the two are no longer the same rule, and the guard is
-    what keeps that safe rather than an accident.
-
-    When ``deletion.chart_type`` is set, an occurrence only strikes if a
-    ``type: <chart_type>`` line sits in the *same* mapping as the leaf
-    (``_yaml_sibling_declares_type``) — without it, a board authoring the
-    same field on both a retired family and one that keeps it (e.g. `bar`
-    and `table` both carrying `conditional_formatting` in one file) would
-    have every occurrence stripped, table's included, since this scanner
-    matches on the key chain alone with no schema position to disambiguate.
+    A path whose key does not resolve to a block-mapping line of its own is
+    skipped rather than guessed at (``_yaml_key_lines``). The file is not
+    written on a skip: ``migrate_yaml_text``'s equality check against
+    ``staged`` sees the divergence and refuses it.
     """
-    leaf_key = deletion.path[-1]
-    parent_keys = deletion.path[:-1]
+    if not paths:
+        return yaml_text
     lines = yaml_text.split("\n")
+    key_lines = _yaml_key_lines(yaml_text)
     to_delete: set[int] = set()
-    for i, line in enumerate(lines):
-        m = _YAML_KEY_RE.match(line)
-        if m is not None and m.group(2) == leaf_key:
-            leaf_indent = len(m.group(1))
-            if not _yaml_parent_chain_matches(lines, i, leaf_indent, parent_keys):
-                continue
-            if deletion.chart_type is not None and not _yaml_sibling_declares_type(
-                lines, i, leaf_indent, deletion.chart_type
-            ):
-                continue
-            to_delete.add(i)
-            # Delete the entire nested block below this key.  Find
-            # block_end = the last non-blank line whose indentation is
-            # strictly greater than leaf_indent; every line up to and
-            # including that boundary (blank or not) belongs to this block.
-            # For a scalar leaf block_end stays at i, so the range is empty
-            # and the scalar-deletion behavior is unchanged.
-            block_end = i
-            k = i + 1
-            while k < len(lines):
-                child = lines[k]
-                if not _YAML_BLANK_OR_COMMENT_RE.match(child):
-                    if len(child) - len(child.lstrip(" ")) <= leaf_indent:
-                        break
-                    block_end = k
-                k += 1
-            for k in range(i + 1, block_end + 1):
-                to_delete.add(k)
-    if parent_keys:
-        _prune_childless_ancestors(lines, to_delete)
-    return "\n".join(line for j, line in enumerate(lines) if j not in to_delete)
-
-
-def _prune_childless_ancestors(lines: list[str], to_delete: set[int]) -> None:
-    """Mark block-only ancestor keys for deletion when all their children are in to_delete.
-
-    Only keys that are actual ancestors of already-deleted lines are candidates —
-    never keys that are empty or comment-only for unrelated reasons.  The
-    candidate scoping alone provides this guarantee: every candidate lies on the
-    backward ancestor walk from a deleted line and therefore has at least one
-    block child.
-
-    Block-only means the key has no inline value *and* no inline trailing comment
-    (``legend:`` or ``legend:  # appearance``); both forms have a null value with
-    a multi-line block of children.
-
-    Interior blank/comment lines inside a pruned block are also added to
-    to_delete so they are not left orphaned at the wrong indentation.
-
-    Iterates to a fixpoint: each pass may expose a grandparent once its child key
-    is marked, propagating the cleanup upward through nested mappings.
-    """
-    changed = True
-    while changed:
-        changed = False
-        candidates: set[int] = set()
-        for deleted_idx in to_delete:
-            m_del = _YAML_KEY_RE.match(lines[deleted_idx])
-            if m_del is None:
-                # Blank or comment line inside a pruned block — no ancestor walk needed.
-                continue
-            current_indent = len(m_del.group(1))
-            for j in range(deleted_idx - 1, -1, -1):
-                anc_line = lines[j]
-                if _YAML_BLANK_OR_COMMENT_RE.match(anc_line):
-                    continue
-                anc_indent = len(anc_line) - len(anc_line.lstrip(" "))
-                if anc_indent >= current_indent:
-                    continue
-                m_anc = _YAML_KEY_RE.match(anc_line)
-                if m_anc is None:
-                    current_indent = anc_indent
-                    continue
-                value = m_anc.group(3)
-                if value is None or value.lstrip().startswith("#"):
-                    candidates.add(j)
-                current_indent = len(m_anc.group(1))
-        for i in candidates:
-            if i in to_delete:
-                continue
-            key_indent = len(lines[i]) - len(lines[i].lstrip(" "))
-            j = i + 1
-            has_live_child = False
-            while j < len(lines):
-                child_line = lines[j]
-                if _YAML_BLANK_OR_COMMENT_RE.match(child_line):
-                    j += 1
-                    continue
-                child_indent = len(child_line) - len(child_line.lstrip(" "))
-                if child_indent <= key_indent:
-                    break
-                if j not in to_delete:
-                    has_live_child = True
-                    break
-                j += 1
-            if not has_live_child:
-                # Find block_end — the last line at indent > key_indent — to
-                # bound the cleanup to the block's actual extent.  Blank/comment
-                # lines after that boundary belong to what follows the block.
-                block_end = i
-                k = i + 1
-                while k < len(lines):
-                    inner = lines[k]
-                    if not _YAML_BLANK_OR_COMMENT_RE.match(inner):
-                        if len(inner) - len(inner.lstrip(" ")) <= key_indent:
-                            break
-                        block_end = k
-                    k += 1
-                for k in range(i + 1, block_end + 1):
-                    if _YAML_BLANK_OR_COMMENT_RE.match(lines[k]):
-                        to_delete.add(k)
-                to_delete.add(i)
-                changed = True
-
-
-def _yaml_parent_chain_matches(
-    lines: list[str],
-    leaf_idx: int,
-    leaf_indent: int,
-    parent_keys: tuple[str, ...],
-) -> bool:
-    """True iff the enclosing mapping ancestors match parent_keys (nearest first).
-
-    Walks backward from leaf_idx looking for keys at strictly lower indentation.
-    List item markers and other non-key lines (blank, comment) are transparent —
-    they update the indentation tracking without requiring a key match.
-    """
-    if not parent_keys:
-        return True
-    remaining = list(reversed(parent_keys))  # nearest parent is first to check
-    current_indent = leaf_indent
-    for j in range(leaf_idx - 1, -1, -1):
-        line = lines[j]
-        if _YAML_BLANK_OR_COMMENT_RE.match(line):
+    promotions: list[tuple[int, int]] = []
+    for path in paths:
+        located = key_lines.get(path)
+        if located is None:
             continue
-        line_indent = len(line) - len(line.lstrip(" "))
-        if line_indent >= current_indent:
-            continue  # sibling or deeper, not an ancestor
-        m = _YAML_KEY_RE.match(line)
-        if m is None:
-            # List item or other structural line — update indent without key check.
-            current_indent = line_indent
-            continue
-        key = m.group(2)
-        if key != remaining[0]:
-            return False
-        remaining.pop(0)
-        current_indent = len(m.group(1))
-        if not remaining:
-            return True
-    return False
+        index, column = located
+        to_delete.add(index)
+        # The key's whole nested block: every line down to the last one
+        # indented past it (blank and comment lines inside that span
+        # included). A scalar leaf has none, and the range stays empty.
+        block_end = index
+        cursor = index + 1
+        while cursor < len(lines):
+            line = lines[cursor]
+            if not _YAML_BLANK_OR_COMMENT_RE.match(line):
+                if len(line) - len(line.lstrip(" ")) <= column:
+                    break
+                block_end = cursor
+            cursor += 1
+        to_delete.update(range(index + 1, block_end + 1))
+        if lines[index].lstrip(" ").startswith("- "):
+            promotions.append((block_end, column))
+    for block_end, column in promotions:
+        _promote_list_item_dash(lines, block_end, column, to_delete)
+    return "\n".join(line for i, line in enumerate(lines) if i not in to_delete)
 
 
-# Matches a list-item line whose first key is inline with the dash, e.g.
-# ``  - type: bar`` — captures (dash indent, key, optional inline value).
-# `_YAML_KEY_RE` deliberately does not match this shape (its key char class
-# never starts with `- `), so a chart-type sibling authored as the dash
-# line's own first key needs this separate pattern.
-_YAML_LIST_ITEM_KEY_RE = re.compile(
-    r"^( *)-[ \t]+([A-Za-z0-9_.\-]+):(?:[ \t]+(\S.*?))?[ \t]*$"
-)
+def _promote_list_item_dash(
+    lines: list[str], block_end: int, column: int, to_delete: set[int]
+) -> None:
+    """Move a deleted item-leading key's ``-`` onto the item's next key.
 
-
-def _yaml_sibling_declares_type(
-    lines: list[str], leaf_idx: int, leaf_indent: int, chart_type: str
-) -> bool:
-    """True iff a ``type: <chart_type>`` sibling sits in the same chart mapping as the leaf.
-
-    For a single-segment tail (e.g. ``("conditional_formatting",)``) there is
-    no ancestor chain to walk — ``_yaml_parent_chain_matches`` only fires on
-    tails with 2+ segments, since ``parent_keys`` is empty here. The
-    chart-type gate instead looks *sideways*: scans lines at the same
-    indentation as the leaf, in both directions, stopping at the first line
-    whose indentation drops below it — that boundary is the start of the
-    enclosing chart block, in either shape a real board uses:
-
-    * an inline list item under ``rows:``/``cols:``/``grid:``/``tabs:``,
-      whose block starts at a ``- `` dash (possibly carrying the first key
-      inline, e.g. ``- type: bar``) — ``_YAML_LIST_ITEM_KEY_RE`` reads that
-      dash line's own key/value; or
-    * a ``charts:`` mapping entry keyed by chart id (``momentum.yml``'s own
-      shape), whose block starts at a plain key line one indentation level
-      shallower, carrying no dash at all.
-
-    Only the backward scan needs the dash-line check: a chart block can only
-    ever *start* via a dash marker, never end via one belonging to the same
-    chart, so a dash encountered scanning forward always belongs to the next
-    list item and is a plain stop, not a candidate.
+    A sequence item's first key shares its line with the dash (``- style:``),
+    so striking that key takes the marker with it and orphans the rest of the
+    item at an indentation that no longer parses. Rewriting the next surviving
+    key at the same column to carry the dash keeps the item whole. An item that
+    held nothing else has no next key to promote and the scan finds none.
     """
-    for j in range(leaf_idx - 1, -1, -1):
-        line = lines[j]
+    for index in range(block_end + 1, len(lines)):
+        line = lines[index]
         if _YAML_BLANK_OR_COMMENT_RE.match(line):
             continue
         indent = len(line) - len(line.lstrip(" "))
-        if indent < leaf_indent:
-            m_item = _YAML_LIST_ITEM_KEY_RE.match(line)
-            if m_item is not None and m_item.group(2) == "type":
-                return _normalize_yaml_scalar_token(m_item.group(3)) == chart_type
-            break
-        if indent == leaf_indent:
-            m = _YAML_KEY_RE.match(line)
-            if m is None:
-                if line[indent : indent + 1] == "-":
-                    continue
-                break
-            if m.group(2) == "type":
-                return _normalize_yaml_scalar_token(m.group(3)) == chart_type
-    for j in range(leaf_idx + 1, len(lines)):
-        line = lines[j]
-        if _YAML_BLANK_OR_COMMENT_RE.match(line):
-            continue
-        indent = len(line) - len(line.lstrip(" "))
-        if indent < leaf_indent:
-            break
-        if indent == leaf_indent:
-            m = _YAML_KEY_RE.match(line)
-            if m is None:
-                if line[indent : indent + 1] == "-":
-                    continue
-                break
-            if m.group(2) == "type":
-                return _normalize_yaml_scalar_token(m.group(3)) == chart_type
-    return False
+        if indent < column:
+            return
+        if indent == column and index not in to_delete:
+            dash = column - 2
+            lines[index] = " " * dash + "-" + " " * (column - dash - 1) + line[column:]
+            return
 
 
-def _normalize_yaml_scalar_token(raw: str | None) -> str:
-    """Strip a matched surrounding quote pair and a trailing comment from a
-    scalar value capture, e.g. ``'"bar"  # note'`` -> ``bar``.
+def _yaml_key_lines(yaml_text: str) -> dict[DocumentPath, tuple[int, int]]:
+    """Document path -> the (line, column) its block-mapping key sits at.
 
-    ``_YAML_KEY_RE``/``_YAML_LIST_ITEM_KEY_RE``'s value group is the raw,
-    unparsed remainder of the line — comparing it directly against a bare
-    Python string (a ``chart_type`` literal) diverges on an author's
-    ``type: "bar"`` or ``type: bar  # note``, which parse to the same value
-    the in-memory walk compares against but do not string-equal it.
+    Composed from the YAML node tree rather than scanned, so sequence indices
+    and nesting come from the parser instead of an indentation heuristic.
+
+    A key the rewriter cannot act on is left out, and the caller skips it: a
+    flow-style key (``style: {color: x}``) shares its parent's line, so
+    deleting the line would take the parent too, and a key inside a block
+    scalar is prose, not structure. Both are recognized the same way —
+    everything left of the key on its own line must be indentation, optionally
+    with the sequence dashes that legitimately precede an item's first key.
     """
-    if raw is None:
-        return ""
-    text = raw.strip()
-    if text[:1] in ("'", '"'):
-        quote = text[0]
-        end = text.find(quote, 1)
-        if end != -1:
-            return text[1:end]
-    # YAML only starts a comment at a `#` preceded by whitespace (or at the
-    # scalar's start) — a bare chart-type literal never legitimately
-    # contains one, so the first whitespace-led `#` always ends the value.
-    for marker in (" #", "\t#"):
-        comment_at = text.find(marker)
-        if comment_at != -1:
-            text = text[:comment_at]
-    return text.strip()
+    from dbt_charts.core.compile.parse.parser import compose_yaml
+
+    lines = yaml_text.split("\n")
+    out: dict[DocumentPath, tuple[int, int]] = {}
+
+    def walk(node: yaml.Node, prefix: DocumentPath) -> None:
+        if isinstance(node, yaml.MappingNode):
+            for key_node, value_node in node.value:
+                if not isinstance(key_node, yaml.ScalarNode):
+                    continue
+                key = str(key_node.value)
+                path = (*prefix, key)
+                line = key_node.start_mark.line
+                column = key_node.start_mark.column
+                if line < len(lines) and _is_block_key_line(lines[line], column, key):
+                    out[path] = (line, column)
+                walk(value_node, path)
+        elif isinstance(node, yaml.SequenceNode):
+            for index, item in enumerate(node.value):
+                walk(item, (*prefix, index))
+
+    walk(compose_yaml(yaml_text), ())
+    return out
+
+
+def _is_block_key_line(line: str, column: int, key: str) -> bool:
+    """Whether *key* opens a block mapping entry at *column* on *line*."""
+    return line[column:].startswith(f"{key}:") and not line[:column].strip(" -")
 
 
 def _format_path(path: YamlKeyPath) -> str:

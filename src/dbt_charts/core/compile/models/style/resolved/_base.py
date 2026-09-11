@@ -43,6 +43,7 @@ from dbt_charts.core.compile.models.style.theme import (
     GlobalMarksStyle,
     HeatmapChartStyle,
     HistogramChartStyle,
+    HoverEmphasisStyle,
     KpiChartStyle,
     KpiTonesStyle,
     LayoutStyle,
@@ -88,6 +89,11 @@ class ResolvedRulerAxis:
     # suffix field (and required a tabular label font at resolve). False for
     # a horizontal ruler, whose ticks render along VL's x channel.
     reserve: bool
+    # Whether the currency prefix repeats on every non-zero tick rather than
+    # anchoring on one. Column_forming alone decides this -- unlike `mode`,
+    # which can independently be REPEAT on a column-forming axis too (the
+    # ladder's own magnitude-driven suffix register).
+    prefix_repeats: bool
     # Split from axis.format by ruler_digit_format (core/text/numeral_scale.py)
     # once, here, rather than re-parsed at every consumer: prefix is the
     # currency symbol (empty if none), digit_spec is the fixed-point d3 spec
@@ -184,12 +190,16 @@ class ResolvedTickLabel:
     # (mirrors ruler.prefix): the bare symbol (e.g. "$"), no added spacing.
     # "" when the format has no currency symbol.
     prefix: str = ""
-    # Whether the anchor tick is first rather than last. For a currency prefix
-    # (e.g. "$"): the largest positive tick when any exist, else the
+    # Tri-state, keyed off `prefix` and column_forming (folded in at resolve,
+    # never re-declared in render): "" prefix -> irrelevant, unset. Non-empty
+    # prefix + column_forming -> bool, whether the anchor tick is first
+    # rather than last (largest positive tick when any exist, else the
     # most-negative — sign-aware, unlike the magnitude-based
-    # ResolvedRulerAxis.anchor_at_start (a "$" has no scale dependency the
-    # way a shared "K"/"M" suffix does). Set only when `prefix` is non-empty
-    # (the anchor-only prefix gate) and None otherwise.
+    # ResolvedRulerAxis.anchor_at_start, since a "$" has no scale dependency
+    # the way a shared "K"/"M" suffix does). Non-empty prefix + NOT
+    # column_forming -> None, meaning repeat the prefix on every tick (no
+    # vertical digit column to disambiguate against) — mirrors
+    # ResolvedRulerAxis's SuffixMode.REPEAT.
     anchor_at_start: bool | None = None
     # Mirrors ResolvedRulerAxis.decimal_pad_table: one padding string per
     # possible missing_len (0..precision+1), built from compose_decimal_units
@@ -645,6 +655,7 @@ class ResolvedChartDefaults:
 
     # --- Board/board chrome ---
     tooltip: TooltipStyle
+    hover_emphasis: HoverEmphasisStyle
     font_family: str | None
     title: TitleStyle
     pagination: PaginationConfig | None

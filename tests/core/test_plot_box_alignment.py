@@ -142,6 +142,14 @@ def test_every_layer_that_paints_nothing_is_clipped(chart_type: str):
     A halo is invisible by color, not by opacity: it paints the theme background
     at 1.0. Matching on ``opacity == 0`` alone would leave three of the four clip
     sites unpinned.
+
+    Background-colored stroke/fill alone no longer means invisible: a
+    colorless single-series area now draws its real top-edge separator in
+    the background color too (the stacked recipe's band-knockout idiom),
+    and that mark carries ``tooltip: True`` same as any other visible data
+    mark -- ``tooltip is not True`` is the same visible/invisible split
+    ``_data_lines`` above uses, so the background-color match only catches
+    the genuinely invisible halo/backdrop sub-layers.
     """
     background = resolve_style(get_theme_style()).background
     marks = _marks(_spec(chart_type, {"marks": {"point": {"size": 400}}}))
@@ -150,8 +158,16 @@ def test_every_layer_that_paints_nothing_is_clipped(chart_type: str):
         m
         for m in marks
         if m.get("opacity") == 0
-        or (m.get("stroke") == background and m["type"] == "line")
-        or (m.get("fill") == background and m["type"] == "area")
+        or (
+            m.get("stroke") == background
+            and m["type"] == "line"
+            and m.get("tooltip") is not True
+        )
+        or (
+            m.get("fill") == background
+            and m["type"] == "area"
+            and m.get("tooltip") is not True
+        )
     ]
     assert len(paints_nothing) >= 2, marks
 

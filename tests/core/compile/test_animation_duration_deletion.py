@@ -1,7 +1,7 @@
-"""Regression tests for the animation_duration deletion (current boundary).
+"""Regression tests for the animation_duration deletion (DEV boundary).
 
 ``animation_duration`` was removed from all style models in the current
-(unreleased) cycle.  ``versions/current.py`` must register Deletions for every
+(unreleased) cycle.  ``versions/v0_7_0.py`` must register Deletions for every
 position where the key appeared in the frozen 0.4.0 schema so that authored
 boards from before the removal migrate cleanly.
 
@@ -213,7 +213,7 @@ def test_board_without_animation_duration_is_unchanged(
 ) -> None:
     """Pins "a current-compatible board is not rewritten at all" — not animation_duration-specific.
 
-    _recognize() returns _CURRENT for this board, so migrate_mapping returns a
+    _recognize() returns the DEV version for this board, so migrate_mapping returns a
     deep copy without running any Deletion. This is a no-op-migration contract
     test, not a check that animation_duration is stripped.
     """

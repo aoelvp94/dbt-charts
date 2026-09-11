@@ -143,6 +143,7 @@ class ScatterEmitter:
                     chart.id,
                     "scatter",
                     domain_values=x_domain,
+                    panel_fields=tuple(axis.field for axis in dataset.axes),
                 )
                 x_type, x_axis, x_time_unit = x_res.vl_type, x_res.axis, x_res.time_unit
             x_scale = emit_resolved_scale_vl(ax.scale, include_x_only=True)

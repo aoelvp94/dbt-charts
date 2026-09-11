@@ -138,12 +138,24 @@ charts:
       # The bands are a semantic ramp, so they stack in the query's own order
       # (poor, satisfactory, good) rather than the default ascending-by-value.
       stack_order: data
+      # The chart is about the measures, not the backdrop, so the legend leads
+      # with them; the bands then follow top-down as they stack.
+      legend:
+        values:
+        - Actual
+        - Goal
+        - Good
+        - Satisfactory
+        - Poor
+      # Slots follow the color domain (poor, satisfactory, good, actual, goal),
+      # so the three band grays run dark -> light as the band improves: worse
+      # bands carry more ink, and the ramp reads as one sequence.
       color:
         categorical:
           palette:
-          - "#D5D8DC"
           - "#6E7378"
           - "#A8ADB3"
+          - "#D5D8DC"
           - "#16181B"
           - "#16181B"
     layers:

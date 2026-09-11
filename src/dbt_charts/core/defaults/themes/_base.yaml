@@ -290,6 +290,12 @@ style:
         radius: 3.0
       active_marker: fill
 
+    # Whether a chart visually answers "what am I pointing at", beyond the
+    # tooltip. One switch for the whole family of mechanisms; each chart
+    # family picks its own, and their strengths are engine config.
+    hover_emphasis:
+      visible: true
+
     legend:
       position: right
       direction: vertical
@@ -491,7 +497,11 @@ style:
         curve: "linear"
         halo_multiplier: 2.0
       area:
-        # Soft tinted fill on a cream-knockout undercoat (when multi-series).
+        # Soft tinted fill on a cream-knockout undercoat -- the overlap recipe
+        # for 2+ unstacked series. A single series has nothing to overlap and
+        # nothing for a trend line to sit on top of, so resolve (area.py)
+        # swaps in the FULL `stacked` recipe below there instead -- treated
+        # like a stack, not an overlap with the halo turned off.
         # The top-edge stroke is a genuine separate line mark (Vega-Lite
         # itself compiles an area's edge line this way) — its geometry
         # (width/cap/join/halo) lives on marks.line above, shared with the
@@ -501,8 +511,9 @@ style:
         # marks.line.halo_multiplier (which only sizes the edge line's own
         # halo) — a fill has no "width" to scale, so this is a plain on/off.
         backdrop: true
-        # Stacked / streamgraph recipe (chart.stack non-false): solid fill +
-        # a full-perimeter background-color stroke replaces the overlap
+        # Stacked recipe, used by stacked / streamgraph charts and by a single
+        # unstacked series: solid fill + a background-color separator stroke
+        # replaces the overlap
         # translucent-halo recipe above. Stacked bands don't cross, so there's
         # no halo undercoat to knock out — the perimeter stroke itself is the
         # separator between adjacent bands (same idiom as bar.border above).
@@ -806,9 +817,11 @@ style:
     pie:
       aspect_ratio: 1.0
       # Donut center total — the big number on top, smaller caption below.
-      # The engine auto-fills `chart.total` label and format independently,
-      # supplying whichever an author left unset; `chart.total: { label,
-      # format }` overrides either. This slot only contributes typography.
+      # `chart.total: { label }` is chart-root copy (auto-filled if the
+      # author leaves it unset); `value.format` here is style paint,
+      # resolved at chart-resolve time (defaults to the integer preset for
+      # any donut shape that leaves it unset in the whole cascade). This
+      # slot also carries the value/label typography.
       total:
         value:
           font:

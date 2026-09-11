@@ -33,12 +33,12 @@ from dbt_charts.core.render.chart.time_unit_detect import (
 from dbt_charts.core.render.chart.type_inference import (
     DetectedTimeUnit,
     infer_vega_type_from_data,
-    is_vega_numeric_value,
     resolve_authored_x_type,
     resolve_cartesian_x_type,
 )
 from dbt_charts.core.render.chart.vl_field_maps import axis_to_vl, legend_to_vl
 from dbt_charts.core.text.case import default_axis_title
+from dbt_charts.core.utils import is_vega_numeric_value
 
 
 def _numeric_extent(

@@ -23,7 +23,7 @@ class ResolvedPieStyle(BaseModel):
         description="Resolved d3 tooltip number format ('' = VL default).",
     )
     total_style: TotalStyle = Field(
-        description="Donut center total font styles (value number + caption label).",
+        description="Donut center total paint: value number (font + resolved format) and caption label (font).",
     )
     title_font: ResolvedFontStyle | None = Field(
         default=None,

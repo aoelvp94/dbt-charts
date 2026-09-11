@@ -69,6 +69,7 @@ from dbt_charts.core.compile.models.style.authored._base import (
     StylePatch,
     SupportTableStylePatch,
     TitleStylePatch,
+    TotalSlotStylePatch,
     TotalStylePatch,
     XScaleStylePatch,
 )
@@ -168,6 +169,7 @@ __all__ = [
     "TableColumnDefaultsConfig",
     "TitleStylePatch",
     "fill_table_column_defaults",
+    "TotalSlotStylePatch",
     "TotalStylePatch",
 ]
 

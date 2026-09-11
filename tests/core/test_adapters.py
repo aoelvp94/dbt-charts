@@ -977,6 +977,117 @@ class TestDbtAdapterDirectInstantiation:
         with pytest.raises(ValueError, match="typo_profile"):
             adapter._get_dbt_adapter()
 
+    def _capture_build_adapter_target(
+        self,
+        tmp_path: Path,
+        profiles_yml: str,
+        local_project: Callable[..., FilesystemProject],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> dict[str, object]:
+        """Run _get_dbt_adapter() against profiles_yml, returning the target
+        dict it hands to build_adapter (mocked, so no real connection needed)."""
+        from unittest.mock import MagicMock
+
+        from dbt_charts.core.execute.adapters import dbt_adapter_factory
+
+        # A machine exporting DBT_PROFILES_DIR outranks the project-local
+        # profiles.yml this helper writes (_read_profiles_yml's resolution order).
+        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+        (tmp_path / "profiles.yml").write_text(profiles_yml)
+        captured: dict[str, object] = {}
+
+        def fake_build_adapter(target_dict, **kwargs):
+            captured.update(target_dict)
+            return MagicMock()
+
+        with patch.object(dbt_adapter_factory, "build_adapter", fake_build_adapter):
+            dbt_adapter = DbtAdapter(
+                project=local_project(tmp_path),
+                dbt_project_path=tmp_path,
+                target_name="dev",
+                profile_name="test_profile",
+            )
+            dbt_adapter._get_dbt_adapter()
+        return captured
+
+    def test_env_var_in_target_is_rendered_before_reaching_build_adapter(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        """_get_dbt_adapter() must render env_var() before build_adapter, or a
+        field a driver opens as a file (Snowflake's private_key_path) reaches
+        open() as the literal, unrendered Jinja string."""
+        monkeypatch.setenv("DCT_TEST_SECRET_PATH", "/tmp/fake_key.p8")
+        captured = self._capture_build_adapter_target(
+            tmp_path,
+            """\
+test_profile:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: ":memory:"
+      custom_secret_path: "{{ env_var('DCT_TEST_SECRET_PATH') }}"
+""",
+            local_project,
+            monkeypatch,
+        )
+        assert captured["custom_secret_path"] == "/tmp/fake_key.p8"
+
+    def test_env_var_value_containing_jinja_is_not_re_evaluated(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        """Rendering happens once. A second pass would treat the first pass's
+        output as a template — mirrors test_dbt_profile_routing.py's resolver-path
+        coverage of the same one-render contract, for the _get_dbt_adapter path."""
+        monkeypatch.setenv("DCT_TEST_SECRET", "{{ 1 + 1 }}")
+        captured = self._capture_build_adapter_target(
+            tmp_path,
+            """\
+test_profile:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: ":memory:"
+      custom_secret: "{{ env_var('DCT_TEST_SECRET') }}"
+""",
+            local_project,
+            monkeypatch,
+        )
+        assert captured["custom_secret"] == "{{ 1 + 1 }}"
+
+    def test_absolute_templated_duckdb_path_is_not_anchored(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        """The relative-DuckDB-path anchor in _read_target_dict must test the
+        rendered path, not the literal Jinja — an unrendered `{{ env_var(...) }}`
+        is never absolute, so it would join onto dbt_project_path as text and
+        the adapter would open the wrong (or a nonexistent) file."""
+        monkeypatch.setenv("DCT_TEST_DB_PATH", "/data/warehouse.duckdb")
+        captured = self._capture_build_adapter_target(
+            tmp_path,
+            """\
+test_profile:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DCT_TEST_DB_PATH') }}"
+""",
+            local_project,
+            monkeypatch,
+        )
+        assert captured["path"] == "/data/warehouse.duckdb"
+
 
 class TestResolveDuckdbConfig:
     """DuckDBAdapter._resolve_duckdb_config falls back to adapter-level default."""

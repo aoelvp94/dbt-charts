@@ -8,8 +8,11 @@ silently stamp ERR-INTERNAL.
 
 from __future__ import annotations
 
+import sys
+import types
 from collections.abc import Callable
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -33,6 +36,10 @@ from dbt_charts.core.render.errors import (
 )
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
+
+
+def _noop_register_fonts(vlc_module: object) -> None:
+    pass
 
 
 class TestRenderNoLayoutCarriesCode:
@@ -89,6 +96,101 @@ text: "static text only"
             render(result.board, executor, format="not-a-real-format")
 
         assert exc_info.value.code is ERR_FORMAT_UNSUPPORTED
+
+
+class TestFormatConversionFailureCarriesCode:
+    """A PDF/PNG converter failure (e.g. the PDF 28-level nesting ceiling)
+    must surface a registered code, not fall through to ERR-INTERNAL.
+    """
+
+    @pytest.mark.parametrize(
+        ("module_name", "helper_name", "raw_detail", "expected_alt"),
+        [
+            (
+                "png",
+                "svg_to_png",
+                "Failed to rasterize SVG to PNG: unsupported font glyph in "
+                "embedded typeface. (element: png)",
+                "HTML",
+            ),
+            (
+                "pdf",
+                "svg_to_pdf",
+                "Failed to convert SVG to PDF: The SVG's nesting depth is "
+                "too high. (element: pdf)",
+                "PNG or HTML",
+            ),
+        ],
+    )
+    def test_converter_exception_carries_code_not_internal(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        module_name: str,
+        helper_name: str,
+        raw_detail: str,
+        expected_alt: str,
+    ) -> None:
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_FORMAT_CONVERSION_FAILED,
+        )
+
+        module = __import__(
+            f"dbt_charts.core.render.converters.{module_name}", fromlist=["*"]
+        )
+        fake_helper = mock.Mock(side_effect=RuntimeError(raw_detail))
+        fake_vlc = types.SimpleNamespace(**{helper_name: fake_helper})
+        monkeypatch.setitem(sys.modules, "vl_convert", fake_vlc)
+        monkeypatch.setattr(module, "register_vl_convert_fonts", _noop_register_fonts)
+
+        svg = '<svg xmlns="http://www.w3.org/2000/svg"></svg>'
+        convert = (
+            (lambda: module.to_png(svg, scale=1.0))
+            if module_name == "png"
+            else (lambda: module.to_pdf(svg))
+        )
+
+        with pytest.raises(FormatError) as exc_info:
+            convert()
+
+        assert exc_info.value.code is ERR_FORMAT_CONVERSION_FAILED
+        # "HTML" is a substring of the PDF row's own remedy text ("PNG or
+        # HTML"), so a bare substring check can't distinguish a correct PNG
+        # message from a wrong one -- pin the full clause instead.
+        assert f"Try exporting {expected_alt} instead" in str(exc_info.value)
+        # Converter detail preserved, not swallowed.
+        assert raw_detail in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "module_name",
+        ["png", "pdf"],
+    )
+    def test_missing_vl_convert_carries_code_not_internal(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        module_name: str,
+    ) -> None:
+        from dbt_charts.core.diagnostics.codes_render import (
+            ERR_FORMAT_CONVERTER_UNAVAILABLE,
+        )
+
+        module = __import__(
+            f"dbt_charts.core.render.converters.{module_name}", fromlist=["*"]
+        )
+        svg = '<svg xmlns="http://www.w3.org/2000/svg"></svg>'
+        convert = (
+            (lambda: module.to_png(svg, scale=1.0))
+            if module_name == "png"
+            else (lambda: module.to_pdf(svg))
+        )
+
+        with (
+            mock.patch.dict(sys.modules, {"vl_convert": None}),
+            pytest.raises(FormatError) as exc_info,
+        ):
+            convert()
+
+        assert exc_info.value.code is ERR_FORMAT_CONVERTER_UNAVAILABLE
+        assert "pip install vl-convert-python" in str(exc_info.value)
 
 
 class TestRenderKpiMultirowCarriesCode:

@@ -55,6 +55,14 @@ _ROWS = [
     {"month": "2024-06-15 00:00:00", "value": 30},
 ]
 
+# The same shape one grain coarser, for the yearquarter cases: mid-quarter
+# timestamps, one per quarter.
+_QUARTERLY_ROWS = [
+    {"month": "2024-02-15 00:00:00", "value": 10},
+    {"month": "2024-05-15 00:00:00", "value": 20},
+    {"month": "2024-08-15 00:00:00", "value": 30},
+]
+
 
 def _make_ctx(
     chart: Chart, rows: list[dict[str, Any]] | None = _ROWS
@@ -478,7 +486,9 @@ def test_fires_for_quarter_accessor() -> None:
             }
         ),
     )
-    ctx = _make_ctx(chart)
+    # Quarter-grained rows: _ROWS is monthly, and three months inside one
+    # quarter is a bucket collision, not one point per bucket.
+    ctx = _make_ctx(chart, rows=_QUARTERLY_ROWS)
     diags = detector.detect(ctx)
     codes = {w.code for w in diags}
     assert WARN_LOCAL_TIME_LABEL_EXPR_ON_BUCKETED_AXIS.code in codes
@@ -582,14 +592,17 @@ def test_silent_for_horizontal_bar_above_density_threshold_without_todate() -> N
     encoding. Passing that vl_type to the temporal branch fires a false positive on
     bare timeFormat(datum.value, ...) without toDate. The fix forces vl_type='ordinal'
     for orientation='horizontal'."""
-    from datetime import date, timedelta
+    from datetime import date
 
     start = date(2019, 1, 1)
-    # 65 distinct date strings -- crosses max_ordinal_buckets=60
-    many_rows = [
-        {"month": (start + timedelta(days=i * 30)).strftime("%Y-%m-%d"), "value": i}
-        for i in range(65)
-    ]
+
+    def _nth_month(n: int) -> str:
+        y = start.year + (start.month - 1 + n) // 12
+        m = (start.month - 1 + n) % 12 + 1
+        return date(y, m, 1).isoformat()
+
+    # 65 contiguous months -- crosses max_ordinal_buckets=60
+    many_rows = [{"month": _nth_month(i), "value": i} for i in range(65)]
     chart = BarChart(
         id="c1",
         type="bar",
@@ -800,7 +813,7 @@ def test_fires_for_wide_bar_with_datetime_strings_and_todate() -> None:
     emitter, called with chart.color=None, which degenerates its dim-cross-
     join to a plain per-bucket fill -- there's no separate wide-only
     preprocessing branch left). The x-values are therefore rewritten to
-    date-only ISO buckets ('2024-04-15 00:00:00' -> '2024-04-15'), same as a
+    date-only ISO buckets ('2024-04-15 00:00:00' -> '2024-04-01'), same as a
     regular bar, so toDate() promotes them to a UTC-midnight Date and the
     real hazard is detected -- same as test_fires_for_bar_with_integer_year_x
     (long-form)."""

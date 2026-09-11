@@ -12,6 +12,8 @@ from dbt_charts.core.render.chart.time_unit_detect import (
     ordinal_axis_values,
 )
 
+from ._svg_render import render_board_to_svg
+
 
 class TestDetectTimeUnit:
     # ── year ────────────────────────────────────────────────────────────
@@ -424,3 +426,238 @@ class TestOrdinalAxisValues:
         rows = [{"d": "2024-01-01", "v": 1}, {"d": "2024-01-02", "v": 2}]
         result = ordinal_axis_values(rows, "d")
         assert result == ["2024-01-01", "2024-01-02"]
+
+
+def _month_ends(start: dt.date, count: int) -> list[dt.date]:
+    """`count` consecutive month-end dates, first one in `start`'s month."""
+    out: list[dt.date] = []
+    year, month = start.year, start.month
+    for _ in range(count):
+        nxt = dt.date(year + month // 12, month % 12 + 1, 1)
+        out.append(nxt - dt.timedelta(days=1))
+        year, month = nxt.year, nxt.month
+    return out
+
+
+def _quarter_ends(start: dt.date, count: int) -> list[dt.date]:
+    """`count` consecutive quarter-end dates, first one in `start`'s quarter."""
+    return _month_ends(start, count * 3)[::3]
+
+
+def _render_bar_of_dates(dates: list[dt.date], fiscal_year_start_month: int = 1) -> str:
+    """SVG of a defaults-only bar chart over `dates` — no authored time_unit."""
+    rows = "\n".join(
+        f"      - {{d: '{d.isoformat()}', v: {i + 1}}}" for i, d in enumerate(dates)
+    )
+    return render_board_to_svg(
+        "title: Cadence\n"
+        "queries:\n"
+        "  q:\n"
+        "    type: values\n"
+        "    rows:\n"
+        f"{rows}\n"
+        "charts:\n"
+        "  c:\n"
+        "    query: q\n"
+        "    type: bar\n"
+        "    x: d\n"
+        "    y: v\n"
+        "    style:\n"
+        "      axis_x:\n"
+        f"        fiscal_year_start_month: {fiscal_year_start_month}\n"
+        "rows:\n"
+        "  - c\n"
+    )
+
+
+class TestDetectCadence:
+    """Grain follows how far apart values sit, not where they land.
+
+    Every case here is a real reporting cadence — a month-end close, a
+    quarter-end close, a fixed billing day — that sits on no bucket start,
+    so position alone reaches none of them.
+    """
+
+    def test_month_ends_detect_yearmonth(self) -> None:
+        values = _month_ends(dt.date(2022, 1, 1), 36)
+        assert detect_time_unit(values) == "yearmonth"
+
+    def test_month_starts_still_detect_yearmonth(self) -> None:
+        values = [d.replace(day=1) for d in _month_ends(dt.date(2022, 1, 1), 36)]
+        assert detect_time_unit(values) == "yearmonth"
+
+    def test_fixed_day_of_month_billing_detects_yearmonth(self) -> None:
+        # Invoices dated the 15th — never day 1, never a month end.
+        values = [d.replace(day=15) for d in _month_ends(dt.date(2022, 1, 1), 36)]
+        assert detect_time_unit(values) == "yearmonth"
+
+    def test_quarter_ends_detect_yearquarter(self) -> None:
+        values = _quarter_ends(dt.date(2021, 3, 1), 16)
+        assert [d.month for d in values[:4]] == [3, 6, 9, 12]
+        assert detect_time_unit(values) == "yearquarter"
+
+    def test_year_ends_detect_year(self) -> None:
+        values = [dt.date(y, 12, 31) for y in range(2014, 2026)]
+        assert detect_time_unit(values) == "year"
+
+    def test_fiscal_year_ends_detect_year(self) -> None:
+        # Jan 31 close — a calendar year apart, never on a calendar boundary.
+        values = [dt.date(y, 1, 31) for y in range(2014, 2026)]
+        assert detect_time_unit(values) == "year"
+
+    def test_contiguous_daily_control_unchanged(self) -> None:
+        values = [dt.date(2024, 1, 1) + dt.timedelta(days=i) for i in range(120)]
+        assert detect_time_unit(values) == "yearmonthdate"
+
+    def test_business_daily_control_unchanged(self) -> None:
+        # Weekday-only dailies: 1-day gaps with a 3-day gap every weekend.
+        values = [
+            d
+            for d in (dt.date(2024, 1, 1) + dt.timedelta(days=i) for i in range(90))
+            if d.weekday() < 5
+        ]
+        assert detect_time_unit(values) == "yearmonthdate"
+
+
+class TestDetectCadenceAmbiguousShapes:
+    """Deliberate verdicts for shapes where no cadence is legible."""
+
+    def test_two_point_series_has_no_cadence(self) -> None:
+        # One interval is a measurement, not a rhythm — nothing repeats yet.
+        assert detect_time_unit([dt.date(2024, 1, 31), dt.date(2024, 2, 29)]) == (
+            "yearmonthdate"
+        )
+
+    def test_three_point_series_is_enough_cadence(self) -> None:
+        # Two agreeing intervals is the minimum evidence of a repeat.
+        values = [dt.date(2024, 1, 31), dt.date(2024, 2, 29), dt.date(2024, 3, 31)]
+        assert detect_time_unit(values) == "yearmonth"
+
+    def test_irregular_event_dates_stay_daily(self) -> None:
+        # One value per month, but the intervals disagree — they land one per
+        # month by accident, so month buckets would move each point.
+        values = [dt.date(2024, 1, 15), dt.date(2024, 2, 7), dt.date(2024, 3, 22)]
+        assert detect_time_unit(values) == "yearmonthdate"
+
+    def test_dailies_with_stray_month_ends_stay_daily(self) -> None:
+        # Mixed grains: the dominant cadence is daily and the median says so.
+        values = [dt.date(2024, 1, 1) + dt.timedelta(days=i) for i in range(60)]
+        values += [dt.date(2024, 4, 30), dt.date(2024, 5, 31), dt.date(2024, 6, 30)]
+        assert detect_time_unit(values) == "yearmonthdate"
+
+    def test_month_ends_with_stray_dailies_stay_daily(self) -> None:
+        # The other mixing order: month buckets would collide the two dailies
+        # into one bucket, so the coarse grain is refused outright.
+        values = _month_ends(dt.date(2022, 1, 1), 12)
+        values += [dt.date(2022, 6, 2), dt.date(2022, 6, 3)]
+        assert detect_time_unit(values) == "yearmonthdate"
+
+    def test_monthly_with_a_missing_month_still_yearmonth(self) -> None:
+        # A skipped bucket is a whole number of periods — cadence survives.
+        values = [d for d in _month_ends(dt.date(2022, 1, 1), 24) if d.month != 4]
+        assert detect_time_unit(values) == "yearmonth"
+
+    def test_fortnightly_same_weekday_stays_yearweek(self) -> None:
+        # 14-day cadence keeps its weekday, so the weekly branch owns it and
+        # its ≤14-day median gate still says yes. Unchanged.
+        start = dt.date(2024, 1, 2)  # Tuesday
+        values = [start + dt.timedelta(days=14 * i) for i in range(12)]
+        assert detect_time_unit(values) == "yearweek"
+
+    def test_retail_454_calendar_returns_none(self) -> None:
+        # 4-5-4 periods are 28 or 35 days — always a whole number of weeks, so
+        # every boundary shares a weekday and the weekly branch's median-gap
+        # gate rejects it. No Gregorian bucket fits: a 5-week period would put
+        # two boundaries in one calendar month.
+        start = dt.date(2024, 2, 3)  # Saturday
+        lengths = [28, 35, 28] * 4
+        values = [start]
+        for length in lengths:
+            values.append(values[-1] + dt.timedelta(days=length))
+        assert len({d.weekday() for d in values}) == 1
+        assert detect_time_unit(values) is None
+
+    def test_semiannual_detects_yearquarter(self) -> None:
+        # Half-years have no bucket of their own; quarters divide them evenly
+        # and never collide two points into one slot.
+        values = [dt.date(y, m, 30) for y in range(2018, 2026) for m in (6, 12)]
+        assert detect_time_unit(values) == "yearquarter"
+
+    def test_bimonthly_detects_yearmonth(self) -> None:
+        values = [
+            dt.date(2023 + (i * 2) // 12, (i * 2) % 12 + 1, 20) for i in range(12)
+        ]
+        assert detect_time_unit(values) == "yearmonth"
+
+    def test_month_end_beside_the_next_month_open_stays_daily(self) -> None:
+        # A month-end close and the next month's day-1 open sit one day apart.
+        # Scoring that one-day gap as "zero months" would read the pair as a
+        # clean monthly rhythm and band two rows a month apart, so a gap
+        # shorter than a period counts as one whole period off.
+        values = [
+            dt.date(2024, 1, 31),
+            dt.date(2024, 2, 1),
+            dt.date(2024, 3, 31),
+            dt.date(2024, 4, 1),
+        ]
+        assert detect_time_unit(values) == "yearmonthdate"
+
+    def test_subdaily_month_end_timestamps_still_none(self) -> None:
+        values = [
+            dt.datetime.combine(d, dt.time(23, 59, 59))
+            for d in _month_ends(dt.date(2022, 1, 1), 24)
+        ]
+        assert detect_time_unit(values) is None
+
+
+class TestDetectedGrainNeverCollidesRows:
+    """A detected grain must keep every distinct value in its own bucket.
+
+    Downstream, two rows landing in one gap-fill bucket is a hard error — the
+    engine will not guess which value the bucket means. That error is safe to
+    raise against an *authored* ``time_unit``, where an author asked for the
+    grain. Detection has no such license: an ordinary board that happens to
+    hold one off-cadence date (the day billing started, alongside month-end
+    snapshots) would be detected as monthly and then refuse to render, with
+    nobody having authored anything.
+    """
+
+    def test_off_cadence_extra_date_refuses_the_coarse_grain(self) -> None:
+        # January holds two values — the 15th and the month end — so a month
+        # bucket cannot represent this series without dropping one.
+        values = [dt.date(2025, 1, 15), *_month_ends(dt.date(2025, 1, 1), 12)]
+        assert detect_time_unit(values) == "yearmonthdate"
+
+    def test_a_clean_month_end_series_still_detects_yearmonth(self) -> None:
+        # The rule is a collision guard, not a cadence veto: one value per
+        # month still names its grain.
+        assert detect_time_unit(_month_ends(dt.date(2025, 1, 1), 12)) == "yearmonth"
+
+    def test_a_quarterly_series_with_a_doubled_quarter_falls_to_yearmonth(self) -> None:
+        # Quarter ends, plus one extra reading inside Q3 2024. Quarter buckets
+        # collide, month buckets do not, so detection steps down one rung
+        # rather than all the way to daily.
+        values = _month_ends(dt.date(2023, 3, 1), 34)[::3]
+        values.append(dt.date(2024, 8, 31))
+        assert detect_time_unit(values) == "yearmonth"
+
+    def test_billing_start_plus_month_ends_renders(self) -> None:
+        """End to end: the shape above must produce a chart, not an error."""
+        dates = [dt.date(2025, 1, 15), *_month_ends(dt.date(2025, 1, 1), 12)]
+        assert "ERR-" not in _render_bar_of_dates(dates)
+
+    def test_off_cadence_date_refuses_a_grain_the_fiscal_anchor_would_collide(
+        self,
+    ) -> None:
+        # Sixteen quarter-end closes plus one mid-January reading. Calendar
+        # quarters keep all seventeen apart, but a fiscal year opening in
+        # February folds the December close and the January reading into one
+        # quarter. Detection never sees the axis, so a quarter/year grain has
+        # to survive every anchor before it can be named.
+        values = [*_quarter_ends(dt.date(2021, 3, 1), 16), dt.date(2025, 1, 15)]
+        assert detect_time_unit(values) == "yearmonth"
+
+    def test_that_shape_renders_under_a_february_fiscal_year(self) -> None:
+        """End to end: a non-default anchor must not produce an error card."""
+        dates = [*_quarter_ends(dt.date(2021, 3, 1), 16), dt.date(2025, 1, 15)]
+        assert "ERR-" not in _render_bar_of_dates(dates, fiscal_year_start_month=2)

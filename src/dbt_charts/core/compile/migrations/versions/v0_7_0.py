@@ -1,9 +1,10 @@
-"""Version-migration module for the unreleased 0.6.0 -> current boundary.
+"""Version-migration module for the unreleased 0.6.0 -> 0.7.0 boundary.
 
-Declares the pending structural changes since the 0.6.0 freeze. Authored as
-``versions/current.py`` while unreleased (the ``catalog.latest.version ->
-current`` boundary); renamed to ``versions/v<new_version>.py`` at release time
-with no content edit, same convention as ``v0_5_0.py``/``v0_6_0.py``.
+Declares the pending structural changes since the 0.6.0 freeze. Named for the
+predicted next minor version -- the manifest's DEV entry -- rather than a
+``current`` placeholder; renamed only if the predicted version itself changes
+before release (a major bump, or a patch release that ships a grammar
+change).
 
 THIS FILE IS SCHEMA CHANGES ONLY. Do not add an entry here for anything that
 is not a key rename, a key removal, or an authored value's meaning changing
@@ -11,10 +12,8 @@ in place (the unmigratable-redefinition case, which still owes the author a
 signal per ``migrations/AGENTS.md``). A renderer-default tweak, a bug fix, a
 performance change, a visual behavior change, an internal refactor -- none of
 these are grammar changes, and none of them get a bullet here, no matter how
-significant. If you cannot point to the ``Move``, ``Deletion``, in-place
-redefinition, or a documented removed-fail-loud (no migration exists;
-`MigrationRegistry` rejects any tail collision, and the bullet exists to say
-so) backing your bullet, it does not belong in this file. Put it in the task
+significant. If you cannot point to the ``Move``, ``Deletion``, or in-place
+redefinition backing your bullet, it does not belong in this file. Put it in the task
 or the PR description instead. See ``migrations/AGENTS.md``'s "If you catch
 yourself thinking..." table.
 
@@ -28,26 +27,21 @@ Changes in this release:
     required fields, so a tail scoped to ``background`` alone would leave
     those two shapes unrecognized. Anchored at ``style`` rather than a bare
     ``("page",)`` — same reasoning as ``v0_5_0.py``'s ``("style",
-    "tooltip")`` precedent: the in-memory schema walk only ever matches this
-    tail under ``style``, but a bare tail is also live on ``dct migrate``'s
-    text path, which has no schema awareness and would strike a ``page:``
-    key at any depth (e.g. inside a query's own free-form row data). The
-    anchored form strips all three authored shapes
+    "tooltip")`` precedent: the schema walk only ever matches this tail under
+    ``style``, and the anchored form says which ``page:`` the declaration
+    means at the declaration. It strips all three authored shapes
     (``style.page.background: ...``, ``style.page: {}``,
     ``style.page: null``) and is auto-stripped by ``dct migrate``.
   - ``style.color`` (a per-board text-color override) was fully inert — it
-    never rendered — so a ``Move`` to its natural hand-edit target,
-    ``style.font.color``, would be unsafe rather than lossless: ``font.color``
-    *is* live, so redirecting an inert value onto it would change every
-    affected board's render instead of preserving it. Same ``kpi.style.color``
-    situation as the KPI text-styling reconciliation on the 0.5.0 -> 0.6.0
-    boundary: ``color`` is one of the most common leaf names in the schema
-    (every chart family's chart-local ``style.color``, plus
-    ``kpi.style.color``), so neither the bare tail ``("color",)`` nor the
-    anchored ``("style", "color")`` is Deletion-eligible — both still match a
-    live sibling field elsewhere. Removed fail-loud instead: an authored
-    root ``style.color`` now raises ``extra_forbidden`` naming the field,
-    same outcome as authoring it never having existed.
+    never rendered — so it is stripped, not moved: its natural hand-edit
+    target ``style.font.color`` *is* live, and redirecting an inert value onto
+    it would change every affected board's render instead of preserving it.
+    ``color`` is one of the most common leaf names in the schema, and the
+    Deletion is declared on the bare tail ``("style", "color")`` anyway:
+    ``_live_declares_tail`` fires it only where the live grammar has stopped
+    declaring the tail, which is a board's own style block (root and nested
+    alike) and nowhere else. Every chart family's chart-local
+    ``style.color`` keeps its value.
 
 - ``conditional_formatting:`` retired from 11 ``type:`` literals: ``bar``,
   ``histogram``, ``line``, ``area``, ``scatter``, ``pie``, ``donut``, ``map``,
@@ -84,6 +78,21 @@ Changes in this release:
   ``_relative_field_paths``' ``seen`` guard makes a self-nested ``AuthoredBoard``
   opaque, so a sub-board reached by recursion is not walked and its own
   ``grid.zero`` is not rewritten.
+
+- Pie/donut ``total.format`` moved from chart-root copy to
+  ``style.total.value.format`` paint. It never belonged beside `total.label`
+  (author intent, chart-local copy) -- every other format field in the schema
+  (`TooltipStyle.format`, `BarTotalLabelStyle.format`, axis `labels.format`)
+  lives in style, and pinning `total.format` to chart root blocked board- and
+  theme-level format overrides that those fields get for free.
+
+  Declared via ``suffix_rename_moves`` in ``TOTAL_FORMAT_RENAMES`` below,
+  same mechanism as ``THRESHOLD_RENAMES`` despite the differing tail depth --
+  the shared prefix (``charts.<id>``) is preserved either way. The
+  corresponding board-tier position, ``style.charts.pie.total.value.format``,
+  has no old-grammar counterpart (chart-root ``total`` was never
+  theme-cascaded), so ``suffix_rename_moves`` silently drops that candidate
+  rather than producing a Move for it.
 """
 
 from __future__ import annotations
@@ -103,7 +112,7 @@ THEME_RENAMES: dict[MappedScalar, MappedScalar] = {}
 
 # style.page (PageStyle had exactly one field, `background`) — anchored tail,
 # not the bare `page` key (see the module docstring for why).
-DELETED_TAILS: tuple[YamlKeyPath, ...] = (("style", "page"),)
+DELETED_TAILS: tuple[YamlKeyPath, ...] = (("style", "page"), ("style", "color"))
 
 
 def _deletion_reason(tail: YamlKeyPath) -> str | None:
@@ -131,6 +140,12 @@ def _deletion_reason(tail: YamlKeyPath) -> str | None:
 # module docstring for why the tail is qualified by "grid").
 THRESHOLD_RENAMES: tuple[tuple[YamlKeyPath, YamlKeyPath], ...] = (
     (("grid", "threshold"), ("grid", "zero")),
+)
+
+# Pie/donut total.format: chart-root copy -> style.total.value.format paint
+# (see the module docstring for why).
+TOTAL_FORMAT_RENAMES: tuple[tuple[YamlKeyPath, YamlKeyPath], ...] = (
+    (("style", "total", "value", "format"), ("total", "format")),
 )
 
 
@@ -165,7 +180,7 @@ def _conditional_formatting_deletion_reason(chart_type: str) -> str:
 def deletions(
     source_schema: str, target_schema: str, *, catalog: YamlSchemaCatalog
 ) -> tuple[Deletion, ...]:
-    """Return Deletion objects for the 0.6.0 -> current boundary."""
+    """Return Deletion objects for the 0.6.0 -> 0.7.0 boundary."""
     style_tail_deletions = tuple(
         Deletion(
             source_schema,
@@ -191,13 +206,13 @@ def deletions(
 def moves(
     source_schema: str, target_schema: str, *, catalog: YamlSchemaCatalog
 ) -> tuple[Move, ...]:
-    """Return Move objects for the 0.6.0 -> current boundary."""
+    """Return Move objects for the 0.6.0 -> 0.7.0 boundary."""
     from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 
     return suffix_rename_moves(
         AuthoredBoard,
         source_schema,
         target_schema,
-        THRESHOLD_RENAMES,
+        THRESHOLD_RENAMES + TOTAL_FORMAT_RENAMES,
         catalog=catalog,
     )

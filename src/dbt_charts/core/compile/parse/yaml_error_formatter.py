@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 import yaml
 from pydantic import BaseModel, Tag
 
+from dbt_charts.core.utils import YAML_LOADER
+
 if TYPE_CHECKING:
     from dbt_charts.core.diagnostics.diagnostic import Diagnostic
 
@@ -195,7 +197,7 @@ def _chart_type_from_error_path(
         return None
 
     try:
-        data = yaml.safe_load(yaml_content)
+        data = yaml.load(yaml_content, Loader=YAML_LOADER)
     except yaml.YAMLError:
         return None
 
@@ -475,6 +477,29 @@ def _path_is_axis_title(path: list[str]) -> bool:
     )
 
 
+# style.total.label is the paint slot (typography only) for the donut center
+# caption; its text is authored at chart-root total.label. TotalSlotStylePatch
+# anchors only the label slot -- the value slot has its own type
+# (TotalValueSlotStylePatch, which does carry a real `format` field), so no
+# value/label path special-case is needed here.
+_TOTAL_LABEL_TEXT_HINT = (
+    "Donut center label text is authored on the chart, as `total.label:` — "
+    "`style.total.label` here styles the label's typography only."
+)
+
+
+def _path_is_total_label(path: list[str]) -> bool:
+    """True when *path* lands on the ``label:`` slot of a donut center total
+    (``style.total.label``, or the theme-tier ``style.charts.pie.total.label``)."""
+    from dbt_charts.core.compile.models.style.authored import TotalSlotStylePatch
+
+    return any(
+        model is TotalSlotStylePatch
+        for annotation in _annotations_at_path(path)
+        for model in _model_types_from_annotation(annotation)
+    )
+
+
 def _model_types_from_annotation(annotation: Any) -> list[type[BaseModel]]:
     _, annotation = _tagged_annotated_inner(annotation, "")
 
@@ -580,9 +605,10 @@ def _extra_field_diagnostic(
             fields=fields,
         )
 
-    # Authored grid.gap was inert (resolve reads style.layout.grid.gap instead)
-    # and could not ship a Deletion: the ("grid", "gap") tail still matches the
-    # live style key, so stripping it would take the working one with it.
+    # Authored grid.gap is inert (resolve reads style.layout.grid.gap instead)
+    # and declarable but unconverted: the ("grid", "gap") tail also matches the
+    # live style key, so it is legal only root-anchored. Until it is declared,
+    # this hint is the whole author-facing story.
     # `grid:` also names axis-gridline blocks, which are a different key
     # entirely -- so ask the schema which model the parent is rather than
     # guessing from the path's names.
@@ -643,6 +669,13 @@ def _extra_field_diagnostic(
         return _ExtraFieldDiagnostic(
             message=message,
             hint=_AXIS_TITLE_TEXT_HINT,
+            fields=fields,
+        )
+
+    if field_name == "text" and _path_is_total_label(parent_path):
+        return _ExtraFieldDiagnostic(
+            message=message,
+            hint=_TOTAL_LABEL_TEXT_HINT,
             fields=fields,
         )
 
@@ -835,12 +868,12 @@ def _newer_schema_version_hint(yaml_content: str | None) -> str | None:
     raw re-parsed mapping with no Pydantic coercion, so a YAML float,
     non-numeric text, or a malformed version degrades to no hint rather than
     a crash inside error formatting itself. This does not extend to
-    pathological YAML the earlier ``yaml.safe_load`` call above could itself
-    choke on (e.g. runaway nesting) -- that risk already exists on every
-    other path through this same re-parse and is not new here.
+    a parse error the earlier re-parse above could itself raise -- that risk
+    already exists on every other path through this same re-parse and is not
+    new here.
 
     Only fires across a real release boundary: within one dev cycle, a file
-    this build's ``dct migrate`` stamps carries ``catalog.latest.version``,
+    this build's ``dct migrate`` stamps carries ``catalog.latest_released.version``,
     the same value this build compares against, so ``declared <= latest`` and
     no hint fires. The hint is for a reader *older* than the build that wrote
     the stamp, which by definition can't be this build.
@@ -848,7 +881,7 @@ def _newer_schema_version_hint(yaml_content: str | None) -> str | None:
     if not yaml_content:
         return None
     try:
-        data = yaml.safe_load(yaml_content)
+        data = yaml.load(yaml_content, Loader=YAML_LOADER)
     except yaml.YAMLError:
         return None
     if not isinstance(data, dict):
@@ -874,13 +907,13 @@ def _newer_schema_version_hint(yaml_content: str | None) -> str | None:
     from dbt_charts.core.compile.migrations.migrations import _board_migration_context
 
     catalog, _ = _board_migration_context()
-    latest_parts = parse_dotted_version(catalog.latest.version)
+    latest_parts = parse_dotted_version(catalog.latest_released.version)
     if latest_parts is None or declared_parts <= latest_parts:
         return None
     return (
         f"This board declares _schema_version {declared}, newer than the "
-        f"{catalog.latest.version} schema this build of dbt charts understands. "
-        "Upgrade dbt charts to parse it correctly."
+        f"{catalog.latest_released.version} schema this build of dbt charts "
+        "understands. Upgrade dbt charts to parse it correctly."
     )
 
 
@@ -979,6 +1012,8 @@ def format_validation_errors_structured(
             redirect = (
                 f" {_AXIS_TITLE_TEXT_HINT}"
                 if _path_is_axis_title(field_path_parts)
+                else f" {_TOTAL_LABEL_TEXT_HINT}"
+                if _path_is_total_label(field_path_parts)
                 else ""
             )
             hint = (

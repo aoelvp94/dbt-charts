@@ -1288,8 +1288,12 @@ def connection_create(
     name defaults to the field that names the warehouse — BigQuery's project,
     otherwise the database — and create prints the slug it derived.
 
-    A connection whose test fails is reported as a failure and is not saved:
-    fix the credential and run the same command again.
+    A connection whose test fails outright is reported as a failure and is
+    not saved: read the printed cause, fix it, and run the same command again. A
+    test that could not complete in time (the warehouse may still be starting
+    up) is different: the connection IS saved, since the check never actually
+    disproved the credential, and the error names the slug and the
+    `connection test` verb that resolves it once the warehouse answers.
     """
     fields = parse_kv_pairs(settings or [], "--set")
     leaked = sorted(SECRET_FIELDS & set(fields))

@@ -36,6 +36,7 @@ from dbt_charts.core.compile.config import (
     get_theme_style,
     reset_config,
 )
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
     Chart,
@@ -43,6 +44,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
 )
 from dbt_charts.core.compile.models.primitives import StrokeStyle
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.compile.models.style.authored import AreaChartStylePatch
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
@@ -521,7 +523,14 @@ def test_disconnected_cap_resolves_on_an_overlay_layer():
 
 
 def test_area_edge_line_is_unaffected_by_the_disconnected_default():
-    """Area has no ``connect`` — its edge is always a continuous silhouette."""
+    """Area has no ``connect`` — its edge is always a continuous silhouette, so
+    the disconnected-band cap must never reach it.
+
+    Step curves require a single series, and a single-series area renders the
+    stacked recipe, so its edge cap comes from ``marks.area.stacked.stroke``.
+    Authoring a non-theme cap there proves the edge reads it, rather than
+    matching the theme's ``round`` by coincidence.
+    """
     board_rs, board_ctx = _board_with_mark("area", curve="step")
     chart = AreaChart(
         id="area-caps",
@@ -530,13 +539,16 @@ def test_area_edge_line_is_unaffected_by_the_disconnected_default():
         y="target",
         query=SqlQuery(sql="SELECT 1", source="test"),
         query_name="q",
+        style=AreaChartStylePatch.model_validate(
+            {"marks": {"area": {"stacked": {"stroke": {"cap": "square"}}}}}
+        ),
     )
     spec = generate_vega_lite_spec(
         chart, BARS, board_style=board_rs, chart_style_context=board_ctx
     )
     caps = _caps(spec)
-    assert caps and all(c == "round" for c in caps), (
-        f"area edge keeps marks.line.stroke.cap; got {caps!r}"
+    assert caps and all(c == "square" for c in caps), (
+        f"area edge takes marks.area.stacked.stroke.cap; got {caps!r}"
     )
 
 
@@ -554,6 +566,11 @@ def test_area_halo_tracks_the_edge_cap_and_join():
     theme's own values are round/round, so asserting those would pass just as
     well against the hardcoded ``"round"`` literals this replaced; only a
     distinctive value makes this a real detector.
+
+    Wide ``y`` (2+ bands) keeps this chart on the overlap/halo recipe -- a
+    colorless, single-band area now takes the stacked recipe instead (see
+    ``test_stacked_area_perimeter_keeps_its_cap_and_join``), which has no
+    halo to test here.
     """
     compiled = get_theme_style("clarity")
     area = compiled.charts.area
@@ -573,7 +590,12 @@ def test_area_halo_tracks_the_edge_cap_and_join():
         id="area-halo",
         type="area",
         x="month",
-        y="target",
+        y=["actual", "target"],
+        # Wide y draws an endpoint-label rail by default, wrapping the spec in
+        # hconcat -- off here so _line_marks's plain layer-array walk applies.
+        style=AreaChartStylePatch.model_validate(
+            {"endpoint_labels": {"visible": False}}
+        ),
         query=SqlQuery(sql="SELECT 1", source="test"),
         query_name="q",
     )
@@ -665,16 +687,25 @@ def test_stacked_stroke_without_cap_or_join_raises():
         query=SqlQuery(sql="SELECT 1", source="test"),
         query_name="q",
     )
-    with pytest.raises(ValueError, match="marks.area.stacked.stroke must declare"):
+    with pytest.raises(CompilationError) as exc_info:
         generate_vega_lite_spec(
             chart, BARS, board_style=board_rs, chart_style_context=board_ctx
         )
+    assert exc_info.value.code is not None
+    assert exc_info.value.code.code == "ERR-AREA-STACKED-STROKE-INCOMPLETE"
 
 
 def test_non_stacked_area_tolerates_an_authored_null_cap():
     """The guard must NOT fire on the non-stacked path: marks.line.stroke
     survives intact there, and ResolvedStrokeStyle documents None as the legal
-    "use the VL default" state. A board authoring `cap: null` renders."""
+    "use the VL default" state. A board authoring `cap: null` renders, and the
+    emitter leaves strokeCap/strokeJoin out rather than writing null, which is
+    not in Vega-Lite's enum.
+
+    Two measures keep the chart on the overlap recipe. A single-series area
+    would take the stacked recipe's stroke instead, so the authored null cap
+    would never reach the emitter and this test would pass vacuously.
+    """
     compiled = get_theme_style("clarity")
     marks = compiled.charts.marks
     line = marks.line.model_copy(
@@ -693,6 +724,47 @@ def test_non_stacked_area_tolerates_an_authored_null_cap():
         id="null-cap",
         type="area",
         x="month",
+        y=["actual", "target"],
+        # Wide y draws an endpoint-label rail by default, wrapping the spec in
+        # hconcat -- off here so _stroked_marks's plain layer-array walk applies.
+        style=AreaChartStylePatch.model_validate(
+            {"endpoint_labels": {"visible": False}}
+        ),
+        query=SqlQuery(sql="SELECT 1", source="test"),
+        query_name="q",
+    )
+    spec = generate_vega_lite_spec(
+        chart, BARS, board_style=board_rs, chart_style_context=board_ctx
+    )
+    marks = _stroked_marks(spec)
+    assert marks, "a null cap must still render an area"
+    assert all(m.get("strokeCap", "unset") is not None for m in marks), marks
+    assert all(m.get("strokeJoin", "unset") is not None for m in marks), marks
+
+
+def test_line_halo_omits_an_authored_null_cap():
+    """A line's halo takes its fg line's cap and join, so an authored
+    ``cap: null`` must be omitted from the halo too, not written as ``null``,
+    which is not in Vega-Lite's enum. Keeps the theme's default halo, unlike
+    ``_board_with_mark``, which zeroes it."""
+    compiled = get_theme_style("clarity")
+    marks = compiled.charts.marks
+    line = marks.line.model_copy(
+        update={"stroke": StrokeStyle(cap=None, join=None, width=2.5)}
+    )
+    board_rs, board_ctx = resolve_style_and_context(
+        compiled.model_copy(
+            update={
+                "charts": compiled.charts.model_copy(
+                    update={"marks": marks.model_copy(update={"line": line})}
+                )
+            }
+        )
+    )
+    chart = LineChart(
+        id="null-cap-line",
+        type="line",
+        x="month",
         y="target",
         query=SqlQuery(sql="SELECT 1", source="test"),
         query_name="q",
@@ -700,7 +772,10 @@ def test_non_stacked_area_tolerates_an_authored_null_cap():
     spec = generate_vega_lite_spec(
         chart, BARS, board_style=board_rs, chart_style_context=board_ctx
     )
-    assert _stroked_marks(spec), "a null cap must still render an area"
+    marks_out = _stroked_marks(spec)
+    assert len(marks_out) >= 2, "expected a fg line and its halo"
+    assert all(m.get("strokeCap", "unset") is not None for m in marks_out), marks_out
+    assert all(m.get("strokeJoin", "unset") is not None for m in marks_out), marks_out
 
 
 def test_disconnected_cap_is_authorable_as_yaml_on_a_layer():

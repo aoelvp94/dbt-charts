@@ -4,6 +4,10 @@ Stage: RENDER
 Purpose: Convert SVG output to PDF using vl-convert.
 """
 
+from dbt_charts.core.diagnostics.codes_render import (
+    ERR_FORMAT_CONVERSION_FAILED,
+    ERR_FORMAT_CONVERTER_UNAVAILABLE,
+)
 from dbt_charts.core.render.errors import FormatError
 from dbt_charts.core.render.font_support import (
     normalize_svg_font_families_for_vl_convert,
@@ -30,11 +34,15 @@ def to_pdf(svg_content: str) -> bytes:
         normalized_svg = normalize_svg_font_families_for_vl_convert(svg_content)
         return vlc.svg_to_pdf(normalized_svg)
     except ImportError:
-        raise FormatError(
-            "PDF export requires vl-convert-python: pip install vl-convert-python",
-            "pdf",
+        raise FormatError.from_code(
+            ERR_FORMAT_CONVERTER_UNAVAILABLE, format="pdf"
         ) from None
     except FormatError:
         raise
     except Exception as e:
-        raise FormatError(f"PDF conversion failed: {e}", "pdf") from e
+        raise FormatError.from_code(
+            ERR_FORMAT_CONVERSION_FAILED,
+            format="pdf",
+            detail=str(e),
+            alt_formats="PNG or HTML",
+        ) from e

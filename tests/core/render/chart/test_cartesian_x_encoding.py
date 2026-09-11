@@ -357,10 +357,12 @@ class TestFineGrainScaffoldBudgetGate:
     """A detected yearweek/yearmonthdate grain bands only while the ordinal
     scaffold gap-fill would enumerate stays within budget
     (synthesized empty buckets ≤ max(distinct buckets, max_ordinal_buckets)).
-    Past that, the data is sparser than its detected grain — e.g. quarterly
-    rows plus two stray mid-month dates reading as "daily" — and banding
-    renders sub-pixel bars across thousands of near-empty slots. Those charts
-    flip to a continuous temporal scale with no timeUnit banding."""
+    Past that, the data is sparser than its detected grain — e.g. ten dates
+    45 days apart, too irregular for any cadence to name, reading as "daily" —
+    and banding renders sub-pixel bars across thousands of near-empty slots.
+    Those charts flip to a continuous temporal scale with no timeUnit banding.
+    Regularly-spaced data names its own grain before it gets here, so what
+    reaches this gate is data with no legible grain of its own."""
 
     def test_sparse_daily_bar_flips_to_continuous_temporal(self) -> None:
         ax = _axis()
@@ -370,23 +372,24 @@ class TestFineGrainScaffoldBudgetGate:
         assert vl_type == "temporal"
         assert tu is None
 
-    def test_quarterly_with_stray_dates_flips_to_continuous_temporal(self) -> None:
+    def test_quarterly_with_stray_dates_never_reaches_a_fine_grain(self) -> None:
         # The reported repro: quarterly data plus two NULL-measure pad rows at
-        # arbitrary dates. The strays flip detection to yearmonthdate; without
-        # the gate that enumerated ~1370 daily buckets and every bar vanished.
+        # arbitrary dates. Two odd gaps out of sixteen do not move the median,
+        # so the grain is yearmonth — 46 slots for 17 bars, comfortably inside
+        # budget, and the bars keep their bands.
         quarters = [
             f"{y}-{m:02d}-01" for y in range(2023, 2027) for m in (1, 4, 7, 10)
         ][:15]
         dates = ["2022-11-17", *quarters, "2026-08-15"]
         ax = _axis()
         vl_type, _, tu = build_cartesian_x_encoding(_rows(dates), "date", ax, {}, "bar")
-        assert vl_type == "temporal"
-        assert tu is None
+        assert tu == "yearmonth"
+        assert vl_type == "ordinal"
 
-    def test_month_end_monthly_bar_flips_to_continuous_temporal(self) -> None:
-        # LAST_DAY()-style monthly buckets read as yearmonthdate (day != 1);
-        # 36 of them span ~1100 days — daily banding would be ~30x empty slots
-        # per real bar.
+    def test_month_end_monthly_bar_never_reaches_a_fine_grain(self) -> None:
+        # LAST_DAY()-style monthly buckets sit on no bucket start, but their
+        # 28–31-day cadence names the grain outright: 36 month buckets for 36
+        # rows, zero synthesized.
         dates = []
         d = dt.date(2023, 1, 1)
         for _ in range(36):
@@ -395,8 +398,8 @@ class TestFineGrainScaffoldBudgetGate:
             d = next_month
         ax = _axis()
         vl_type, _, tu = build_cartesian_x_encoding(_rows(dates), "date", ax, {}, "bar")
-        assert vl_type == "temporal"
-        assert tu is None
+        assert tu == "yearmonth"
+        assert vl_type == "ordinal"
 
     def test_dense_daily_bar_stays_ordinal(self) -> None:
         # Contiguous daily data has zero synthesized buckets — banding stands
@@ -523,17 +526,16 @@ class TestFineGrainScaffoldBudgetGate:
         assert tu == "yearmonthdate"
         assert vl_type == "ordinal"
 
-    def test_sparse_daily_line_area_scatter_keep_grain(self) -> None:
-        # line/area/scatter never band mark widths, so the budget gate must
-        # not touch their grain: the timeUnit's UTC day-flooring and the
-        # curated label ladder resolve exactly as before at any sparsity.
+    def test_sparse_daily_line_area_scatter_drop_grain(self) -> None:
+        # line/area/scatter never band mark widths, but grain also paints one
+        # gridline and label per bucket — an over-budget fine grain must be
+        # dropped for these families too, same as bar/heatmap.
         for mark in ("line", "area", "scatter"):
-            vl_type, ax_vl, tu = build_cartesian_x_encoding(
+            vl_type, _, tu = build_cartesian_x_encoding(
                 _rows(_sparse_daily_dates()), "date", _axis(), {}, mark
             )
             assert vl_type == "temporal", mark
-            assert tu == "yearmonthdate", mark
-            assert "labelExpr" in ax_vl, mark
+            assert tu is None, mark
 
     def test_authored_temporal_sparse_daily_drops_time_unit(self) -> None:
         # style.axis_x.type: temporal with sparse daily-grain data: the scale
@@ -542,6 +544,89 @@ class TestFineGrainScaffoldBudgetGate:
         ax = _axis(axis_type="temporal")
         vl_type, _, tu = build_cartesian_x_encoding(
             _rows(_sparse_daily_dates()), "date", ax, {}, "bar"
+        )
+        assert vl_type == "temporal"
+        assert tu is None
+
+
+# ---------------------------------------------------------------------------
+# build_cartesian_x_encoding — coarse-grain (month/quarter/year) budget gate
+# ---------------------------------------------------------------------------
+
+
+class TestCoarseGrainScaffoldBudgetGate:
+    """The scaffold budget applies to month/quarter/year grains too.
+
+    A coarse grain owes the axis one band per bucket across its span exactly
+    as a fine one does; a decade-spaced series names ``year`` honestly and
+    still asks for ten empty bands per real bar. The row count the coarse
+    branch measures against ``max_ordinal_buckets`` cannot see that — it only
+    ever counts the bars that exist."""
+
+    def test_decennial_bar_flips_to_continuous_temporal(self) -> None:
+        # Twelve readings a decade apart: an honest `year` cadence, but 111
+        # bands for 12 bars — 99 of them empty.
+        dates = [f"{y}-04-15" for y in range(1910, 2021, 10)]
+        ax = _axis()
+        vl_type, _, tu = build_cartesian_x_encoding(_rows(dates), "date", ax, {}, "bar")
+        assert vl_type == "temporal"
+        assert tu is None
+
+    def test_annual_bar_stays_ordinal(self) -> None:
+        # The control the flip above must not catch: contiguous years
+        # synthesize nothing.
+        dates = [f"{y}-12-31" for y in range(2014, 2026)]
+        ax = _axis()
+        vl_type, _, tu = build_cartesian_x_encoding(_rows(dates), "date", ax, {}, "bar")
+        assert tu == "year"
+        assert vl_type == "ordinal"
+
+    def test_five_yearly_bar_stays_ordinal(self) -> None:
+        # Sparse but not pathological: 21 bands for 5 bars is inside the
+        # 60-bucket floor, so the grain stands.
+        dates = [f"{y}-06-30" for y in range(1990, 2011, 5)]
+        ax = _axis()
+        vl_type, _, tu = build_cartesian_x_encoding(_rows(dates), "date", ax, {}, "bar")
+        assert tu == "year"
+        assert vl_type == "ordinal"
+
+    def test_twelve_month_bar_stays_ordinal(self) -> None:
+        ax = _axis()
+        vl_type, _, tu = build_cartesian_x_encoding(
+            _rows(_monthly_dates(12, start=(2024, 1))), "date", ax, {}, "bar"
+        )
+        assert tu == "yearmonth"
+        assert vl_type == "ordinal"
+
+    def test_quarterly_bar_stays_ordinal(self) -> None:
+        dates = [f"{y}-{m:02d}-01" for y in range(2021, 2025) for m in (1, 4, 7, 10)]
+        ax = _axis()
+        vl_type, _, tu = build_cartesian_x_encoding(_rows(dates), "date", ax, {}, "bar")
+        assert tu == "yearquarter"
+        assert vl_type == "ordinal"
+
+    def test_semiannual_bar_stays_ordinal(self) -> None:
+        # Half-years band as quarters: 31 bands for 16 bars.
+        dates = [f"{y}-{m:02d}-30" for y in range(2018, 2026) for m in (6, 12)]
+        ax = _axis()
+        vl_type, _, tu = build_cartesian_x_encoding(_rows(dates), "date", ax, {}, "bar")
+        assert tu == "yearquarter"
+        assert vl_type == "ordinal"
+
+    def test_authored_coarse_grain_is_never_gated(self) -> None:
+        dates = [f"{y}-04-15" for y in range(1910, 2021, 10)]
+        ax = _axis(time_unit="year")
+        vl_type, _, tu = build_cartesian_x_encoding(_rows(dates), "date", ax, {}, "bar")
+        assert tu == "year"
+        assert vl_type == "ordinal"
+
+    def test_decennial_line_drops_the_grain(self) -> None:
+        # line/area/scatter never band mark widths, but they do paint one
+        # gridline and label per bucket, so they consult the same gate.
+        dates = [f"{y}-04-15" for y in range(1910, 2021, 10)]
+        ax = _axis()
+        vl_type, _, tu = build_cartesian_x_encoding(
+            _rows(dates), "date", ax, {}, "line"
         )
         assert vl_type == "temporal"
         assert tu is None
@@ -578,10 +663,11 @@ class TestBuildCartesianXEncodingMarkTypeSplit:
         assert vl_type == "temporal"
 
     def test_low_density_yearmonth_scatter_is_temporal(self):
-        # Scatter joins line/area's always-temporal rule: it renders individual
-        # points, not per-bucket gridlines, so it has no density gate either —
-        # and switching a scatter x to an ordinal band scale would snap its
-        # points onto equally-spaced ticks instead of their real position.
+        # Scatter joins line/area's always-temporal rule for the ordinal-vs-
+        # temporal split — never bar's ordinal band, since that would snap
+        # its points onto equally-spaced ticks instead of their real
+        # position. The scaffold-budget gate is not reached here: the grain is
+        # authored, and yearmonth is not a FINE_BUCKET_UNIT.
         ax = _axis(time_unit="yearmonth")
         dates = _monthly_dates(12, start=(2024, 1))
         vl_type, _, tu = build_cartesian_x_encoding(
@@ -628,8 +714,9 @@ class TestBuildCartesianXEncodingMarkTypeSplit:
 
     def test_low_density_yearmonth_line_is_temporal(self) -> None:
         # Below max_ordinal_buckets, bar stays ordinal (existing density gate)
-        # but line always goes continuous — it needs no gate, it never
-        # renders one gridline per bucket.
+        # but line always goes continuous — the ordinal-vs-temporal split is
+        # bar-only. The scaffold-budget gate is not reached here: the grain is
+        # authored, and yearmonth is not a FINE_BUCKET_UNIT.
         ax = _axis(time_unit="yearmonth")
         dates = _monthly_dates(24)
         vl_type, _, _tu = build_cartesian_x_encoding(

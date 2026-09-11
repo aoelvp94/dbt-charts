@@ -22,7 +22,7 @@ from typing import Any
 
 import yaml
 
-from dbt_charts.core.utils import UniqueKeyLoader
+from dbt_charts.core.utils import YAML_LOADER, UniqueKeyLoader
 
 _CHART_EMBED_RE = re.compile(r"^\s*\{\{\s*chart\s+(\w+)\s*\}\}\s*$", re.MULTILINE)
 
@@ -183,7 +183,7 @@ def markdown_to_yaml(md_text: str, *, metadata_table: bool = False) -> str:
         return yaml_str
 
     # Inject metadata table as the first text row
-    board_dict = yaml.safe_load(yaml_str)
+    board_dict = yaml.load(yaml_str, Loader=YAML_LOADER)
     if not isinstance(board_dict, dict):
         return yaml_str
 
