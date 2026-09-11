@@ -25,7 +25,7 @@ class TestInstallHintCanonicalShape:
         assert install_hint() == 'pip install "dbt-charts"'
 
     def test_extras_hint(self) -> None:
-        for extra in ("mcp", "playground", "bigquery"):
+        for extra in ("mcp", "bigquery"):
             assert install_hint(extra) == f'pip install "dbt-charts[{extra}]"'
 
 
@@ -55,7 +55,7 @@ class TestInstallHintSignal:
             sys, "prefix", "/Users/dave/.local/share/uv/tools/dbt-charts"
         )
         monkeypatch.delenv("UV_TOOL_DIR", raising=False)
-        for extra in ("mcp", "playground", "bigquery"):
+        for extra in ("mcp", "bigquery"):
             assert install_hint(extra) == f'uv tool install "dbt-charts[{extra}]"'
 
     def test_uv_tool_dir_override_is_honored(

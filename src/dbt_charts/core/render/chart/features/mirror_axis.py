@@ -15,17 +15,15 @@ from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
 from dbt_charts.core.compile.models.chart.resolved._base import (
     _CartesianResolvedChartFields,
 )
-from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
-from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
 from dbt_charts.core.compile.models.chart.resolved.heatmap import (
     ResolvedHeatmapChart,
 )
-from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
 from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
 from dbt_charts.core.compile.models.style.resolved._cartesian import (
     _CartesianResolvedStyle,
 )
 from dbt_charts.core.compile.models.style.theme.axis import AxisMirrorStyle
+from dbt_charts.core.compile.resolve.chart._wide_fields import wide_measure_fields
 from dbt_charts.core.compile.resolve.chart.tick_values import numeric_domain_bounds
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
@@ -139,12 +137,9 @@ class MirrorAxisFeature:
         # Mirror reflects a single shared y-scale — no meaning for multi-series.
         # Check this before endpoint_label_layout: the multi-series conflict is
         # more fundamental and multi-y + endpoint_labels may both be active.
-        if (
-            isinstance(chart, (ResolvedBarChart, ResolvedAreaChart, ResolvedLineChart))
-            and chart.wide_measures
-        ):
+        if wide_fields := wide_measure_fields(chart):
             raise ChartDataError.from_code(
-                ERR_MIRROR_MULTI_SERIES, chart_id=chart.id, y=list(chart.wide_measures)
+                ERR_MIRROR_MULTI_SERIES, chart_id=chart.id, y=list(wide_fields)
             )
         if spec.endpoint_label_layout is not None:
             code = (

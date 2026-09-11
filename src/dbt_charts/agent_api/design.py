@@ -244,31 +244,33 @@ _SCALAR_TYPES = _NUMERIC_TYPES | {"str", "bool"}
 # list-valued `y` and any of these siblings cannot both be authored.
 #
 # The rule is one rule; where it *fires* is not. Bar and area raise from
-# `reject_multi_series_channel_conflicts` at parse time, line from
+# `reject_multi_series_channel_conflicts` at parse time, line and scatter from
 # `resolve_wide_measure_channels` (`resolve/chart/_wide_fields.py`) at resolve.
 # The save endpoint re-parses and nothing more, so the resolve-time half is the
 # worse one: the panel's edit passes the gate, is written to git, and the chart
-# stops rendering — which is why line has to be in this table even though the
-# parse-gate test cannot see it. `_RENDER_FIXTURES` in the tests reaches it.
+# stops rendering — which is why line and scatter have to be in this table
+# even though the parse-gate test cannot see them. `_RENDER_FIXTURES` in the
+# tests reaches it.
 #
 # The two halves do not cover the same siblings. `resolve_wide_measure_channels`
 # reads `layers:` (and refuses a `color:` that is not a plain column) and
-# nothing else, so a line chart carrying a list `y` and `layers:` renders with
-# no diagnostic caught at parse — line's row exists for the render sweep only,
-# because a table that claims more than the compiler enforces hides a control
-# on a board that works. `color` is in neither row: a column there composes
-# with a list `y` (one series per value per measure).
+# nothing else, so a line or scatter chart carrying a list `y` and `layers:`
+# renders with no diagnostic caught at parse — their rows exist for the render
+# sweep only, because a table that claims more than the compiler enforces
+# hides a control on a board that works. `color` is in neither row: a column
+# there composes with a list `y` (one series per value per measure).
 #
 # Forward: once `y` holds a list, the conflicting sibling is not a control, or
 # the panel shows one half of a mutually exclusive pair and hides the other.
 # Mirror: once a sibling is authored, `y` is not a *multi-value* control, since
 # the list is the edit that creates the collision. `layers` has no control
 # (`_NOT_DESIGN`), so only the mirror direction is live today.
-# GATED — the parse sweep (bar, area) and the render sweep (line).
+# GATED — the parse sweep (bar, area) and the render sweep (line, scatter).
 _LIST_CONFLICTS = {
     "bar": ("y", ("layers",)),
     "AreaChart": ("y", ("layers",)),
     "LineChart": ("y", ("layers",)),
+    "ScatterChart": ("y", ("layers",)),
 }
 
 # What a list-valued `y` collides with that is neither a sibling field nor a
@@ -331,17 +333,18 @@ _VALUE_CONFLICTS = {
         ("y", "style.axis_y.mirror", None),
         ("y", "style.color.gradient", None),
     ),
+    "ScatterChart": (
+        ("y", "style.axis_y.mirror", None),
+        ("y", "style.color.gradient", None),
+    ),
 }
 
 # The families whose validator is stricter than their own declared type.
 # `SparkBarChart.y` is typed `str | list[str]` and `_validate_single_series`
 # refuses every list but a one-element one: a spark bar is one row of bars
 # against one value column, so there is no second encoding for a second measure.
-# `ScatterChart.y` is typed the same way and `resolve/chart/scatter.py` raises
-# `ERR_MULTI_Y_UNSUPPORTED_CHART_TYPE` for any list at all — unconditionally, so
-# unlike the table above no sibling makes it come back.
 #
-# `HeatmapChart.y` is the third, and the only one with no validator behind it at
+# `HeatmapChart.y` is the other, and the only one with no validator behind it at
 # all. `reject_multi_series_channel_conflicts` states the rule every wide family
 # obeys — the fold spends the mark fill on the measures — and a heatmap's color
 # *is* its measure, so there is nothing left to spend. Heatmap neither calls that
@@ -349,13 +352,12 @@ _VALUE_CONFLICTS = {
 # clean: a y band stacking two columns' values against each other, and a cell
 # color that has stopped encoding magnitude. Neither gate can see a chart that
 # is merely wrong, so this one is pinned by an explicit test.
-# GATED for scatter and spark bar (both sweeps). The `HeatmapChart` row is
+# GATED for spark bar (both sweeps). The `HeatmapChart` row is
 # POLICY: a heatmap renders a list `y` clean, so there is no rule to agree with
 # — `test_a_heatmap_spends_its_color_channel_on_the_measure_and_takes_no_list`
 # is the whole of it.
 _NEVER_A_LIST = {
     "SparkBarChart": ("y",),
-    "ScatterChart": ("y",),
     "HeatmapChart": ("y",),
 }
 

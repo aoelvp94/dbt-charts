@@ -18,7 +18,7 @@ import html
 from typing import TYPE_CHECKING, Literal
 
 from dbt_charts.core.render.column_packer import MAX_COLUMN_COUNT
-from dbt_charts.core.render.svg_utils import format_svg_numeric, px
+from dbt_charts.core.render.svg_utils import format_svg_numeric, px, translate_group
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
@@ -249,15 +249,11 @@ def render_prose_svg(
             )
             if not style_block:
                 style_block = rendered.style_block
-            col_elements.append(
-                f'<g transform="translate(0, {px(y - lift)})">{rendered.elements}</g>'
-            )
+            col_elements.append(translate_group(0, px(y - lift), rendered.elements))
             y += (last - first + 1) * m.line_advance - lift
         column_heights.append(y)
         if col_elements:
-            column_parts.append(
-                f'<g transform="translate({px(col_x)}, 0)">{"".join(col_elements)}</g>'
-            )
+            column_parts.append(translate_group(px(col_x), 0, "".join(col_elements)))
 
     actual_col_height = max(column_heights) if column_heights else 0.0
 

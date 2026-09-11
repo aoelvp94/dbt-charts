@@ -50,6 +50,26 @@ def px(v: float) -> int:
     return int(round(v))
 
 
+def translate_group(x: int, y: int, content: str, extra_attrs: str = "") -> str:
+    """Wrap ``content`` in a translate ``<g>`` — unless the translate is a
+    no-op and there is nothing else to carry, in which case ``content`` is
+    returned unwrapped.
+
+    An untranslated, attribute-free ``<g>`` still counts against a PDF
+    writer's hard limit on graphics-state nesting even though usvg would
+    otherwise flatten a truly bare group away — the cost only shows up once
+    such groups sit between real clipping levels, which is exactly what a
+    deeply nested board does. ``x``/``y`` are pixel-snapped coordinates (the
+    caller's own ``px(...)`` output, or a literal ``0``) — this only decides
+    whether to open the wrapper, it does not do any snapping itself.
+    ``extra_attrs``, like ``authored_kind_attr``'s return value, must carry
+    its own leading space when non-empty.
+    """
+    if x == 0 and y == 0 and not extra_attrs:
+        return content
+    return f'<g transform="translate({x}, {y})"{extra_attrs}>{content}</g>'
+
+
 def authored_attrs(path: str, kind: str) -> str:
     """The ``data-authored-path``/``data-authored-kind`` pair every authoring-tagged
     *block* carries, so every emission site (chart wrapper, prose header pieces)
@@ -145,9 +165,8 @@ def padded_authoring_content(
     top, bottom = padding["top"], padding["bottom"]
     outer_width = inner_width + left + right
     outer_height = inner_height + top + bottom
-    return (
-        f"{selection_boxes(outer_width, outer_height, padding, mark)}"
-        f'<g transform="translate({px(left)}, {px(top)})">{content}</g>'
+    return f"{selection_boxes(outer_width, outer_height, padding, mark)}" + (
+        translate_group(px(left), px(top), content)
     )
 
 

@@ -89,7 +89,6 @@ class TestInitDoesNotWriteAgentMarkdown:
                     "--project-dir",
                     str(dbt_dir),
                     "--no-mcp",
-                    "--no-with-playground",
                     "--no-vscode",
                     "--no-cursor",
                 ],
@@ -110,7 +109,6 @@ class TestInitDoesNotWriteAgentMarkdown:
                 str(dbt_dir),
                 "--yes",
                 "--no-mcp",
-                "--no-with-playground",
                 "--no-vscode",
                 "--no-cursor",
             ],
@@ -149,7 +147,6 @@ class TestInitWizardFlags:
                 str(dbt_dir),
                 "--no-skills",
                 "--no-mcp",
-                "--no-with-playground",
                 "--no-vscode",
                 "--no-cursor",
             ],
@@ -162,155 +159,6 @@ class TestInitWizardFlags:
         assert not (dbt_dir / ".claude/skills").exists()
         # inspect-eject is opt-in; not triggered by default
         assert not (dbt_dir / "charts" / "inspect").exists()
-
-    def test_playground_install_failure_degrades_to_warning_not_exit(
-        self, dbt_dir: Path
-    ) -> None:
-        """install_extras("playground") raising typer.Exit(1) must not abort dct init.
-
-        Regression: dbt-charts-playground is not on public PyPI, so install always
-        fails for OSS users. The wizard must degrade to a warning and exit 0.
-        """
-        import typer
-
-        def _missing_packages_stub(extra: str) -> list[str]:
-            return ["dbt-charts-playground"] if extra == "playground" else []
-
-        def _install_extras_stub(extra: str, **_kw: object) -> None:
-            if extra == "playground":
-                raise typer.Exit(1)
-
-        with (
-            patch(
-                "dbt_charts.cli._extras._missing_packages",
-                side_effect=_missing_packages_stub,
-            ),
-            patch(
-                "dbt_charts.cli._extras.install_extras",
-                side_effect=_install_extras_stub,
-            ),
-        ):
-            runner = CliRunner()
-            result = runner.invoke(
-                app,
-                [
-                    "init",
-                    "--project-dir",
-                    str(dbt_dir),
-                    "--with-playground",
-                    "--no-mcp",
-                    "--no-vscode",
-                    "--no-cursor",
-                    "--yes",
-                ],
-                catch_exceptions=False,
-            )
-        assert result.exit_code == 0, result.output
-        assert "playground" in result.output.lower()
-
-    def test_yes_default_does_not_attempt_playground_install(
-        self, dbt_dir: Path
-    ) -> None:
-        """dct init --yes must not attempt playground install by default.
-
-        dbt-charts-playground is private-registry only; the default flow for a
-        public-PyPI user must not trigger an install attempt.
-        """
-
-        def _missing_packages_stub(extra: str) -> list[str]:
-            return ["dbt-charts-playground"] if extra == "playground" else []
-
-        with patch(
-            "dbt_charts.cli._extras._missing_packages",
-            side_effect=_missing_packages_stub,
-        ):
-            runner = CliRunner()
-            runner.invoke(
-                app,
-                ["init", "--project-dir", str(dbt_dir), "--yes"],
-                catch_exceptions=False,
-            )
-        # install_extras must never be called with "playground" in the default flow
-        for call in self.mocks.extras.call_args_list:
-            assert call.args[0] != "playground", (
-                "playground install was attempted in default --yes flow; "
-                "default must be off until dbt-charts-playground ships on public PyPI"
-            )
-
-    def test_playground_extra_installed_when_with_playground_flag(
-        self, dbt_dir: Path
-    ) -> None:
-        # Simulate playground not installed so the install branch is reachable
-        def _missing_packages_stub(extra: str) -> list[str]:
-            return ["dbt-charts-playground"] if extra == "playground" else []
-
-        with patch(
-            "dbt_charts.cli._extras._missing_packages",
-            side_effect=_missing_packages_stub,
-        ):
-            runner = CliRunner()
-            runner.invoke(
-                app,
-                [
-                    "init",
-                    "--project-dir",
-                    str(dbt_dir),
-                    "--with-playground",
-                    "--no-mcp",
-                    "--no-vscode",
-                    "--no-cursor",
-                    "--yes",
-                ],
-                catch_exceptions=False,
-            )
-        self.mocks.extras.assert_any_call("playground", interactive=False)
-
-    def test_playground_extra_skipped_when_no_with_playground(
-        self, dbt_dir: Path
-    ) -> None:
-        # Even when playground packages are missing, --no-with-playground suppresses install
-        with patch(
-            "dbt_charts.cli._extras._missing_packages",
-            return_value=["dbt-charts-playground"],
-        ):
-            runner = CliRunner()
-            runner.invoke(
-                app,
-                [
-                    "init",
-                    "--project-dir",
-                    str(dbt_dir),
-                    "--no-with-playground",
-                    "--yes",
-                ],
-                catch_exceptions=False,
-            )
-        # install_extras must never be called with "playground"
-        for call in self.mocks.extras.call_args_list:
-            assert call.args[0] != "playground"
-
-    def test_playground_extra_skipped_when_already_installed(
-        self, dbt_dir: Path
-    ) -> None:
-        # When _missing_packages returns [] (already installed), no install should happen
-        with patch(
-            "dbt_charts.cli._extras._missing_packages",
-            return_value=[],
-        ):
-            runner = CliRunner()
-            runner.invoke(
-                app,
-                [
-                    "init",
-                    "--project-dir",
-                    str(dbt_dir),
-                    "--with-playground",
-                    "--yes",
-                ],
-                catch_exceptions=False,
-            )
-        for call in self.mocks.extras.call_args_list:
-            assert call.args[0] != "playground"
 
     def test_mcp_extra_installed_when_mcp_wiring_is_written(
         self, dbt_dir: Path
@@ -332,7 +180,6 @@ class TestInitWizardFlags:
                 "--mcp",
                 "--no-vscode",
                 "--no-cursor",
-                "--no-with-playground",
                 "--yes",
             ],
             catch_exceptions=False,
@@ -361,7 +208,6 @@ class TestInitWizardFlags:
                     "--mcp",
                     "--no-vscode",
                     "--no-cursor",
-                    "--no-with-playground",
                     "--yes",
                 ],
                 catch_exceptions=False,
@@ -597,7 +443,6 @@ class TestInitWizardFlags:
                 "init",
                 "--yes",
                 "--no-mcp",
-                "--no-with-playground",
                 "--no-vscode",
                 "--no-cursor",
             ],
@@ -626,7 +471,6 @@ class TestInitWizardFlags:
                 str(subdir),
                 "--yes",
                 "--no-mcp",
-                "--no-with-playground",
                 "--no-vscode",
                 "--no-cursor",
             ],
@@ -714,7 +558,6 @@ class TestInitPreservesExistingAgentMarkdown:
                 str(dbt_dir),
                 "--yes",
                 "--no-mcp",
-                "--no-with-playground",
                 "--no-vscode",
                 "--no-cursor",
             ],
@@ -736,7 +579,6 @@ class TestInitPreservesExistingAgentMarkdown:
                 str(dbt_dir),
                 "--yes",
                 "--no-mcp",
-                "--no-with-playground",
                 "--no-vscode",
                 "--no-cursor",
             ],

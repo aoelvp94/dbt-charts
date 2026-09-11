@@ -74,6 +74,22 @@ Fires when a board's whole content is one chart and both the board and the chart
 ## charts
 
 
+### WARN-AREA-UNSTACKED-READS-AS-STACKED: Unstacked area is hard to tell apart from a stacked one
+
+- **Level:** warning
+- **Domain:** render
+- **Suppressible:** yes
+
+**Message template:**
+
+```
+Chart {chart_id!r}: hard to tell this area chart apart from a stacked one. Its {count} series from {field!r} overlap, so the outer edge represents an individual series value, not the total.
+```
+
+**Fix:** Set `style.stack: "zero"` if the series compose a total, or use `type: line` if they are independent trends. Which one this occurrence recommends leading with depends on how much of the real total the chart's outer edge is hiding.
+
+Fires when an area chart resolves to an unstacked mode (`stack: none`), paints two or more series (from a `color:` column or a wide `y: [a, b, c]` measure list), and no pair of those series visibly trades places anywhere on the axis. A pair is compared at the x values they share, on values coercible to a number, and only where both sit on one side of the zero baseline: a series painting above the baseline and one painting below it never warn about each other, since their bands occupy disjoint regions rather than nesting. A log y axis is not judged, since position there is logarithmic and no single ratio converts a gap at every magnitude. dbt charts already signals stacking through fill weight: an unstacked area's fill is translucent, a stacked one's is solid. A series that visibly trades places with another declares itself an overlap; the reader sees two bands swap and reads them as independent. Where that never visibly happens, each band looks nested inside the next at every x, indistinguishable from a real stack whatever the fill opacity says. A reader takes the outer edge for the total; it instead represents an individual series value, and the real total's magnitude may be several times larger. The render is unchanged by this warning; it reports a chart that is very likely either a stacked area missing its `stack:` key or a line chart drawn with the wrong mark. Small multiples split by the series column itself give each series its own panel, so no panel holds a pair to compare and nothing is reported. A chart with overlay layers is never judged: a layer can paint the very total the base series' outer edge only looks like, and judging the base alone would fire on a chart that already resolves the ambiguity. A series that repeats the same x value on two or more rows within one panel abstains the whole panel, since there is no principled way to pick which of the repeated values the chart actually paints.
+
 ### WARN-AXIS-ALIGN-DISCARDED: Authored axis_y.labels.align has no effect on a house-format quantitative axis
 
 - **Level:** warning

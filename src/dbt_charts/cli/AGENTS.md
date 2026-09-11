@@ -39,7 +39,7 @@ Each command module calls one (or a small, clearly named set of) functions from 
 - `dbt_charts.cli._error_format.print_diagnostics(errs, ...)` — every `Diagnostic` list, both TTY and pipe modes
 - `dbt_charts.cli._console.is_plain_output()` — every TTY / agent-context check
 - `dbt_charts.cli._parsing.parse_kv_pairs(items, flag)` — every `--var key=value` repeatable option
-- `dbt_charts.cli._extras` — every optional-dependency gate (`mcp`, `playground`, etc.) and its install-hint message
+- `dbt_charts.cli._extras` — every optional-dependency gate (`mcp`, etc.) and its install-hint message
 
 An inline `json.dumps(obj.model_dump(...))`, a hand-rolled `for e in errors: console.print(...)`, a bare `os.environ.get("CLAUDECODE")`, or a per-command `try: import openai except ImportError:` is a violation — extend the shared helper instead.
 

@@ -26,6 +26,7 @@ from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
 from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     wide_legend_aliases,
+    wide_measure_fields,
     wide_measure_labels_for,
     wide_series_names,
 )
@@ -181,12 +182,11 @@ def _color_field_and_domain(
                 seen.append(v)
         return value_field, seen, None
 
-    if isinstance(chart, _CARTESIAN_WIDE_FAMILIES) and chart.wide_measures:
+    if measures := wide_measure_fields(chart):
         # A wide chart can't also author layers:, so no layer loop is
         # needed here. It can cross its measures with a color: dimension;
         # the domain is the humanized measure list (or the dimension
         # composite when one is set).
-        measures = chart.wide_measures
         dimension = chart.color
         wide_labels = wide_measure_labels_for(measures)
         domain = wide_series_names(measures, dimension, rows, wide_labels)

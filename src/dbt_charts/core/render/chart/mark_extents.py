@@ -41,6 +41,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedPointMapChart,
     ResolvedScatterChart,
 )
+from dbt_charts.core.compile.resolve.chart._wide_fields import wide_measure_fields
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 
 SVG = "{http://www.w3.org/2000/svg}"
@@ -204,14 +205,15 @@ def _measure_columns(chart: ResolvedChart) -> list[str]:
     for — see ``PAINTS_MARKS``) — the caller treats that as "can't tell",
     not as "all zero".
     """
-    if isinstance(chart, (ResolvedBarChart, ResolvedLineChart, ResolvedAreaChart)):
+    if wide_fields := wide_measure_fields(chart):
         # Wide charts fold query columns via VL's transform; the measure columns
         # exist in the query rows, not the synthetic WIDE_VALUE_FIELD.
-        if chart.wide_measures:
-            return list(chart.wide_measures)
+        return list(wide_fields)
+    if isinstance(
+        chart,
+        (ResolvedBarChart, ResolvedLineChart, ResolvedAreaChart, ResolvedScatterChart),
+    ):
         column: str | None = chart.y
-    elif isinstance(chart, ResolvedScatterChart):
-        column = chart.y
     elif isinstance(chart, ResolvedHeatmapChart):
         column = chart.color
     elif isinstance(chart, ResolvedPieChart):

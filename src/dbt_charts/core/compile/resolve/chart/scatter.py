@@ -32,10 +32,11 @@ from dbt_charts.core.compile.resolve.chart._domain import (
     _authored_axis_y_ticks_count,
     _bake_y_zero,
     _CartesianTickResolution,
-    _numeric_y_values,
+    _first_non_numeric_y,
     _reject_non_positive_log_scale_data,
     _resolve_cartesian_ticks,
     _shared_y_values,
+    _zero_anchor_floats,
     resolve_y_zero,
 )
 from dbt_charts.core.compile.resolve.chart._kwargs import (
@@ -63,11 +64,15 @@ from dbt_charts.core.compile.resolve.chart._plan import (
     plan_cartesian,
     quantitative_channel_values,
 )
+from dbt_charts.core.compile.resolve.chart._wide_fields import (
+    bake_wide_measures_kwargs,
+    resolve_wide_measure_channels,
+)
 from dbt_charts.core.compile.resolve.style.chart_context import (
     build_chart_style_context,
 )
 from dbt_charts.core.diagnostics.codes_compile import (
-    ERR_MULTI_Y_UNSUPPORTED_CHART_TYPE,
+    ERR_SCATTER_MULTI_Y_NOT_NUMERIC,
 )
 from dbt_charts.core.text.format_d3 import is_d3_si_spec
 
@@ -89,24 +94,34 @@ def _resolve_scatter(
     multiples_scale = (
         normalized.multiples.scale if normalized.multiples is not None else "shared"
     )
-    # Scatter has no wide-measure fold implementation (unlike bar/area/line,
-    # which route through resolve_wide_measure_channels/bake_wide_measures_kwargs
-    # in _wide_fields.py) — fail clearly at resolve time rather than let
-    # ResolvedScatterChart's y: str | None field raise a raw pydantic
-    # ValidationError, or (if that narrowing were ever loosened) silently
-    # reference a synthetic fold field the render pipeline never populates.
+    # A wide y: [a, b] folds every measure onto one shared WIDE_VALUE_FIELD
+    # axis, always quantitative -- unlike a single y:, which may legitimately
+    # be categorical (the dot-plot recipe). A non-numeric measure in the list
+    # would silently bake a NaN axis with zero marks; refuse instead, mirroring
+    # bar's/line's own _first_non_numeric_y guard (they hardcode y to
+    # quantitative unconditionally, so they check every y field, not just the
+    # list case).
     if isinstance(normalized.y, list):
-        raise CompilationError.from_code(
-            ERR_MULTI_Y_UNSUPPORTED_CHART_TYPE,
-            chart_id=normalized.id,
-            chart_type="scatter",
-        )
+        _scatter_bad_y = _first_non_numeric_y(normalized.y, data)
+        if _scatter_bad_y is not None:
+            raise CompilationError.from_code(
+                ERR_SCATTER_MULTI_Y_NOT_NUMERIC,
+                chart_id=normalized.id,
+                y_field=_scatter_bad_y,
+            )
     # Scatter axes are typically both quantitative, but a categorical x or y
     # (dot plot) must bake as nominal — otherwise the numeric label font/format
-    # is applied to category strings (Vega coerces them to NaN).
+    # is applied to category strings (Vega coerces them to NaN). A wide y:
+    # [a, b] folds onto the synthetic WIDE_VALUE_FIELD, which is always
+    # numeric — the dot-plot recipe (a real column classified nominal/ordinal)
+    # only ever applies to a single authored y column.
     y_field_scatter = normalized.y if isinstance(normalized.y, str) else None
     x_ch_type = _classify_to_channel_type(normalized.x, data, is_dimension=True)
-    y_ch_type = _classify_to_channel_type(y_field_scatter, data, is_dimension=False)
+    y_ch_type = (
+        "quantitative"
+        if isinstance(normalized.y, list)
+        else _classify_to_channel_type(y_field_scatter, data, is_dimension=False)
+    )
     chart_local_style_context = build_chart_style_context(
         chart_style_context, normalized
     )
@@ -124,6 +139,9 @@ def _resolve_scatter(
     primary = plan.primary
     scatter = merge_onto_base(chart_style_context.scatter, primary)
     channels = plan.channels
+    channels, wide_measure_series = resolve_wide_measure_channels(
+        normalized, channels, "scatter", has_layers=bool(normalized.layers)
+    )
     # Scatter (and bubble -- a scatter with a size channel, not a separate
     # family) never routes to a top legend: its legend swatch is a circle
     # matching its own point marks in shape and comparable in size (measured
@@ -141,8 +159,8 @@ def _resolve_scatter(
         endpoint_label_has_layers=False,
         has_layers=bool(normalized.layers),
         rail_eligible_for_suppression=False,
-        suppress_wide_measure_series=False,
-        multiples_wide_measure_series=False,
+        suppress_wide_measure_series=wide_measure_series,
+        multiples_wide_measure_series=wide_measure_series,
         top_legend_series=None,
         plot_height_estimate=estimate_cartesian_plot_height(normalized, scatter, width),
         # top_legend_series=None above means the row-fit check this feeds
@@ -166,16 +184,27 @@ def _resolve_scatter(
     _reject_non_positive_log_scale_data(
         normalized.id,
         ay_merged,
-        [y_field_scatter] if y_field_scatter else [],
+        (
+            [y_field_scatter]
+            if y_field_scatter
+            else (list(normalized.y) if isinstance(normalized.y, list) else [])
+        ),
         data,
     )
-    if y_field_scatter:
-        _sy = _numeric_y_values(data, (y_field_scatter,))
-        if _sy:
+    # _zero_anchor_floats spans every wide measure's own values, or the
+    # single y field's -- the one shared extent the zero-anchor decision and
+    # the tick ladder both read from (mirrors line.py's multi-metric bake).
+    _zero_floats = _zero_anchor_floats(normalized.y, data)
+    if y_field_scatter or wide_measure_series:
+        if _zero_floats:
             if y_ch_type == "quantitative":
-                ay_merged = _bake_y_zero(ay_merged, _sy, "scatter")
-            _sz = resolve_y_zero(_ay_pre_zero_bake, min(_sy), max(_sy), "scatter")
-            _scatter_anchored = _sz is True or (_sz is None and min(_sy) >= 0.0)
+                ay_merged = _bake_y_zero(ay_merged, _zero_floats, "scatter")
+            _sz = resolve_y_zero(
+                _ay_pre_zero_bake, min(_zero_floats), max(_zero_floats), "scatter"
+            )
+            _scatter_anchored = _sz is True or (
+                _sz is None and min(_zero_floats) >= 0.0
+            )
         else:
             # No numeric y values -- a nominal or temporal y (the rotated
             # dot-plot recipe puts the category on y), or every row null.
@@ -189,11 +218,10 @@ def _resolve_scatter(
         scatter_ticks = _resolve_cartesian_ticks(
             normalized.id,
             ay_merged,
-            _shared_y_values(
-                data,
-                y_field_scatter,
-                normalized,
-                datasets,
+            (
+                _shared_y_values(data, y_field_scatter, normalized, datasets)
+                if y_field_scatter
+                else _zero_floats
             ),
             zero_anchor=_scatter_anchored,
             authored_ticks_count=_authored_axis_y_ticks_count(normalized.style),
@@ -284,6 +312,15 @@ def _resolve_scatter(
     if authored_y_domain is not None:
         _check_layers_y_domain(normalized.id, resolved_layers, authored_y_domain)
     _tf = _title_font(normalized, chart_local_style_context, width)
+    _ck = _cartesian_kwargs(
+        normalized,
+        chart_local_style_context,
+        variables,
+        data,
+        "scatter",
+        panel_axes=dataset.axes,
+    )
+    _ck, wide_measures = bake_wide_measures_kwargs(normalized.y, _ck)
     return ResolvedScatterChart(
         **_base_kwargs(
             normalized,
@@ -301,14 +338,8 @@ def _resolve_scatter(
             force_legend_visible=naming.force_legend_visible,
             legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
         ),
-        **_cartesian_kwargs(
-            normalized,
-            chart_local_style_context,
-            variables,
-            data,
-            "scatter",
-            panel_axes=dataset.axes,
-        ),
+        **_ck,
+        wide_measures=wide_measures,
         chart_type="scatter",
         size=normalized.size,
         shape=normalized.shape,

@@ -22,6 +22,7 @@ from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatte
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.style.resolved import ResolvedAxisStyle
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartRows
+from dbt_charts.core.compile.resolve.chart._wide_fields import wide_measure_fields
 from dbt_charts.core.render.chart.emitters._cartesian import (
     authored_measure_domain,
     build_zero_rule_if_applicable,
@@ -162,14 +163,13 @@ def _zero_in_shared_domain(
     """
     base_rows = chart_rows(chart, datasets).all_rows()
     # Wide charts carry the authored measures in wide_measures; query rows
-    # have the real columns, not the synthetic WIDE_VALUE_FIELD. Scatter has
-    # no fold/multi-measure render path, so it never has wide measures.
+    # have the real columns, not the synthetic WIDE_VALUE_FIELD. `chart` is
+    # never actually a ResolvedBarChart here (see the caller's own
+    # isinstance branch), so wide_measure_fields matching bar too is inert.
+    wide_fields = wide_measure_fields(chart)
     fields = (
-        chart.wide_measures
-        if isinstance(chart, (ResolvedLineChart, ResolvedAreaChart))
-        and chart.wide_measures
-        else (measure_field,)
-    )
+        wide_fields if wide_fields else (measure_field,)
+    )  # type-state: silent_fallback — empty tuple is the documented "not wide" return, not a hidden default
     values = [v for field in fields for v in numeric_column_values(base_rows, field)]
     for layer in chart.layers:
         if layer.type == "bar":

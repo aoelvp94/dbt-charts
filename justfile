@@ -8,19 +8,15 @@
 host := env_var_or_default("DCT_HOST", "127.0.0.1")
 demo_dir := env_var_or_default("DCT_DEMO_DIR", ".demo")
 
-# Two genuinely standalone-incompatible cases, re-audited empirically against
+# One genuinely standalone-incompatible case, re-audited empirically against
 # a real export (everything else in the old, much longer list here turned out
 # to already pass standalone once dbt-charts self-contained landed):
-#   - test_playground_shim.py: exercises the real dbt-charts-playground
-#     package. TEMPORARY: the [playground] extra falls back to PyPI standalone
-#     (see copy.bara.sky's matching core.replace) because that package isn't
-#     published there yet. Delete once it is.
 #   - test_help_option_surface.py's "inspect" case: expects `table`/`audit`,
 #     which the private dbt-charts-super-schema plugin registers via an
 #     entry-point. Permanent, not temporary -- that package never ships in
 #     the OSS wheel. Deselected narrowly (not file-ignored) since the file's
 #     other 4 cases pass and cover real OSS-only commands.
-monorepo_only := "--ignore=tests/cli/test_playground_shim.py --deselect=tests/cli/test_help_option_surface.py::test_help_documents_option_surface[inspect]"
+monorepo_only := "--deselect=tests/cli/test_help_option_surface.py::test_help_documents_option_surface[inspect]"
 
 # Show the main commands
 default:
@@ -155,7 +151,7 @@ demo port="":
     if [ ! -f "{{demo_dir}}/dbt_charts.yml" ]; then
         mkdir -p "{{demo_dir}}"
         uv run dct init -y --project-dir "{{demo_dir}}" \
-            --no-skills --no-mcp --no-vscode --no-cursor --no-with-playground
+            --no-skills --no-mcp --no-vscode --no-cursor
     fi
     port_args=""
     if [ -n "{{port}}" ]; then port_args="--port {{port}}"; fi

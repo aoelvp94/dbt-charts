@@ -37,10 +37,10 @@
     "."
   ],
   "reportPrivateImportUsage": "none",
-  // dbt_charts_super_schema (private, never published) and dbt_charts_playground
-  // are optional, conditionally-imported extensions probed via
-  // importlib.util.find_spec at runtime -- resolvable in the monorepo (real
-  // workspace members) but never installable standalone, by design. Mirrors
+  // dbt_charts_super_schema (private, never published) is an optional,
+  // conditionally-imported extension probed via importlib.util.find_spec at
+  // runtime -- resolvable in the monorepo (a real workspace member) but never
+  // installable standalone, by design. Mirrors
   // [tool.mypy]'s ignore_missing_imports = true, which already accepts this
   // for the same reason. This is set globally, not scoped via
   // executionEnvironments, because the probe sites span nearly all of src/ --

@@ -1052,11 +1052,11 @@ def cartesian_series_naming(
 
     ``suppress_wide_measure_series`` and ``multiples_wide_measure_series`` are
     separate parameters for the families that ever need them to differ, even
-    though bar.py, line.py, and area.py all currently pass the same real
-    ``resolve_wide_measure_channels`` flag to both (a wide ``y:`` list folds
-    into a legend the same way it folds into a suppression signal for all
-    three). scatter.py and heatmap.py have no wide-measure fold and pass
-    ``False`` to both.
+    though bar.py, line.py, area.py, and scatter.py all currently pass the
+    same real ``resolve_wide_measure_channels`` flag to both (a wide ``y:``
+    list folds into a legend the same way it folds into a suppression signal
+    for all four). heatmap.py has no wide-measure fold (its own, different
+    one-rect-layer-per-measure path) and passes ``False`` to both.
 
     ``top_legend_series`` is the one chart-shape trigger every family reads
     the same way, replacing what used to be two family-specific opt-in

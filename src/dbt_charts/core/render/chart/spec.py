@@ -176,8 +176,9 @@ class ChartSpec:
             geoshape/map families.  Set by ``GeoshapeEmitter`` on the outer spec
             (no-data path) or on each layer (choropleth layered path).
             ``assemble_final_vl`` emits it as the VL ``data`` key.
-        transforms: VL ``transform`` list set by ``GeoshapeEmitter`` on the choropleth
-            overlay layer (lookup join).  Empty list → no transform key emitted.
+        transforms: VL ``transform`` list. Set by ``GeoshapeEmitter`` on the choropleth
+            overlay layer (lookup join); by a wide (``y: [a, b]``) bar/area/line/scatter
+            emitter for its VL ``fold`` transform.  Empty list → no transform key emitted.
         resolve: VL ``resolve`` block for layered specs (e.g. scale independence
             across layers).  Set by pie emitter as ``{"scale": {"color": "independent"}}``.
             Empty dict → no resolve key emitted.

@@ -134,6 +134,22 @@ def test_non_currency_non_percent_column_no_warning() -> None:
     assert detector.detect(ctx) == []
 
 
+def test_wide_scatter_currency_column_no_format_fires() -> None:
+    """Wide (``y: [...]``) scatter -- scatter joined the wide-measures shape
+    already covered for bar/area/line. Must check the real authored measure
+    names, not the synthetic WIDE_VALUE_FIELD that replaces chart.y at
+    resolve time."""
+    chart = _make_chart(type="scatter", x="month", y=["revenue_usd", "order_count"])
+    ctx = _make_ctx(chart)
+    warnings = detector.detect(ctx)
+
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert w.code == WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER.code
+    assert w.field == "revenue_usd"
+    assert "currency" in (w.fix or "").lower()
+
+
 def test_overlay_layer_currency_fires_when_base_format_absent() -> None:
     """A currency-looking y on an overlay layer warns when chart format is absent.
 

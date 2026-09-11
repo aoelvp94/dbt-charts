@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.6.1.dev174",
+  "version": "0.6.1.dev135",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -16326,6 +16326,15 @@
           ],
           "default": null,
           "description": "Final per-chart support_table style (board theme merged with the family override)."
+        },
+        "wide_measures": {
+          "default": [],
+          "description": "Authored y: list measures, stored after resolve-time normalization.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Wide Measures",
+          "type": "array"
         },
         "chart_type": {
           "const": "scatter",

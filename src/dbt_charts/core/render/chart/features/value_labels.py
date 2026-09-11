@@ -1497,6 +1497,12 @@ class ValueLabelFeature:
         labels = chart.style.point_mark.labels
         if labels.visible is not True:
             return spec
+        # No wide_measures early-return, unlike _apply_bar/_apply_line/_apply_area:
+        # those guard against value-label positions stacking at one shared band
+        # center against the synthetic WIDE_VALUE_FIELD. A scatter point has no
+        # band to stack against -- each folded row already carries its own real
+        # x/y position, so a label built off WIDE_VALUE_FIELD (chart.y here) is
+        # correctly positioned per point, same as the color-coded mark itself.
         y = chart.y
         if not isinstance(y, str):
             return spec

@@ -19,9 +19,7 @@ from __future__ import annotations
 from dbt_charts.core.compile.models.chart.resolved._base import (
     _CartesianResolvedChartFields,
 )
-from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
-from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
-from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
+from dbt_charts.core.compile.resolve.chart._wide_fields import wide_measure_fields
 from dbt_charts.core.diagnostics import WARN_Y_ENCODING_MOSTLY_NULL, Diagnostic
 from dbt_charts.core.render.warnings.base import WarningContext
 
@@ -48,11 +46,8 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             continue
         # Wide charts fold y: list via VL's fold transform; query rows carry the
         # authored measure columns, not the synthetic WIDE_VALUE_FIELD.
-        if (
-            isinstance(chart, (ResolvedBarChart, ResolvedLineChart, ResolvedAreaChart))
-            and chart.wide_measures
-        ):
-            y_fields: list[str] = list(chart.wide_measures)
+        if wide_fields := wide_measure_fields(chart):
+            y_fields: list[str] = list(wide_fields)
         else:
             # Heatmap is the only remaining family that can still carry a
             # list y (its own multi-measure render path, not the fold).

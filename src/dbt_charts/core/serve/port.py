@@ -1,4 +1,4 @@
-"""Port resolution for dct serve / dct playground.
+"""Port resolution for dct serve / dct-playground.
 
 Resolution order:
 1. Explicit --port CLI flag (highest priority)

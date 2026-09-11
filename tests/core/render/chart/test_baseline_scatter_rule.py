@@ -194,6 +194,32 @@ def test_straddling_scatter_still_emits_zero_rule() -> None:
     assert len(_rule_layers(spec)) == 1
 
 
+def test_wide_scatter_straddling_zero_emits_zero_rule() -> None:
+    """A wide (``y: [a, b]``) scatter whose folded measures straddle zero
+    must still draw the rule -- ``_zero_in_shared_domain`` reads the real
+    query columns (``chart.wide_measures``) here, not the synthetic
+    ``WIDE_VALUE_FIELD``, which is absent from every raw row and would
+    silently read as an empty (never-straddling) domain."""
+    payload: dict[str, Any] = {
+        "id": "t",
+        "type": "scatter",
+        "x": "x",
+        "y": ["rev", "cost"],
+        "style": None,
+    }
+    data = [
+        {"x": "a", "rev": 100, "cost": -40},
+        {"x": "b", "rev": -200, "cost": 90},
+        {"x": "c", "rev": 150, "cost": -70},
+    ]
+    reset_config()
+    chart = TypeAdapter(Chart).validate_python(payload)
+    spec = generate_vega_lite_spec(
+        chart, data, width=400, board_style=_BOARD_STYLE, chart_style_context=_BOARD_CTX
+    )
+    assert len(_rule_layers(spec)) == 1
+
+
 def test_layered_scatter_with_straddling_line_overlay_emits_zero_rule() -> None:
     """An all-negative base scatter with a shared-scale line overlay whose
     own values straddle zero must still draw the rule -- the overlay's data

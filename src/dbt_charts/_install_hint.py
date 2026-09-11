@@ -56,9 +56,8 @@ def _is_uv_tool_install() -> bool:
 def install_hint(extra: str | None = None) -> str:
     """Return the install one-liner that matches how this dbt charts got installed.
 
-    ``extra`` is an optional optional-dependency group (``"mcp"``,
-    ``"playground"``, ``"bigquery"``); when set, the returned command
-    installs dbt charts with that extras bracket.
+    ``extra`` is an optional optional-dependency group (``"mcp"``, ``"bigquery"``);
+    when set, the returned command installs dbt charts with that extras bracket.
     """
     spec = f"dbt-charts[{extra}]" if extra else "dbt-charts"
     if _is_uv_tool_install():

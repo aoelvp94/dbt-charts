@@ -989,6 +989,26 @@ def test_plain_scatter_no_header_two_peer_value_rows():
     assert row.index("revenue") < row.index("cost"), row
 
 
+def test_wide_scatter_does_not_apply_structured_tooltip() -> None:
+    """A wide (``y: [a, b]``) scatter's ``chart.y`` is the synthetic
+    WIDE_VALUE_FIELD sentinel -- ``isinstance(chart.y, str)`` alone can't
+    tell it apart from a real column, so ``applies_to()`` must exclude it
+    explicitly via ``chart.wide_measures``, or ``_scatter_roles`` would read
+    a field absent from every raw row."""
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+    )
+    from dbt_charts.core.render.chart.features.structured_tooltip import (
+        StructuredTooltipFeature,
+    )
+
+    chart = ScatterChart(id="t", type="scatter", x="month", y=["rev", "cost"])
+    data = [{"month": "Jan", "rev": 100, "cost": 40}]
+    ctx = resolve_chart_style_context(get_theme_style("stark"))
+    rc = resolve(chart, data, chart_style_context=ctx)
+    assert StructuredTooltipFeature().applies_to(rc) is False
+
+
 _COLORED_SCATTER_DATA = [
     {"cost": 10.0, "revenue": 100.0, "region": "North"},
     {"cost": 20.0, "revenue": 150.0, "region": "South"},

@@ -38,7 +38,6 @@ import base64
 import hashlib
 import html
 import logging
-import os
 import re
 import zlib
 from collections.abc import Generator
@@ -71,7 +70,7 @@ from dbt_charts.integrations.highlighting import highlight_board_yaml
 
 logger = logging.getLogger("dbt_charts.integrations.markdown")
 
-_PLAYGROUND_DEFAULT_URL = "https://play.dbtcharts.com"
+_PLAYGROUND_URL = "https://play.dbtcharts.com"
 _VALID_LAYOUTS = {"side-by-side", "stacked", "render-only", "yaml-only"}
 _EXTERNAL_QUERY_NOT_FOUND_RE = re.compile(r"External query file not found", re.I)
 
@@ -130,14 +129,11 @@ def _highlight_yaml(source: str) -> str:
     )
 
 
-def _playground_url(yaml_source: str, base_url: str) -> str:
-    """Generate a playground URL with compressed YAML payload.
-
-    ``base_url`` is required — env resolution lives at the fence-handler boundary.
-    """
+def _playground_url(yaml_source: str) -> str:
+    """Generate a hosted-playground URL with compressed YAML payload."""
     compressed = zlib.compress(yaml_source.encode("utf-8"), level=9)
     encoded = base64.urlsafe_b64encode(compressed).decode("ascii").rstrip("=")
-    return f"{base_url}/?y={encoded}"
+    return f"{_PLAYGROUND_URL}/?y={encoded}"
 
 
 def _resolve_file(file_path: str, project_dir: Path) -> Path:
@@ -493,9 +489,6 @@ def fence_dbt_charts_example(
         ```
     """
     project = FilesystemProject(_resolve_project_dir())
-    playground_base_url = os.getenv(
-        "DCT_PLAYGROUND_URL", _PLAYGROUND_DEFAULT_URL
-    )  # composition-root boundary
 
     resolved_options = _fence_options(options, kwargs)
     layout = resolved_options.get("format", "side-by-side")
@@ -532,7 +525,7 @@ def fence_dbt_charts_example(
         )
     except (FileNotFoundError, ValueError, OSError, yaml.YAMLError) as exc:
         logger.warning("Playground payload rewrite failed: %s", exc)
-    pg_url = _playground_url(playground_yaml, playground_base_url)
+    pg_url = _playground_url(playground_yaml)
 
     # yaml-only: no rendering
     if layout == "yaml-only":

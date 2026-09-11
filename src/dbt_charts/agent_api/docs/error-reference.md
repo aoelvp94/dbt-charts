@@ -680,7 +680,7 @@ Fired when a chart carries a list-valued `y:` while `style.axis_y.mirror` is on.
 Chart {chart_id!r} ({chart_type}): y: [...] folds measures into a color series, and color: {color_field!r} is bound to a gradient or conditional scale, which names no series to cross them with. Bind color: to a plain column (each of its values x each measure becomes a series) or drop it.
 ```
 
-Fired when a bar, area, or line chart authors y: [a, b] together with a color: that is not a plain series column -- a gradient or a conditional scale. A column composes with the fold: the series become `<value> - <measure>` composites, one per dimension value per measure.
+Fired when a bar, area, line, or scatter chart authors y: [a, b] together with a color: that is not a plain series column -- a gradient or a conditional scale. A column composes with the fold: the series become `<value> - <measure>` composites, one per dimension value per measure.
 
 ### ERR-MULTI-Y-LAYERS-CONFLICT: Multi-y chart cannot also have layers:
 
@@ -694,21 +694,7 @@ Fired when a bar, area, or line chart authors y: [a, b] together with a color: t
 Chart {chart_id!r} ({chart_type}): y: [...] folds measures into a color series automatically -- overlay layers: are not supported with multi-y charts. Keep a single y field and overlay the other measures as layers: entries instead.
 ```
 
-Fired when a bar, area, or line chart authors both y: [a, b] and layers: at the same time.
-
-### ERR-MULTI-Y-UNSUPPORTED-CHART-TYPE: y: [...] is not supported for this chart type
-
-- **Level:** error
-- **Domain:** compile
-- **Suppressible:** no
-
-**Message template:**
-
-```
-Chart {chart_id!r} ({chart_type}): y: [...] (multi-metric) is not supported for {chart_type} charts. Use a single y field, with a color: column for the series.
-```
-
-Fired when a chart type with no wide-measure fold implementation (currently scatter) authors y: [a, b]. Bar, area, and line fold list-y into a synthetic color series; other cartesian families have no equivalent render path yet.
+Fired when a bar, area, line, or scatter chart authors both y: [a, b] and layers: at the same time.
 
 ### ERR-MULTIPLES-ENDPOINT-LABELS: multiples cannot be combined with endpoint labels
 
@@ -947,6 +933,20 @@ Chart {chart_id!r}: axis_x.scale.domain is set, but the x-axis resolved to a {vl
 ```
 
 Fired when `axis_x.scale.domain` is set but the x-axis resolves to a categorical (ordinal/nominal) scale rather than a continuous one. An explicit [low, high] domain only extends a continuous scale; on a categorical scale Vega-Lite reads it as exactly two category values. Add `axis_x.scale.type: temporal` to force a continuous temporal scale if needed.
+
+### ERR-SCATTER-MULTI-Y-NOT-NUMERIC: Scatter chart multi-metric y column is not numeric
+
+- **Level:** error
+- **Domain:** compile
+- **Suppressible:** no
+
+**Message template:**
+
+```
+Chart {chart_id!r} (scatter): y: [...] column {y_field!r} is not numeric. A single y: column may be categorical (a dot plot), but every measure in a y: [...] list is folded onto one numeric axis; use numeric columns.
+```
+
+Fired when a scatter chart's y: [a, b] list contains a non-numeric column. A single y: column may be categorical (a dot plot), but a list y: folds every measure onto one shared numeric axis, so each measure must be numeric.
 
 ### ERR-SPARK-BAR-VALUE-FIELD-NOT-FOUND: spark_bar x names a column not in the query result
 

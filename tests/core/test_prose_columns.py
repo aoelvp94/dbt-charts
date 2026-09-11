@@ -52,12 +52,22 @@ def longest_line(svg: str) -> int:
     return max(len(r) for r in runs if r)
 
 
+def _column_x_offsets(svg: str) -> set[float]:
+    """Every column's x offset, including the first.
+
+    The first column sits at x=0, a no-op translate the renderer no longer
+    wraps in a `<g>` (see svg_utils.translate_group) -- so it never appears in
+    the `translate(x, 0)` matches directly and is added back explicitly.
+    """
+    return {0.0} | {float(m) for m in re.findall(r"translate\((\d[\d.]*), 0\)", svg)}
+
+
 def column_count(svg: str) -> int:
-    return len(set(re.findall(r"translate\((\d[\d.]*), 0\)", svg))) or 1
+    return len(_column_x_offsets(svg))
 
 
 def second_column_offset(svg: str) -> float:
-    offsets = sorted({float(m) for m in re.findall(r"translate\((\d[\d.]*), 0\)", svg)})
+    offsets = sorted(_column_x_offsets(svg))
     assert len(offsets) >= 2, f"expected at least two columns, got {offsets}"
     return offsets[1]
 

@@ -108,7 +108,7 @@ Read shipped package data via `files("dbt_charts.<pkg>").joinpath(...).read_text
 
 - `default_factory=lambda: <literal>` — same antipattern as `= <literal>`, just disguised. Distinct from `default_factory=SomeStyleType` (which is correct for fully-defaulted containers). No exceptions; add new cases only with explicit rationale and reviewer sign-off.
 - Hand-written all-Optional duplicates of a style/config type. Use `build_patch_model()`.
-- `_apply_legacy_*`, `_legacy_*_to_*`, `*_compat`, deprecation shims, `# deprecated`, `# backwards compat`, `# legacy alias`. Pre-launch — rename/migrate in one PR, no aliases.
+- `_apply_legacy_*`, `_legacy_*_to_*`, `*_compat`, deprecation shims, `# deprecated`, `# backwards compat`, `# legacy alias`. Internal code carries no aliases — rename in one PR and delete the old path; a user-facing board-grammar change carries a parse-time migration instead of a shim.
 - `assert not hasattr(...)` / `field not in model_fields` / source-grep for removed symbols. Tests Python introspection, not our logic. Banned.
 - Test-side re-implementations of production formulas (`def _n_cols(...) — mirrors render-time computation`). The test validates its own copy. Extract a single helper, import it from the test.
 - Dual mappers for the same concept (`axis_to_vl` AND `_axis_patch_to_vl`). One canonical mapper per concept.

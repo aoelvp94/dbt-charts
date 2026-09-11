@@ -501,15 +501,8 @@ forbidden_module_paths = [
 # alone. The reasons that do stand alone — core ships an importable-but-
 # unrunnable surface, and the repo has three OpenAI client wrappers — are
 # tracked in a follow-up.
-# `dbt_charts_playground` is cli/main.py's find_spec-gated import of the
-# `playground` extra (same shape as dbt_charts_super_schema above) --
-# redundant here (already satisfied by the `playground` optional dep), but
-# dbt-charts/oss/copy.bara.sky strips that optional dep from the exported
-# pyproject.toml (dbt-charts-playground isn't on PyPI yet), so this entry is
-# load-bearing there.
 allowed_external_imports = [
     "dbt_charts_super_schema",
-    "dbt_charts_playground",
     "google",
     "databricks",
     "openai",

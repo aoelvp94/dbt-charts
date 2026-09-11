@@ -42,7 +42,7 @@ from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
 from dbt_charts.core.render.chart.rendering import render_layout_item
 from dbt_charts.core.render.layout_sizing import RenderCache
 from dbt_charts.core.render.sizing import resolve_active_tab_index
-from dbt_charts.core.render.svg_utils import border_dash_attrs, px
+from dbt_charts.core.render.svg_utils import border_dash_attrs, px, translate_group
 
 __all__ = [
     "is_details_expanded",
@@ -133,9 +133,7 @@ def render_rows_layout(
         )
 
         if item_svg:
-            rendered_items.append(
-                f'<g transform="translate(0, {px(current_y)})">{item_svg}</g>'
-            )
+            rendered_items.append(translate_group(0, px(current_y), item_svg))
             actual_total_height = current_y + actual_item_height
             current_y += actual_item_height + gap + card_gap
 
@@ -205,9 +203,7 @@ def render_cols_layout(
         )
 
         if item_svg:
-            rendered_items.append(
-                f'<g transform="translate({px(x_pos)}, 0)">{item_svg}</g>'
-            )
+            rendered_items.append(translate_group(px(x_pos), 0, item_svg))
             max_actual_height = max(max_actual_height, actual_item_height)
 
     bg_rect = ""
@@ -278,9 +274,7 @@ def render_grid_layout(
         )
 
         if item_svg:
-            rendered_items.append(
-                f'<g transform="translate({px(pixel_x)}, {px(pixel_y)})">{item_svg}</g>'
-            )
+            rendered_items.append(translate_group(px(pixel_x), px(pixel_y), item_svg))
             max_bottom_edge = max(max_bottom_edge, pixel_y + actual_item_height)
 
     bg_rect = ""
@@ -424,7 +418,7 @@ def render_tabs_layout(
 
     content_svg = ""
     if item_svg:
-        content_svg = f'<g transform="translate(0, {px(content_y)})">{item_svg}</g>'
+        content_svg = translate_group(0, px(content_y), item_svg)
 
     actual_height = content_y + actual_item_height
     bg_rect = ""

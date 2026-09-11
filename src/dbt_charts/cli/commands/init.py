@@ -57,7 +57,6 @@ def run_wizard(
     yes: bool,
     skills: bool | None,
     mcp: bool | None,
-    with_playground: bool | None,
     vscode: bool | None,
     cursor: bool | None,
 ) -> None:
@@ -83,22 +82,6 @@ def run_wizard(
         prompt="Set up the dbt charts MCP server for AI assistants?",
         default=True,
     )
-
-    from dbt_charts.cli._extras import _missing_packages
-
-    # Playground extra — skip prompt if already installed.
-    # Default is False: dbt-charts-playground is not on public PyPI yet, so an
-    # unprompted install attempt would always fail for OSS users. Explicit
-    # --with-playground still works; failure degrades to a warning (see below).
-    if not _missing_packages("playground"):
-        do_with_playground = False
-    else:
-        do_with_playground = _resolve(
-            with_playground,
-            yes=yes,
-            prompt="Install the dbt-charts[playground] extra now (so 'dct playground' works without prompting later)?",
-            default=False,
-        )
 
     # IDE detection — only prompt for IDEs found on PATH
     code_found = shutil.which("code") is not None
@@ -203,18 +186,6 @@ def run_wizard(
             force=False,
             project_dir=root,
         )
-
-    if do_with_playground:
-        from dbt_charts.cli._extras import install_extras
-
-        try:
-            install_extras("playground", interactive=False)
-        except typer.Exit:
-            install_warnings.append(
-                "playground skipped — dbt-charts-playground is not on public PyPI yet. "
-                "Install it from the private registry or run `dct playground` later "
-                "to install interactively."
-            )
 
     if do_vscode:
         from dbt_charts.cli.commands import extension as extension_cmd

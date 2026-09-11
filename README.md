@@ -2,10 +2,12 @@
 
 **Declarative, dbt-native boards in YAML**
 
-dbt charts (package `dbt-charts`, CLI `dct`) compiles YAML board definitions into
+[dbt charts](https://dbtcharts.com) (package `dbt-charts`, CLI `dct`) compiles YAML board definitions into
 interactive boards, static HTML, and PDF reports. Queries run as plain SQL against
 your warehouse — no dbt project required, though dbt models are queried the same way
 (via `ref()`) when you have one.
+
+Try it without installing anything at **[play.dbtcharts.com](https://play.dbtcharts.com)**.
 
 > This repository is a read-only mirror of a private upstream. Issues are welcome;
 > pull requests are not accepted. See
@@ -38,8 +40,9 @@ dct --version
 adapter is already installed; otherwise install the one you need as an extra:
 
 ```bash
-pip install "dbt-charts[bigquery]"      # also: databricks, postgresql, redshift,
-                                        # snowflake, spark, trino
+uv tool install "dbt-charts[bigquery]"  # or: pip install "dbt-charts[bigquery]"
+                                         # also: databricks, postgresql, redshift,
+                                         # snowflake, spark, trino
 ```
 
 Using a coding agent? Hand it one sentence. `dct skills intro` teaches it the tool
@@ -56,9 +59,6 @@ dct init                        # bootstrap a project (creates charts/guide.yml)
 dct validate charts/guide.yml   # check board YAML for errors, no warehouse needed
 dct serve                       # live preview server
 ```
-
-Try it without installing anything at **[play.dbtcharts.com](https://play.dbtcharts.com)**:
-a split-pane YAML editor with live preview on sample data.
 
 ### Project layout
 
@@ -79,7 +79,7 @@ with your models.
 ### MCP and agent skills
 
 ```bash
-pip install "dbt-charts[mcp]"
+uv tool install "dbt-charts[mcp]"   # or: pip install "dbt-charts[mcp]"
 dct init mcp      # wire the MCP server into Cursor, VS Code, Claude Desktop, Codex, …
 dct init skills   # install board-authoring skills for file-based agent discovery
 ```

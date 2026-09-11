@@ -6,7 +6,6 @@ No real IDE binary, network call, or warehouse connection is reached.
 
 from __future__ import annotations
 
-import io
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -53,18 +52,10 @@ def test_init_vscode_aliases_to_code() -> None:
     )
 
 
-def test_install_extension_downloads_from_public_gcs_bucket(tmp_path: Path) -> None:
-    """install_extension must fetch the VSIX from the public GCS bucket — no
-    `gh` CLI, no GitHub auth, no private-repo release lookup."""
+def test_install_extension_installs_by_marketplace_id(tmp_path: Path) -> None:
+    """install_extension hands the editor `--install-extension dbtLabsInc.dbtcharts`."""
     fake_editor_bin = str(tmp_path / "code")
     Path(fake_editor_bin).write_text("", encoding="utf-8")
-    fake_vsix_bytes = b"PK\x03\x04 fake-vsix-payload"
-
-    captured_urls: list[str] = []
-
-    def fake_urlopen(url, *_args, **_kwargs):  # type: ignore[no-untyped-def]
-        captured_urls.append(url)
-        return io.BytesIO(fake_vsix_bytes)
 
     install_calls: list[list[str]] = []
 
@@ -79,49 +70,37 @@ def test_install_extension_downloads_from_public_gcs_bucket(tmp_path: Path) -> N
 
     with (
         patch("dbt_charts.cli.commands.extension.shutil.which", side_effect=_which),
-        patch(
-            "dbt_charts.cli.commands.extension.urllib.request.urlopen",
-            side_effect=fake_urlopen,
-        ),
         patch("dbt_charts.cli.commands.extension.subprocess.run", side_effect=fake_run),
     ):
         rc = extension.install_extension("code", emit=emitted.append)
 
     assert rc == 0, f"emitted={emitted}"
-    assert captured_urls == [
-        "https://storage.googleapis.com/dataface-downloads/dataface-latest.vsix"
+    assert install_calls == [
+        [fake_editor_bin, "--install-extension", "dbtLabsInc.dbtcharts"]
     ]
-    assert len(install_calls) == 1
-    assert install_calls[0][0] == fake_editor_bin
-    assert "--install-extension" in install_calls[0]
-    # No `gh` subprocess invocation should ever happen now — only the editor.
-    for cmd in install_calls:
-        assert Path(cmd[0]).name != "gh", cmd
 
 
-def test_install_extension_no_longer_requires_gh(tmp_path: Path) -> None:
-    """Even when `gh` is absent from PATH, install_extension must succeed."""
+def test_install_extension_cursor_installs_by_marketplace_id(tmp_path: Path) -> None:
+    """The `cursor` branch installs the same marketplace ID as `code`."""
     fake_editor_bin = str(tmp_path / "cursor")
     Path(fake_editor_bin).write_text("", encoding="utf-8")
 
     def _which(name: str) -> str | None:
-        # `gh` is deliberately missing; only `cursor` resolves.
         return fake_editor_bin if name == "cursor" else None
 
-    def fake_urlopen(_url, *_args, **_kwargs):  # type: ignore[no-untyped-def]
-        return io.BytesIO(b"PK\x03\x04")
+    install_calls: list[list[str]] = []
+
+    def fake_run(cmd, **_kwargs):  # type: ignore[no-untyped-def]
+        install_calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     with (
         patch("dbt_charts.cli.commands.extension.shutil.which", side_effect=_which),
-        patch(
-            "dbt_charts.cli.commands.extension.urllib.request.urlopen",
-            side_effect=fake_urlopen,
-        ),
-        patch(
-            "dbt_charts.cli.commands.extension.subprocess.run",
-            return_value=subprocess.CompletedProcess(["cursor"], 0, "", ""),
-        ),
+        patch("dbt_charts.cli.commands.extension.subprocess.run", side_effect=fake_run),
     ):
         rc = extension.install_extension("cursor", emit=MagicMock())
 
     assert rc == 0
+    assert install_calls == [
+        [fake_editor_bin, "--install-extension", "dbtLabsInc.dbtcharts"]
+    ]

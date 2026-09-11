@@ -289,6 +289,28 @@ class TestV2MirrorAxis:
         # must not also repr it — "(y = 'a, b')" reads as one comma-named field.
         assert "(y = a, b)" in exc_info.value.message
 
+    def test_scatter_mirror_multi_series_errors(self):
+        """Same as ``test_mirror_multi_series_errors``, for scatter's own
+        wide (``y: [a, b]``) fold -- scatter joined the wide-measures shape
+        this check already covers for line/area/bar."""
+        from dbt_charts.core.compile.models.chart.normalized import ScatterChart
+        from dbt_charts.core.diagnostics.chart_data import ChartDataError
+        from dbt_charts.core.diagnostics.codes_render import ERR_MIRROR_MULTI_SERIES
+
+        chart = ScatterChart.model_validate(
+            {
+                "id": "t",
+                "type": "scatter",
+                "x": "month",
+                "y": ["a", "b"],
+                "style": _MIRROR,
+            }
+        )
+        rows = [{"month": i, "a": i, "b": i * 2} for i in range(4)]
+        with pytest.raises(ChartDataError, match="multi-series") as exc_info:
+            _v2_vl(chart, rows)
+        assert exc_info.value.code is ERR_MIRROR_MULTI_SERIES
+
     def test_heatmap_multi_measure_mirror_errors_as_multi_series(self):
         """A multi-measure heatmap folds its list y into per-measure sublayers
         (no shared y encoding, no authored `layers:`), so mirror must refuse

@@ -106,6 +106,7 @@ class TestCompositeSeries:
             ("bar", "zero"),
             ("bar", "normalize"),
             ("bar", "center"),
+            ("scatter", None),
         ],
     )
     def test_wide_plus_dimension_renders_four_series(
@@ -139,6 +140,7 @@ class TestCompositeSeries:
             ("bar", "none"),
             ("bar", "zero"),
             ("bar", "normalize"),
+            ("scatter", None),
         ],
     )
     def test_measure_null_across_one_dimension_value_still_renders(
@@ -170,7 +172,16 @@ class TestCompositeSeries:
         self, make_chart, chart_type
     ):
         """Two rows per x (one per list) is the right grain once color: names
-        the list — the uniqueness key is (x, dim), not bare x."""
+        the list — the uniqueness key is (x, dim), not bare x.
+
+        Scatter is deliberately excluded: two points sharing one x is not
+        a duplicate for scatter the way it is for bar/line/area (no
+        stack/line-continuity to corrupt), so it never runs
+        ERR_BAR_DUPLICATE_ROWS's check at all -- see
+        ``ScatterEmitter.emit()``, which calls neither
+        ``validate_preaggregated_data_per_panel`` nor
+        ``validate_color_series``.
+        """
         chart = make_chart(chart_type, x="date", y=["messages", "fixes"], color="list")
         _render(chart, _DATA)
         without_color = make_chart(chart_type, x="date", y=["messages", "fixes"])
@@ -227,7 +238,8 @@ class TestCompositeSeries:
         assert len({frozenset(fills - halo) for fills in by_label.values()}) == 4
 
     @pytest.mark.parametrize(
-        ("chart_type", "stack"), [("line", None), ("bar", "zero"), ("area", "zero")]
+        ("chart_type", "stack"),
+        [("line", None), ("bar", "zero"), ("area", "zero"), ("scatter", None)],
     )
     def test_empty_result_set_still_compiles_in_vega(
         self, make_chart, chart_type, stack

@@ -18,7 +18,11 @@ from xml.etree import ElementTree as ET
 
 import pytest
 
+from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.resolve import resolve
+from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 from dbt_charts.core.render.chart.mark_extents import (
+    _measure_columns,
     _measure_role_marks,
     _path_extent,
     all_marks_degenerate,
@@ -52,6 +56,23 @@ def test_a_scatter_symbol_is_measured_exactly() -> None:
     width, height = extent
     assert width == pytest.approx(7.746)
     assert height == pytest.approx(7.746)
+
+
+def test_measure_columns_reads_real_wide_scatter_measures() -> None:
+    """A wide (``y: [a, b]``) scatter's measure columns are the real authored
+    fields, not the synthetic WIDE_VALUE_FIELD -- ``chart_has_nonzero_measure``
+    (this module's other consumer of ``_measure_columns``) reads a nonexistent
+    column for every row otherwise, always reporting zero measure and
+    silently disabling the ERR_CHART_PAINTED_NO_MARKS guard."""
+    from dbt_charts.core.compile.models.chart.normalized import ScatterChart
+
+    chart = ScatterChart(
+        id="c1", type="scatter", query_name="q", x="month", y=["rev", "cost"]
+    )
+    rows = [{"month": "Jan", "rev": 100, "cost": 40}]
+    ctx = resolve_chart_style_context(get_theme_style("stark"))
+    rc = resolve(chart, rows, chart_style_context=ctx)
+    assert _measure_columns(rc) == ["rev", "cost"]
 
 
 def test_a_pie_wedge_is_measured() -> None:

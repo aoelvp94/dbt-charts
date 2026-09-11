@@ -6,11 +6,19 @@ from dataclasses import dataclass
 from typing import Any
 
 from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
+from dbt_charts.core.compile.models.style.resolved import ResolvedAxisStyle
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     category_scale_for,
 )
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartDataset
+from dbt_charts.core.compile.resolve.chart._wide_fields import (
+    raw_wide_series_names,
+    wide_measure_labels_for,
+    wide_series_names,
+)
+from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.emitters._cartesian import (
+    XYTitles,
     apply_domain_headroom_bounds,
     build_palette_config,
     canonicalize_cartesian_x_data,
@@ -20,6 +28,7 @@ from dbt_charts.core.render.chart.emitters._cartesian import (
     resolve_cartesian_x,
     resolve_xy_titles,
     spatial_color_scale,
+    wide_measures_title,
 )
 from dbt_charts.core.render.chart.emitters._channels import (
     apply_color_legend,
@@ -31,6 +40,10 @@ from dbt_charts.core.render.chart.emitters._channels import (
 )
 from dbt_charts.core.render.chart.emitters._layers import emit_scatter_layer
 from dbt_charts.core.render.chart.emitters._overlay import overlay_x_domain_values
+from dbt_charts.core.render.chart.emitters._wide import (
+    FoldedMeasures,
+    fold_wide_measures,
+)
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.type_inference import (
     _utc_time_label_expr,
@@ -49,6 +62,106 @@ from dbt_charts.core.text.case import format_display_text
 from dbt_charts.core.text.format_d3 import is_time_format
 
 
+def _wide_scatter_fold(
+    chart: ResolvedScatterChart,
+    data: list[dict[str, Any]],  # type-state: explicit_any — raw query result rows
+) -> FoldedMeasures:
+    """Fold list-valued measures (``y: [a, b, ...]``) into one VL fold for scatter.
+
+    Scatter has no accumulation order (no stack, no line continuity to sort
+    a last value against) -- display and fold order are both the fold's own
+    RAW-sorted identity, the same convention bar/line's own no-stack/no-x
+    branches fall back to ("matching VL's own default alphabetical domain
+    inference"). Scatter's own authored ``color:`` path reaches the same
+    order by omission (no explicit domain/scale pinned unless
+    ``legend.values``/``category_colors`` is authored), so this isn't a new
+    rule -- see ``ScatterEmitter.emit``'s plain color-series branch below.
+    """
+    assert chart.wide_measures
+    measures = list(chart.wide_measures)
+    dimension = chart.color
+    wide_labels = wide_measure_labels_for(chart.wide_measures)
+    series = wide_series_names(measures, dimension, data, wide_labels)
+    raw_series = raw_wide_series_names(measures, dimension, data)
+    return fold_wide_measures(
+        measures,
+        dimension,
+        data,
+        chart.palette,
+        chart.legend,
+        display_order=series,
+        wide_measure_labels=wide_labels,
+        fold_order=raw_series,
+    )
+
+
+def _emit_wide_scatter(
+    chart: ResolvedScatterChart,
+    data: list[dict[str, Any]],  # type-state: explicit_any — raw query result rows
+    ay: ResolvedAxisStyle,
+    xy: XYTitles,
+    x_enc: VLDict | None,
+) -> tuple[VLDict, VLDict, list[VLDict], list[VLDict]]:
+    """The folded y/color/tooltip encoding + fold transforms for a wide
+    (``y: [a, b]``) scatter -- everything ``ScatterEmitter.emit()`` needs
+    beyond the x encoding it already built (shared with the plain path, so
+    not rebuilt here).
+
+    Returns ``(y_enc, color_enc, tooltip, transforms)``.
+    """
+    wide = _wide_scatter_fold(chart, data)
+    y_axis = measure_axis_to_vl(ay, data, chart.wide_measures)
+    y_axis = compose_axis_label_expr(y_axis, ay.ruler, ay)
+    bake_tick_ladder(y_axis, ay.tick_values)
+    y_scale = emit_resolved_scale_vl(ay.scale)
+    if "domain" not in y_scale:
+        # Exact headroom-applied bounds baked at resolve(); an authored
+        # `domain` (mapped above) always wins outright.
+        y_scale = apply_domain_headroom_bounds(y_scale, ay.domain_max, ay.domain_min)
+    y_enc: VLDict = {
+        "field": wide.value_field,
+        "type": "quantitative",
+        "title": xy.y_title,
+    }
+    if y_axis:
+        y_enc["axis"] = y_axis
+    if y_scale:
+        y_enc["scale"] = y_scale
+    fmt = chart.style.tooltip_format
+    if fmt:
+        y_enc["format"] = fmt
+
+    # wide.color's own encoding-level "title" is deliberately null -- any
+    # non-null value here leaks into the legend's own swatch heading, since
+    # the legend has no title of its own to fall back to instead. VL's
+    # default per-mark tooltip falls back to a channel's raw field name when
+    # its title is null, so without an explicit tooltip the hover card would
+    # show the synthetic WIDE_VALUE_FIELD/WIDE_LABEL_FIELD names verbatim.
+    # Build one explicitly, titled the same way bar/area/line's own
+    # structured tooltip labels these two rows (measure axis title, "Series").
+    tooltip: list[VLDict] = []
+    if x_enc is not None:
+        x_tooltip: VLDict = {
+            "field": x_enc["field"],
+            "type": x_enc["type"],
+            "title": xy.x_title,
+        }
+        if "timeUnit" in x_enc:
+            x_tooltip["timeUnit"] = x_enc["timeUnit"]
+        tooltip.append(x_tooltip)
+    value_tooltip: VLDict = {
+        "field": wide.value_field,
+        "type": "quantitative",
+        "title": xy.y_title,
+    }
+    if fmt:
+        value_tooltip["format"] = fmt
+    tooltip.append(value_tooltip)
+    tooltip.append({"field": wide.label_field, "type": "nominal", "title": "Series"})
+
+    return y_enc, wide.color, tooltip, wide.transforms
+
+
 @dataclass
 class ScatterEmitter:
     def emit(
@@ -62,9 +175,21 @@ class ScatterEmitter:
         ax = chart.style.axis_x
         ay = chart.style.axis_y
         xy = resolve_xy_titles(
-            chart.x, chart.y, chart.x_label, chart.y_label, ax, ay, box, chart.id
+            chart.x,
+            None if chart.wide_measures else chart.y,
+            chart.x_label,
+            (
+                chart.y_label or wide_measures_title(chart.wide_measures)
+                if chart.wide_measures
+                else chart.y_label
+            ),
+            ax,
+            ay,
+            box,
+            chart.id,
         )
         encoding: dict[str, Any] = {}
+        transforms: list[VLDict] = []
 
         x_transformed = False
         if chart.x:
@@ -160,7 +285,14 @@ class ScatterEmitter:
                 x_enc["scale"] = x_scale
             encoding["x"] = x_enc
 
-        if chart.y:
+        if chart.wide_measures:
+            y_enc, color_enc, tooltip, transforms = _emit_wide_scatter(
+                chart, data, ay, xy, encoding.get("x")
+            )
+            encoding["y"] = y_enc
+            encoding["color"] = color_enc
+            encoding["tooltip"] = tooltip
+        elif chart.y:
             y_type = infer_vega_type_from_data(data, chart.y)
             y_axis = measure_axis_to_vl(ay, data, (chart.y,))
             y_axis = compose_axis_label_expr(y_axis, ay.ruler, ay)
@@ -218,7 +350,7 @@ class ScatterEmitter:
                 y_scale = apply_domain_headroom_bounds(
                     y_scale, ay.domain_max, ay.domain_min
                 )
-            y_enc: dict[str, Any] = {
+            y_enc = {
                 "field": chart.y,
                 "type": y_type,
                 "title": xy.y_title,
@@ -243,47 +375,55 @@ class ScatterEmitter:
 
             encoding["y"] = y_enc
 
-        color_ch = chart.resolved_channels.get("color")
-        if color_ch is not None:
-            color_title = (
-                format_display_text(
-                    color_ch.data_field, from_slug=True, font=chart.legend.title.font
+        if not chart.wide_measures:
+            # The wide branch above already set encoding["color"] from its
+            # own fold-aware wide.color -- resolved_channels["color"] there
+            # is the same synthetic WIDE_LABEL_FIELD channel, whose humanized
+            # legend text and palette order only fold_wide_measures knows how
+            # to build (see _wide_scatter_fold's docstring).
+            color_ch = chart.resolved_channels.get("color")
+            if color_ch is not None:
+                color_title = (
+                    format_display_text(
+                        color_ch.data_field,
+                        from_slug=True,
+                        font=chart.legend.title.font,
+                    )
+                    if color_ch.data_field
+                    else None
                 )
-                if color_ch.data_field
-                else None
-            )
-            enc = channel_to_encoding(color_ch, data, title=color_title)
-            apply_color_legend(enc, chart.legend)
-            # A bound field still owes every value its board slot's
-            # color — VL's own alphabetical default range would
-            # otherwise paint this chart from its own local position,
-            # not the board's (mirrors bar/line's grouped-series path).
-            if categorical_color_encoding(color_ch, enc.get("type")):
-                series = distinct_series_values(data, color_ch.data_field)
-                # Only fires when authored -- see the identical
-                # reasoning on the heatmap site: an unconditional pin
-                # here would emit a str()-cast `values` list with no
-                # explicit `scale.domain` to back it (only the
-                # board-wide `category_colors` branch below sets one),
-                # risking a type-mismatched swatch for a non-string
-                # color column.
-                if chart.legend.values is not None:
-                    apply_legend_entry_order(
-                        enc,
-                        series,
-                        authored=chart.legend.values,
-                    )
-                # Ordinal columns carry their own inherent order --
-                # the paint scale below must never touch it.
-                if enc.get("type") == "nominal" and chart.palette:
-                    scale = category_scale_for(
-                        chart.category_colors, color_ch.data_field
-                    )
-                    if scale is not None and series:
-                        enc["scale"] = spatial_color_scale(
-                            series, chart.palette, series, scale
+                enc = channel_to_encoding(color_ch, data, title=color_title)
+                apply_color_legend(enc, chart.legend)
+                # A bound field still owes every value its board slot's
+                # color — VL's own alphabetical default range would
+                # otherwise paint this chart from its own local position,
+                # not the board's (mirrors bar/line's grouped-series path).
+                if categorical_color_encoding(color_ch, enc.get("type")):
+                    series = distinct_series_values(data, color_ch.data_field)
+                    # Only fires when authored -- see the identical
+                    # reasoning on the heatmap site: an unconditional pin
+                    # here would emit a str()-cast `values` list with no
+                    # explicit `scale.domain` to back it (only the
+                    # board-wide `category_colors` branch below sets one),
+                    # risking a type-mismatched swatch for a non-string
+                    # color column.
+                    if chart.legend.values is not None:
+                        apply_legend_entry_order(
+                            enc,
+                            series,
+                            authored=chart.legend.values,
                         )
-            encoding["color"] = enc
+                    # Ordinal columns carry their own inherent order --
+                    # the paint scale below must never touch it.
+                    if enc.get("type") == "nominal" and chart.palette:
+                        scale = category_scale_for(
+                            chart.category_colors, color_ch.data_field
+                        )
+                        if scale is not None and series:
+                            enc["scale"] = spatial_color_scale(
+                                series, chart.palette, series, scale
+                            )
+                encoding["color"] = enc
 
         if chart.size:
             size_enc = field_encoding(chart.size, "quantitative")
@@ -305,7 +445,7 @@ class ScatterEmitter:
         # When no color encoding, use the single_series_fill baked at resolve time.
         mark_props = emit_scatter_layer(
             chart.style.point_mark,
-            color_ch is not None,
+            "color" in encoding,
             chart.style.single_series_fill,
         )
 
@@ -317,6 +457,7 @@ class ScatterEmitter:
             layers=[],
             config=config,
             mark_props=mark_props,
+            transforms=transforms,
         )
         # When x canonicalization fired, stamp transformed rows onto the spec
         # so the session does not overwrite with raw query data.

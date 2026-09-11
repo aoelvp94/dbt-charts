@@ -107,3 +107,16 @@ def test_no_fire_on_wide_chart_within_the_palette() -> None:
         id="c1", type="bar", query_name="q", x="x", y=["a", "b", "c"], color="list"
     )
     assert detector.detect(_make_ctx(chart, _wide_rows(4), "nominal")) == []
+
+
+def test_fires_on_wide_scatter_without_color_and_names_y() -> None:
+    """Same as ``test_fires_on_wide_chart_without_color_and_names_y``, for
+    scatter's own wide fold -- scatter joined the wide-measures shape this
+    detector already covers for bar/area/line."""
+    measures = [f"m{i:02d}" for i in range(13)]
+    chart = ScatterChart(id="c1", type="scatter", query_name="q", x="x", y=measures)
+    rows = [{"x": i, **dict.fromkeys(measures, i)} for i in range(3)]
+    warnings = detector.detect(_make_ctx(chart, rows, "nominal"))
+    assert len(warnings) == 1
+    assert warnings[0].field == "y"
+    assert warnings[0].path == "charts.c1.y"

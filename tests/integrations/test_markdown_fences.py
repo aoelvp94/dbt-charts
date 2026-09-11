@@ -5,7 +5,6 @@
 """
 
 import logging
-import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -612,8 +611,7 @@ class TestFenceDbtChartsExample:
 
         captured: dict[str, str] = {}
 
-        def fake_playground_url(yaml_source, base_url):
-            assert base_url is not None
+        def fake_playground_url(yaml_source):
             captured["yaml"] = yaml_source
             return "http://localhost:5001/?y=test"
 
@@ -780,9 +778,9 @@ class TestFenceDbtChartsClosesAdapterRegistry:
 class TestPlaygroundUrl:
     """Test playground URL generation."""
 
-    def test_custom_base_url(self):
-        url = _playground_url("type: bar", base_url="http://localhost:5001")
-        assert url.startswith("http://localhost:5001/?y=")
+    def test_targets_the_hosted_playground(self):
+        url = _playground_url("type: bar")
+        assert url.startswith("https://play.dbtcharts.com/?y=")
 
 
 class TestInlinePlaygroundQueries:
@@ -858,55 +856,24 @@ class TestResolveProjectDir:
             assert _resolve_project_dir() == pinned.resolve()
 
 
-class TestPlaygroundUrlBoundary:
-    """DCT_PLAYGROUND_URL is read at the fence boundary, not in _playground_url."""
+class TestPlaygroundUrlIgnoresEnv:
+    """The playground link always targets the hosted playground — no override."""
 
-    def test_playground_url_helper_does_not_read_env(
+    def test_fence_dbt_charts_example_ignores_dct_playground_url_env(
         self, tmp_path, monkeypatch
     ) -> None:
-        """_playground_url must not consult os.getenv for DCT_PLAYGROUND_URL."""
-        monkeypatch.setenv("DCT_PLAYGROUND_URL", "http://should-not-be-read.test")
-
-        reads: list[str] = []
-        real_getenv = os.getenv
-
-        def tracking_getenv(name, default=None):
-            if name == "DCT_PLAYGROUND_URL":
-                reads.append(name)
-            return real_getenv(name, default)
-
-        with patch("dbt_charts.integrations.markdown.os.getenv", tracking_getenv):
-            _playground_url("type: bar", base_url="http://passed-in.test")
-
-        assert reads == []
-
-    def test_fence_dbt_charts_example_reads_env_at_boundary(
-        self, tmp_path, monkeypatch
-    ) -> None:
-        """fence_dbt_charts_example reads DCT_PLAYGROUND_URL once and threads it through."""
         (tmp_path / "dbt_charts.yml").write_text("name: x\n")
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("DCT_PLAYGROUND_URL", "http://boundary.test")
+        monkeypatch.setenv("DCT_PLAYGROUND_URL", "http://should-not-be-read.test")
         source = "charts:\n  c1:\n    type: bar\n    x: a\n    y: b\n"
 
-        seen: dict[str, object] = {}
-
-        def capture_playground_url(yaml_source, base_url):
-            seen["base_url"] = base_url
-            return "http://captured/?y=stub"
-
-        with (
-            patch(
-                "dbt_charts.integrations.markdown._render_with_fallback",
-                return_value="<svg/>",
-            ),
-            patch(
-                "dbt_charts.integrations.markdown._playground_url",
-                side_effect=capture_playground_url,
-            ),
+        with patch(
+            "dbt_charts.integrations.markdown._render_with_fallback",
+            return_value="<svg/>",
         ):
-            fence_dbt_charts_example(
+            result = fence_dbt_charts_example(
                 source, "dbt-charts-example", "dbt-charts-example", {}, None
             )
 
-        assert seen["base_url"] == "http://boundary.test"
+        assert "https://play.dbtcharts.com/?y=" in result
+        assert "should-not-be-read" not in result

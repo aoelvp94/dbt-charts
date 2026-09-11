@@ -8,13 +8,9 @@ Detection rule:
 
 from __future__ import annotations
 
-from dbt_charts.core.compile.models.chart.resolved import (
-    ResolvedAreaChart,
-    ResolvedBarChart,
-    ResolvedLineChart,
-    effective_color_field,
-)
+from dbt_charts.core.compile.models.chart.resolved import effective_color_field
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
+    WIDE_MEASURE_FAMILIES,
     raw_wide_series_names,
 )
 from dbt_charts.core.diagnostics import WARN_TOO_MANY_COLOR_CATEGORIES, Diagnostic
@@ -44,10 +40,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
         rows = ctx.chart_results[chart_id]
         # The authored key the series come from — what the message names.
         authored_key, authored_field = "color", color_field
-        if (
-            isinstance(chart, (ResolvedBarChart, ResolvedLineChart, ResolvedAreaChart))
-            and chart.wide_measures
-        ):
+        if isinstance(chart, WIDE_MEASURE_FAMILIES) and chart.wide_measures:
             # The fold's series field exists only post-fold: count the pinned
             # domain (measures × dimension values — an all-null measure still
             # holds its palette slot), not the cells that carry a value.

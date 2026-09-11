@@ -1,6 +1,6 @@
 """Fixed synthetic field names for the wide-measure fold transform, the
 shared resolve-time validation/channel-injection every wide-capable cartesian
-family resolver (bar, area, line) uses, and the Python mirror of the fold.
+family resolver (bar, area, line, scatter) uses, and the Python mirror of the fold.
 
 The constants are used by both the resolver (to bake WIDE_VALUE_FIELD as the
 resolved y column) and the render emitter (to build the VL fold transform).
@@ -11,11 +11,16 @@ compile -> render circular dependency.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Final
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.normalized import _CartesianChartFields
+from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
 from dbt_charts.core.compile.models.chart.resolved._channel import ResolvedStyleChannel
+from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
+from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
+from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
+from dbt_charts.core.compile.models.chart.resolved.scatter import ResolvedScatterChart
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_MULTI_Y_COLOR_CONFLICT,
     ERR_MULTI_Y_LAYERS_CONFLICT,
@@ -41,6 +46,39 @@ WIDE_LABEL_FIELD = "__dbt_charts_wide_label__"
 # Synthetic sort-order field appended when stack != 'none'.
 WIDE_ORDER_FIELD = "__dbt_charts_wide_order__"
 WIDE_SERIES_SEPARATOR = " - "
+
+# The resolved chart types whose resolver folds an authored y: [a, b] list
+# into `wide_measures` + WIDE_VALUE_FIELD -- heatmap is deliberately excluded
+# (its own, different one-rect-layer-per-measure multi-measure path never
+# populates `wide_measures`). The one place this tuple is spelled; every
+# consumer that needs to gate on "is this chart's y: folded" imports it from
+# here instead of re-spelling it -- a re-spelled copy can drift (add a fifth
+# wide-capable family here and a hand-rolled tuple elsewhere silently stays
+# stale).
+WideMeasureChart = (
+    ResolvedBarChart | ResolvedAreaChart | ResolvedLineChart | ResolvedScatterChart
+)
+WIDE_MEASURE_FAMILIES: Final = (
+    ResolvedBarChart,
+    ResolvedAreaChart,
+    ResolvedLineChart,
+    ResolvedScatterChart,
+)
+
+
+def wide_measure_fields(chart: ResolvedChart) -> tuple[str, ...]:
+    """The real authored measure columns for a folded chart, or `()`.
+
+    `()` both when `chart` isn't a wide-capable family (see
+    `WIDE_MEASURE_FAMILIES`) and when it is one but wasn't authored wide --
+    callers that only need a bool test truthiness; callers that need the
+    actual columns (to read raw query rows instead of the synthetic
+    WIDE_VALUE_FIELD, which is absent from them) get them directly, so a
+    caller can never have the bool right and the field list wrong.
+    """
+    if isinstance(chart, WIDE_MEASURE_FAMILIES):
+        return chart.wide_measures
+    return ()
 
 
 def unfold_wide_rows(
@@ -225,8 +263,8 @@ def resolve_wide_measure_channels(
     once real rows happen to produce a dimension value. Any resolve reaches
     this regardless of row count, including a zero-row resolve.
 
-    Shared by every wide-capable cartesian family resolver (bar, area,
-    line) — one validation/injection site instead of three near-identical
+    Shared by every wide-capable cartesian family resolver (bar, area, line,
+    scatter) — one validation/injection site instead of four near-identical
     copies that could silently drift.
     """
     wide_measure_series = isinstance(normalized.y, list)

@@ -380,14 +380,6 @@ Planned enhancements:
 
 - **Syntax Highlighting** - Colorized code blocks using Pygments with VS Code theme support. See [notes/SYNTAX_HIGHLIGHTING_PLAN.md](notes/SYNTAX_HIGHLIGHTING_PLAN.md) for details.
 
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
 ## Related Projects
 
 - This is the only Python library (that we know of) for rendering Markdown directly to SVG

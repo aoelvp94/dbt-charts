@@ -432,9 +432,16 @@ class StructuredTooltipFeature:
                 and chart.multiples is None
             )
         if isinstance(chart, ResolvedScatterChart):
+            # A wide (multi-y) scatter's chart.y is the synthetic
+            # WIDE_VALUE_FIELD fold column, absent from raw rows -- unlike
+            # bar/line/area's own wide branch above, _scatter_roles below has
+            # no fold-aware variant, so a wide scatter falls back to the
+            # plain per-mark VL tooltip instead of reading a field that isn't
+            # there.
             return (
                 isinstance(chart.x, str)
                 and isinstance(chart.y, str)
+                and not chart.wide_measures
                 and not chart.layers
                 and chart.multiples is None
             )

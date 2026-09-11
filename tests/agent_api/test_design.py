@@ -876,6 +876,17 @@ _RENDER_FIXTURES = {
         "    x: revenue\n"
         "    y: cost\n"
     ),
+    "scatter-with-layers": (
+        "rows:\n"
+        "  - title: Scatter\n"
+        "    type: scatter\n"
+        "    query: q\n"
+        "    x: month\n"
+        "    y: revenue\n"
+        "    layers:\n"
+        "      - type: scatter\n"
+        "        y: cost\n"
+    ),
     "bar-with-color": (
         "rows:\n"
         "  - title: Bar\n"
@@ -915,6 +926,19 @@ _RENDER_FIXTURES = {
         "rows:\n"
         "  - title: Area\n"
         "    type: area\n"
+        "    query: q\n"
+        "    x: month\n"
+        "    y: revenue\n"
+        "    color: revenue\n"
+        "    style:\n"
+        "      color:\n"
+        "        gradient:\n"
+        "          palette: ['#ffffff', '#0000ff']\n"
+    ),
+    "scatter-with-gradient-color": (
+        "rows:\n"
+        "  - title: Scatter\n"
+        "    type: scatter\n"
         "    query: q\n"
         "    x: month\n"
         "    y: revenue\n"
@@ -1011,9 +1035,9 @@ _RENDER_FIXTURES = {
     ),
     # `axis_y.mirror` reflects one shared y-scale, so `mirror_axis.py` raises
     # `ERR-MIRROR-MULTI-SERIES` the moment `y` holds two columns — at render, on
-    # all three cartesian families. Both authored forms, because `mirror` is
-    # `bool | AxisMirrorStyle` and the object form breaks the board just as the
-    # bare `true` does.
+    # all four wide-capable cartesian families. Both authored forms, because
+    # `mirror` is `bool | AxisMirrorStyle` and the object form breaks the board
+    # just as the bare `true` does.
     "line-mirrored": (
         "rows:\n"
         "  - title: Line\n"
@@ -1029,6 +1053,17 @@ _RENDER_FIXTURES = {
         "rows:\n"
         "  - title: Area\n"
         "    type: area\n"
+        "    query: q\n"
+        "    x: month\n"
+        "    y: revenue\n"
+        "    style:\n"
+        "      axis_y:\n"
+        "        mirror: true\n"
+    ),
+    "scatter-mirrored": (
+        "rows:\n"
+        "  - title: Scatter\n"
+        "    type: scatter\n"
         "    query: q\n"
         "    x: month\n"
         "    y: revenue\n"
@@ -1238,11 +1273,12 @@ def test_no_list_control_can_commit_a_board_that_stops_rendering() -> None:
     """The parse gate's blind half: a rule the compiler enforces at resolve.
 
     `reject_multi_series_channel_conflicts` is a parse-time validator for bar and
-    area only. Line enforces the identical rule from `resolve/chart/line.py`, and
-    scatter refuses a list `y` outright from `resolve/chart/scatter.py` — both
-    past the save endpoint's re-parse. So the panel offered a multi-value control
-    on those two families, the save succeeded, and the board stopped rendering,
-    with no way back from the panel that broke it.
+    area only. Line and scatter enforce the identical rule from
+    `resolve_wide_measure_channels` (`resolve/chart/_wide_fields.py`), reached
+    from `resolve/chart/line.py` and `resolve/chart/scatter.py` respectively —
+    both past the save endpoint's re-parse. So the panel offered a multi-value
+    control on those two families, the save succeeded, and the board stopped
+    rendering, with no way back from the panel that broke it.
 
     Bounded to the `list` widget on purpose: it is the edit that made these rules
     reachable at all, and it is the only one worth a full render apiece. The
@@ -1476,9 +1512,10 @@ def test_the_multi_metric_rules_follow_the_families_that_enforce_them() -> None:
 
     A `color:` column beside `y: [a, b]` is the dimension the measures are
     grouped by (one series per value per measure), so the control stays on
-    offer on bar, area and line alike. Scatter is the other shape: it refuses
-    a list `y` outright, so a multi-metric scatter offers no `y` control at all
-    rather than one whose every use fails.
+    offer on bar, area, line, and scatter alike -- scatter folds the same
+    way as the other three, unlike heatmap (its own, different multi-measure
+    render path, see `test_a_heatmap_spends_its_color_channel_on_the_measure_
+    and_takes_no_list`).
 
     The mirror matters as much: applying bar's `x`-required raise to a family
     that does not make it hides a control the compiler accepts.
@@ -1486,7 +1523,8 @@ def test_the_multi_metric_rules_follow_the_families_that_enforce_them() -> None:
     assert "color" in _multi_metric("bar")
     assert "color" in _multi_metric("area")
     assert "color" in _multi_metric("line")
-    assert "y" not in _multi_metric("scatter")
+    assert "color" in _multi_metric("scatter")
+    assert "y" in _multi_metric("scatter")
 
     assert _multi_metric("bar")["x"].required
     assert not _multi_metric("line")["x"].required

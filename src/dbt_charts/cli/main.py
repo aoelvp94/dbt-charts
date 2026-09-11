@@ -1,9 +1,11 @@
 """Main CLI entry point."""
 
+import contextlib
 import importlib.util
 import io
 import logging
 import sys
+import webbrowser
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -254,13 +256,6 @@ def init_default(
         bool | None,
         typer.Option("--mcp/--no-mcp", help="Set up MCP server for AI assistants"),
     ] = None,
-    with_playground: Annotated[
-        bool | None,
-        typer.Option(
-            "--with-playground/--no-with-playground",
-            help="Install dbt-charts[playground] extra (enables dct playground)",
-        ),
-    ] = None,
     vscode: Annotated[
         bool | None,
         typer.Option(
@@ -296,7 +291,6 @@ def init_default(
       dct init --project-dir ./myrepo # Init in a specific directory
       dct init --force                # Re-scaffold, overwriting files
       dct init --no-mcp --no-vscode   # Skip MCP and IDE extension
-      dct init --with-playground      # Also install dbt-charts[playground]
     """
     if ctx.invoked_subcommand is not None:
         return
@@ -307,7 +301,6 @@ def init_default(
         yes=yes,
         skills=skills,
         mcp=mcp,
-        with_playground=with_playground,
         vscode=vscode,
         cursor=cursor,
     )
@@ -1546,23 +1539,15 @@ def docs(
 app.add_typer(init_app, name="init", rich_help_panel="Reference")
 
 
-# Split "extra not installed" (use stub) from "extra installed but broken"
-# (let the ImportError propagate) — a blanket except would swallow real
-# transitive-import failures into the install-hint stub.
-if importlib.util.find_spec("dbt_charts_playground") is None:
+PLAYGROUND_URL = "https://play.dbtcharts.com"
 
-    @app.command("playground", rich_help_panel="Reference")
-    def playground_not_installed() -> None:
-        """Start interactive playground with YAML editor and live preview.
 
-        Requires the ``playground`` extra.
-        """
-        require_extras("playground")
-
-else:
-    from dbt_charts_playground.cli import main as _playground_main
-
-    app.command("playground", rich_help_panel="Reference")(_playground_main)
+@app.command("playground", rich_help_panel="Reference")
+def playground() -> None:
+    """Open the hosted dbt Charts playground in your browser."""
+    typer.echo(PLAYGROUND_URL)
+    with contextlib.suppress(OSError):
+        webbrowser.open(PLAYGROUND_URL)
 
 
 @app.command("examples", rich_help_panel="Reference")

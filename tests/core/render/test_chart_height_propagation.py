@@ -265,12 +265,15 @@ rows:
                 render_cache={},
             )
 
-        # Second item must be at Y = first_actual_height + gap = 400 + 20 = 420
+        # First item lands at Y=0 — a no-op translate, so it's embedded with no
+        # wrapper <g> at all (an inert wrapper wastes PDF's nesting budget; see
+        # translate_group in svg_utils.py). Second item must be at
+        # Y = first_actual_height + gap = 400 + 20 = 420, which IS a real
+        # translate and does get wrapped.
+        assert first_svg in svg, "first item (Y=0) should be embedded unwrapped"
         ys = _translate_y_values(svg)
-        assert len(ys) >= 2, f"Expected at least 2 translated items, got: {ys}"
-        assert ys[0] == pytest.approx(0.0)
-        assert ys[1] == pytest.approx(400.0 + gap, abs=1.0), (
-            f"Second item Y={ys[1]} should be first_actual_height({400})+gap({gap})=420"
+        assert ys == [pytest.approx(400.0 + gap, abs=1.0)], (
+            f"Second item Y should be first_actual_height({400})+gap({gap})=420, got {ys}"
         )
 
         # Total height should be first + gap + second = 400 + 20 + 300 = 720

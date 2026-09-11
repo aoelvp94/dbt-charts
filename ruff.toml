@@ -56,13 +56,11 @@ combine-as-imports = true
 # `tasks` -- imported by tests/visual/series_naming.py to resolve a defect
 # register entry's task status;
 # `dbt-charts` -- test-namespace package (from dbt-charts.tests.*);
-# `dbt_charts_playground` -- conditional CLI import (cli/main.py);
 # `dbt_charts_super_schema` -- optional extension, conditionally imported;
 # `nimble` -- repo-local tool imported in one test.
 known-first-party = [
     "dbt-charts",
     "dbt_charts",
-    "dbt_charts_playground",
     "dbt_charts_super_schema",
     "d3_format",
     "mdsvg",

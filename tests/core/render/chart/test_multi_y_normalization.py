@@ -380,24 +380,205 @@ class TestMultiYBarValidation:
             resolve(chart, data, chart_style_context=ctx)
 
 
-class TestMultiYScatterValidation:
-    def test_multi_y_scatter_raises_clear_error_not_pydantic_validation_error(
-        self, make_chart
-    ):
-        """y: [a, b] on scatter raises a clear CompilationError, not a raw
-        pydantic ValidationError -- scatter has no wide-measure fold
-        implementation yet (ERR_MULTI_Y_UNSUPPORTED_CHART_TYPE). Wiring the
-        resolver-side channel injection without matching emitter-side fold
-        support would silently reference a synthetic field the render
-        pipeline never populates -- fail at resolve time instead.
-        """
-        from dbt_charts.core.compile.errors import CompilationError
+def _multi_measure_scatter_data() -> list[dict[str, Any]]:
+    return [
+        {"month": "Jan", "rev": 100, "cost": 40},
+        {"month": "Feb", "rev": 200, "cost": 90},
+        {"month": "Mar", "rev": 150, "cost": 70},
+    ]
+
+
+class TestMultiYScatter:
+    def test_multi_y_scatter_resolves_wide_measures_and_color_channel(self, make_chart):
+        """y: [a, b] on scatter resolves like bar/area/line: wide_measures is
+        baked and a synthetic series-color channel is injected, instead of
+        raising the (now-deregistered) unsupported-chart-type error."""
+        from dbt_charts.core.compile.models.chart.resolved.scatter import (
+            ResolvedScatterChart,
+        )
 
         chart = make_chart("scatter", x="month", y=["rev", "cost"])
-        data = [{"month": "Jan", "rev": 100, "cost": 40}]
+        data = _multi_measure_scatter_data()
         ctx = resolve_chart_style_context(get_theme_style("stark"))
-        with pytest.raises(CompilationError):
+        rc = resolve(chart, data, chart_style_context=ctx)
+        assert isinstance(rc, ResolvedScatterChart)
+        assert rc.wide_measures == ("rev", "cost")
+        color_ch = rc.resolved_channels.get("color")
+        assert color_ch is not None
+        assert color_ch.mode == "series"
+
+    def test_multi_y_scatter_renders_one_folded_mark_with_color(self, make_chart):
+        """A rendered multi-y scatter spec carries the VL fold transform and a
+        real color encoding -- one folded point mark, not per-measure layers."""
+        from dbt_charts.core.compile.resolve.chart._wide_fields import WIDE_LABEL_FIELD
+
+        chart = make_chart("scatter", x="month", y=["rev", "cost"])
+        data = _multi_measure_scatter_data()
+        ctx = resolve_chart_style_context(get_theme_style("stark"))
+        rc = resolve(chart, data, chart_style_context=ctx)
+        artifact = render_resolved_chart(rc, data, _BOARD_STYLE, width=400)
+        spec = artifact.payload
+        folds = _find_fold_lists(spec)
+        assert folds == [["cost", "rev"]], folds
+
+        def _color_fields(node: Any) -> list[Any]:
+            found: list[Any] = []
+            if isinstance(node, dict):
+                color = node.get("color")
+                if isinstance(color, dict) and "field" in color:
+                    found.append(color["field"])
+                for v in node.values():
+                    found.extend(_color_fields(v))
+            elif isinstance(node, list):
+                for item in node:
+                    found.extend(_color_fields(item))
+            return found
+
+        color_fields = _color_fields(spec)
+        assert color_fields and all(f == WIDE_LABEL_FIELD for f in color_fields), (
+            f"Expected every color encoding bound to {WIDE_LABEL_FIELD!r} on "
+            f"the folded scatter mark, got: {color_fields}"
+        )
+
+    def test_multi_y_scatter_tooltip_does_not_leak_synthetic_field_names(
+        self, make_chart
+    ):
+        """The rendered tooltip names real fields (x, the folded measure
+        value, the series label) with real titles -- not the raw
+        WIDE_VALUE_FIELD/WIDE_LABEL_FIELD sentinel names VL's default
+        per-mark tooltip would otherwise fall back to (wide.color's own
+        encoding-level title is deliberately null so it doesn't leak into
+        the legend heading)."""
+        from dbt_charts.core.compile.resolve.chart._wide_fields import (
+            WIDE_LABEL_FIELD,
+            WIDE_VALUE_FIELD,
+        )
+
+        chart = make_chart("scatter", x="month", y=["rev", "cost"])
+        data = _multi_measure_scatter_data()
+        ctx = resolve_chart_style_context(get_theme_style("stark"))
+        rc = resolve(chart, data, chart_style_context=ctx)
+        artifact = render_resolved_chart(rc, data, _BOARD_STYLE, width=400)
+        spec = artifact.payload
+
+        tooltip = spec["encoding"]["tooltip"]
+        assert [entry["field"] for entry in tooltip] == [
+            "month",
+            WIDE_VALUE_FIELD,
+            WIDE_LABEL_FIELD,
+        ]
+        assert tooltip[0]["title"] == "month"
+        assert tooltip[1]["title"] == "rev, cost"
+        assert tooltip[2]["title"] == "Series"
+
+    def test_multi_y_scatter_value_labels_render_per_point(self, make_chart):
+        """point_mark.labels.visible on a wide scatter still emits a text
+        label layer -- _apply_scatter (value_labels.py) has no wide_measures
+        early-return the way bar/line/area do (each folded point already
+        carries its own real position, so a label built off the synthetic
+        WIDE_VALUE_FIELD is correctly positioned per point)."""
+        chart = make_chart(
+            "scatter",
+            x="month",
+            y=["rev", "cost"],
+            style={"marks": {"point": {"labels": {"visible": True}}}},
+        )
+        data = _multi_measure_scatter_data()
+        ctx = resolve_chart_style_context(get_theme_style("stark"))
+        rc = resolve(chart, data, chart_style_context=ctx)
+        artifact = render_resolved_chart(rc, data, _BOARD_STYLE, width=400)
+        spec = artifact.payload
+        text_layers = [
+            lay
+            for lay in spec.get("layer", [])
+            if lay.get("mark", {}).get("type") == "text"
+        ]
+        assert text_layers, (
+            f"Expected a text label layer, got layers: {spec.get('layer')}"
+        )
+        assert (
+            text_layers[0]["encoding"]["y"]["field"] == "__dbt_charts_wide_value__"
+        ), (
+            f"Expected the label positioned off the folded value field, got: {text_layers[0]}"
+        )
+
+    def test_multi_y_scatter_with_non_numeric_measure_raises(self, make_chart):
+        """y: [a, b] with a non-numeric measure raises ERR-SCATTER-MULTI-Y-NOT-NUMERIC
+        instead of silently baking a NaN axis with zero marks.
+
+        A single (non-list) y: may legitimately be non-numeric (the dot-plot
+        recipe) -- this guard is scoped to the list case only, mirroring
+        bar's/line's own _first_non_numeric_y check.
+        """
+        from dbt_charts.core.compile.errors import CompilationError
+        from dbt_charts.core.diagnostics import ERR_SCATTER_MULTI_Y_NOT_NUMERIC
+
+        chart = make_chart("scatter", x="month", y=["grade", "cost"])
+        data = [{"month": "Jan", "grade": "A", "cost": 40}]
+        ctx = resolve_chart_style_context(get_theme_style("stark"))
+        with pytest.raises(CompilationError) as exc:
             resolve(chart, data, chart_style_context=ctx)
+        assert exc.value.code == ERR_SCATTER_MULTI_Y_NOT_NUMERIC
+
+    def test_multi_y_scatter_with_gradient_color_raises(self, make_chart):
+        """y: [a, b] + a gradient color: raises via the shared resolver
+        conflict check -- same as bar/area/line."""
+        from dbt_charts.core.compile.errors import CompilationError
+        from dbt_charts.core.diagnostics import ERR_MULTI_Y_COLOR_CONFLICT
+
+        chart = make_chart(
+            "scatter",
+            x="month",
+            y=["rev", "cost"],
+            color="rev",
+            style={"color": {"gradient": {"palette": ["#ffffff", "#0000ff"]}}},
+        )
+        data = [{"month": "Jan", "rev": 100, "cost": 40, "category": "A"}]
+        ctx = resolve_chart_style_context(get_theme_style("stark"))
+        with pytest.raises(CompilationError) as exc:
+            resolve(chart, data, chart_style_context=ctx)
+        assert exc.value.code == ERR_MULTI_Y_COLOR_CONFLICT
+
+    def test_multi_y_scatter_with_layers_raises(self, make_chart):
+        """y: [a, b] + layers: raises via the shared resolver conflict check."""
+        from dbt_charts.core.compile.errors import CompilationError
+        from dbt_charts.core.diagnostics import ERR_MULTI_Y_LAYERS_CONFLICT
+
+        chart = make_chart(
+            "scatter",
+            x="month",
+            y=["rev", "cost"],
+            layers=[{"y": "extra", "type": "line"}],
+        )
+        data = [{"month": "Jan", "rev": 100, "cost": 40, "extra": 10}]
+        ctx = resolve_chart_style_context(get_theme_style("stark"))
+        with pytest.raises(CompilationError) as exc:
+            resolve(chart, data, chart_style_context=ctx)
+        assert exc.value.code == ERR_MULTI_Y_LAYERS_CONFLICT
+
+    def test_multi_y_scatter_click_link_fields(self, make_chart):
+        """The click-interactivity y/color link fields for a wide scatter --
+        the first authored measure for y, WIDE_KEY_FIELD for color with no
+        dimension -- same convention bar/area/line already use for their own
+        wide fold (``click_interactivity.py::_channel_field``)."""
+        from dbt_charts.core.compile.resolve.chart._wide_fields import WIDE_KEY_FIELD
+        from dbt_charts.core.render.chart.features.click_interactivity import (
+            _channel_field,
+        )
+
+        chart = make_chart("scatter", x="month", y=["rev", "cost"])
+        data = _multi_measure_scatter_data()
+        ctx = resolve_chart_style_context(get_theme_style("stark"))
+        rc = resolve(chart, data, chart_style_context=ctx)
+        assert _channel_field(rc, "y") == "rev"
+        assert _channel_field(rc, "color") == WIDE_KEY_FIELD
+
+        dimensioned = make_chart(
+            "scatter", x="month", y=["rev", "cost"], color="region"
+        )
+        dim_data = [{"month": "Jan", "rev": 100, "cost": 40, "region": "west"}]
+        rc_dim = resolve(dimensioned, dim_data, chart_style_context=ctx)
+        assert _channel_field(rc_dim, "color") == "region"
 
 
 # ---------------------------------------------------------------------------

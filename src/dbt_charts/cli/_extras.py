@@ -55,7 +55,7 @@ def _missing_packages(extra: str) -> list[str]:
     """Return requirements from <extra> whose top-level module cannot be imported."""
     missing = []
     for requirement in _extra_requirements(extra):
-        # Holds for every gated extra today (mcp, playground). An extra whose
+        # Holds for every gated extra today (mcp). An extra whose
         # import name diverges further would report missing forever, since the
         # offered install can never satisfy this check.
         dist = _dist_name(requirement)

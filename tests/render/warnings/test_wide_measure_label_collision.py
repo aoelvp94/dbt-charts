@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from dbt_charts.core.compile.models.chart.normalized import BarChart
+from dbt_charts.core.compile.models.chart.normalized import BarChart, ScatterChart
 from dbt_charts.core.diagnostics import WARN_WIDE_MEASURE_LABEL_COLLISION, Diagnostic
 from dbt_charts.core.render.warnings import (
     WarningContext,
@@ -68,6 +68,23 @@ def test_silent_on_a_non_wide_chart() -> None:
     chart = _bar(y="revenue_usd", color="series")
     rows = [{"month": "Jan", "revenue_usd": 1, "series": "A"}]
     assert detector.detect(_ctx(chart, rows)) == []
+
+
+def test_fires_when_two_scatter_measures_humanize_identically() -> None:
+    """Same as ``test_fires_when_two_measures_humanize_identically``, for
+    scatter's own wide fold -- scatter joined the wide-measures shape this
+    detector already covers for bar/area/line."""
+    chart = ScatterChart(
+        id="c1",
+        type="scatter",
+        query_name="q",
+        x="month",
+        y=["churn_pct", "churn_percent"],
+    )
+    rows = [{"month": "Jan", "churn_pct": 1, "churn_percent": 2}]
+    warnings = detector.detect(_ctx(chart, rows))
+    assert len(warnings) == 1
+    assert "churn_pct" in warnings[0].message and "churn_percent" in warnings[0].message
 
 
 def test_silent_on_an_exact_duplicate_y_entry() -> None:

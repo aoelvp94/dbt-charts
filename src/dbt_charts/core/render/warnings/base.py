@@ -64,12 +64,18 @@ callout, and spark_bar truncations are captured alongside VL axis titles.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
 from dbt_charts.core.compile.models.board.resolved import ResolvedBoard
-from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
+from dbt_charts.core.compile.models.chart.resolved import (
+    ResolvedAreaChart,
+    ResolvedBarChart,
+    ResolvedChart,
+    ResolvedLineChart,
+)
 from dbt_charts.core.execute.executor import TruncationInfo
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.axis_label_collision import AxisLabelCollision
@@ -165,6 +171,50 @@ class WarningContext(BaseModel):
     # by a cache-ref composition — only the composed query is charted, not its
     # upstreams). Sparse — only present when such orphan truncations exist.
     unattributed_truncations: dict[str, TruncationInfo] = {}
+
+
+@dataclass(frozen=True)
+class ChartSeries:
+    """The authored key/field a series-count diagnostic should name so its
+    message points at YAML the author actually wrote: ``color`` for a
+    color-encoded chart, ``y`` for a wide chart whose series ARE its measure
+    list.
+    """
+
+    authored_key: str
+    authored_field: str
+
+
+def chart_series(chart: ResolvedChart) -> ChartSeries | None:
+    """The authored key/field a chart's series come from, or None when its
+    color channel makes none.
+
+    Two authoring shapes produce series: a ``color:`` column, or a wide
+    ``y: [a, b]`` measure list (resolve injects a synthetic color channel for
+    it, so it takes the ``wide_measures`` branch, not the presence of a color
+    field).
+
+    ``mode`` is the gate, not the presence of a ``data_field``: a color channel can
+    carry a field without splitting the chart into series. ``conditional_formatting``
+    lowers its rules onto the color channel with ``data_field`` set to the *measure*
+    (mode ``conditional``), and a continuous ramp does the same (mode ``gradient``);
+    both paint one mark per row of a single series. Counting either would report one
+    "series" per distinct measure value on a chart that draws one.
+    """
+    color = chart.resolved_channels.get("color")
+    if color is None or color.mode != "series" or not color.data_field:
+        return None
+    color_field = color.data_field
+
+    if (
+        isinstance(chart, (ResolvedBarChart, ResolvedLineChart, ResolvedAreaChart))
+        and chart.wide_measures
+    ):
+        if chart.color is None:
+            return ChartSeries("y", "y")
+        return ChartSeries("color", chart.color)
+
+    return ChartSeries("color", color_field)
 
 
 def encoding_channel_type(vega_spec: dict[str, object], channel: str) -> str:

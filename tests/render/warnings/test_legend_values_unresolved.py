@@ -291,6 +291,55 @@ def test_fires_on_scatter_when_an_entry_matches_no_series() -> None:
     assert "bogus" in warnings[0].message
 
 
+def test_fires_on_wide_scatter_when_an_entry_matches_no_measure() -> None:
+    """Same as ``test_fires_on_wide_chart_when_an_entry_matches_no_measure``,
+    for scatter's own wide fold -- scatter joined the wide-measures shape
+    this detector already covers for bar/area/line.
+
+    Asserts the real resolved domain (``named, non named``), not just that
+    something fired -- see the sibling silent test below for why that
+    distinction matters here.
+    """
+    from dbt_charts.core.compile.models.chart.normalized import ScatterChart
+    from dbt_charts.core.compile.models.style.authored import ScatterChartStylePatch
+
+    chart = ScatterChart(
+        id="c1",
+        type="scatter",
+        query_name="q",
+        x="cat",
+        y=["named", "non_named"],
+        style=ScatterChartStylePatch.model_validate({"legend": {"values": ["nope"]}}),
+    )
+    rows = [{"cat": "a", "named": 1, "non_named": 2}]
+    warnings = detector.detect(_ctx(chart, rows))
+    assert len(warnings) == 1
+    assert "nope" in warnings[0].message
+    assert "named, non named" in warnings[0].message
+
+
+def test_silent_on_wide_scatter_when_every_entry_resolves() -> None:
+    """The discriminating half of the pair above: an authored
+    ``legend.values`` that matches every real measure must stay silent --
+    the domain check above is only meaningful if a *correctly* resolved
+    domain can also clear it."""
+    from dbt_charts.core.compile.models.chart.normalized import ScatterChart
+    from dbt_charts.core.compile.models.style.authored import ScatterChartStylePatch
+
+    chart = ScatterChart(
+        id="c1",
+        type="scatter",
+        query_name="q",
+        x="cat",
+        y=["named", "non_named"],
+        style=ScatterChartStylePatch.model_validate(
+            {"legend": {"values": ["non named", "named"]}}
+        ),
+    )
+    rows = [{"cat": "a", "named": 1, "non_named": 2}]
+    assert detector.detect(_ctx(chart, rows)) == []
+
+
 def test_fires_on_field_colored_overlay_with_non_quantitative_base_y() -> None:
     """_overlay.py's use_shared_scale -- and therefore whether a
     colorless layer's label reaches the shared scale_domain at all --

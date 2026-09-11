@@ -53,6 +53,7 @@ from dbt_charts.core.render.svg_utils import (
     format_svg_numeric,
     padded_authoring_content,
     px,
+    translate_group,
 )
 from dbt_charts.core.render.variables_resolve import resolve_controls
 from dbt_charts.core.render.variables_strip import (
@@ -560,12 +561,10 @@ def _render_title_variables_inline_band(
             f"{authored_kind_attr('title')}>"
             f"{title_inner}</g>"
         )
-    band = (
-        "<g>"
-        f"{title_group}"
-        f'<g transform="translate({px(card_pad + title_w + col_gap)}, {px(vars_dy)})">{vars_svg}</g>'
-        "</g>"
+    vars_group = translate_group(
+        px(card_pad + title_w + col_gap), px(vars_dy), vars_svg
     )
+    band = f"{title_group}{vars_group}"
     return band, band_h
 
 
@@ -673,14 +672,14 @@ def _build_board_content_items(
             # composed position a pixel off where it rendered before the wrapper.
             # The leaf carries a bare kind (no path — the block already has it),
             # which key of the combined header handle a double-click landed on.
-            return (
-                f'<g transform="translate({px(at_x) - px(content_x)},'
-                f' {px(at_y) - px(header_start)})"'
-                f"{authored_kind_attr(kind) if kind else ''}>"
-                f"{svg}</g>"
+            return translate_group(
+                px(at_x) - px(content_x),
+                px(at_y) - px(header_start),
+                svg,
+                authored_kind_attr(kind) if kind else "",
             )
         if not own_attrs:
-            return f'<g transform="translate({px(at_x)}, {px(at_y)})">{svg}</g>'
+            return translate_group(px(at_x), px(at_y), svg)
         return _tagged_authoring_block(
             svg,
             own_attrs,
@@ -780,17 +779,13 @@ def _build_board_content_items(
     if variables_svg and not inline_header_svg:
         if not text_svg and title_svg:
             y += gap  # title/band → variables (no text between): normal gap
-        items.append(
-            f'<g transform="translate({px(content_x)}, {px(y)})">{variables_svg}</g>'
-        )
+        items.append(translate_group(px(content_x), px(y), variables_svg))
         y += variables_height
 
     # Layout block position is authoritative from the box, not from y accumulation.
     y_layout = y_offset + box.non_layout_height + box.gap_before_layout
     if layout_content:
-        items.append(
-            f'<g transform="translate({px(x_offset)}, {px(y_layout)})">{layout_content}</g>'
-        )
+        items.append(translate_group(px(x_offset), px(y_layout), layout_content))
 
     # Total height = non-layout stack + gap-before-layout + layout slot.
     # For nested boards: sizing computed layout_content_height to fill the slot exactly.
@@ -1595,11 +1590,11 @@ def render_nested_board(
             f'rx="{max(border_radius - stroke_inset, 0)}"/>'
         )
 
-    board_group = f"""<g transform="translate({px(board_margin_left)}, {px(board_margin_top)})">
-{bg_rect}
-{border_rect}
-{"".join(inner_items)}
-</g>"""
+    board_group = translate_group(
+        px(board_margin_left),
+        px(board_margin_top),
+        f"{bg_rect}\n{border_rect}\n{''.join(inner_items)}",
+    )
 
     svg = f"""<svg width="{total_svg_width}" height="{total_svg_height}" viewBox="0 0 {total_svg_width} {total_svg_height}">
 {board_group}

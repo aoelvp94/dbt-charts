@@ -1015,16 +1015,21 @@ def _emits_discrete_y(
       area — ``"type": "quantitative"``). Safe only because resolve
       refuses a non-numeric ``y`` outright before render ever runs. Never
       discrete.
-    - Scatter: the one family actually inferred from data —
+    - Scatter (single-series): the one family actually inferred from data —
       ``emitters/scatter.py``'s ``y_type = infer_vega_type_from_data(data,
       chart.y)``. Scatter has no numeric-``y`` validation and no fixed axis
       semantics (a scatter "y" can legitimately be nominal, e.g. a dot
       plot), so this is the only row where re-reading the data is the
-      correct source of truth, not merely convenient. Scatter also never
-      reaches here as a wide chart — resolve raises
-      ``ERR_MULTI_Y_UNSUPPORTED_CHART_TYPE`` for a list ``y``
-      (``compile/resolve/chart/scatter.py``) — so ``chart.y`` is always a
-      plain ``str | None`` by this point.
+      correct source of truth, not merely convenient.
+    - Scatter (wide, ``chart.wide_measures``): never reaches this function at
+      all. The caller (``facet_extra_axis_width_px``, below) gates on
+      ``"y" in _domain_subset_narrowing_candidates(...)``, which itself
+      requires ``_panel_domain_is_proper_subset(chart.y, ...)`` — and for a
+      wide chart ``chart.y`` is the synthetic ``WIDE_VALUE_FIELD``, absent
+      from every raw row, so every panel domain reads empty and "y" is
+      never a narrowing candidate. A folded ``y: [a, b]`` is always
+      quantitative regardless (resolved at ``compile/resolve/chart/
+      scatter.py``); it simply never needs to ask this function.
     """
     if isinstance(chart, ResolvedHeatmapChart):
         return True

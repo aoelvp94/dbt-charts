@@ -1,31 +1,20 @@
 """Install the dbt charts VS Code / Cursor extension.
 
-The extension is mirrored to a public GCS bucket on every release.
-``dct init code`` and ``dct init cursor``:
-
-1. Download ``dataface-latest.vsix`` from
-   ``https://storage.googleapis.com/dataface-downloads/`` (world-readable —
-   no auth, no ``gh`` CLI).
-2. Run ``code --install-extension <path>`` or
-   ``cursor --install-extension <path>``.
-
-Once the extension is on the Marketplace, the implementation will switch to
-``code --install-extension dbt-charts.dbt-charts`` (a one-line change).
+The extension is published to the VS Code Marketplace and to Open VSX under
+the same ID (``dbtLabsInc.dbtcharts``), so one ``--install-extension``
+argument resolves on both registries: ``code --install-extension
+dbtLabsInc.dbtcharts`` for VS Code, ``cursor --install-extension
+dbtLabsInc.dbtcharts`` for Cursor. The editor fetches, installs, and
+thereafter updates the extension itself.
 """
 
 from __future__ import annotations
 
 import shutil
 import subprocess
-import tempfile
-import urllib.error
-import urllib.request
 from collections.abc import Callable
-from pathlib import Path
 
-DOWNLOADS_BASE = "https://storage.googleapis.com/dataface-downloads"
-LATEST_VSIX = "dataface-latest.vsix"
-LATEST_VSIX_URL = f"{DOWNLOADS_BASE}/{LATEST_VSIX}"
+EXTENSION_ID = "dbtLabsInc.dbtcharts"
 
 # Editor name → CLI binary on PATH.
 EDITORS: dict[str, str] = {
@@ -36,7 +25,7 @@ EDITORS: dict[str, str] = {
 
 
 def install_extension(editor: str, emit: Callable[[str], None] = print) -> int:
-    """Auto-install the latest VSIX into the named editor.
+    """Install the dbt charts extension into the named editor by marketplace ID.
 
     Returns shell-style exit code: 0 on success, non-zero on failure.
     ``editor`` is one of ``EDITORS`` keys (``code``, ``vscode``, ``cursor``).
@@ -54,33 +43,23 @@ def install_extension(editor: str, emit: Callable[[str], None] = print) -> int:
         )
         return 1
 
-    with tempfile.TemporaryDirectory(prefix="dct-ext-") as tmpdir:
-        vsix_path = Path(tmpdir) / LATEST_VSIX
-        emit(f"Downloading {LATEST_VSIX} from {DOWNLOADS_BASE}…")
-        try:
-            with urllib.request.urlopen(LATEST_VSIX_URL, timeout=60) as resp:
-                vsix_path.write_bytes(resp.read())
-        except (urllib.error.URLError, TimeoutError, OSError) as err:
-            emit(f"  download failed: {err}")
-            return 1
-
-        emit(f"Installing into {cli}…")
-        try:
-            result = subprocess.run(
-                [binary, "--install-extension", str(vsix_path)],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                timeout=60,
-            )
-        except subprocess.TimeoutExpired:
-            emit(f"  {cli} --install-extension timed out after 60s.")
-            return 1
-        for line in (result.stdout or "").rstrip().splitlines():
+    emit(f"Installing dbt charts extension from the marketplace into {cli}…")
+    try:
+        result = subprocess.run(
+            [binary, "--install-extension", EXTENSION_ID],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        emit(f"  {cli} --install-extension timed out after 60s.")
+        return 1
+    for line in (result.stdout or "").rstrip().splitlines():
+        emit(f"  {line}")
+    if result.returncode != 0:
+        for line in (result.stderr or "").rstrip().splitlines():
             emit(f"  {line}")
-        if result.returncode != 0:
-            for line in (result.stderr or "").rstrip().splitlines():
-                emit(f"  {line}")
-            return result.returncode
-        emit(f"✓ Installed dbt charts extension into {cli}.")
-        return 0
+        return result.returncode
+    emit(f"✓ Installed dbt charts extension into {cli}.")
+    return 0

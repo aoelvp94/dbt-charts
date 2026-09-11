@@ -400,6 +400,27 @@ ERR_LINE_Y_NOT_NUMERIC = REGISTRY.register(
     )
 )
 
+ERR_SCATTER_MULTI_Y_NOT_NUMERIC = REGISTRY.register(
+    ErrorCode(
+        code="ERR-SCATTER-MULTI-Y-NOT-NUMERIC",
+        domain="compile",
+        title="Scatter chart multi-metric y column is not numeric",
+        message_template=(
+            "Chart {chart_id!r} (scatter): y: [...] column {y_field!r} is not "
+            "numeric. A single y: column may be categorical (a dot plot), but "
+            "every measure in a y: [...] list is folded onto one numeric axis; "
+            "use numeric columns."
+        ),
+        doc=(
+            "Fired when a scatter chart's y: [a, b] list contains a non-numeric "
+            "column. A single y: column may be categorical (a dot plot), but a "
+            "list y: folds every measure onto one shared numeric axis, so each "
+            "measure must be numeric."
+        ),
+        docs_topic="charts",
+    )
+)
+
 ERR_AREA_ENCODING_SWAPPED = REGISTRY.register(
     ErrorCode(
         code="ERR-AREA-ENCODING-SWAPPED",
@@ -1247,9 +1268,9 @@ ERR_MULTI_Y_COLOR_CONFLICT = REGISTRY.register(
             "a series) or drop it."
         ),
         doc=(
-            "Fired when a bar, area, or line chart authors y: [a, b] together "
-            "with a color: that is not a plain series column -- a gradient or "
-            "a conditional scale. A column composes with the "
+            "Fired when a bar, area, line, or scatter chart authors y: [a, b] "
+            "together with a color: that is not a plain series column -- a "
+            "gradient or a conditional scale. A column composes with the "
             "fold: the series become `<value> - <measure>` composites, one "
             "per dimension value per measure."
         ),
@@ -1269,8 +1290,8 @@ ERR_MULTI_Y_LAYERS_CONFLICT = REGISTRY.register(
             "measures as layers: entries instead."
         ),
         doc=(
-            "Fired when a bar, area, or line chart authors both y: [a, b] and "
-            "layers: at the same time."
+            "Fired when a bar, area, line, or scatter chart authors both "
+            "y: [a, b] and layers: at the same time."
         ),
         docs_topic="charts",
     )
@@ -1300,26 +1321,6 @@ ERR_WIDE_MEASURE_NAME_CONTAINS_SEPARATOR = REGISTRY.register(
             "composite cannot be split back apart unambiguously in that "
             "case, so the measure column must be renamed, or aliased in "
             "the query, to avoid the separator."
-        ),
-        docs_topic="charts",
-    )
-)
-
-ERR_MULTI_Y_UNSUPPORTED_CHART_TYPE = REGISTRY.register(
-    ErrorCode(
-        code="ERR-MULTI-Y-UNSUPPORTED-CHART-TYPE",
-        domain="compile",
-        title="y: [...] is not supported for this chart type",
-        message_template=(
-            "Chart {chart_id!r} ({chart_type}): y: [...] (multi-metric) is not "
-            "supported for {chart_type} charts. Use a single y field, with a "
-            "color: column for the series."
-        ),
-        doc=(
-            "Fired when a chart type with no wide-measure fold implementation "
-            "(currently scatter) authors y: [a, b]. Bar, area, and line fold "
-            "list-y into a synthetic color series; other cartesian families "
-            "have no equivalent render path yet."
         ),
         docs_topic="charts",
     )

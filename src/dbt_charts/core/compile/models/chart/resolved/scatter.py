@@ -15,10 +15,20 @@ from ._base import _CartesianResolvedChartFields
 class ResolvedScatterChart(_CartesianResolvedChartFields):
     """Render-ready scatter chart."""
 
-    # Narrows base y from str | list[str] | None to str | None — scatter has
-    # no fold/multi-measure render path, unlike heatmap (which keeps the
-    # base's wider type for its real one-rect-layer-per-measure path).
+    # Narrows base y from str | list[str] | None to str | None — scatter
+    # never carries a list-y at render time; wide measures are normalized at
+    # resolve time into wide_measures + WIDE_VALUE_FIELD, same as
+    # ResolvedBarChart/ResolvedAreaChart/ResolvedLineChart. Unlike heatmap
+    # (which keeps the base's wider type for its own, different
+    # one-rect-layer-per-measure path).
     y: str | None = Field(default=None, description="Y-axis data column.")
+    # Original wide-measure column names when y was authored as a list.
+    # Empty tuple for single-series charts. The emitter reads this to call
+    # fold_wide_measures instead of a plain y-channel encoding.
+    wide_measures: tuple[str, ...] = Field(
+        default=(),
+        description="Authored y: list measures, stored after resolve-time normalization.",
+    )
     chart_type: Literal["scatter"] = Field(
         description="Discriminator key; always 'scatter'.",
     )

@@ -236,9 +236,9 @@ def _zero_anchor_floats(
 ) -> list[float]:
     """Numeric floats for the zero-anchor heuristic across all y fields.
 
-    Multi-metric (``y: [a, b]``, area/line's wide-y): floats span every
-    measure's own values so the anchor decision reads the real extent instead
-    of always-anchored on empty data.
+    Multi-metric (``y: [a, b]``, area/line/scatter's wide-y): floats span
+    every measure's own values so the anchor decision reads the real extent
+    instead of always-anchored on empty data.
     """
     if isinstance(normalized_y, str):
         return _numeric_y_values(data, (normalized_y,))

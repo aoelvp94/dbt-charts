@@ -11,11 +11,11 @@ from dbt_charts.core.compile.models.chart.resolved._base import (
     _BaseResolvedChartFields,
     _CartesianResolvedChartFields,
 )
-from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
-from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
-from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
 from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
-from dbt_charts.core.compile.resolve.chart._wide_fields import WIDE_KEY_FIELD
+from dbt_charts.core.compile.resolve.chart._wide_fields import (
+    WIDE_KEY_FIELD,
+    WIDE_MEASURE_FAMILIES,
+)
 from dbt_charts.core.render.chart.feature import chart_rows
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 
@@ -32,7 +32,7 @@ def _channel_field(chart: ResolvedChart, channel: str) -> str | None:
             return chart.x
         return None
     if channel == "y":
-        if isinstance(chart, (ResolvedBarChart, ResolvedLineChart, ResolvedAreaChart)):
+        if isinstance(chart, WIDE_MEASURE_FAMILIES):
             # Wide charts use the first authored measure as the y link field;
             # WIDE_VALUE_FIELD is the synthetic fold column, never in raw rows.
             if chart.wide_measures:
@@ -53,10 +53,7 @@ def _channel_field(chart: ResolvedChart, channel: str) -> str | None:
         # a link needs the raw column via WIDE_KEY_FIELD, or downstream SQL
         # matches nothing. An authored dimension `color:` is an untouched
         # column on every row, so read it directly instead.
-        if (
-            isinstance(chart, (ResolvedBarChart, ResolvedLineChart, ResolvedAreaChart))
-            and chart.wide_measures
-        ):
+        if isinstance(chart, WIDE_MEASURE_FAMILIES) and chart.wide_measures:
             return chart.color if chart.color is not None else WIDE_KEY_FIELD
         color_ch = chart.resolved_channels.get("color")
         return color_ch.data_field if color_ch is not None else None

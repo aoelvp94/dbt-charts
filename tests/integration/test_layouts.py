@@ -397,9 +397,13 @@ rows:
             transform = group.attrib.get("transform", "")
             if not any(transform.startswith(p) for p in margin_prefixes):
                 continue
+            # Any depth, not just one <g> down: a no-op layout-content translate
+            # (x_offset=0, y_layout=0) is no longer wrapped in its own <g> (see
+            # svg_utils.translate_group), so the nested board's <svg> can sit
+            # directly under the margin group instead of one level deeper.
             nested_widths.extend(
                 float(svg.attrib["width"])
-                for svg in group.findall("./svg:g/svg:svg", ns)
+                for svg in group.findall(".//svg:svg", ns)
                 if "width" in svg.attrib
             )
 

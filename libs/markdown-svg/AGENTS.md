@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Convert Markdown to SVG with automatic text wrapping. MIT-licensed. SVG has no native text flow; this library parses Markdown and renders properly wrapped, styled SVG suitable for dashboards, diagrams, and exports. Core dependencies: `fonttools` (text measurement) and `nh3` (HTML sanitization).
+Convert Markdown to SVG with automatic text wrapping. SVG has no native text flow; this library parses Markdown and renders properly wrapped, styled SVG suitable for dashboards, diagrams, and exports. Core dependencies: `fonttools` (text measurement) and `nh3` (HTML sanitization).
 
 This directory has no `[project]`/`[build-system]` of its own and is not an independent uv workspace member — it is a peer package built directly into the `dbt-charts` wheel (`dbt-charts/pyproject.toml`'s `[tool.hatch.build.targets.wheel.force-include]`), the same way `d3_format` is. Import name stays `mdsvg`.
 

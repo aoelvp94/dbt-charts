@@ -266,6 +266,24 @@ def test_no_fire_for_multi_y_when_no_column_mostly_null() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_fires_for_multi_y_scatter_when_one_column_mostly_null() -> None:
+    """Same as ``test_fires_for_multi_y_when_one_column_mostly_null``, for
+    scatter's own wide fold -- scatter joined the wide-measures shape this
+    detector already covers for bar/area/line. Reads the real authored
+    measure columns, not the synthetic WIDE_VALUE_FIELD (absent from every
+    row), which would otherwise read as 100% null regardless of the data."""
+    chart = _make_chart(type="scatter", x="region", y=["revenue", "profit"])
+    rows = [
+        {"region": "West", "revenue": None, "profit": 10},
+        {"region": "East", "revenue": None, "profit": 20},
+        {"region": "North", "revenue": 100, "profit": 30},
+    ]
+    ctx = _make_ctx(chart, rows)
+    warnings = detector.detect(ctx)
+    assert len(warnings) == 1
+    assert warnings[0].field == "revenue"
+
+
 def test_missing_y_key_in_row_counts_as_null() -> None:
     """Rows where the y key is absent are treated as NULL (same semantics as None value)."""
     chart = _make_chart(y="revenue")

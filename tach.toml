@@ -75,10 +75,6 @@ exclude = [
     # check because tach looks up the import name `PIL`, not the
     # PyPI-normalized name `pillow`.
     "pillow",
-    # `dbt-charts-playground` is declared in [project.optional-dependencies]
-    # playground (tach 0.35.0 only reads [project] dependencies, not
-    # optional-deps). Imported lazily by `dct playground`.
-    "dbt_charts_playground",
     # `google-cloud-bigquery` is declared in [project.optional-dependencies]
     # bigquery (tach 0.35.0 only reads [project] dependencies, not optional-deps).
     # Imported lazily in _SourcePool._ensure_connected when type==bigquery.

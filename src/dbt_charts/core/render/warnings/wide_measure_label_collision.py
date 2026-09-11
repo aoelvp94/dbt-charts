@@ -9,16 +9,12 @@ detector, calls it fresh from ``chart.wide_measures``.
 
 from __future__ import annotations
 
-from dbt_charts.core.compile.models.chart.resolved.area import ResolvedAreaChart
-from dbt_charts.core.compile.models.chart.resolved.bar import ResolvedBarChart
-from dbt_charts.core.compile.models.chart.resolved.line import ResolvedLineChart
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     resolve_wide_measure_labels,
+    wide_measure_fields,
 )
 from dbt_charts.core.diagnostics import WARN_WIDE_MEASURE_LABEL_COLLISION, Diagnostic
 from dbt_charts.core.render.warnings.base import WarningContext
-
-_WIDE_MEASURE_FAMILIES = (ResolvedBarChart, ResolvedAreaChart, ResolvedLineChart)
 
 
 def detect(ctx: WarningContext) -> list[Diagnostic]:
@@ -27,13 +23,12 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
     warnings: list[Diagnostic] = []
 
     for chart_id, chart in ctx.board_spec.charts.items():
-        if not isinstance(chart, _WIDE_MEASURE_FAMILIES):
-            continue
-        if not chart.wide_measures:
+        measures = wide_measure_fields(chart)
+        if not measures:
             continue
 
-        _, collision_groups = resolve_wide_measure_labels(chart.wide_measures)
-        for label, measures in collision_groups.items():
+        _, collision_groups = resolve_wide_measure_labels(measures)
+        for label, colliding_measures in collision_groups.items():
             warnings.append(
                 Diagnostic.from_code(
                     WARN_WIDE_MEASURE_LABEL_COLLISION,
@@ -41,7 +36,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
                     path=f"charts.{chart_id}.y",
                     message=WARN_WIDE_MEASURE_LABEL_COLLISION.message_template.format(
                         chart_id=chart_id,
-                        measures=", ".join(repr(m) for m in measures),
+                        measures=", ".join(repr(m) for m in colliding_measures),
                         label=label,
                     ),
                     fix=WARN_WIDE_MEASURE_LABEL_COLLISION.fix_template,
