@@ -626,6 +626,26 @@ rows:
             f"got: {location!r}"
         )
 
+    def test_pattern_alias_capture_wins_over_a_colliding_query_param(
+        self, param_project: Path
+    ) -> None:
+        """`/items/m2?name=m9` redirects with `name=m2` once — never both.
+
+        The query string is carried as pairs now (a repeated key is a list
+        value), so a colliding param must be dropped rather than merged, or the
+        next request would fold `m9` and `m2` into one list for a scalar.
+        """
+        with TestClient(
+            create_server(FilesystemProject(param_project)),
+            raise_server_exceptions=False,
+            follow_redirects=False,
+        ) as client:
+            response = client.get("/items/m2?name=m9&foo=bar")
+        location = response.headers.get("location", "")
+        assert "name=m2" in location and "m9" not in location, location
+        assert location.count("name=") == 1, location
+        assert "foo=bar" in location, location
+
     def test_pattern_alias_merges_extra_query_string(self, param_project: Path) -> None:
         with TestClient(
             create_server(FilesystemProject(param_project)),

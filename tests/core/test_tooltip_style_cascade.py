@@ -3,7 +3,7 @@
 TDD anchors:
 - TooltipStyle must reject construction without required scalars (ValidationError).
 - All built-in production themes resolve tooltip box fields.
-- Python injection emits a parseable DCT_TOOLTIP_STYLE JSON blob.
+- The board root publishes a parseable data-dbt-tooltip-style JSON blob.
 """
 
 from __future__ import annotations
@@ -184,17 +184,20 @@ def test_tooltip_cascade_propagates_via_override():
 
 
 # ---------------------------------------------------------------------------
-# Python injection: DCT_TOOLTIP_STYLE blob must appear in rendered SVG
+# Published on the board root: data-dbt-tooltip-style is the JSON the runtime reads
 # ---------------------------------------------------------------------------
 
 
-def _get_interactivity_script(resolved_style):
-    """Extract the embedded JS from generate_svg_chart_interactivity_script."""
-    from dbt_charts.core.render.chart_interactivity import (
-        generate_svg_chart_interactivity_script,
-    )
+def _tooltip_style_blob(resolved_style):
+    """The tooltip style as the board root publishes it for the hover runtime."""
+    import html
 
-    return generate_svg_chart_interactivity_script(resolved_style)
+    from dbt_charts.core.render.chart_interactivity import hover_runtime_attributes
+
+    attrs = hover_runtime_attributes(resolved_style)
+    match = re.search(r'data-dbt-tooltip-style="([^"]*)"', attrs)
+    assert match, "board root does not publish data-dbt-tooltip-style"
+    return json.loads(html.unescape(match.group(1)))
 
 
 def _get_resolved_style():
@@ -204,23 +207,9 @@ def _get_resolved_style():
     return resolve_style(get_theme_style("stark"))
 
 
-def test_tooltip_style_blob_present_in_js():
-    """DCT_TOOLTIP_STYLE declaration must appear in the generated JS."""
-    resolved = _get_resolved_style()
-    script = _get_interactivity_script(resolved)
-    assert "DCT_TOOLTIP_STYLE" in script, "Expected DCT_TOOLTIP_STYLE in embedded JS"
-
-
 def test_tooltip_style_blob_parses_as_json():
-    """DCT_TOOLTIP_STYLE value must be valid JSON with expected top-level keys."""
-    resolved = _get_resolved_style()
-    script = _get_interactivity_script(resolved)
-
-    # Extract the JSON blob from: const DCT_TOOLTIP_STYLE = {...};
-    match = re.search(r"const DCT_TOOLTIP_STYLE\s*=\s*(\{.*?\});", script, re.DOTALL)
-    assert match, "Could not find DCT_TOOLTIP_STYLE assignment in JS"
-
-    blob = json.loads(match.group(1))
+    """The published value must be valid JSON with the expected top-level keys."""
+    blob = _tooltip_style_blob(_get_resolved_style())
     expected_keys = {
         "background",
         "lineHeight",
@@ -234,24 +223,14 @@ def test_tooltip_style_blob_parses_as_json():
         "shadow",
     }
     missing = expected_keys - blob.keys()
-    assert not missing, f"DCT_TOOLTIP_STYLE missing keys: {missing}"
+    assert not missing, f"tooltip style missing keys: {missing}"
 
 
 def test_tooltip_style_blob_shadow_is_bool():
-    """DCT_TOOLTIP_STYLE.shadow.visible must be a boolean."""
-    resolved = _get_resolved_style()
-    script = _get_interactivity_script(resolved)
-    match = re.search(r"const DCT_TOOLTIP_STYLE\s*=\s*(\{.*?\});", script, re.DOTALL)
-    assert match
-    blob = json.loads(match.group(1))
+    blob = _tooltip_style_blob(_get_resolved_style())
     assert isinstance(blob["shadow"]["visible"], bool)
 
 
 def test_tooltip_style_blob_padding_has_four_sides():
-    """DCT_TOOLTIP_STYLE.padding must have top/bottom/left/right."""
-    resolved = _get_resolved_style()
-    script = _get_interactivity_script(resolved)
-    match = re.search(r"const DCT_TOOLTIP_STYLE\s*=\s*(\{.*?\});", script, re.DOTALL)
-    assert match
-    blob = json.loads(match.group(1))
+    blob = _tooltip_style_blob(_get_resolved_style())
     assert {"top", "bottom", "left", "right"} <= blob["padding"].keys()

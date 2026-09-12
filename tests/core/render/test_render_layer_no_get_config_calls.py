@@ -6,7 +6,7 @@ value appears in the output — proving the global get_config() is not being
 consulted.
 
 Sites covered:
-  chart_interactivity.generate_svg_chart_interactivity_script
+  chart_interactivity.hover_runtime_attributes
   chart/rendering.py border radius (via resolved_style.charts.border.radius)
   converters/chart.render_vega_spec placeholder height
   boards._render_text_svg text_font_family param
@@ -37,11 +37,9 @@ from mdsvg.fonts import FontFaces
 
 
 def test_b_chart_interactivity_uses_resolved_style_font_family() -> None:
-    """generate_svg_chart_interactivity_script must use resolved_style.font.family,
-    never fall back to the global get_config()."""
-    from dbt_charts.core.render.chart_interactivity import (
-        generate_svg_chart_interactivity_script,
-    )
+    """The font family the hover runtime reads comes from resolved_style, never
+    from the global get_config() — published on the board root as data."""
+    from dbt_charts.core.render.chart_interactivity import hover_runtime_attributes
 
     style = resolve_style(
         get_theme_style().model_copy(
@@ -52,8 +50,7 @@ def test_b_chart_interactivity_uses_resolved_style_font_family() -> None:
             }
         )
     )
-    result = generate_svg_chart_interactivity_script(resolved_style=style)
-    assert "SentinelFontB" in result
+    assert "SentinelFontB" in hover_runtime_attributes(resolved_style=style)
 
 
 # =============================================================================

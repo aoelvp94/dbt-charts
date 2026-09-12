@@ -110,11 +110,11 @@ def selection_boxes(
     is the inner one, the outer box is nowhere in the DOM for the mark to
     read.
 
-    ``.dbt-box-outer`` — padding included, ``pointer-events="none"``. It sits
+    ``.dbt-box-outer`` — padding included, inert to the pointer (a host rule). It sits
     over the block's own ink, so intercepting events there would break
     drag-to-select on board prose (a live feature); tracing it is purely
     geometric.
-    ``.dbt-box-inner`` — padding excluded, ``pointer-events="all"``. Insetting
+    ``.dbt-box-inner`` — padding excluded, the pointer target (a host rule). Insetting
     the pointer target by the same padding turns the gutter between two
     adjacent blocks into dead space instead of belonging to whichever block
     happens to abut it.
@@ -140,10 +140,10 @@ def selection_boxes(
     return (
         f'<rect class="dbt-box-outer" x="0" y="{px(mark_y)}"'
         f' width="{px(outer_width)}" height="{px(mark_height)}"'
-        f' fill="transparent" pointer-events="none"/>'
+        f' fill="transparent"/>'
         f'<rect class="dbt-box-inner" x="{px(left)}" y="{px(top)}"'
         f' width="{px(inner_width)}" height="{px(inner_height)}"'
-        f' fill="transparent" pointer-events="all"/>'
+        f' fill="transparent"/>'
     )
 
 

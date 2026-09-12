@@ -23,14 +23,13 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
 )
 from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.render.controls import controls_stylesheet
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
-# The row-link class carries a hash of its theme link color (see
-# `_row_link_class` in table.py) so two linked tables on different themes
-# sharing one HTML page don't collide on `.dbt-table-row-link:hover`. Tests
-# that only care "did the row band render" match on the bare prefix.
-_ROW_LINK_CLASS = r"dbt-table-row-link-[0-9a-f]{8}"
+# The row-link band is one static class; it carries its theme link color as
+# the --dbt-link custom property, which the host's hover rule reads.
+_ROW_LINK_CLASS = r"dbt-table-row-link"
 
 
 def _row_link_count(svg: str) -> int:
@@ -628,10 +627,10 @@ rows:
     # attribute would lose that cascade, so assert the class + the rule, not an
     # attribute. The wired "Open" cell keeps events and is inked as a link.
     assert re.search(r'<text class="dbt-table-cell-inert"[^>]*>T1</text>', svg)
-    assert ".dbt-chart text.dbt-table-cell-inert" in svg
+    assert ".dbt-chart text.dbt-table-cell-inert" not in svg
     assert re.search(
-        r"\.dbt-chart text\.dbt-table-cell-inert\s*\{[^}]*pointer-events:\s*none",
-        svg,
+        r"\.dbt-chart text\.dbt-table-cell-inert[^{]*\{[^}]*pointer-events:\s*none",
+        controls_stylesheet(),
     )
     open_text = re.search(r"<text([^>]*)>[^<]*Open</text>", svg)
     assert open_text is not None
@@ -687,7 +686,11 @@ rows:
     assert '<g class="dbt-table-link"' not in svg
     assert 'class="dbt-table-link-text"' not in svg
     # Row-hover selection background CSS is present and distinct from link text.
-    assert re.search(rf"\.{_ROW_LINK_CLASS}:hover", svg) is not None
+    assert re.search(rf"\.{_ROW_LINK_CLASS}:hover", controls_stylesheet()) is not None
+    assert (
+        re.search(rf'class="{_ROW_LINK_CLASS}"[^>]*style="--dbt-link: ', svg)
+        is not None
+    )
     # Plain cell text carries the inert-cell class, and the stylesheet drops its
     # pointer events via a rule qualified to outrank the board's
     # ``.dbt-chart text { pointer-events: auto }`` — this is what lets a
@@ -696,8 +699,8 @@ rows:
     # was verified manually against `dct serve`.)
     assert '<text class="dbt-table-cell-inert"' in svg
     assert re.search(
-        r"\.dbt-chart text\.dbt-table-cell-inert\s*\{[^}]*pointer-events:\s*none",
-        svg,
+        r"\.dbt-chart text\.dbt-table-cell-inert[^{]*\{[^}]*pointer-events:\s*none",
+        controls_stylesheet(),
     )
 
 
@@ -787,7 +790,7 @@ rows:
         )
 
     def _band_x(svg: str) -> float:
-        xs = re.findall(rf'<rect class="{_ROW_LINK_CLASS}" x="([0-9.]+)"', svg)
+        xs = re.findall(rf'<rect class="{_ROW_LINK_CLASS}"[^>]*? x="([0-9.]+)"', svg)
         assert len(xs) == 2, svg
         return float(xs[0])
 
@@ -832,10 +835,12 @@ rows:
     )
 
     assert '<a href="/accounts/Cyberdyne">' in svg
-    assert ".dbt-table-link:hover .dbt-table-link-text" in svg
-    assert "a:focus-visible .dbt-table-link-text" in svg
-    assert "text-decoration-thickness: 1px" in svg
-    assert "text-underline-offset: 1px" in svg
+    css = controls_stylesheet()
+    assert ".dbt-table-link:hover .dbt-table-link-text" in css
+    assert "a:focus-visible .dbt-table-link-text" in css
+    assert "text-decoration-thickness: 1px" in css
+    assert "text-underline-offset: 1px" in css
+    assert ".dbt-table-link:hover" not in svg
     assert f'fill="{board_style.font.color}"' in svg
     assert 'font-weight="500"' in svg
     assert "dbt-table-link-text" in svg
@@ -951,11 +956,51 @@ charts:
         ), "href encoding without its calculate transform in the same pane"
 
 
-def test_row_link_class_is_keyed_to_the_link_color():
-    """Two link colors must not land on one class, or the `:hover` rules
-    collide when both tables share a page; one color must be stable, or the
-    rule and its wearer drift apart within a single render."""
-    from dbt_charts.core.render.chart.table import _row_link_class
+def test_row_link_band_carries_its_link_color_as_a_property():
+    """One class for every theme: the band carries its theme link color as
+    `--dbt-link`, which the host's single `:hover` rule reads off the rect
+    itself — so two tables with different link colors on one page cannot
+    collide the way a class minted per color once had to prevent. Pinned on
+    the emitted shape of one table."""
+    from dbt_charts.core.render.chart.table import render_table_svg as render_table_svg
 
-    assert _row_link_class("#222222") != _row_link_class("#EDEFF2")
-    assert _row_link_class("#222222") == _row_link_class("#222222")
+    data = [
+        {"ticket_id": "T1", "status": "new"},
+        {"ticket_id": "T2", "status": "open"},
+    ]
+    yaml = """\
+title: Tickets
+queries:
+  q1:
+    type: values
+    rows:
+      - {ticket_id: "T1", status: "new"}
+      - {ticket_id: "T2", status: "open"}
+charts:
+  c1:
+    type: table
+    query: q1
+    link: "/zendesk/ticket/{{ ticket_id }}"
+rows:
+  - c1
+"""
+    result = compile(yaml)
+    assert result.success, result.errors
+    resolved = resolve(
+        result.board.charts["c1"], data, chart_style_context=_BOARD_STYLE
+    )
+    svg = render_table_svg(
+        resolved,
+        data,
+        width=800,
+        height=400,
+        board_style=resolve_style(get_theme_style()),
+    )
+
+    bands = re.findall(
+        rf'<rect class="{_ROW_LINK_CLASS}" fill="transparent" style="--dbt-link: (#[0-9A-Fa-f]{{6}})"',
+        svg,
+    )
+    assert bands, "no row-link band carrying --dbt-link"
+    assert len(set(bands)) == 1, "one table, one link color"
+    assert "var(--dbt-link)" in controls_stylesheet()

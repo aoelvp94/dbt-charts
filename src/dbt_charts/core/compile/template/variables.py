@@ -9,12 +9,42 @@ by both the execute and render stages.
 
 import json
 import math
+from collections.abc import Iterable
 from datetime import date, datetime
 from typing import Any
 
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.diagnostics.execution import ExecutionError
+
+
+def variables_from_query_pairs(pairs: Iterable[tuple[str, str]]) -> dict[str, str]:
+    """Variable values from a query string's ``(key, value)`` pairs, in order.
+
+    A list-valued variable travels as a repeated key — ``?region=west&region=east``
+    — the way an HTML form sends a ``<select multiple>``: a link is hand-writable,
+    carries no JSON, and each value is its own param so a member may contain any
+    delimiter. ``dict(params)`` kept only the last repeat, so the standard form
+    silently dropped every value but one.
+
+    A repeat lands as the JSON list string a list value has always been carried
+    as past this boundary (``parse_variable_json_strings`` narrows it), so the
+    render key, the session store and every ``dict[str, str]`` downstream see
+    exactly what they saw before; only the URL changed. A key that appears once
+    is a scalar, and ``?region=`` is an explicit empty, distinct from absent.
+    """
+    values: dict[str, str] = {}
+    members: dict[str, list[str]] = {}
+    for key, value in pairs:
+        if key in members:
+            members[key].append(value)
+        elif key in values:
+            members[key] = [values[key], value]
+        else:
+            values[key] = value
+    for key, seen in members.items():
+        values[key] = json.dumps(seen)
+    return values
 
 
 def parse_variable_json_strings(variables: VariableValues) -> VariableValues:
@@ -360,6 +390,7 @@ __all__ = [
     "UNSET_MULTISELECT",
     "choice_member_type",
     "coerce_multiselect",
+    "variables_from_query_pairs",
     "coerce_variable_values",
     "normalize_multiselect_values",
     "parse_iso_date",

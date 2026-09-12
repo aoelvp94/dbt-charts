@@ -1,36 +1,30 @@
-"""A rendered board's embedded `<script>`/`<style>` must carry no comments.
+"""The host-shipped runtime and a board's embedded `<style>` carry no comments.
 
 Goldens are normalized to strip `<script>` tags entirely (see
 `normalize_svg` in the visual-test harness), so the committed-goldens
 comment guard (`dbt-charts/tests/visual/test_goldens_free_of_comments.py`)
-never exercises the JS half of the payload. This test renders a real
-board -- which always embeds the variables and chart-interactivity
-scripts -- and checks the actual `<script>` payload directly.
+never exercises the JS half of the payload -- and a board no longer embeds
+a script at all: the hover and controls runtimes ship with the host. This
+test checks that runtime source directly, and a real board's `<style>`.
 """
 
 from __future__ import annotations
 
 import re
 
+from dbt_charts.core.render.controls import controls_runtime_source
+
 from .._svg_render import render_board_to_svg
 
 
-def test_rendered_svg_script_has_no_comments() -> None:
-    svg = render_board_to_svg()
+def test_host_runtime_has_no_fenced_comments() -> None:
+    script = controls_runtime_source()
 
-    assert "<script" in svg, "expected the render to embed a <script> tag"
-
-    scripts = re.findall(r"<!\[CDATA\[(.*?)\]\]>", svg, re.DOTALL)
-    assert scripts, "expected at least one CDATA-wrapped script body"
-
-    for script in scripts:
-        assert "{#" not in script and "#}" not in script, (
-            f"fenced comment survived in embedded script: {script[:200]}"
-        )
+    assert "{#" not in script and "#}" not in script
 
     # The strip is fence-only: plain `//` comments and any `//` inside a string
     # (URLs, namespace literals) survive untouched.
-    assert any("//" in script for script in scripts)
+    assert "//" in script
 
 
 def test_rendered_svg_styles_have_no_css_comments() -> None:

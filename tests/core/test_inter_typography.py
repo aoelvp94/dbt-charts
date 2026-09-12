@@ -19,7 +19,8 @@ from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.render import render
 from dbt_charts.core.render.chart_interactivity import (
-    generate_svg_chart_interactivity_script,
+    hover_runtime_attributes,
+    hover_runtime_source,
 )
 from dbt_charts.core.render.converters.pdf import to_pdf
 from dbt_charts.core.render.converters.png import to_png
@@ -104,12 +105,15 @@ def test_placeholder_overlay_uses_inter() -> None:
 
 
 def test_chart_tooltip_script_uses_inter_and_tabular_values() -> None:
+    import html
+
     from dbt_charts.core.compile.resolve.style.board import resolve_style
 
-    script = generate_svg_chart_interactivity_script(
-        resolved_style=resolve_style(get_theme_style())
+    attrs = html.unescape(
+        hover_runtime_attributes(resolved_style=resolve_style(get_theme_style()))
     )
-    assert f'const DCT_FONT_FAMILY = "{_FONT_FAMILY_PRIMARY},' in script
+    script = hover_runtime_source()
+    assert f'data-dbt-font-family="{_FONT_FAMILY_PRIMARY},' in attrs
     assert "tooltip.style.fontFamily = DCT_FONT_FAMILY;" in script
     assert "font-variant-numeric:tabular-nums lining-nums;" in script
 

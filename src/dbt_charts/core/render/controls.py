@@ -18,6 +18,7 @@ from functools import cache
 from importlib.resources import files
 from typing import TYPE_CHECKING
 
+from dbt_charts.core.render.chart_interactivity import hover_runtime_source
 from dbt_charts.core.render.comment_stripping import strip_js_comments
 from dbt_charts.core.render.template_loader import render_template
 
@@ -54,7 +55,7 @@ def controls_are_interactive() -> bool:
 
 @cache
 def controls_runtime_source() -> str:
-    """The variable-control runtime, as JS for a host to ship in its page.
+    """The board runtimes — chart hover, then variable controls — as JS for a host to ship in its page.
 
     Strips the ``/*{# ... #}*/``-fenced comments — engineering notes with no
     audience once the runtime is shipped. Cached: hosts rebuild this per page
@@ -63,7 +64,8 @@ def controls_runtime_source() -> str:
     source = (
         files("dbt_charts.core.render") / "templates" / "scripts" / "variables.js"
     ).read_text(encoding="utf-8")
-    return strip_js_comments(source)
+    # Hover first: the controls runtime's mount() hands each board to it.
+    return hover_runtime_source() + "\n" + strip_js_comments(source)
 
 
 @cache

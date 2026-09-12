@@ -10,6 +10,8 @@ from xml.etree import ElementTree
 
 import pytest
 
+from dbt_charts.core.render.controls import controls_stylesheet
+
 from ._svg_render import (
     authored_boxes,
     leaf_kind_subtrees,
@@ -384,7 +386,10 @@ rows:
     assert svg.count('class="dbt-box-inner"') == 3
     assert 'data-authored-path="charts.metric"' in svg
     assert 'data-authored-path="charts.table"' in svg
-    assert 'pointer-events="all"' in svg
+    # The inner box catches the pointer through the host's rule on its class;
+    # the board carries no pointer-events attribute of its own.
+    assert 'pointer-events="all"' not in svg
+    assert ".dbt-chart .dbt-box-inner" in controls_stylesheet()
 
 
 def test_nested_title_and_text_share_one_handle_on_their_board() -> None:

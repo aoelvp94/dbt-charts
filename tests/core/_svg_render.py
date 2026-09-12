@@ -38,7 +38,12 @@ rows:
 """
 
 
-def render_board_to_svg(yaml_content: str = SAMPLE_BOARD_YAML) -> str:
+def render_board_to_svg(
+    yaml_content: str = SAMPLE_BOARD_YAML, *, controls: bool = False
+) -> str:
+    """``controls=True`` renders as a live host would — the board a page binds,
+    rather than a static export (which alone still carries the pagination
+    script for a multi-page table)."""
     result = compile(yaml_content)
     assert result.success
     executor = Executor(
@@ -46,7 +51,7 @@ def render_board_to_svg(yaml_content: str = SAMPLE_BOARD_YAML) -> str:
         adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
         query_registry=result.query_registry,
     )
-    return render(result.board, executor, format="svg").output
+    return render(result.board, executor, format="svg", controls=controls).output
 
 
 def board_with_mark(

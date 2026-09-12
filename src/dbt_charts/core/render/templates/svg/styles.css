@@ -1,6 +1,15 @@
 <style type="text/css">
-{# SVG Chart Styles
-   These styles are embedded in dbt charts SVGs for interactive features. #}
+{# The board's own stylesheet — embedded in every render, so it ships in every
+   PNG/PDF export and every golden exactly as it ships on a live page.
+
+   A board is a picture. Nothing interactive belongs here: no :hover, :focus,
+   cursor, pointer-events, transition, and nothing that reads .dbt-interactive
+   or styles what the runtime mounts. Interaction only exists on a page that
+   also runs the controls runtime, and that page ships controls_stylesheet()
+   beside it — that is where those rules live (controls/_styles.css). A rule
+   here that only matters when the runtime is present would re-bake every
+   golden for a change no export can show.
+   tests/core/render/test_board_stylesheet_is_static.py holds the line. #}
 
 {{ font_face_css }}
 {% if emoji_mode == "monochrome" %}svg text { font-variant-emoji: text; }{% endif %}
@@ -9,77 +18,5 @@
 .dbt-chart {
     position: relative;
 }
-
-{# Chart text is selectable; show the text cursor.
-   pointer-events overrides the inherited none from Vega group elements. #}
-.dbt-chart text {
-    cursor: text;
-    pointer-events: auto;
-}
-
-.dbt-chart text::selection {
-    background: rgba(102, 126, 234, 0.25);
-}
-
-{# Chart highlight overlay when hovering over dependent variable.
-   Border only, no fill - just outlines the dependent charts. #}
-.dbt-chart-highlight-overlay {
-    fill: none;
-    stroke: #667eea;
-    stroke-width: 3;
-    pointer-events: none;
-    opacity: 1;
-    transition: opacity 0.15s ease-in-out;
-}
-
-{# The variable controls are drawn borderless: at rest the strip states the
-   board's filter state, it does not pretend to be a form nobody can submit.
-   The runtime puts .dbt-interactive on the board root once it has bound the
-   controls, and these rules draw the affordances. A stylesheet rule outranks
-   the render's stroke="none" presentation attribute, and stroke takes no part
-   in SVG layout, so the toggle costs no re-render and moves nothing. #}
-.dbt-interactive [data-dbt-field] {
-    stroke: var(--dbt-variable-field-border);
-    stroke-width: 1;
-}
-
-.dbt-interactive [data-dbt-variable] {
-    cursor: pointer;
-}
-
-{# The chevron and calendar glyph ride the same switch as the borders, and for
-   the same reason: they promise an interaction, so they belong to the bound
-   board and not to a downloaded PNG, where they sat on a borderless field and
-   read as stray marks beside the value. Opacity keeps them out of layout, so
-   the width reserved for them is identical either way. #}
-.dbt-interactive [data-dbt-ornament="arrow"],
-.dbt-interactive [data-dbt-ornament="calendar"] {
-    opacity: 1;
-}
-
-{# A gated-off control gets no handlers and no tab stop, so it must not offer a
-   pointer either — the cursor would undercut the dimming and promise a click
-   that does nothing. #}
-.dbt-interactive [data-dbt-variable][data-dbt-enabled="false"] {
-    cursor: not-allowed;
-}
-
-.dbt-interactive [data-dbt-variable]:focus-visible {
-    outline: 2px solid var(--dbt-variable-field-border);
-    outline-offset: 2px;
-}
-
-{# Footer attribution link. The fill and the heavier weight are inline
-   attributes on the brand run itself (see _footer_attribution_svg) — a
-   rasterizer will not resolve this class against the run, so they cannot
-   live here. This rule owns only the cursor and the hover underline. #}
-.dbt-footer-link {
-    cursor: pointer;
-}
-
-.dbt-footer-link:hover {
-    text-decoration: underline;
-}
-
 
 </style>

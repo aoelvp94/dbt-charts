@@ -1,11 +1,22 @@
-{# Styles for what a host overlays on a drawn board.
+{# The interaction stylesheet — shipped by a host beside the controls runtime,
+   never embedded in a board.
 
-   The controls themselves are SVG the server drew, styled by the theme through
-   the board's own stylesheet — nothing here paints a control. What is left is
-   the chrome that only exists during an interaction: the popover a select
-   opens, and the native input a text field lifts. Both are page-level and
-   native-size, because anything positioned inside a scaled board inherits that
-   scale, popovers included.
+   A board is a picture: the SVG a render produces is the same bytes on a live
+   page, in a PNG/PDF export and in a golden, and nothing interactive belongs in
+   it. Interaction exists only on a page that runs the controls runtime, so
+   everything that only matters then lives here: the affordances the runtime
+   switches on by putting .dbt-interactive on the board root (borders, cursors,
+   chevrons, focus, the inert slider thumb), the chrome it mounts (the popover a
+   select opens, the native input a text field lifts, the hover outline on a
+   dependent chart), and the selectable chart text. The controls themselves are
+   SVG the server drew, styled by the theme through the board's own stylesheet —
+   nothing here paints a control at rest.
+
+   Page-level and native-size on purpose: anything positioned inside a scaled
+   board inherits that scale, popovers included. Every host that runs the
+   runtime ships this (`controls_stylesheet()`): the HTML converter, Cloud, the
+   playground. The board-side rule is enforced by
+   tests/core/render/test_board_stylesheet_is_static.py.
 
    These comments use the templating engine's own comment syntax rather than
    plain CSS comments, so they're stripped before the stylesheet is served. #}
@@ -50,16 +61,81 @@
   background: color-mix(in srgb, var(--dbt-system-muted, #6c757d) 12%, transparent);
 }
 
-{# Selected row — solid accent fill. A multiselect shows several at once. #}
+{# The unset row is the way out, not a member: it reads as a different kind
+   of thing from the values beneath it — quieter, set off by a rule — so a
+   user does not take "All" for a fifth ticket type. #}
+.dbt-select-unset {
+  color: var(--dbt-system-muted, #6c757d);
+  font-style: italic;
+  border-bottom: 1px solid var(--dbt-system-input-border, #ced4da);
+}
+
+{# Selected row — solid accent fill. #}
 .dbt-select-option[aria-selected="true"] {
   background: var(--dbt-system-accent, #667eea);
   color: white;
+}
+
+{# A multiselect's members carry a checkbox, and the checkbox carries the
+   state: it is what tells a multi from a single before anything is clicked
+   (a single's rows have none), and it says "several can be on" the way a
+   row fill cannot. So a member row keeps no fill when selected — the box is
+   ticked instead. The unset row is not a member: no box, but the same
+   inset so the text lines up beneath it. #}
+[aria-multiselectable="true"] .dbt-select-option {
+  position: relative;
+  padding-left: 34px;
+}
+
+[aria-multiselectable="true"] .dbt-select-option:not(.dbt-select-unset)::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  transform: translateY(-50%);
+  border: 1px solid var(--dbt-system-input-border, #ced4da);
+  border-radius: 3px;
+  background: var(--dbt-popover-bg, #ffffff);
+}
+
+[aria-multiselectable="true"] .dbt-select-option:not(.dbt-select-unset)[aria-selected="true"] {
+  background: none;
+  color: inherit;
+}
+
+[aria-multiselectable="true"] .dbt-select-option:not(.dbt-select-unset)[aria-selected="true"]::before {
+  border-color: var(--dbt-system-accent, #667eea);
+  background: var(--dbt-system-accent, #667eea);
+}
+
+{# The tick: two white edges of a small box, turned — no glyph, no font. #}
+[aria-multiselectable="true"] .dbt-select-option:not(.dbt-select-unset)[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 17px;
+  top: 50%;
+  width: 4px;
+  height: 8px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: translateY(-62%) rotate(45deg);
 }
 
 {# The transient native input a text, number, date, or daterange control lifts
    on focus. Sized and positioned inline from the drawn field's client rect, so
    only appearance is set here — never geometry, which would fight the runtime
    for where it sits. #}
+{# No browser ring: focus is the border color, set with the drawn field's in
+   svg/styles.css so both modes read one rule. Left alone the browser would add
+   its default on top — a square ring in the OS accent color. #}
+.dbt-variable-overlay:focus,
+.dbt-variable-overlay:focus-visible {
+    outline: none;
+}
+
 .dbt-variable-overlay {
   background: var(--dbt-popover-bg, #ffffff);
   border: 1px var(--dbt-system-input-border-style, solid) var(--dbt-system-input-border, #ced4da);
@@ -286,4 +362,185 @@
 }
 @keyframes dbt-spin {
   to { transform: rotate(360deg); }
+}
+
+{# ── Affordances on the drawn board, switched on by the runtime ──────────── #}
+
+{# Chart text is selectable; show the text cursor.
+   pointer-events overrides the inherited none from Vega group elements. #}
+.dbt-chart text {
+    cursor: text;
+    pointer-events: auto;
+}
+
+.dbt-chart text::selection {
+    background: rgba(102, 126, 234, 0.25);
+}
+
+{# Chart highlight overlay when hovering over dependent variable.
+   Border only, no fill - just outlines the dependent charts. #}
+.dbt-chart-highlight-overlay {
+    fill: none;
+    stroke: #667eea;
+    stroke-width: 3;
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 0.15s ease-in-out;
+}
+
+{# The variable controls are drawn borderless: at rest the strip states the
+   board's filter state, it does not pretend to be a form nobody can submit.
+   The runtime puts .dbt-interactive on the board root once it has bound the
+   controls, and these rules draw the affordances. A stylesheet rule outranks
+   the render's stroke="none" presentation attribute, and stroke takes no part
+   in SVG layout, so the toggle costs no re-render and moves nothing. #}
+.dbt-interactive [data-dbt-field] {
+    stroke: var(--dbt-variable-field-border);
+    stroke-width: 1;
+}
+
+.dbt-interactive [data-dbt-variable] {
+    cursor: pointer;
+}
+
+{# The chevron and calendar glyph ride the same switch as the borders, and for
+   the same reason: they promise an interaction, so they belong to the bound
+   board and not to a downloaded PNG, where they sat on a borderless field and
+   read as stray marks beside the value. Opacity keeps them out of layout, so
+   the width reserved for them is identical either way. #}
+.dbt-interactive [data-dbt-ornament="arrow"],
+.dbt-interactive [data-dbt-ornament="calendar"] {
+    opacity: 1;
+}
+
+{# A gated-off control gets no handlers and no tab stop, so it must not offer a
+   pointer either — the cursor would undercut the dimming and promise a click
+   that does nothing. #}
+.dbt-interactive [data-dbt-variable][data-dbt-enabled="false"] {
+    cursor: not-allowed;
+}
+
+{# A drawn control has no form input to focus: it is `<g><text>label</text>
+   <rect>field</rect></g>`, and the runtime makes it operable by putting the tab
+   stop and the ARIA role on the <g>. So the browser's focus target is the whole
+   group, and the ring it draws by default boxes the label in with the field —
+   in the user's OS accent color, which belongs to no theme we ship.
+
+   Suppressed on :focus as well as :focus-visible: a browser that paints the
+   default ring on a plain click (rather than only on keyboard focus) otherwise
+   leaks it around the group, which is the one shape this rule exists to stop.
+   The indicator is redrawn on the field box, so a drawn control and the native
+   input that lifts over it on click mark focus in the same place. #}
+.dbt-interactive [data-dbt-variable]:focus,
+.dbt-interactive [data-dbt-variable]:focus-visible {
+    outline: none;
+}
+
+{# Focus is the field's own border in the accent ink — not a second ring
+   drawn beside it. An outline on an SVG rect is its square bounding box, so it
+   could never match the rounded field; the stroke *is* the rounded edge.
+   [data-dbt-active] is the control whose native text overlay is up: the
+   overlay holds the caret then, so the group is not :focus, but this is still
+   the focused field. The overlay's own border goes accent in the same rule
+   (controls/_styles.css keeps its shape; this keeps its color) so both modes
+   read from one declaration. #}
+.dbt-interactive [data-dbt-variable]:is(:focus, :focus-visible, [data-dbt-active]) [data-dbt-field],
+.dbt-variable-overlay:focus {
+    stroke: var(--dbt-system-accent, #667eea);
+    border-color: var(--dbt-system-accent, #667eea);
+}
+
+{# The thumb is drawn over the track, so with events of its own it swallowed
+   every gesture aimed at it — the one place a user grabs a slider was the one
+   place that did nothing. It is a drawing of the value; the track is the
+   control. #}
+.dbt-interactive [data-dbt-ornament="slider-thumb"] {
+    pointer-events: none;
+}
+
+{# Footer attribution link. The fill and the heavier weight are inline
+   attributes on the brand run itself (see _footer_attribution_svg) — a
+   rasterizer will not resolve this class against the run, so they cannot
+   live here. This rule owns only the cursor and the hover underline. #}
+.dbt-footer-link {
+    cursor: pointer;
+}
+
+.dbt-footer-link:hover {
+    text-decoration: underline;
+}
+
+{# ── What a chart draws for a pointer — the table's links and paginator, the
+   details toggle. Scoped under .dbt-chart so the anchor rules never reach the
+   host's own links. #}
+.dbt-chart .dbt-table-link:hover .dbt-table-link-text,
+.dbt-chart a:focus-visible .dbt-table-link-text {
+  text-decoration-line: underline;
+  text-decoration-style: solid;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 1px;
+  text-decoration-color: currentColor;
+}
+
+.dbt-chart a:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+{# Inert to the pointer so a click on a plain cell, or on the paginator's
+   glyph, falls through to the row band or the button beneath it. Qualified
+   with the element so it outranks `.dbt-chart text { pointer-events: auto }`
+   above — a bare presentation attribute would lose that cascade. #}
+.dbt-chart text.dbt-table-cell-inert,
+.dbt-chart text.dbt-paginator-glyph {
+  pointer-events: none;
+  cursor: pointer;
+}
+
+{# The general inert class — a row rule, a swatch, a spark, a cell background,
+   the strip's anchor box, a placeholder overlay. Qualified with the element
+   for text, where `.dbt-chart text { pointer-events: auto }` above would
+   otherwise win. #}
+.dbt-pointer-inert,
+.dbt-chart text.dbt-pointer-inert {
+  pointer-events: none;
+}
+
+{# The chart's two hit boxes: the outer (padding included) lets the pointer
+   through, the inner (the mark) catches it — how a host tells "on the chart"
+   from "in its padding". #}
+.dbt-chart .dbt-box-outer {
+  pointer-events: none;
+}
+
+.dbt-chart .dbt-box-inner {
+  pointer-events: all;
+}
+
+{# The paginator's buttons: transparent hit rects that must catch the pointer;
+   its labels are not for selecting. #}
+.dbt-chart .dbt-page-target {
+  pointer-events: all;
+  cursor: pointer;
+}
+
+.dbt-chart .dbt-paginator text,
+.dbt-chart text.dbt-paginator-label {
+  user-select: none;
+}
+
+{# The row-link band is drawn transparent; on hover it tints with the theme's
+   link color, which the rect carries as --dbt-link. One rule for every theme:
+   two linked tables with different link colors on one page each read their
+   own property, where a per-color class used to be minted to keep them apart. #}
+.dbt-table-row-link {
+  cursor: pointer;
+}
+
+.dbt-table-row-link:hover {
+  fill: color-mix(in srgb, var(--dbt-link) 8%, transparent);
+}
+
+.dbt-details-toggle {
+  cursor: pointer;
 }

@@ -339,17 +339,16 @@ def add_placeholder_overlay(
     # Create overlay elements
     # Semi-transparent overlay rectangle
     overlay_rect = (
-        f'<rect x="0" y="0" width="{width}" height="{height}" '
-        f'fill="{overlay.background}" pointer-events="none"/>'
+        f'<rect class="dbt-pointer-inert" x="0" y="0" width="{width}" height="{height}" '
+        f'fill="{overlay.background}"/>'
     )
 
     # Text element centered on chart
     overlay_text = (
-        f'<text x="{center_x}" y="{center_y}" '
+        f'<text class="dbt-pointer-inert" x="{center_x}" y="{center_y}" '
         f'text-anchor="middle" dominant-baseline="middle" '
         f'font-family="{font_family}" '
-        f'font-size="{overlay.font.size}" font-weight="{overlay.font.weight}" fill="{overlay.font.color}" '
-        f'pointer-events="none">'
+        f'font-size="{overlay.font.size}" font-weight="{overlay.font.weight}" fill="{overlay.font.color}">'
         f"{escaped_text}"
         f"</text>"
     )

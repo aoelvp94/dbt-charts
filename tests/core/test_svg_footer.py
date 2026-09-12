@@ -9,6 +9,7 @@ in the footer text links to style.footer.link (a subtle watermark) when set.
 import re
 
 from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+from dbt_charts.core.render.controls import controls_stylesheet
 
 from ._svg_render import render_board_to_svg
 
@@ -200,10 +201,10 @@ style:
             r'<a class="dbt-footer-link"[^>]*><text[^>]*>dbt Charts</text></a>', svg
         )
         assert 'class="dbt-footer-link"' in svg
-        # The stylesheet owns only the hover affordance; fill and weight are
-        # inline on the run.
-        assert ".dbt-footer-link" in svg
-        assert ".dbt-footer-link:hover" in svg
+        # The hover affordance is interaction, so it ships with the host
+        # stylesheet, never inside the board; fill and weight are inline on the run.
+        assert ".dbt-footer-link:hover" not in svg
+        assert ".dbt-footer-link:hover" in controls_stylesheet()
 
     def test_footer_link_absent_when_brand_word_not_in_text(self):
         yaml = """\

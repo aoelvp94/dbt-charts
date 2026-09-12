@@ -18,8 +18,7 @@ import pytest
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.variable.authored import Variable, VariableOptions
 from dbt_charts.core.compile.resolve.style.board import resolve_style
-from dbt_charts.core.render.controls import interactive_controls
-from dbt_charts.core.render.template_loader import render_template
+from dbt_charts.core.render.controls import controls_stylesheet, interactive_controls
 from dbt_charts.core.render.variables_layout import lay_out_variables
 from dbt_charts.core.render.variables_resolve import resolve_controls
 from dbt_charts.core.render.variables_strip import (
@@ -214,8 +213,12 @@ def test_type_ornaments_are_hidden_until_a_host_turns_them_on() -> None:
 
 
 def test_the_stylesheet_reveals_the_ornaments_on_bind() -> None:
-    """The reveal rule has to exist, or the glyphs are dead weight in every host."""
-    css = render_template("svg/styles.css")
+    """The reveal rule has to exist, or the glyphs are dead weight in every host.
+
+    In the host's stylesheet: the reveal only happens under the runtime, and a
+    board is a picture that ships no interaction of its own.
+    """
+    css = controls_stylesheet()
 
     assert '.dbt-interactive [data-dbt-ornament="arrow"]' in css
     assert '.dbt-interactive [data-dbt-ornament="calendar"]' in css
@@ -1030,3 +1033,55 @@ def test_a_control_with_no_unset_affordance_publishes_none(input_type: str) -> N
     svg, _ = _strip({"region": Variable(input=input_type)})
 
     assert _groups(svg)[0].get("data-dbt-can-unset") is None
+
+
+def test_a_defaulted_multiselect_can_still_be_unset() -> None:
+    """A default is something to fall back to, not a reason to forbid empty.
+
+    Regression: `can_unset` was `default is None and not required`, so every
+    control carrying a default published `can-unset="false"`. The popover reads
+    that to decide whether to offer Clear and whether to let the last member be
+    unchecked, so a defaulted multiselect could be narrowed but never emptied —
+    the user could uncheck every option except one and then get stuck.
+    `required` alone decides this: an empty list reads as absent
+    (`variable_value_is_absent`), so a required variable has no legal empty
+    state whether it carries a default or not, and a non-required one always
+    does.
+    """
+    svg, _ = _strip(
+        {
+            "ticket_types": Variable(
+                input="multiselect",
+                default=["problem", "incident"],
+                options=VariableOptions(
+                    static=["task", "problem", "question", "incident"]
+                ),
+            )
+        }
+    )
+
+    group = _groups(svg)[0]
+    assert group.get("data-dbt-can-unset") == "true"
+    assert group.get("data-dbt-unset-label") == "All"
+
+
+def test_a_required_multiselect_with_a_default_still_cannot_be_unset() -> None:
+    """A default does not rescue a required variable from an empty selection.
+
+    `variable_value_is_absent` counts `[]` as absent, so clearing writes an
+    empty list the required check rejects — the next render raises
+    MissingRequiredVariablesError with no board left to recover from. The
+    default is never consulted, because the empty list *is* a committed value.
+    """
+    svg, _ = _strip(
+        {
+            "ticket_types": Variable(
+                input="multiselect",
+                required=True,
+                default=["problem"],
+                options=VariableOptions(static=["task", "problem"]),
+            )
+        }
+    )
+
+    assert _groups(svg)[0].get("data-dbt-can-unset") == "false"

@@ -41,7 +41,7 @@ from dbt_charts.core.font_measure import (
 )
 from dbt_charts.core.render.board_variables import board_variables
 from dbt_charts.core.render.chart_interactivity import (
-    generate_svg_chart_interactivity_script,
+    hover_runtime_attributes,
 )
 from dbt_charts.core.render.layout_sizing import RenderCache
 from dbt_charts.core.render.prose import render_prose_svg
@@ -1153,13 +1153,10 @@ def render_board_svg(
         content_box.non_layout_height + content_box.gap_before_layout
     )
 
-    # Chart hover interactivity is the one runtime the artifact carries: it reads
-    # data already in the SVG, so it works in a plain viewer with no server. The
-    # variable controls do not — a committed value needs a fresh render — so they
-    # ship as a host-injected layer instead (render/controls.py).
-    chart_interactivity_script = generate_svg_chart_interactivity_script(
-        resolved_style=resolved_style
-    )
+    # The chart hover runtime ships with the host, like the variable controls
+    # (render/controls.py): a board is a picture, and code never ships inside
+    # it. What it needs from the theme rides on the board root as data.
+    hover_attributes = hover_runtime_attributes(resolved_style=resolved_style)
 
     # Render layout (using shared helper). Scoped in board_variables() so any
     # chart reachable from here (table pagination today) can read the current
@@ -1264,11 +1261,7 @@ def render_board_svg(
     # render after this point and read that same string. Only assembled in embed
     # mode: URL mode ignores it, and every `dct serve` request would otherwise pay
     # for a second copy of the whole board.
-    painted_markup = (
-        "".join(content_items) + chart_interactivity_script + str(font_family)
-        if embed_fonts
-        else ""
-    )
+    painted_markup = "".join(content_items) + str(font_family) if embed_fonts else ""
     svg_styles = generate_svg_styles(
         emoji_mode=resolved_style.emoji_mode,
         font_face_css=board_font_face_css(
@@ -1361,7 +1354,7 @@ def render_board_svg(
     # is a pure transport attribute to_html() reads back, never seen by a
     # user, and already-persisted Cloud renders carry this exact name --
     # renaming it would 500 on every one of them for no benefit.
-    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {total_width} {total_height}" width="{format_svg_numeric(total_width)}" height="{format_svg_numeric(total_height)}" preserveAspectRatio="xMinYMin meet" style="display: block;" data-rendered-at="{render_timestamp_iso}" data-dbt-page-title="{html.escape(page_title, quote=True)}" data-dbt-font-family="{html.escape(str(font_family), quote=True)}" data-dbt-page-background="{html.escape(str(board_background), quote=True)}" aria-label="{html.escape(page_title, quote=True)}">
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {total_width} {total_height}" width="{format_svg_numeric(total_width)}" height="{format_svg_numeric(total_height)}" preserveAspectRatio="xMinYMin meet" style="display: block;" data-rendered-at="{render_timestamp_iso}" data-dbt-page-title="{html.escape(page_title, quote=True)}"{hover_attributes} data-dbt-page-background="{html.escape(str(board_background), quote=True)}" aria-label="{html.escape(page_title, quote=True)}">
 
 <defs>
 {grid_defs}
@@ -1372,7 +1365,6 @@ def render_board_svg(
 {margin_lines}
 {timestamp_element}
 {footer_element}
-{chart_interactivity_script}
 </svg>"""
     return _dedupe_repeated_style_rules(svg)
 

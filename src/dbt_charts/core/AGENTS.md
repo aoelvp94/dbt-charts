@@ -245,6 +245,24 @@ runtime-resolution purpose rather than reaching for it themselves. Every other
 render module reads `resolved.style.*` off the already-resolved chart its
 caller holds rather than calling `build_chart_style_context` itself.
 
+### A board is a picture — interaction never ships inside it
+
+A render's SVG is the same bytes on a live page, in a PNG/PDF export, and in a
+golden, so nothing that only matters when a user can interact goes in it: no
+`:hover`/`:focus`/`cursor`/`pointer-events`/`transition`, no `.dbt-interactive`
+rule, no inline `style=`, no script. Interaction lives with the host:
+`controls_stylesheet()` (shipped by every host, `to_html` included) and
+`controls_runtime_source()` (the chart-hover runtime bundled ahead of the
+controls runtime). The board only *publishes* what a host binds to — a class
+(`dbt-pointer-inert`, `dbt-page-target`), a CSS custom property for a per-board
+color (`--dbt-link`), a `data-dbt-*` attribute naming what a control drives
+(`data-dbt-page-var`; the hover runtime's theme facts on the root) — never an
+`onclick` or a class minted per color. Guard:
+`tests/core/render/test_board_stylesheet_is_static.py`. One exception:
+`table_pagination.js`, embedded only in a static multi-page export so a
+download can page with no host (whether downloads should carry interaction at
+all is a filed follow-up).
+
 ### Resolved models are read-only in render
 
 Render is a strict consumer of `Resolved*` — it must never construct a mutated copy of one. `model_copy(update=...)` or `dataclasses.replace(...)` on a `ResolvedChart`/`ResolvedStyle` (or any nested field) inside `render/` is the reach-back above in disguise: it patches a value after the fact instead of getting it right at the resolved boundary. If render needs a different value, fix resolution (`compile/resolve/style/` or wherever the field is baked) — don't build a second, edited copy of the resolved object downstream.

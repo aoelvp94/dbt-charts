@@ -53,6 +53,7 @@ from dbt_charts.core.compile.config import (
     resolve_cache_boot,
 )
 from dbt_charts.core.compile.models.board.normalized import Board
+from dbt_charts.core.compile.template.variables import variables_from_query_pairs
 from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.registry import ERROR_GUIDE_PATH, REGISTRY
@@ -1259,7 +1260,9 @@ def create_server(
             if clean_path.endswith(url_suffix):
                 base = clean_path[: -len(url_suffix)]
                 file_path = _resolve_board_file_path(charts, base)
-                raw_variables = dict(request.query_params)
+                raw_variables = variables_from_query_pairs(
+                    request.query_params.multi_items()
+                )
                 return _render_board_file(
                     file_path,
                     raw_variables,
@@ -1293,12 +1296,12 @@ def create_server(
         for suffix in BOARD_CANDIDATE_SUFFIXES:
             if clean_path.endswith(suffix):
                 target = "/" + clean_path[: -len(suffix)]
-                qs = urlencode(dict(request.query_params))
+                qs = request.url.query
                 return RedirectResponse(
                     url=f"{target}?{qs}" if qs else target, status_code=301
                 )
 
-        raw_params = dict(request.query_params)
+        raw_params = variables_from_query_pairs(request.query_params.multi_items())
         download_format = raw_params.pop("format", None)
         variables = raw_params
 
@@ -1313,10 +1316,10 @@ def create_server(
         canonical_url = alias_index.lookup(request_url)
         if canonical_url is not None:
             # Preserve the query string (without the internal `format` pop — restore it)
-            qs_params = dict(request.query_params)
+            qs = request.url.query
             redirect_url = canonical_url
-            if qs_params:
-                redirect_url = canonical_url + "?" + urlencode(qs_params)
+            if qs:
+                redirect_url = canonical_url + "?" + qs
             # 302 (temporary) is the correct v1 default — browsers don't cache it,
             # so renaming a board later is safe.  Per-alias `redirect: 301` for
             # permanent SEO-safe moves is a documented follow-up; it requires a
@@ -1395,7 +1398,9 @@ def create_server(
                 adapter_registry=app.state.adapter_registry,
                 result_cache=app.state.result_cache,
                 max_workers=app.state.max_workers,
-                request_variables=dict(request.query_params),
+                request_variables=variables_from_query_pairs(
+                    request.query_params.multi_items()
+                ),
             )
             if registered_response is not None:
                 return registered_response
@@ -1418,7 +1423,14 @@ def create_server(
         # its variable.
         if not file_path.exists():
             for canonical, captured in alias_index.match_patterns(request_url):
-                merged = {**dict(request.query_params), **captured}
+                # The capture wins over a colliding query param, as it always has:
+                # the alias names the board's variable, and a stray `?name=` in the
+                # link must not ride along beside it as a second value.
+                merged = [
+                    (key, value)
+                    for key, value in request.query_params.multi_items()
+                    if key not in captured
+                ] + list(captured.items())
                 redirect_url = canonical + ("?" + urlencode(merged) if merged else "")
                 return RedirectResponse(url=redirect_url, status_code=302)
 

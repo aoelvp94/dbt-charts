@@ -1,7 +1,19 @@
 (function () {
-    const DCT_FONT_FAMILY = "__DCT_FONT_FAMILY__";
-    const DCT_TOOLTIP_STYLE = "__DCT_TOOLTIP_STYLE__";
-    const DCT_HOVER_EMPHASIS = "__DCT_HOVER_EMPHASIS__";
+    /*{# Theme facts, read off the board root at mount (data-dbt-font-family, #}*/
+    /*{# data-dbt-tooltip-style, data-dbt-hover-emphasis): one static script #}*/
+    /*{# for every board, shipped by the host — never templated into a board. #}*/
+    /*{# The root carrying them is what makes an svg a board; the host's own #}*/
+    /*{# icons are svgs too and stay untouched. Page-level, not per root: a #}*/
+    /*{# page showing differently themed boards would need them keyed by root. #}*/
+    let DCT_FONT_FAMILY;
+    let DCT_TOOLTIP_STYLE;
+    let DCT_HOVER_EMPHASIS;
+
+    function readBoardConfig(root) {
+        DCT_FONT_FAMILY = root.dataset.dbtFontFamily;
+        DCT_TOOLTIP_STYLE = JSON.parse(root.dataset.dbtTooltipStyle);
+        DCT_HOVER_EMPHASIS = JSON.parse(root.dataset.dbtHoverEmphasis);
+    }
 
     /*{# Role markers baked by emitters/_tooltip.py's ROLE_HEADER / ROLE_HEADER_SWATCHED / #}*/
     /*{# ROLE_SERIES / ROLE_TOTAL / ROLE_ORDER -- zero-width Unicode format characters, #}*/
@@ -262,8 +274,8 @@
         if (!markHeaderEntry(hoveredEntries)) return [{ mark: hoveredMark, entries: hoveredEntries }];
         const identity = headerKey(hoveredEntries);
 
-        /*{# Scope grouping to the hovered mark's OWN chart. The interactivity #}*/
-        /*{# script is bound once at the board-root <svg>, but each chart is a #}*/
+        /*{# Scope grouping to the hovered mark's OWN chart. The runtime is #}*/
+        /*{# bound once at the board-root <svg>, but each chart is a #}*/
         /*{# nested standalone <svg>; querying the whole board would collect #}*/
         /*{# same-identity marks from OTHER charts (e.g. two `x: month` charts) and #}*/
         /*{# contaminate the bubble with foreign rows / wrong values. Mirrors the #}*/
@@ -1315,12 +1327,15 @@
         applyHoverMarkers(state, mark, useXUnified ? matches : [{ mark: mark }]);
     }
 
+    /*{# Bound once, at the board root: each chart is a nested standalone <svg> #}*/
+    /*{# whose events bubble up to it. #}*/
     function initializeSvg(svg) {
-        if (!svg || svg.dataset.dbtHoverInitialized === 'true') {
+        if (!svg.matches('[data-dbt-tooltip-style]') || svg.dataset.dbtHoverInitialized === 'true') {
             return;
         }
 
         svg.dataset.dbtHoverInitialized = 'true';
+        readBoardConfig(svg);
         const state = ensureState();
 
         svg.addEventListener('mousemove', function (event) {
@@ -1393,21 +1408,19 @@
         });
     }
 
-    function initialize() {
-        const script = document.currentScript;
-        const ownerSvg = script && script.closest ? script.closest('svg') : null;
-
-        if (ownerSvg) {
-            initializeSvg(ownerSvg);
-            return;
+    /*{# Hosts that swap boards in place hand the new one here (the controls #}*/
+    /*{# runtime's mount() does); a page that loads once binds on ready. #}*/
+    window.dbtChartHover = {
+        mount: function (root) {
+            const scope = root || document;
+            if (scope.matches && scope.matches('svg')) initializeSvg(scope);
+            scope.querySelectorAll('svg').forEach(initializeSvg);
         }
-
-        document.querySelectorAll('svg').forEach(initializeSvg);
-    }
+    };
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initialize, { once: true });
+        document.addEventListener('DOMContentLoaded', function () { window.dbtChartHover.mount(); }, { once: true });
     } else {
-        initialize();
+        window.dbtChartHover.mount();
     }
 })();

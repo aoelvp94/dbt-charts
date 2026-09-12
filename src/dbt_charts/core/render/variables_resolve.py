@@ -88,12 +88,15 @@ class ResolvedControl:
     slider_max: float
     slider_step: float
     # Whether an empty/unset value is a legal state to land in — false for a
-    # required variable with no default, since there is nothing to fall back
-    # to and the next render raises MissingRequiredVariablesError with no
-    # control layer left to recover from. Settled once so every unset-offering
+    # required variable, since `variable_value_is_absent` counts an empty list
+    # as absent and the next render raises MissingRequiredVariablesError with no
+    # control layer left to recover from. `required` decides this alone: a
+    # default is not consulted once an empty value is committed, so it rescues
+    # nothing here, and on a non-required variable it is a value to return to
+    # rather than a reason to forbid empty. Settled once so every unset-offering
     # affordance (the select's blank "All" option, the multiselect's Clear
     # button and its per-toggle guard) reads the same fact rather than each
-    # re-deriving it from var_def.default/var_def.required independently.
+    # re-deriving it from var_def.required independently.
     can_unset: bool
 
     @property
@@ -164,7 +167,7 @@ def resolve_controls(
                 slider_min=low,
                 slider_max=high,
                 slider_step=step,
-                can_unset=var_def.default is None and not var_def.required,
+                can_unset=not var_def.required,
                 enabled=_is_enabled(var_def, current_values, executor),
             )
         )

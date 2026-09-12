@@ -30,10 +30,9 @@ from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_cont
 
 _BOARD_CTX = resolve_chart_style_context(get_theme_style())
 
-# The row-link class carries a hash of its theme link color (see
-# `_row_link_class` in table.py) so two linked tables on different themes
-# sharing one HTML page don't collide on `.dbt-table-row-link:hover`.
-_ROW_LINK_CLASS = r"dbt-table-row-link-[0-9a-f]{8}"
+# The row-link band is one static class; its theme link color rides as
+# the --dbt-link custom property the host's hover rule reads.
+_ROW_LINK_CLASS = r"dbt-table-row-link"
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.chart.resolved import ResolvedChart

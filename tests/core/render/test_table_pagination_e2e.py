@@ -17,6 +17,7 @@ from unittest.mock import Mock
 from dbt_charts.core.compile import compile
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
+from dbt_charts.core.render.controls import controls_stylesheet
 
 _BOARD_YAML = """\
 title: Probe
@@ -88,9 +89,11 @@ def test_variables_page_reaches_the_table_renderer() -> None:
 
 def test_paginator_glyph_uses_a_class_not_a_presentation_attribute() -> None:
     """A ``pointer-events="none"`` presentation attribute can never beat the
-    board stylesheet's ``.dbt-chart text { pointer-events: auto }`` rule --
-    the fix must be a class plus a matching CSS rule, exactly like
-    ``.dbt-table-cell-inert`` for cell text.
+    host stylesheet's ``.dbt-chart text { pointer-events: auto }`` rule -- the
+    fix must be a class plus a matching CSS rule, exactly like
+    ``.dbt-table-cell-inert`` for cell text. Both rules ship with the host
+    (interaction never lives inside a board), so the glyph in the SVG carries
+    only the class.
     """
     result = compile(_BOARD_YAML)
     assert result.success and result.board is not None, result.errors
@@ -102,10 +105,11 @@ def test_paginator_glyph_uses_a_class_not_a_presentation_attribute() -> None:
     svg = render_result.output
     assert isinstance(svg, str)
 
-    # Both rules must coexist in the same document -- that's what proves the
+    # Both rules must coexist in the same stylesheet -- that's what proves the
     # class rule's specificity, not just its presence, is what wins.
-    assert ".dbt-chart text {" in svg
-    assert "pointer-events: auto" in svg
+    css = controls_stylesheet()
+    assert ".dbt-chart text {" in css
+    assert "pointer-events: auto" in css
 
     glyph_tags = re.findall(r'<text [^>]*class="dbt-paginator-glyph"[^>]*>', svg)
     assert glyph_tags, "paginator glyph <text> must carry the dbt-paginator-glyph class"
@@ -116,5 +120,36 @@ def test_paginator_glyph_uses_a_class_not_a_presentation_attribute() -> None:
     assert re.search(
         r"\.dbt-chart text\.dbt-paginator-glyph \{\s*"
         r"pointer-events: none;\s*cursor: pointer;\s*\}",
-        svg,
-    ), "matching CSS rule must ship pointer-events: none + cursor: pointer"
+        css,
+    ), "matching host rule must ship pointer-events: none + cursor: pointer"
+    assert "dbt-paginator-glyph {" not in svg
+
+
+def test_paginator_label_and_cap_note_are_inert_to_selection() -> None:
+    """The row-range label sits outside the strippable paginator group and the
+    static-export cap note outside any group, so neither is reached by the
+    host rule for the group's own glyphs. Both carry a class the host
+    stylesheet targets instead -- interaction never ships inline in a board.
+    """
+    result = compile(_BOARD_YAML)
+    assert result.success and result.board is not None, result.errors
+    rows = [{"name": f"row_{i}"} for i in range(1, 106)]  # 21 pages: past the cap
+    executor = _make_executor(result.board, result.query_registry, rows)
+
+    live = render(result.board, executor, format="svg", controls=True).output
+    static = render(result.board, executor, format="svg", controls=False).output
+    assert isinstance(live, str) and isinstance(static, str)
+
+    assert re.search(
+        r'<text [^>]*class="dbt-paginator-label"[^>]*>Rows 1–5 of 105</text>', live
+    )
+    assert re.search(
+        r'<text [^>]*class="dbt-paginator-label"[^>]*>Showing pages 1–20 of 21',
+        static,
+    )
+    assert "user-select" not in live and "user-select" not in static
+    assert re.search(
+        r"\.dbt-chart \.dbt-paginator text,\s*"
+        r"\.dbt-chart text\.dbt-paginator-label \{\s*user-select: none;\s*\}",
+        controls_stylesheet(),
+    )

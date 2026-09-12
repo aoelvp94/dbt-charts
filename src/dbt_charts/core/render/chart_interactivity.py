@@ -1,11 +1,13 @@
 """Core-owned chart hover interactivity runtime."""
 
+import html
 import json
+from functools import cache
 from importlib.resources import files
 from typing import TYPE_CHECKING, Any
 
 from dbt_charts.core.compile.config import get_chart_rendering
-from dbt_charts.core.render.script_embedding import embed_svg_script
+from dbt_charts.core.render.comment_stripping import strip_js_comments
 from dbt_charts.core.text.format_d3 import NULL_DISPLAY
 
 if TYPE_CHECKING:
@@ -77,29 +79,38 @@ def _build_hover_emphasis_dict(
     }
 
 
-def generate_chart_interactivity_source(resolved_style: "ResolvedStyle") -> str:
-    """Return the chart hover runtime as raw JS with theme values injected.
+@cache
+def hover_runtime_source() -> str:
+    """The chart hover runtime, as JS for a host to ship in its page.
 
-    For hosts that ship the runtime as a plain HTML <script> beside SVG
-    output whose own embedded scripts were sanitized away.
+    One static script for every board: the theme values it needs ride on the
+    board root as data attributes (``hover_runtime_attributes``), read at mount.
+    ``NULL_DISPLAY`` is a package constant, not a theme value, so it is the one
+    substitution left — made once and cached, like the controls runtime.
     """
-    font_family = str(resolved_style.font.family)
-    tooltip_style = _build_tooltip_style_dict(resolved_style)
-    hover_emphasis = _build_hover_emphasis_dict(resolved_style)
     script = (
         files("dbt_charts.core.render")
         / "templates"
         / "scripts"
         / "chart_interactivity.js"
     ).read_text(encoding="utf-8")
-    script = script.replace('"__DCT_FONT_FAMILY__"', json.dumps(font_family))
-    script = script.replace('"__DCT_TOOLTIP_STYLE__"', json.dumps(tooltip_style))
-    script = script.replace('"__DCT_HOVER_EMPHASIS__"', json.dumps(hover_emphasis))
-    return script.replace('"__DCT_NULL_DISPLAY__"', json.dumps(NULL_DISPLAY))
+    return strip_js_comments(
+        script.replace('"__DCT_NULL_DISPLAY__"', json.dumps(NULL_DISPLAY))
+    )
 
 
-def generate_svg_chart_interactivity_script(
-    resolved_style: "ResolvedStyle",
-) -> str:
-    """Embed the chart hover runtime into SVG output."""
-    return embed_svg_script(generate_chart_interactivity_source(resolved_style))
+def hover_runtime_attributes(resolved_style: "ResolvedStyle") -> str:
+    """The theme facts the hover runtime reads off the board root.
+
+    Published as data, never templated into the script: a board is a picture,
+    and code never ships inside it. Leading space included, for the ``<svg``
+    open tag.
+    """
+    values = {
+        "data-dbt-font-family": str(resolved_style.font.family),
+        "data-dbt-tooltip-style": json.dumps(_build_tooltip_style_dict(resolved_style)),
+        "data-dbt-hover-emphasis": json.dumps(
+            _build_hover_emphasis_dict(resolved_style)
+        ),
+    }
+    return "".join(f' {k}="{html.escape(v, quote=True)}"' for k, v in values.items())

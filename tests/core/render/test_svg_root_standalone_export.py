@@ -24,7 +24,8 @@ from .._svg_render import render_board_to_svg  # noqa: E402
 
 
 def _root_style(svg: str) -> str:
-    match = re.search(r"<svg\b[^>]*\bstyle=\"([^\"]*)\"", svg)
+    # Not `\bstyle=`: the root also carries data-dbt-tooltip-style.
+    match = re.search(r"<svg\b[^>]*\sstyle=\"([^\"]*)\"", svg)
     assert match is not None, "root <svg> has no style attribute"
     return match.group(1)
 

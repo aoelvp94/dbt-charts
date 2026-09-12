@@ -7,7 +7,6 @@ mark channels (``color``/``background``/``opacity``/``stroke_*`` are
 
 from __future__ import annotations
 
-import hashlib
 import html as html_module
 import re
 from collections.abc import Mapping
@@ -186,22 +185,6 @@ _TITLE_ASCENT_RATIO = 0.8
 def _format_svg_numeric(value: float) -> str:
     numeric = float(value)
     return str(int(numeric)) if numeric.is_integer() else str(numeric)
-
-
-def _row_link_class(link_color: str) -> str:
-    """Scoped class for the row-link band, keyed to its theme color.
-
-    Inline SVG has no style scope in an HTML page: two linked tables with
-    different theme link colors sharing a page would have the last
-    ``.dbt-table-row-link:hover`` rule win for both (mdsvg's ``.md-*``
-    classes hit the same collision; ``_class_prefix`` there is the same
-    pattern). Same color -> same class (rules are identical anyway);
-    different color -> different class -> no collision.
-    """
-    color_hash = hashlib.sha256(link_color.encode(), usedforsecurity=False).hexdigest()[
-        :8
-    ]
-    return f"dbt-table-row-link-{color_hash}"
 
 
 def _svg_font_family(family: str) -> str:
@@ -2140,8 +2123,10 @@ def _render_data_rows(
             # not catch the pointer or it re-opens a dead strip in the hover
             # band that paints beneath it (bands span the full per_row_height).
             # Only emitted for linked tables so non-linked table goldens are
-            # byte-identical — the attribute is inert without a band anyway.
-            rule_pe_attr = ' pointer-events="none"' if chart_root_link else ""
+            # byte-identical — the class is inert without a band anyway. A class
+            # the host stylesheet reads, never a pointer-events attribute:
+            # interaction does not ship inside a board.
+            rule_pe_attr = ' class="dbt-pointer-inert"' if chart_root_link else ""
             row_rule_parts.append(
                 f'<rect x="{rule_x1}" y="{rule_y}" width="{rule_x2 - rule_x1}" '
                 f'height="{rule_reserve_px}" fill="{effective_rule_color}"'
@@ -2183,7 +2168,8 @@ def _render_data_rows(
                 # still reaches the band across the boundary.
                 svg_parts.append(
                     f'<a href="{escaped_row_href}" aria-label="{escaped_row_label}">'
-                    f'<rect class="{_row_link_class(colors["link"])}" '
+                    f'<rect class="dbt-table-row-link" fill="transparent" '
+                    f'style="--dbt-link: {colors["link"]}" '
                     f'x="{row_link_x1}" '
                     f'y="{row_y}" width="{row_link_x2 - row_link_x1}" '
                     f'height="{per_row_height}"/></a>',
@@ -2192,13 +2178,13 @@ def _render_data_rows(
         # In a banded row, painted cell content that is NOT itself a link must
         # not swallow the band's pointer events — otherwise clicking/hovering a
         # value would hit the glyph on top and never reach the row link behind.
-        # This presentation attribute is used for the swatch <g>, spark <g>, and
-        # cell-background <rect>, which no board stylesheet rule selects. Cell
-        # <text> is handled separately via a class: the board ships
-        # ``.dbt-chart text { pointer-events: auto }`` and a CSS declaration
-        # always beats a presentation attribute, so text needs a rule, not attr.
-        # Cell/filter anchors are left event-bearing so they still win the click.
-        cell_pe_attr = ' pointer-events="none"' if row_has_band else ""
+        # A class the host stylesheet reads (`.dbt-chart .dbt-pointer-inert`), on
+        # the swatch <g>, spark <g>, and cell-background <rect>; cell <text> takes
+        # `.dbt-table-cell-inert`, whose rule is qualified with the element so it
+        # outranks `.dbt-chart text { pointer-events: auto }`. Never an attribute:
+        # interaction does not ship inside a board. Cell/filter anchors are left
+        # event-bearing so they still win the click.
+        cell_pe_attr = ' class="dbt-pointer-inert"' if row_has_band else ""
 
         for i, col in enumerate(columns):
             cw = col_widths.get(col, 100)
@@ -2830,7 +2816,7 @@ def _render_pagination_controls(
     Layout: each item occupies a fixed ``item_width`` slot; the rightmost
     slot's right edge sits at ``table_width``. Clickable items (live
     chevrons and inactive page numbers) get an invisible ``<rect>`` with an
-    ``onclick=updateVariable(...)`` handler \u2014 this is the hit target.
+    ``data-dbt-page-var`` the runtime commits \u2014 this is the hit target.
     Disabled chevrons, the active page, and the ellipsis are non-interactive.
     Disabled state is signaled by color (``color_disabled``), not opacity.
 
@@ -2898,10 +2884,11 @@ def _render_pagination_controls(
     if padding + label_w <= cursor_left:
         safe_label = html_module.escape(label_text, quote=True)
         label_svg = (
-            f'<text x="{padding:.1f}" y="{text_y:.1f}" font-size="{font_size}" '
+            f'<text class="dbt-paginator-label" x="{padding:.1f}" '
+            f'y="{text_y:.1f}" font-size="{font_size}" '
             f'fill="{safe_inactive}" font-family="{safe_font}" '
             f'font-weight="{paginator.weight_inactive}" '
-            f'style="font-variant-numeric: tabular-nums; user-select: none;">'
+            f'style="font-variant-numeric: tabular-nums;">'
             f"{safe_label}</text>\n"
         )
 
@@ -2945,24 +2932,24 @@ def _render_pagination_controls(
             # cursor:pointer doesn't extend into the gap between items.
             rect_x = center_x - rect_w / 2
             # Interactive hosts (dct serve, Cloud) ship variables.js and can
-            # act on onclick=updateVariable — see render/controls.py. A
+            # act on data-dbt-page-var — see render/controls.py. A
             # static export ships neither, so its hit target instead carries
             # a plain data attribute the embedded table_pagination.js script
             # reads to toggle which pre-rendered page is visible.
-            action = (
-                f"onclick=\"updateVariable('{safe_var}', '{target}')\""
-                if controls_are_interactive()
-                else f'data-dbt-page-target="{target}"'
+            # Code never ships inside a board. On a live host the button names
+            # the variable it drives and the runtime commits it (variables.js
+            # binds data-dbt-page-var); a static export names only the target,
+            # which its standalone runtime uses to toggle pre-drawn pages.
+            page_var = (
+                f' data-dbt-page-var="{safe_var}"' if controls_are_interactive() else ""
             )
             parts.append(
-                f'<rect x="{rect_x:.1f}" y="{rect_y:.1f}" '
+                f'<rect class="dbt-page-target" x="{rect_x:.1f}" y="{rect_y:.1f}" '
                 f'width="{rect_w:.1f}" height="{rect_h:.1f}" '
-                f'fill="transparent" pointer-events="all" '
-                f'style="cursor: pointer;" '
-                f"{action}/>"
+                f'fill="transparent"{page_var} data-dbt-page-target="{target}"/>'
             )
 
-        text_style = "font-variant-numeric: tabular-nums; user-select: none;"
+        text_style = "font-variant-numeric: tabular-nums;"
         data_attrs = f' data-paginator-role="{role}"'
         if is_active_page:
             data_attrs += f' data-pagination-current="{safe_var}"'
@@ -3008,10 +2995,9 @@ def _render_static_pagination_cap_note(
         f"Showing pages 1–{rendered_pages} of {total_pages} in this static export"
     )
     return (
-        f'<text x="{padding:.1f}" y="{y + 18:.1f}" font-size="{font_size}" '
-        f'fill="{safe_color}" font-family="{safe_font}" '
-        f'font-weight="{paginator.weight_inactive}" '
-        f'style="user-select: none;">{text}</text>'
+        f'<text class="dbt-paginator-label" x="{padding:.1f}" y="{y + 18:.1f}" '
+        f'font-size="{font_size}" fill="{safe_color}" font-family="{safe_font}" '
+        f'font-weight="{paginator.weight_inactive}">{text}</text>'
     )
 
 
@@ -3035,11 +3021,6 @@ def _table_pagination_script() -> str:
 
 
 _PAGINATOR_GROUP_RE = re.compile(r'<g class="dbt-paginator".*?</g>', re.DOTALL)
-# Stripped alongside the group: once every <g class="dbt-paginator"> is gone,
-# this rule matches nothing — dead CSS, not just inert.
-_PAGINATOR_GLYPH_CSS_RE = re.compile(
-    r"\s*\.dbt-chart text\.dbt-paginator-glyph \{.*?\}", re.DOTALL
-)
 
 
 def strip_pagination_chrome(svg: str) -> str:
@@ -3052,7 +3033,7 @@ def strip_pagination_chrome(svg: str) -> str:
     rasterizing; the visible page's rows are untouched, so a table simply
     shows its first page with no chrome — honest, not broken-looking.
     """
-    return _PAGINATOR_GLYPH_CSS_RE.sub("", _PAGINATOR_GROUP_RE.sub("", svg))
+    return _PAGINATOR_GROUP_RE.sub("", svg)
 
 
 def _as_resolved_table_column(
@@ -3326,7 +3307,7 @@ def _render_table_svg_core(
     colors["row_stripe"] = sanitize_color(
         tc.row.stripe.color if tc.row.stripe else None, colors["row_stripe"]
     )
-    # Link color is interpolated into an inline SVG <style> block (row-link
+    # Link color rides as the --dbt-link custom property on the row-link rect (row-link
     # hover) and into cell fill attributes, so it must be a validated color —
     # an authored font.color is free-form and would otherwise be a CSS/attr
     # injection sink. sanitize_color raises on anything but hex/transparent.
@@ -4027,7 +4008,7 @@ def _render_table_svg_core(
         ]
 
     # A host that ships variables.js (dct serve, Cloud — see render/controls.py)
-    # can act on onclick=updateVariable, so a single page renders and clicking
+    # can act on data-dbt-page-var, so a single page renders and clicking
     # a control asks the host to re-render. A static export ships neither, so
     # every page is pre-rendered into its own toggle group and a small inline
     # script (table_pagination.js) flips which one is visible — the same
@@ -4300,14 +4281,8 @@ def _render_table_svg_core(
     )
     indicator_y = current_y + current_page_rows_height + bottom_padding
 
-    # Gates the .dbt-paginator-glyph CSS rule below (see paginator_glyph_css
-    # near the end of this function): a paginator-free table's <style>
-    # should ship no dead CSS for a class it never paints.
-    paginator_rendered = False
-
     if static_multi_page:
         assert chart_id is not None  # static_multi_page requires a truthy chart_id
-        paginator_rendered = True
         page_var_name = f"{chart_id}_page"
         safe_chart_id = html_module.escape(chart_id, quote=True)
         rendered_pages = min(total_pages, _STATIC_MULTI_PAGE_MAX_PAGES)
@@ -4446,7 +4421,6 @@ def _render_table_svg_core(
         if len(data) > len(visible_data):
             if pagination_active and chart_id:
                 # Interactive pagination controls
-                paginator_rendered = True
                 page_var_name = f"{chart_id}_page"
                 controls_svg = _render_pagination_controls(
                     page=current_page,
@@ -4485,57 +4459,9 @@ def _render_table_svg_core(
     # both light and dark themes (text contrasts with its background by
     # definition). Distinct from the ink+underline cell-link treatment so the
     # two affordances read differently. Only emitted when the table has a
-    # chart-root link, to keep link-free table goldens clean.
-    row_link_class = _row_link_class(colors["link"])
-    row_link_css = (
-        f"""
-  .{row_link_class} {{
-    fill: transparent;
-    cursor: pointer;
-  }}
-  .{row_link_class}:hover {{
-    fill: color-mix(in srgb, {colors["link"]} 8%, transparent);
-  }}
-  .dbt-chart text.dbt-table-cell-inert {{
-    pointer-events: none;
-    cursor: pointer;
-  }}"""
-        if link
-        else ""
-    )
-
-    # Only emitted when a paginator actually rendered: a paginator-free
-    # table's SVG should ship no dead CSS for a class it never paints, same
-    # as row_link_css just below only appearing when a chart-root link
-    # exists. (Also keeps test assertions like `"dbt-paginator" not in svg`
-    # honest — but that's a side effect of the gate, not the reason for it;
-    # no production code greps rendered SVG for this substring.)
-    paginator_glyph_css = (
-        """
-  .dbt-chart text.dbt-paginator-glyph {
-    pointer-events: none;
-    cursor: pointer;
-  }"""
-        if paginator_rendered
-        else ""
-    )
 
     # Wrap in SVG
     svg_result = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{table_width_s}" height="{table_height_s}" viewBox="0 0 {table_width_s} {table_height_s}">
-<style>
-  .dbt-table-link:hover .dbt-table-link-text,
-  a:focus-visible .dbt-table-link-text {{
-    text-decoration-line: underline;
-    text-decoration-style: solid;
-    text-decoration-thickness: 1px;
-    text-underline-offset: 1px;
-    text-decoration-color: currentColor;
-  }}
-  a:focus-visible {{
-    outline: 2px solid currentColor;
-    outline-offset: 2px;
-  }}{paginator_glyph_css}{row_link_css}
-</style>
 {"".join(svg_parts)}
 </svg>"""
 

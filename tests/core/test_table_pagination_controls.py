@@ -410,7 +410,7 @@ class TestAutoShrinkOverridesTruncationFooter:
             board_style=resolve_style(get_theme_style()),
         )
 
-        assert "dbt-paginator" not in svg
+        assert 'class="dbt-paginator"' not in svg
         assert "more rows" not in svg
         assert "row_30" in svg
 
@@ -439,7 +439,7 @@ class TestAutoShrinkOverridesTruncationFooter:
             board_style=resolve_style(get_theme_style()),
         )
 
-        assert "dbt-paginator" not in svg
+        assert 'class="dbt-paginator"' not in svg
         assert "more rows" not in svg
         assert "row_5" in svg
 
@@ -511,7 +511,7 @@ class TestPaginationControlsInSvg:
         )
 
         assert "small_table_page" not in svg
-        assert "dbt-paginator" not in svg
+        assert 'class="dbt-paginator"' not in svg
 
     def test_no_pagination_controls_when_disabled(self, make_chart) -> None:
         from dbt_charts.core.compile.models.style.authored import (
@@ -535,7 +535,7 @@ class TestPaginationControlsInSvg:
         )
 
         assert "no_pages_page" not in svg
-        assert "dbt-paginator" not in svg
+        assert 'class="dbt-paginator"' not in svg
 
     def test_page_from_variables_shows_correct_data(self, make_chart) -> None:
         from dbt_charts.core.compile.models.style.authored import (
@@ -589,12 +589,15 @@ class TestPaginationControlsInSvg:
         inner = _find_paginator_group(svg, "nav_test_page")
 
         rects = re.findall(r"<rect[^>]*/>", inner)
-        clickable = [r for r in rects if "updateVariable" in r and "nav_test_page" in r]
-        assert clickable, "no clickable hit-rects in paginator"
+        # The button names the variable it drives; the runtime commits it. No
+        # onclick — code never ships inside a board.
+        clickable = [r for r in rects if 'data-dbt-page-var="nav_test_page"' in r]
+        assert clickable, "no hit-rects naming the page variable in paginator"
+        assert not any("updateVariable" in r for r in rects)
         for rect in clickable:
             assert 'fill="transparent"' in rect
-            assert "cursor: pointer" in rect
-            assert 'pointer-events="all"' in rect
+            # The pointer cursor is the host's rule on the class, not an inline style.
+            assert 'class="dbt-page-target"' in rect
 
     def test_first_page_prev_chevron_is_disabled(self, make_chart) -> None:
         """On page 1 the prev chevron renders in the disabled tone with no
@@ -1203,9 +1206,9 @@ class TestStaticMultiPagePagination:
 
         from dbt_charts.core.render.chart.table import _PAGINATION_CAP_NOTE_HEIGHT
 
-        label_match = re.search(r'<text x="[\d.]+" y="([\d.]+)"[^>]*>Rows ', svg)
+        label_match = re.search(r'<text [^>]*?y="([\d.]+)"[^>]*>Rows ', svg)
         assert label_match, "row-range label not found"
-        note_match = re.search(r'<text x="[\d.]+" y="([\d.]+)"[^>]*>Showing pages', svg)
+        note_match = re.search(r'<text [^>]*?y="([\d.]+)"[^>]*>Showing pages', svg)
         assert note_match, "static export cap note not found"
 
         label_y = float(label_match.group(1))
@@ -1261,11 +1264,10 @@ class TestStaticMultiPagePagination:
         )
 
         label_ys = [
-            float(y)
-            for y in re.findall(r'<text x="[\d.]+" y="([\d.]+)"[^>]*>Rows ', svg)
+            float(y) for y in re.findall(r'<text [^>]*?y="([\d.]+)"[^>]*>Rows ', svg)
         ]
         assert label_ys, "no row-range labels found"
-        note_match = re.search(r'<text x="[\d.]+" y="([\d.]+)"[^>]*>Showing pages', svg)
+        note_match = re.search(r'<text [^>]*?y="([\d.]+)"[^>]*>Showing pages', svg)
         assert note_match, "static export cap note not found"
         note_y = float(note_match.group(1))
 
@@ -1324,11 +1326,9 @@ class TestStaticMultiPagePagination:
             )
             label_ys = [
                 float(y)
-                for y in re.findall(r'<text x="[\d.]+" y="([\d.]+)"[^>]*>Rows ', svg)
+                for y in re.findall(r'<text [^>]*?y="([\d.]+)"[^>]*>Rows ', svg)
             ]
-            note_match = re.search(
-                r'<text x="[\d.]+" y="([\d.]+)"[^>]*>Showing pages', svg
-            )
+            note_match = re.search(r'<text [^>]*?y="([\d.]+)"[^>]*>Showing pages', svg)
             if note_match is None:
                 absent.append(height)
                 continue
@@ -1545,7 +1545,7 @@ class TestStripPaginationChrome:
         # is left alone, same as chart_interactivity.js always is — a
         # <script> element paints no pixels, so it isn't the dead-looking
         # affordance this guards against.
-        assert "dbt-paginator" not in stripped
+        assert 'class="dbt-paginator"' not in stripped
         assert "row_1" in stripped, "page-1 rows must survive stripping"
         # The row-range label is content ("how much am I not seeing?"), not
         # clickable-looking chrome -- it must survive even though it used to
@@ -1799,3 +1799,31 @@ class TestPaginatorFollowsCurrentPage:
             "still sizes the card even though the pager now follows the "
             "current page"
         )
+
+
+def test_a_live_paginator_publishes_its_variable_and_writes_no_script(
+    make_chart,
+) -> None:
+    """Code never ships inside a board. On a live host the button names the
+    variable it drives and the runtime commits it; the server used to write an
+    onclick="updateVariable(...)" into the SVG instead."""
+    from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
+    from dbt_charts.core.render.controls import interactive_controls
+
+    chart = make_chart(
+        "table",
+        x=None,
+        y=None,
+        id="live1",
+        style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+    )
+    data = _make_data(20)
+    chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
+    with interactive_controls(True):
+        svg = render_table_svg(
+            chart, data, width=600, board_style=resolve_style(get_theme_style())
+        )
+
+    assert "onclick=" not in svg
+    assert 'data-dbt-page-var="live1_page"' in svg
+    assert 'data-dbt-page-target="2"' in svg

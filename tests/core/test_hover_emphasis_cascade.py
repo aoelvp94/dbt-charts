@@ -21,7 +21,8 @@ from dbt_charts.core.compile.models.style.theme.charts import HoverEmphasisStyle
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.render.chart_interactivity import (
     _build_hover_emphasis_dict,
-    generate_chart_interactivity_source,
+    hover_runtime_attributes,
+    hover_runtime_source,
 )
 
 
@@ -104,8 +105,8 @@ def test_an_authored_switch_reaches_the_rendered_runtime() -> None:
     on = render_board_to_svg(_BOARD)
     off = render_board_to_svg(_BOARD + _SWITCH_OFF)
 
-    assert '"visible": true' in on
-    assert '"visible": false' in off
+    assert _published_hover_emphasis(on)["visible"] is True
+    assert _published_hover_emphasis(off)["visible"] is False
 
 
 _DROP_LINE_OVERRIDE = """
@@ -130,17 +131,30 @@ def test_an_authored_drop_line_override_reaches_the_rendered_runtime() -> None:
 
     svg = render_board_to_svg(_BOARD + _DROP_LINE_OVERRIDE)
 
-    assert '"dropLineColor": "#4b0082"' in svg
-    assert '"dropLineWidth": 12.75' in svg
+    emphasis = _published_hover_emphasis(svg)
+    assert emphasis["dropLineColor"] == "#4b0082"
+    assert emphasis["dropLineWidth"] == 12.75
 
 
-def test_source_substitutes_the_hover_emphasis_placeholder() -> None:
-    source = generate_chart_interactivity_source(
-        resolve_style(get_theme_style("stark"))
-    )
+def _published_hover_emphasis(svg: str) -> dict:
+    """The hover-emphasis dict as the board root publishes it for the runtime."""
+    import html
+    import json
 
+    match = re.search(r'data-dbt-hover-emphasis="([^"]*)"', svg)
+    assert match, "board root does not publish data-dbt-hover-emphasis"
+    return json.loads(html.unescape(match.group(1)))
+
+
+def test_the_runtime_reads_hover_emphasis_off_the_board_root() -> None:
+    """No theme value is templated into the script: the board root publishes
+    it and the one static runtime reads it at mount."""
+    attrs = hover_runtime_attributes(resolve_style(get_theme_style("stark")))
+    source = hover_runtime_source()
+
+    assert "data-dbt-hover-emphasis=" in attrs
     assert "__DCT_HOVER_EMPHASIS__" not in source
-    assert "const DCT_HOVER_EMPHASIS =" in source
+    assert "dbtHoverEmphasis" in source
 
 
 _BOARD = """
@@ -167,8 +181,8 @@ def _chart_markup(yaml: str) -> str:
     """Rendered SVG, normalized for everything that is not the board's own geometry.
 
     Three things legitimately differ between two renders and none of them is
-    what this comparison is about: the injected runtime (carrying the switch is
-    its whole job), ``data-rendered-at`` (a wall clock), and Vega's clipPath ids
+    what this comparison is about: the root's published hover facts (carrying the
+    switch is their whole job), ``data-rendered-at`` (a wall clock), and Vega's clipPath ids
     (a process-global counter, so the second render in a process is offset from
     the first). The ids are renumbered in order of appearance rather than erased,
     so a genuine change in which clip a node references still fails this.
@@ -176,6 +190,12 @@ def _chart_markup(yaml: str) -> str:
     from ._svg_render import render_board_to_svg
 
     svg = re.sub(r"<script.*?</script>", "", render_board_to_svg(yaml), flags=re.S)
+
+    # The switch rides on the board root as data now, not in a script; the
+
+    # picture beneath it is what must not change.
+
+    svg = re.sub(r' data-dbt-hover-emphasis="[^"]*"', "", svg)
     svg = re.sub(r'data-rendered-at="[^"]*"', "", svg)
     seen: dict[str, str] = {}
     return re.sub(

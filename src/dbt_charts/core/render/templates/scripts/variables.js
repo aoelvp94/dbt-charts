@@ -170,9 +170,13 @@
             el.setAttribute('data-dbt-checked', value ? 'true' : 'false');
         }
         /*{# Same emptiness test the URL branch uses, so a cleared control reads #}*/
-        /*{# back as unset rather than as the string "false". #}*/
-        var empty = value === '' || value === null || value === false;
-        el.setAttribute('data-dbt-value', empty ? '' : String(value));
+        /*{# back as unset. `false` is not one: it is the value an unticked #}*/
+        /*{# checkbox commits, and publishing "" for it hides that from a host. #}*/
+        var empty = value === '' || value === null;
+        /*{# A list is published as JSON: that is the shape a host reads back #}*/
+        /*{# (getAllVariableValues), and the URL is the only place it repeats. #}*/
+        el.setAttribute('data-dbt-value',
+            empty ? '' : Array.isArray(value) ? JSON.stringify(value) : String(value));
     }
 
     /*{# Update URL and reload (or notify parent) #}*/
@@ -184,11 +188,22 @@
 
         publishCommitted(name, value);
 
-        /*{# Update URL #}*/
+        /*{# Update URL. Absent and empty are different states and the server #}*/
+        /*{# keeps them apart: no param means "the default", `?name=` means "no #}*/
+        /*{# value" — the All row, a cleared text field, an emptied list. So '' #}*/
+        /*{# is *set*, not deleted: deleting it collapsed the two, and on any #}*/
+        /*{# control with a default, All put the default straight back. Only #}*/
+        /*{# null deletes. `false` is a value too — a checkbox's other one. #}*/
         var url = new URL(window.location);
-        if (value === '' || value === null || value === false) {
-            url.searchParams.delete(name);
-        } else {
+        url.searchParams.delete(name);
+        if (Array.isArray(value)) {
+            /*{# A list is a repeated key — `?region=west&region=east`, the way #}*/
+            /*{# a form sends a <select multiple> — so a link is hand-writable #}*/
+            /*{# and each member is its own param. An empty list is one #}*/
+            /*{# explicit empty, the same spelling every other empty uses. #}*/
+            if (!value.length) url.searchParams.append(name, '');
+            value.forEach(function(member) { url.searchParams.append(name, String(member)); });
+        } else if (value !== null) {
             url.searchParams.set(name, String(value));
         }
 
@@ -216,6 +231,7 @@
             /*{# restoreScrollIfSaved can put it back after the new page renders. #}*/
             try {
                 sessionStorage.setItem('__dfScrollY_' + window.location.pathname, String(window.scrollY));
+                sessionStorage.setItem(_MENU_OPEN_KEY + window.location.pathname, JSON.stringify(_openMenuNames()));
             } catch (e) { /*{# sessionStorage may be unavailable #}*/ }
             window.location.href = url.toString();
         }
@@ -231,11 +247,42 @@
     /*{# no longer in the document would otherwise sit on document.body forever, #}*/
     /*{# and its instance would keep answering the outside-click and Esc #}*/
     /*{# handlers. Both go when the control does. #}*/
+    /*{# Menus open when a render lands. A host replaces the board's nodes, so #}*/
+    /*{# the menu hanging off the old trigger is dropped with it — and a #}*/
+    /*{# multiselect, which exists for picking several, shut on the first pick. #}*/
+    /*{# The name is kept, and mount() opens that menu again on the new trigger. #}*/
+    var _reopenAfterMount = [];
+    var _MENU_OPEN_KEY = '__dfMenuOpen_';
+
+    function _openMenuNames() {
+        return _popoverInstances.filter(function(inst) { return inst.isOpen(); })
+            .map(function(inst) { return inst.trigger.getAttribute('data-dbt-variable'); });
+    }
+
     function _dropDetachedPopovers() {
         _popoverInstances = _popoverInstances.filter(function(inst) {
             if (inst.trigger.isConnected) return true;
+            if (inst.isOpen()) _reopenAfterMount.push(inst.trigger.getAttribute('data-dbt-variable'));
             if (inst.popover && inst.popover.parentNode) inst.popover.remove();
             return false;
+        });
+    }
+
+    function _reopenMenus() {
+        try {
+            var key = _MENU_OPEN_KEY + window.location.pathname;
+            var saved = sessionStorage.getItem(key);
+            if (saved !== null) {
+                sessionStorage.removeItem(key);
+                _reopenAfterMount = _reopenAfterMount.concat(JSON.parse(saved));
+            }
+        } catch (e) { /*{# sessionStorage may be unavailable #}*/ }
+        var names = _reopenAfterMount;
+        _reopenAfterMount = [];
+        _popoverInstances.forEach(function(inst) {
+            if (names.indexOf(inst.trigger.getAttribute('data-dbt-variable')) !== -1 && !inst.isOpen()) {
+                inst.open();
+            }
         });
     }
 
@@ -286,6 +333,26 @@
         });
     }
 
+    /*{# Focus is granted here, once, for every drawn control — never inside a #}*/
+    /*{# binding. Clicking an SVG <g> does not focus it the way clicking an input #}*/
+    /*{# does, and granting it per binding meant any control that skipped the #}*/
+    /*{# helper (or a future one) silently kept the ring on whatever was operated #}*/
+    /*{# last, pointing at one control while another's menu stood open. On #}*/
+    /*{# pointerdown, not click: that is when a browser grants focus, so a lifted #}*/
+    /*{# text overlay blurs with this control as its relatedTarget and commits #}*/
+    /*{# itself away instead of sitting behind the new menu. The label run is #}*/
+    /*{# the authoring handle, not the value surface — a host answers that press #}*/
+    /*{# by revealing YAML, so the control must not take the caret from it. #}*/
+    if (!_documentWired) document.addEventListener('pointerdown', function(event) {
+        if (!event.target.closest) return;
+        var control = event.target.closest('[data-dbt-variable]');
+        if (!control || !control.focus) return;
+        if (control.getAttribute('data-dbt-enabled') === 'false') return;
+        var run = event.target.closest('[data-authored-kind="label"]');
+        if (run && control.contains(run)) return;
+        control.focus();
+    });
+
     if (!_documentWired) {
         document.addEventListener('click', function(event) {
             if (_openingTurn) return;
@@ -307,6 +374,16 @@
             if (open[0].trigger.focus) open[0].trigger.focus();
         });
     }
+
+    /*{# A paginator button on a live board names the variable it drives; the #}*/
+    /*{# server writes no onclick into the SVG. A static export's button names #}*/
+    /*{# only its target page, so this leaves it alone. #}*/
+    if (!_documentWired) document.addEventListener('click', function(event) {
+        if (!event.target.closest) return;
+        var button = event.target.closest('[data-dbt-page-var]');
+        if (!button) return;
+        updateVariable(button.getAttribute('data-dbt-page-var'), button.getAttribute('data-dbt-page-target'));
+    });
 
     /*{# ── Intercept clicks on SVG <a href="?..."> links ──────────────────────── #}*/
     /*{# Blob URL iframes can't navigate to query-string URLs, so we parse the #}*/
@@ -520,12 +597,21 @@
         popover.style.left = '';
     }
 
-    /*{# Position from the trigger's viewport coords, flipping to a right-edge #}*/
+    /*{# A drawn control is `<g>[label][field]`, and the <g> is the tab stop and #}*/
+    /*{# the combobox — so its client rect spans the label too. The menu belongs #}*/
+    /*{# under the field the user clicked, so anchor off the field box the render #}*/
+    /*{# already marks. Controls without one (nothing today) fall back to the #}*/
+    /*{# group rather than losing their placement. #}*/
+    function _anchorBoxOf(trigger) {
+        return trigger.querySelector('[data-dbt-field]') || trigger;
+    }
+
+    /*{# Position from the anchor's viewport coords, flipping to a right-edge #}*/
     /*{# anchor when a left anchor would overflow. getBoundingClientRect() on an #}*/
     /*{# SVG element returns its on-screen box, so this works against a drawn #}*/
     /*{# control unchanged. #}*/
     function _positionPopoverFixed(trigger, popover) {
-        var rect = trigger.getBoundingClientRect();
+        var rect = _anchorBoxOf(trigger).getBoundingClientRect();
         popover.style.top = (rect.bottom + 6) + 'px';
         var popoverWidth = popover.getBoundingClientRect().width;
         var margin = 8;
@@ -536,11 +622,15 @@
         }
     }
 
-    /*{# A fixed popover does not follow its anchor, so an open one is re-placed #}*/
-    /*{# on scroll and resize. #}*/
+    /*{# A fixed element does not follow its anchor, so every open one — a #}*/
+    /*{# popover, or the native input lifted over a text field — is re-placed #}*/
+    /*{# on scroll and resize. One mechanism for everything that floats. #}*/
     function _repositionOpenPopovers() {
         _popoverInstances.forEach(function(inst) {
             if (inst.isOpen()) _positionPopoverFixed(inst.trigger, inst.popover);
+        });
+        document.querySelectorAll('.dbt-variable-overlay').forEach(function(overlay) {
+            if (overlay.__dbtPlace) overlay.__dbtPlace();
         });
     }
 
@@ -600,6 +690,31 @@
     /*{# would inherit the board's scale, and a fixed element under a scaled #}*/
     /*{# ancestor inherits that scale too — menus would shrink with the board. #}*/
     /*{# At rest we are in board coordinates; on interaction, viewport ones. #}*/
+    /*{# The committed selection as a list, however it was published: a JSON #}*/
+    /*{# list, a bare scalar from a URL written before the control was a list, #}*/
+    /*{# or '' for nothing. This is the one source the rows are lit from. #}*/
+    function _committedList(el) {
+        var raw = el.getAttribute('data-dbt-value') || '';
+        if (raw === '') return [];
+        try {
+            var parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [raw];
+        } catch (e) { return [raw]; }
+    }
+
+    /*{# Every row lit from `chosen` and nothing else — the unset row exactly #}*/
+    /*{# when nothing is chosen, a member exactly when it is. Rows never toggle #}*/
+    /*{# themselves: state that lives in the DOM is state that drifts, and it #}*/
+    /*{# did — "All" and a member lit at once. #}*/
+    function _reflectSelection(popover, chosen) {
+        popover.querySelectorAll('.dbt-select-option').forEach(function(row) {
+            var lit = row.hasAttribute('data-unset')
+                ? !chosen.length
+                : chosen.indexOf(row.getAttribute('data-value')) !== -1;
+            row.setAttribute('aria-selected', lit ? 'true' : 'false');
+        });
+    }
+
     function _buildSelectPopover(el, varName) {
         var raw = el.getAttribute('data-dbt-options');
         var canUnset = el.getAttribute('data-dbt-can-unset') === 'true';
@@ -611,18 +726,18 @@
         /*{# returned to unset — that row is the whole menu. #}*/
         if (!values.length && !canUnset) return null;
 
-        var raw_current = el.getAttribute('data-dbt-value') || '';
-        var selected;
-        try {
-            var parsed = JSON.parse(raw_current);
-            selected = Array.isArray(parsed) ? parsed : [raw_current];
-        } catch (e) { selected = [raw_current]; }
         var popover = document.createElement('div');
         /*{# Both classes: .dbt-popover is the card — display:none included — and #}*/
         /*{# .dbt-select-popover only modifies it. Setting the modifier alone #}*/
         /*{# leaves every select's options rendered, unstyled, on the page. #}*/
         popover.className = 'dbt-popover dbt-select-popover';
         popover.setAttribute('role', 'listbox');
+        /*{# On the listbox, where ARIA puts it — and where the stylesheet reads #}*/
+        /*{# it to draw a checkbox on every member row: the one cue that tells a #}*/
+        /*{# multi from a single before anything is clicked. #}*/
+        if (el.getAttribute('data-dbt-input') === 'multiselect') {
+            popover.setAttribute('aria-multiselectable', 'true');
+        }
 
         /*{# A no-default, non-required control offers its way back to unset. #}*/
         /*{# Without this row the user can filter and never unfilter, since a #}*/
@@ -635,9 +750,6 @@
             /*{# appearance and this is what it *is* — the way back to unset. #}*/
             clear.setAttribute('data-unset', 'true');
             clear.setAttribute('data-value', '');
-            clear.setAttribute(
-                'aria-selected', selected.join('') === '' ? 'true' : 'false'
-            );
             /*{# No `|| 'All'` fallback: the server emits this attribute on #}*/
             /*{# every can_unset control, and can_unset is the only branch that #}*/
             /*{# builds this row. A default here would silently diverge from #}*/
@@ -651,13 +763,11 @@
             opt.className = 'dbt-select-option';
             opt.setAttribute('role', 'option');
             opt.setAttribute('data-value', value);
-            opt.setAttribute(
-                'aria-selected', selected.indexOf(value) !== -1 ? 'true' : 'false'
-            );
             opt.id = 'dbt-opt-' + varName + '-' + i;
             opt.textContent = value;
             popover.appendChild(opt);
         });
+        _reflectSelection(popover, _committedList(el));
         document.body.appendChild(popover);
         return popover;
     }
@@ -713,33 +823,23 @@
                 updateVariable(name, opt.getAttribute('data-value'));
                 return;
             }
-            /*{# The unset row is not a member to toggle — it is the way out. #}*/
-            /*{# Toggling it lands on `chosen = []`, which commits the literal #}*/
-            /*{# string "[]" into the URL; the next render narrows that to a #}*/
-            /*{# one-member selection of "[]" and filters the board on it. #}*/
-            /*{# Clearing means committing empty, so the param is deleted. #}*/
-            if (opt.hasAttribute('data-unset')) {
-                close();
-                updateVariable(name, '');
-                return;
-            }
-            var wasOn = opt.getAttribute('aria-selected') === 'true';
-            opt.setAttribute('aria-selected', wasOn ? 'false' : 'true');
-            var chosen = Array.prototype.slice
-                .call(popover.querySelectorAll('[aria-selected="true"]'))
-                .map(function(row) { return row.getAttribute('data-value'); })
-                .filter(function(v) { return v !== ''; });
+            var value = opt.getAttribute('data-value');
+            var committed = _committedList(el);
+            var chosen = opt.hasAttribute('data-unset') ? []
+                : committed.indexOf(value) === -1 ? committed.concat([value])
+                : committed.filter(function(v) { return v !== value; });
             /*{# A required control with no default has no legal empty state: #}*/
             /*{# committing one renders the next page with no board, and so no #}*/
-            /*{# control to get back from. Refuse rather than strand the user. #}*/
-            if (!chosen.length && el.getAttribute('data-dbt-can-unset') !== 'true') {
-                opt.setAttribute('aria-selected', 'true');
-                return;
-            }
-            updateVariable(name, JSON.stringify(chosen));
+            /*{# control to get back from. Refuse — nothing has changed yet. #}*/
+            if (!chosen.length && el.getAttribute('data-dbt-can-unset') !== 'true') return;
+            _reflectSelection(popover, chosen);
+            /*{# The unset row is the way out, so it closes; a member toggles and #}*/
+            /*{# stays open for the next pick. Empty commits '' either way: one #}*/
+            /*{# spelling of "nothing", which the server reads as the empty list. #}*/
+            if (opt.hasAttribute('data-unset')) close();
+            updateVariable(name, chosen.length ? chosen : '');
         });
-        el.setAttribute('aria-multiselectable', multi ? 'true' : 'false');
-        _registerPopover({trigger: el, popover: popover, isOpen: isOpen, close: close});
+        _registerPopover({trigger: el, popover: popover, isOpen: isOpen, open: open, close: close});
     }
 
     /*{# Text entry lifts to a native input rather than being drawn. A caret, #}*/
@@ -751,7 +851,6 @@
         function lift() {
             if (document.querySelector('.dbt-variable-overlay')) return;
             var field = el.querySelector('[data-dbt-field]');
-            var fieldRect = (field || el).getBoundingClientRect();
 
             var input = document.createElement('input');
             input.className = 'dbt-variable-overlay';
@@ -759,11 +858,47 @@
                 : (inputType === 'date' || inputType === 'datepicker') ? 'date' : 'text';
             input.value = el.getAttribute('data-dbt-value') || '';
             input.style.position = 'fixed';
-            input.style.left = fieldRect.left + 'px';
-            input.style.top = fieldRect.top + 'px';
-            input.style.width = fieldRect.width + 'px';
-            input.style.height = fieldRect.height + 'px';
+            /*{# Placed from the field's client rect, and re-placed from it on #}*/
+            /*{# every scroll and resize (_repositionOpenPopovers): a fixed #}*/
+            /*{# element does not move with the document, so without that the #}*/
+            /*{# field slid away under a scroll and the caret stayed behind, #}*/
+            /*{# floating over whatever chart had scrolled up beneath it. #}*/
+            function place() {
+                var fieldRect = (field || el).getBoundingClientRect();
+                input.style.left = fieldRect.left + 'px';
+                input.style.top = fieldRect.top + 'px';
+                input.style.width = fieldRect.width + 'px';
+                input.style.height = fieldRect.height + 'px';
+                /*{# Corners, type and inset from the drawing it covers, not from #}*/
+                /*{# page tokens: those are page pixels, and the drawing is board #}*/
+                /*{# units scaled to fit — so a 13px input over a board at 1.7x #}*/
+                /*{# shrank the text the moment it was clicked. Everything here #}*/
+                /*{# is scaled by the ratio the box itself was. #}*/
+                var drawnWidth = field && parseFloat(field.getAttribute('width'));
+                if (!(drawnWidth > 0)) return;
+                var scale = fieldRect.width / drawnWidth;
+                var rx = parseFloat(field.getAttribute('rx'));
+                if (rx > 0) input.style.borderRadius = (rx * scale) + 'px';
+                var drawnX = parseFloat(field.getAttribute('x'));
+                var valueText = Array.prototype.filter.call(el.querySelectorAll('text'), function(t) {
+                    return parseFloat(t.getAttribute('x')) >= drawnX;
+                })[0];
+                if (!valueText) return;
+                var fontSize = parseFloat(valueText.getAttribute('font-size'));
+                if (fontSize > 0) input.style.fontSize = (fontSize * scale) + 'px';
+                var family = valueText.getAttribute('font-family');
+                if (family) input.style.fontFamily = family;
+                var inset = parseFloat(valueText.getAttribute('x')) - drawnX;
+                if (inset >= 0) input.style.padding = '0 ' + (inset * scale) + 'px';
+            }
+            place();
+            input.__dbtPlace = place;
             document.body.appendChild(input);
+            /*{# While the input is up, the ring stays on the drawn field beneath #}*/
+            /*{# it — the same rule, the same box, as a focused drawn control. #}*/
+            /*{# The group cannot be :focus while its overlay is, so this marker #}*/
+            /*{# is what the stylesheet reads in its place. #}*/
+            el.setAttribute('data-dbt-active', '');
             input.focus();
             input.select();
 
@@ -779,20 +914,41 @@
             setTimeout(function() { liftTurn = false; }, 0);
 
             var done = false;
-            function commit(save) {
+            /*{# `keepCaret` is false when the blur came from another control #}*/
+            /*{# taking focus: handing it back here would drag the ring off the #}*/
+            /*{# control the user just clicked and onto this one. Enter and #}*/
+            /*{# Escape end the edit with nowhere else to be, so those keep it. #}*/
+            function commit(save, keepCaret) {
                 if (done) return;
                 done = true;
                 var next = input.value;
                 input.remove();
-                el.focus();
+                el.removeAttribute('data-dbt-active');
+                if (keepCaret && el.focus) el.focus();
                 if (save && next !== (el.getAttribute('data-dbt-value') || '')) {
                     updateVariable(name, next);
                 }
             }
             input.__dbtOwner = el;
-            input.__dbtDismiss = function() { done = true; input.remove(); };
-            input.addEventListener('blur', function() {
-                if (!liftTurn || done) { commit(true); return; }
+            input.__dbtDismiss = function() {
+                done = true;
+                input.remove();
+                el.removeAttribute('data-dbt-active');
+            };
+            input.addEventListener('blur', function(e) {
+                /*{# A blur with somewhere to go is another control claiming the #}*/
+                /*{# caret; one without is a click on nothing, and the control #}*/
+                /*{# this input covers is where focus belongs. #}*/
+                var elsewhere = !!e.relatedTarget;
+                /*{# The liftTurn grace below is for the *host* focusing its own #}*/
+                /*{# UI on the way in. Another drawn control is not that: it is #}*/
+                /*{# the user moving on, and reclaiming the caret from it would #}*/
+                /*{# leave this input mounted behind the menu they just opened. #}*/
+                var toAnotherControl = elsewhere
+                    && e.relatedTarget.closest
+                    && e.relatedTarget.closest('[data-dbt-variable]')
+                    && e.relatedTarget.closest('[data-dbt-variable]') !== el;
+                if (!liftTurn || done || toAnotherControl) { commit(true, !elsewhere); return; }
                 /*{# The host's own focus call is mid-flight — it blurs this #}*/
                 /*{# input on its way in, so focusing back from inside the blur #}*/
                 /*{# loses the race and it lands there anyway. Take the caret in #}*/
@@ -800,8 +956,8 @@
                 setTimeout(function() { if (!done) input.focus(); }, 0);
             });
             input.addEventListener('keydown', function(e) {
-                if (e.key === 'Enter') { e.preventDefault(); commit(true); }
-                else if (e.key === 'Escape') { e.preventDefault(); commit(false); }
+                if (e.key === 'Enter') { e.preventDefault(); commit(true, true); }
+                else if (e.key === 'Escape') { e.preventDefault(); commit(false, true); }
             });
         }
         _onValueGesture(el, lift);
@@ -833,15 +989,61 @@
         /*{# re-filters the board to the slider's minimum. Only the track is a #}*/
         /*{# position the user meant to pick. Keys stay on the group, which is #}*/
         /*{# what holds focus. #}*/
-        track.addEventListener('click', function(e) {
+        function valueAt(clientX) {
             var b = bounds();
-            if (!b) return;
+            if (!b) return null;
             var rect = track.getBoundingClientRect();
-            if (!rect.width) return;
-            var fraction = Math.min(Math.max((e.clientX - rect.left) / rect.width, 0), 1);
+            if (!rect.width) return null;
+            var fraction = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
             var raw = b.min + Math.round((fraction * (b.max - b.min)) / b.step) * b.step;
-            updateVariable(name, tidy(Math.min(Math.max(raw, b.min), b.max)));
+            return tidy(Math.min(Math.max(raw, b.min), b.max));
+        }
+
+        /*{# Move the drawn thumb while the pointer is down. The commit is a #}*/
+        /*{# board re-render, so doing one per pointermove would be a render #}*/
+        /*{# storm — the thumb follows locally and the value commits on release. #}*/
+        function previewAt(value) {
+            var b = bounds();
+            var thumb = el.querySelector('[data-dbt-ornament="slider-thumb"]');
+            if (!b || !thumb) return;
+            var rect = track.getBoundingClientRect();
+            var svg = el.ownerSVGElement || el.closest('svg');
+            if (!rect.width || !svg) return;
+            /*{# The track's own drawn x/width, so the preview lands in board #}*/
+            /*{# units — the client rect is in page pixels and the board scales. #}*/
+            var x = parseFloat(track.getAttribute('x'));
+            var w = parseFloat(track.getAttribute('width'));
+            if (isNaN(x) || isNaN(w)) return;
+            thumb.setAttribute('cx', x + w * ((value - b.min) / (b.max - b.min)));
+        }
+
+        /*{# Pointer events rather than click: a slider you cannot drag reads as #}*/
+        /*{# broken, and `click` alone gave no drag at all. Capture keeps the #}*/
+        /*{# gesture on this track once it starts, so leaving the track mid-drag #}*/
+        /*{# keeps sliding instead of dropping the pointer. #}*/
+        var dragging = false;
+        track.addEventListener('pointerdown', function(e) {
+            var value = valueAt(e.clientX);
+            if (value === null) return;
+            dragging = true;
+            if (track.setPointerCapture && e.pointerId !== undefined) {
+                try { track.setPointerCapture(e.pointerId); } catch (err) { /*{# unsupported #}*/ }
+            }
+            previewAt(value);
         });
+        track.addEventListener('pointermove', function(e) {
+            if (!dragging) return;
+            var value = valueAt(e.clientX);
+            if (value !== null) previewAt(value);
+        });
+        function release(e) {
+            if (!dragging) return;
+            dragging = false;
+            var value = valueAt(e.clientX);
+            if (value !== null) updateVariable(name, value);
+        }
+        track.addEventListener('pointerup', release);
+        track.addEventListener('pointercancel', function() { dragging = false; });
 
         el.addEventListener('keydown', function(e) {
             var b = bounds();
@@ -1127,10 +1329,11 @@
                 if (!btn) return;
                 var action = btn.getAttribute('data-action');
                 if (action === 'clear') {
-                    range = [null, null];
-                    hoverDate = null;
-                    markRailActive(rail, null);
-                    rebuildCalendar();
+                    /*{# Terminal, like a select's All row: closed before the #}*/
+                    /*{# commit, so the menu is not open when the render lands #}*/
+                    /*{# and does not come back with it. open() re-seeds the #}*/
+                    /*{# calendar from the committed value, so nothing to reset. #}*/
+                    close();
                     updateVariable(name, '');
                 } else if (action === 'apply') {
                     close();
@@ -1186,7 +1389,7 @@
             hoverDate = null;
             if (range[0] && range[1]) {
                 markRailActive(rail, matchPreset(range));
-                updateVariable(name, JSON.stringify([toISO(range[0]), toISO(range[1])]));
+                updateVariable(name, [toISO(range[0]), toISO(range[1])]);
             } else {
                 markRailActive(rail, null);
             }
@@ -1199,7 +1402,7 @@
                 range = r;
                 viewMonth = new Date(r[1].getFullYear(), r[1].getMonth(), 1);
                 markRailActive(rail, p.id);
-                updateVariable(name, JSON.stringify([toISO(r[0]), toISO(r[1])]));
+                updateVariable(name, [toISO(r[0]), toISO(r[1])]);
             } else {
                 /*{# 'custom' — just highlight the rail entry and let the user pick. #}*/
                 markRailActive(rail, p.id);
@@ -1211,7 +1414,7 @@
             if (hoverDate) { hoverDate = null; paintCalendarState(); }
         });
 
-        _registerPopover({trigger: el, popover: popover, isOpen: isOpen, close: close});
+        _registerPopover({trigger: el, popover: popover, isOpen: isOpen, open: open, close: close});
     }
 
     function _bindCheckbox(el, name) {
@@ -1297,6 +1500,10 @@
                 setupVariableHoverHighlighting(board);
             }
         });
+        _reopenMenus();
+        /*{# The hover runtime ships ahead of this one in the same bundle; a #}*/
+        /*{# swapped-in board needs binding there too, and a host calls one mount. #}*/
+        window.dbtChartHover.mount(scope);
         return bound;
     }
 

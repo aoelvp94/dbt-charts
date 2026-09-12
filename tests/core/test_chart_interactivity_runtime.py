@@ -1,4 +1,4 @@
-"""Tests for core-owned chart hover runtime embedding."""
+"""Tests for where the core-owned chart hover runtime ships."""
 
 from collections.abc import Callable
 from pathlib import Path
@@ -8,6 +8,7 @@ from dbt_charts.core.compile import compile
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.render import render
+from dbt_charts.core.render.chart_interactivity import hover_runtime_source
 
 _TEST_YAML = """
 title: Test Dashboard
@@ -39,20 +40,19 @@ def _compile_board(local_project: Callable[..., FilesystemProject]):
     return result.board, executor
 
 
-def test_svg_output_embeds_chart_hover_runtime(
+def test_svg_output_carries_hover_facts_not_the_runtime(
     local_project: Callable[..., FilesystemProject],
 ):
     board, executor = _compile_board(local_project)
 
     svg_output = render(board, executor, format="svg").output
 
-    assert "window.__dbtChartsChartHoverState" in svg_output
-    assert "function escapeHtml(value)" in svg_output
-    assert "className = 'dbt-tooltip'" in svg_output
-    assert "document.currentScript" in svg_output
+    assert "<script" not in svg_output
+    assert 'data-dbt-tooltip-style="' in svg_output
+    assert "window.__dbtChartsChartHoverState" in hover_runtime_source()
 
 
-def test_html_output_inherits_chart_hover_runtime_from_svg(
+def test_html_output_ships_the_hover_runtime(
     local_project: Callable[..., FilesystemProject],
 ):
     board, executor = _compile_board(local_project)

@@ -107,8 +107,9 @@ def render_variables_strip_svg(
     # (variables.input.background), never the container.
     anchor = (
         f'<rect data-dbt-variables-box="true" data-dbt-align="{align}" '
+        f'class="dbt-pointer-inert" '
         f'x="0" y="0" width="{px(width)}" height="{px(layout.height)}" '
-        'fill="none" pointer-events="none"/>'
+        'fill="none"/>'
     )
     # The border color rides on the group as a custom property: the board's
     # stylesheet names the property, the render supplies the theme's value, and
@@ -399,7 +400,7 @@ def _draw_slider(
         f'<rect data-dbt-field="slider" data-dbt-ornament="slider" '
         f'x="{px(x)}" y="{px(mid - 2)}" width="{px(track_width)}" height="4" rx="2" '
         f'fill="{variables_style.input.background}" stroke="none"/>',
-        f'<circle cx="{px(thumb)}" cy="{px(mid)}" r="6" '
+        f'<circle data-dbt-ornament="slider-thumb" cx="{px(thumb)}" cy="{px(mid)}" r="6" '
         f'fill="{variables_style.value.font.color}"/>',
         f'<text x="{px(x + track_width + float(variables_style.control_gap))}" '
         f'y="{px(mid + centered_baseline_offset(value_font.family, font_size))}" font-size="{px(font_size)}" '

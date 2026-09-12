@@ -510,7 +510,7 @@ def render_details_summary(
         f'fill="{_summary_fill or "none"}" '
         f'stroke="{resolved_style.border.color}" stroke-width="{details_config.border.width}"'
         f"{border_dash_attrs(details_config.border)} "
-        f'rx="{details_config.border.radius}" style="cursor: pointer;"/>'
+        f'rx="{details_config.border.radius}" class="dbt-details-toggle"/>'
     )
     return (
         f'<a href="{html.escape(href)}">'

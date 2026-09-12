@@ -28,9 +28,10 @@ def to_html(
         livereload: When True, embed the ``dct serve`` live-reload script that
             reloads the tab on a file change. Off for static render / Cloud / MCP.
         controls: True when the caller is a host that can re-run a board's
-            queries. The page then carries the control runtime and stylesheet,
-            which is what binds the drawn controls. A static export gets
-            neither: a filter that cannot filter is worse than no filter.
+            queries. The page then carries the control runtime, which is what
+            binds the drawn controls; the host stylesheet ships either way,
+            since a static export is still a page in a browser, but not the
+            runtime: a filter that cannot filter is worse than no filter.
             The runtime is not only for variables — it also intercepts the
             ``<a href="?...">`` links a tabbed board renders — so a live host
             ships it even for a board with no variables at all.
@@ -44,6 +45,7 @@ def to_html(
     """
     import html as html_module
 
+    from dbt_charts.core.render.chart_interactivity import hover_runtime_source
     from dbt_charts.core.render.controls import (
         controls_runtime_source,
         controls_stylesheet,
@@ -82,6 +84,12 @@ def to_html(
         svg=svg_content,
         chrome=chrome,
         livereload=livereload,
-        controls_css=controls_stylesheet() if controls else "",
-        controls_runtime=controls_runtime_source() if controls else "",
+        # The stylesheet always: a static HTML export is a page in a browser
+        # with real <a href> links, a text cursor and a hover underline, and no
+        # runtime to grant them — the board itself ships none (a board is a
+        # picture). Only the runtime is gated on a host that can act on it.
+        controls_css=controls_stylesheet(),
+        controls_runtime=controls_runtime_source()
+        if controls
+        else hover_runtime_source(),
     )
