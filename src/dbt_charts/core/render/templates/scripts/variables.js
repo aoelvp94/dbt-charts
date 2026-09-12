@@ -842,6 +842,39 @@
         _registerPopover({trigger: el, popover: popover, isOpen: isOpen, open: open, close: close});
     }
 
+    /*{# The value the chrome drew for a field: the text placed at or past the #}*/
+    /*{# field's own x, which is what place() sizes the lifted input from too. #}*/
+    function _drawnValueText(el, field) {
+        var drawnX = field && parseFloat(field.getAttribute('x'));
+        if (!(drawnX >= 0)) return null;
+        return Array.prototype.filter.call(el.querySelectorAll('text'), function(t) {
+            return parseFloat(t.getAttribute('x')) >= drawnX;
+        })[0] || null;
+    }
+
+    function _numberBounds(el) {
+        function read(attr) {
+            var v = parseFloat(el.getAttribute('data-dbt-' + attr));
+            return isNaN(v) ? null : v;
+        }
+        return {min: read('min'), max: read('max'), step: read('step')};
+    }
+
+    function _constrainNumber(text, bounds) {
+        if (text === '') return text;
+        var v = parseFloat(text);
+        if (isNaN(v)) return text;
+        if (bounds.min !== null && v < bounds.min) v = bounds.min;
+        if (bounds.max !== null && v > bounds.max) v = bounds.max;
+        if (bounds.step > 0) {
+            var base = bounds.min !== null ? bounds.min : 0;
+            v = base + Math.round((v - base) / bounds.step) * bounds.step;
+            if (bounds.max !== null && v > bounds.max) v -= bounds.step;
+            v = parseFloat(v.toFixed(6));
+        }
+        return String(v);
+    }
+
     /*{# Text entry lifts to a native input rather than being drawn. A caret, #}*/
     /*{# selection, IME, and a mobile keyboard are not things to reimplement in #}*/
     /*{# SVG. The overlay is page-level and native-size — the same rule the #}*/
@@ -857,6 +890,17 @@
             input.type = inputType === 'number' ? 'number'
                 : (inputType === 'date' || inputType === 'datepicker') ? 'date' : 'text';
             input.value = el.getAttribute('data-dbt-value') || '';
+            var hint = el.getAttribute('data-dbt-placeholder');
+            if (hint) input.placeholder = hint;
+            /*{# The authored bounds ride on the group; the native input gets #}*/
+            /*{# them for its spinner and validity, and commit() enforces them, #}*/
+            /*{# since typing past a bound is something a number input allows. #}*/
+            var bounds = _numberBounds(el);
+            if (inputType === 'number') {
+                ['min', 'max', 'step'].forEach(function(key) {
+                    if (bounds[key] !== null) input[key] = String(bounds[key]);
+                });
+            }
             input.style.position = 'fixed';
             /*{# Placed from the field's client rect, and re-placed from it on #}*/
             /*{# every scroll and resize (_repositionOpenPopovers): a fixed #}*/
@@ -880,9 +924,7 @@
                 var rx = parseFloat(field.getAttribute('rx'));
                 if (rx > 0) input.style.borderRadius = (rx * scale) + 'px';
                 var drawnX = parseFloat(field.getAttribute('x'));
-                var valueText = Array.prototype.filter.call(el.querySelectorAll('text'), function(t) {
-                    return parseFloat(t.getAttribute('x')) >= drawnX;
-                })[0];
+                var valueText = _drawnValueText(el, field);
                 if (!valueText) return;
                 var fontSize = parseFloat(valueText.getAttribute('font-size'));
                 if (fontSize > 0) input.style.fontSize = (fontSize * scale) + 'px';
@@ -922,10 +964,16 @@
                 if (done) return;
                 done = true;
                 var next = input.value;
+                if (inputType === 'number') next = _constrainNumber(next, bounds);
                 input.remove();
                 el.removeAttribute('data-dbt-active');
                 if (keepCaret && el.focus) el.focus();
                 if (save && next !== (el.getAttribute('data-dbt-value') || '')) {
+                    /*{# Draw what was committed now: the render that carries it #}*/
+                    /*{# is a round trip away, and until it lands the drawing #}*/
+                    /*{# would still read the value the user just replaced. #}*/
+                    var drawn = _drawnValueText(el, field);
+                    if (drawn) drawn.textContent = next || hint || '';
                     updateVariable(name, next);
                 }
             }

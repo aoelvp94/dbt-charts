@@ -1085,3 +1085,61 @@ def test_a_required_multiselect_with_a_default_still_cannot_be_unset() -> None:
     )
 
     assert _groups(svg)[0].get("data-dbt-can-unset") == "false"
+
+
+def test_a_number_input_publishes_its_authored_bounds() -> None:
+    """The lifted native input enforces min/max/step only if the chrome tells it
+    what they are; a number with none authored constrains nothing (the theme's
+    slider defaults are a slider's, not a number's)."""
+    svg, _ = _strip({"age": Variable(input="number", min=0, max=100, step=5)})
+    (group,) = _groups(svg)
+
+    assert group.get("data-dbt-min") == "0"
+    assert group.get("data-dbt-max") == "100"
+    assert group.get("data-dbt-step") == "5"
+
+    svg, _ = _strip({"age": Variable(input="number")})
+    (group,) = _groups(svg)
+    assert group.get("data-dbt-min") is None
+    assert group.get("data-dbt-step") is None
+
+
+@pytest.mark.parametrize("input_type", ["number", "slider"])
+def test_published_bounds_are_exact(input_type: str) -> None:
+    """The runtime clamps to what is published, so a bound must survive the
+    trip byte-for-byte: no six-significant-digit rounding, no float noise."""
+    svg, _ = _strip(
+        {"n": Variable(input=input_type, min=1234567, max=99999999, step=0.1)}
+    )
+    (group,) = _groups(svg)
+
+    assert group.get("data-dbt-min") == "1234567"
+    assert group.get("data-dbt-max") == "99999999"
+    assert group.get("data-dbt-step") == "0.1"
+
+
+@pytest.mark.parametrize("input_type", ["text", "number"])
+def test_an_empty_field_draws_its_placeholder_as_a_hint_not_a_value(
+    input_type: str,
+) -> None:
+    """A placeholder reads as a hint: muted, and published for the lifted
+    native input to show, never drawn in the value color where it passes
+    for a committed value."""
+    svg, _ = _strip({"q": Variable(input=input_type, placeholder="Type here")})
+    (group,) = _groups(svg)
+    hint = [e for e in group.iter() if e.tag.endswith("text") and e.text == "Type here"]
+
+    assert len(hint) == 1
+    assert hint[0].get("fill") == _rs().variables.placeholder.font.color
+    assert hint[0].get("fill") != _rs().variables.value.font.color
+    assert group.get("data-dbt-placeholder") == "Type here"
+    assert group.get("data-dbt-value") == ""
+
+    svg, _ = _strip(
+        {"q": Variable(input=input_type, placeholder="Type here")},
+        {"q": "42" if input_type == "number" else "hello"},
+    )
+    (group,) = _groups(svg)
+    value = [e for e in group.iter() if e.tag.endswith("text")][-1]
+    assert value.get("fill") == _rs().variables.value.font.color
+    assert group.get("data-dbt-placeholder") == "Type here"

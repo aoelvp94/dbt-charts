@@ -271,3 +271,14 @@ rows:
         result = compile(yaml_content)
         assert not result.success
         assert any("must be [start, end]" in str(e) for e in result.errors)
+
+
+@pytest.mark.parametrize("bound", ["min", "max", "step"])
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
+def test_a_non_finite_bound_is_rejected(bound: str, value: float) -> None:
+    with pytest.raises(ValueError, match="finite"):
+        Variable(input="number", **{bound: value})
+
+
+def test_an_integer_bound_past_the_double_range_is_still_a_bound() -> None:
+    assert Variable(input="number", max=10**400).max == 10**400

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dbtcharts.com/schemas/board-resolved.schema.json",
-  "version": "0.6.1.dev135",
+  "version": "0.7.2.dev5",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -23207,7 +23207,7 @@
             }
           ],
           "default": null,
-          "description": "Minimum value for slider/range inputs.",
+          "description": "Minimum value for number, slider and range inputs.",
           "title": "Min"
         },
         "max": {
@@ -23223,7 +23223,7 @@
             }
           ],
           "default": null,
-          "description": "Maximum value for slider/range inputs.",
+          "description": "Maximum value for number, slider and range inputs.",
           "title": "Max"
         },
         "step": {
@@ -23239,7 +23239,7 @@
             }
           ],
           "default": null,
-          "description": "Step size for slider/range inputs.",
+          "description": "Step size for number, slider and range inputs.",
           "title": "Step"
         },
         "operator": {

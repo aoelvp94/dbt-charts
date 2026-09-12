@@ -50,6 +50,11 @@ UNSET_DATERANGE_LABEL = "All dates"
 UNSET_DATE_LABEL = "Any date"
 
 
+# The inputs a user types free text into: they show a placeholder while empty,
+# and number carries authored bounds.
+FREE_ENTRY_INPUTS = frozenset({"text", "input", "textarea", "number"})
+
+
 @dataclass(frozen=True)
 class ResolvedControl:
     """One variable, settled: the widget it is and everything drawn from it.
@@ -98,6 +103,10 @@ class ResolvedControl:
     # button and its per-toggle guard) reads the same fact rather than each
     # re-deriving it from var_def.required independently.
     can_unset: bool
+    # The authored hint an empty free-entry field shows in place of a value;
+    # None when the field holds a value or has no hint. The one place that
+    # decides whether the drawn text is a hint.
+    placeholder: str | None = None
 
     @property
     def spec(self) -> ControlSpec:
@@ -169,6 +178,13 @@ def resolve_controls(
                 slider_step=step,
                 can_unset=not var_def.required,
                 enabled=_is_enabled(var_def, current_values, executor),
+                placeholder=(
+                    var_def.placeholder
+                    if refined.input_type in FREE_ENTRY_INPUTS
+                    and current in (None, "")
+                    and var_def.placeholder
+                    else None
+                ),
             )
         )
     return tuple(controls)

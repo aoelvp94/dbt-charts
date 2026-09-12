@@ -37,6 +37,7 @@ from dbt_charts.core.render.variables_layout import (
     traits_of,
 )
 from dbt_charts.core.render.variables_resolve import (
+    FREE_ENTRY_INPUTS,
     UNSET_DATERANGE_LABEL,
     UNSET_SELECT_LABEL,
     read_only_unset_label,
@@ -227,13 +228,32 @@ def _draw_control(
     # authored bounds. `step: 0.1` through it becomes 0, which the runtime reads
     # as "no step" — and the drawn thumb, positioned from the raw floats, would
     # then disagree with the value a click commits.
-    bounds = (
-        f' data-dbt-min="{control.slider_min:g}"'
-        f' data-dbt-max="{control.slider_max:g}"'
-        f' data-dbt-step="{control.slider_step:g}"'
-        if traits_of(box.input).sizing == "slider"
-        else ""
-    )
+    if traits_of(box.input).sizing == "slider":
+        bounds = (
+            f' data-dbt-min="{_number_attr(control.slider_min)}"'
+            f' data-dbt-max="{_number_attr(control.slider_max)}"'
+            f' data-dbt-step="{_number_attr(control.slider_step)}"'
+        )
+    elif box.input == "number":
+        # Only what the author set: a number typed into a field is bounded by
+        # nothing unless the board says so, never by the theme's slider range.
+        bounds = "".join(
+            f' data-dbt-{attr}="{_number_attr(value)}"'
+            for attr, value in (
+                ("min", control.var_def.min),
+                ("max", control.var_def.max),
+                ("step", control.var_def.step),
+            )
+            if value is not None
+        )
+    else:
+        bounds = ""
+    # The hint the lifted native input shows while empty — published whenever
+    # one is authored, not only while the drawing shows it, since the field
+    # can be emptied on the page.
+    if box.input in FREE_ENTRY_INPUTS and control.var_def.placeholder:
+        placeholder = html.escape(control.var_def.placeholder, quote=True)
+        bounds += f' data-dbt-placeholder="{placeholder}"'
     # Whether an empty value is a legal state to land in, and what it reads as.
     # Without this a user can filter but never unfilter, and a required
     # multiselect emptied by unchecking its last member renders the next page
@@ -265,6 +285,12 @@ def _draw_control(
         f'data-dbt-width="{px(box.width)}" data-dbt-height="{px(box.height)}">'
         f"{''.join(parts)}</g>"
     )
+
+
+def _number_attr(value: float) -> str:
+    """A bound as the runtime must read it back: exact, never ``:g``'s six
+    significant digits, which turned an authored 1234567 into 1.23457e+06."""
+    return str(int(value)) if float(value).is_integer() else repr(float(value))
 
 
 def _committed_value(control: ResolvedControl) -> str:
@@ -303,7 +329,9 @@ def _draw_field(
         return _draw_checkbox(control, x, y, variables_style)
     if sizing == "slider":
         return _draw_slider(control, box, x, y, width, height, variables_style)
-    return _draw_text_field(box, x, y, width, height, variables_style)
+    return _draw_text_field(
+        box, x, y, width, height, variables_style, control.placeholder is not None
+    )
 
 
 def _draw_text_field(
@@ -313,8 +341,10 @@ def _draw_text_field(
     width: float,
     height: float,
     variables_style: VariablesStyle,
+    hint: bool,
 ) -> list[str]:
-    """A rounded field showing the committed value, plus its type ornament."""
+    """A rounded field showing the committed value (or, muted, the hint standing
+    in for one), plus its type ornament."""
     font_size = _font_size(variables_style)
     value_font = variables_style.value.font
     assert value_font.family is not None, _CASCADE_GAP
@@ -322,11 +352,12 @@ def _draw_text_field(
     input_style = variables_style.input
     text_x = x + float(input_style.padding.left)
     baseline = y + height / 2 + centered_baseline_offset(value_font.family, font_size)
+    color = variables_style.placeholder.font.color if hint else value_font.color
 
     parts = [
         _field_rect(x, y, width, height, variables_style),
         f'<text x="{px(text_x)}" y="{px(baseline)}" font-size="{px(font_size)}" '
-        f'font-family="{family}" fill="{value_font.color}">'
+        f'font-family="{family}" fill="{color}">'
         f"{html.escape(box.value)}</text>",
     ]
     ornament = traits_of(box.input).ornament

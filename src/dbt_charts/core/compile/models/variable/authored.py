@@ -7,6 +7,7 @@ Variables provide dynamic values to queries and charts. They can be bound to
 user inputs (select, slider, etc.) or have static default values.
 """
 
+import math
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
@@ -245,16 +246,25 @@ class Variable(BaseModel):
         ),
     )
 
-    # Slider-specific
+    # Numeric bounds: a slider needs them to draw, a number input enforces them
     min: int | float | None = Field(
-        default=None, description="Minimum value for slider/range inputs."
+        default=None, description="Minimum value for number, slider and range inputs."
     )
     max: int | float | None = Field(
-        default=None, description="Maximum value for slider/range inputs."
+        default=None, description="Maximum value for number, slider and range inputs."
     )
     step: int | float | None = Field(
-        default=None, description="Step size for slider/range inputs."
+        default=None, description="Step size for number, slider and range inputs."
     )
+
+    @field_validator("min", "max", "step")
+    @classmethod
+    def _bounds_are_finite(cls, value: int | float | None) -> int | float | None:
+        # A control can only enforce a bound it can read back; `.inf`/`.nan`
+        # publish as tokens the runtime would have to ignore.
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(f"min/max/step must be a finite number, got {value!r}")
+        return value
 
     # Operator for filter generation
     operator: str | None = Field(

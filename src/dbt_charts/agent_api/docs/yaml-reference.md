@@ -63,9 +63,9 @@ Variable definition from YAML.
 | `query` | str \| [SqlQuery](#sqlquery) \| [HttpQuery](#httpquery) \| [ValuesQuery](#valuesquery) \| [CompactValuesQuery](#compactvaluesquery) \| [SchemaQuery](#schemaquery) | Query name or inline query definition for populating options. |
 | `options` | [VariableOptions](#variableoptions) | Where the selectable values come from: a written-out list or a query. |
 | `data_type` | enum: "string", "number", "date", "boolean", "array" | The type of the values a select, radio or multiselect sends back. 'number', 'date' and 'boolean' convert the value before it reaches SQL; needed when the options come from a query, since a static numeric list already implies 'number'. 'string' and 'array' leave the value as sent. |
-| `min` | int \| float | Minimum value for slider/range inputs. |
-| `max` | int \| float | Maximum value for slider/range inputs. |
-| `step` | int \| float | Step size for slider/range inputs. |
+| `min` | int \| float | Minimum value for number, slider and range inputs. |
+| `max` | int \| float | Maximum value for number, slider and range inputs. |
+| `step` | int \| float | Step size for number, slider and range inputs. |
 | `operator` | str | SQL operator used when generating filter expressions (e.g., '=', 'IN', 'LIKE'). |
 
 <a id="variableref"></a>
