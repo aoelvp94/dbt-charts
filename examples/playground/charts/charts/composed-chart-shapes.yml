@@ -14,12 +14,19 @@
 # One chart per shape, each authored the way we would tell an author to author it.
 
 title: Composed chart shapes
-notes: shapes an author asks for by name that dbt charts has no `type:` for. Each cell is the
+notes: shapes an author asks for by name that dbt Charts has no `type:` for. Each cell is the
   natural recipe for one of them, rendered so the verdict is a picture and not an opinion.
 style:
   frame:
     width: 1872
 queries:
+  flows:
+    source: examples_db
+    sql: |
+      SELECT date, category, SUM(revenue) AS revenue
+      FROM ecommerce_orders
+      GROUP BY date, category
+      ORDER BY date, category
   entities:
     source: examples_db
     sql: |
@@ -84,17 +91,39 @@ queries:
   ranks:
     source: examples_db
     sql: |
-      WITH scored AS (
-        SELECT
-          'Region ' || chr((64 + e)::INTEGER)            AS entity,
-          2019 + y                                       AS year,
-          round(50 + 30 * sin(e * 1.3 + y * 0.9), 2)     AS score
-        FROM generate_series(1, 6) t(e)
-        CROSS JOIN generate_series(0, 4) u(y)
-      )
-      SELECT entity, year,
-             rank() OVER (PARTITION BY year ORDER BY score DESC) AS rank
-      FROM scored
+      SELECT entity, year, rank
+      FROM (VALUES
+        ('Region A', 2019, 1),
+        ('Region B', 2019, 2),
+        ('Region C', 2019, 3),
+        ('Region D', 2019, 4),
+        ('Region E', 2019, 5),
+        ('Region F', 2019, 6),
+        ('Region A', 2020, 1),
+        ('Region B', 2020, 2),
+        ('Region E', 2020, 3),
+        ('Region C', 2020, 4),
+        ('Region D', 2020, 5),
+        ('Region F', 2020, 6),
+        ('Region A', 2021, 1),
+        ('Region E', 2021, 2),
+        ('Region B', 2021, 3),
+        ('Region C', 2021, 4),
+        ('Region D', 2021, 5),
+        ('Region F', 2021, 6),
+        ('Region E', 2022, 1),
+        ('Region A', 2022, 2),
+        ('Region B', 2022, 3),
+        ('Region D', 2022, 4),
+        ('Region C', 2022, 5),
+        ('Region F', 2022, 6),
+        ('Region E', 2023, 1),
+        ('Region A', 2023, 2),
+        ('Region B', 2023, 3),
+        ('Region D', 2023, 4),
+        ('Region F', 2023, 5),
+        ('Region C', 2023, 6)
+      ) AS t(entity, year, rank)
       ORDER BY year, rank
 charts:
   lollipop:
@@ -213,11 +242,21 @@ charts:
         scale:
           continuous:
             domain: [6, 1]
+  streamgraph:
+    query: flows
+    type: area
+    title: Streamgraph
+    subtitle: "type: area with style.stack: center, so the bands share a centered baseline instead of the axis."
+    x: date
+    y: revenue
+    color: category
+    style:
+      stack: center
   dot_plot:
     query: dots
     type: scatter
     title: Dot plot
-    subtitle: "type: scatter over long-format rows with color: on the series — no layers, so the measure axis stays the measure axis when the chart is rotated."
+    subtitle: "type: scatter over long-format rows with color: on the series, no layers, so the measure axis stays the measure axis when the chart is rotated."
     x: value
     y: category
     color: series
@@ -233,8 +272,8 @@ charts:
           visible: false
 rows:
 - text: |
-    **5 charts.** Each is the natural recipe for a shape an author asks for by
-    name and dbt charts has no `type:` for. Read each one against the shape it
+    **6 charts.** Each is the natural recipe for a shape an author asks for by
+    name and dbt Charts has no `type:` for. Read each one against the shape it
     claims to be, not against whether it is a legible chart: the question is
     whether the recipe would give an author the chart they asked for.
 
@@ -248,3 +287,4 @@ rows:
 - cols:
   - bump
   - dot_plot
+  - streamgraph

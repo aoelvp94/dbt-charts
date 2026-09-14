@@ -1603,7 +1603,7 @@ Query exceeded max_query_duration_seconds={seconds}s on source {source!r}.
 
 Fired when a query runs longer than the configured `max_query_duration_seconds` limit on a source. Optimize the query, raise the limit, or add a WHERE clause to reduce the result set.
 
-### ERR-REPO-FILE-TOO-LARGE: Repository file exceeds the 100 MB size limit
+### ERR-REPO-FILE-TOO-LARGE: Repository file exceeds the per-file size limit
 
 - **Level:** error
 - **Domain:** execute
@@ -1612,10 +1612,10 @@ Fired when a query runs longer than the configured `max_query_duration_seconds` 
 **Message template:**
 
 ```
-Repo file too large: {file_path} is {size_mb:.1f} MB (limit: 100 MB per file in a connected repo). Use a database connection for data this size.
+Repo file too large: {file_path} is at or over the {limit_mb:.0f} MB per-file limit in a connected repo. Use a database connection for data this size.
 ```
 
-Fired when a file in a connected repository exceeds 100 MB. dbt charts imposes this limit because large files are better served by a direct database connection rather than loading the entire file into memory.
+Fired when a file in a connected repository is at or over the deployment's per-file size limit. dbt charts imposes this limit because large files are better served by a direct database connection rather than loading the entire file into memory.
 
 ### ERR-SOURCE-CONFIG-INVALID: Source configuration fails validation
 

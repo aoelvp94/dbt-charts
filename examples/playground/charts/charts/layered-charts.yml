@@ -43,6 +43,14 @@ queries:
       FROM ecommerce_orders
       GROUP BY date
       ORDER BY date
+  daily_revenue_recent:
+    source: examples_db
+    sql: |
+      SELECT date, SUM(revenue) AS revenue
+      FROM ecommerce_orders
+      WHERE date >= DATE '2024-06-01'
+      GROUP BY date
+      ORDER BY date
   daily_revenue_average:
     source: examples_db
     sql: |
@@ -88,6 +96,7 @@ queries:
     sql: |
       SELECT date, region, SUM(revenue) AS revenue
       FROM ecommerce_orders
+      WHERE date >= DATE '2024-06-01'
       GROUP BY date, region
   daily_revenue_range:
     source: examples_db
@@ -149,9 +158,9 @@ charts:
           line:
             curve: step
   line_scatter:
-    query: daily_revenue
+    query: daily_revenue_recent
     type: line
-    title: Daily revenue with each day marked
+    title: Daily revenue with each day marked, last 30 days
     subtitle: "layers: adds a scatter mark on top of the line's own values"
     x: date
     y: revenue
@@ -232,7 +241,7 @@ charts:
   range_band_median:
     query: daily_revenue_range
     type: area
-    title: Daily revenue range across regions
+    title: Daily revenue range across regions, last 30 days
     subtitle: "layers: adds the lowest and median lines over the highest-region area"
     x: date
     y: highest_region

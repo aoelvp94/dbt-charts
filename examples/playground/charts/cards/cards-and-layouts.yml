@@ -208,7 +208,7 @@ charts:
   product_performance_table:
     type: table
     query: product_performance
-    title: Product performance, this January
+    title: Product performance, first half of 2024
     style:
       columns:
         product:
@@ -217,11 +217,11 @@ charts:
           label: Total revenue
           format: currency
         weekly_trend:
-          label: 5-week trend
+          label: Weekly trend, Jan-Jun
           spark:
             type: line
         growth_pct:
-          label: Week 1 → week 5
+          label: First week → last week
           format: percent_delta
     conditional_formatting:
       growth_pct:

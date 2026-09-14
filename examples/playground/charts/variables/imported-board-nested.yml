@@ -63,10 +63,12 @@ rows:
           static:
             - Widget A
             - Widget B
+            - Widget C
             - Gadget X
             - Gadget Y
+            - Gadget Z
+            - Tool A
             - Tool Z
-        default: Widget A
       region_filter:
         label: Select Regions
         options:
@@ -83,12 +85,13 @@ rows:
     queries:
       product_trend_data: |
         SELECT
-          date,
+          DATE_TRUNC('week', date) AS week,
           product,
           SUM(revenue) AS revenue
         FROM ecommerce_orders
-        GROUP BY date, product
-        ORDER BY date, product
+        WHERE ({{ product_filter }} IS NULL OR product = {{ product_filter }})
+        GROUP BY week, product
+        ORDER BY week, product
       product_breakdown_data: |
         SELECT
           product,
@@ -109,7 +112,7 @@ rows:
         title: "Product Trend{% if product_filter %} - {{ product_filter }}{% endif %}"
         query: product_trend_data
         type: line
-        x: date
+        x: week
         y: revenue
         color: product
       product_breakdown:

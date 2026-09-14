@@ -241,16 +241,17 @@ ERR_REPO_FILE_TOO_LARGE = REGISTRY.register(
     ErrorCode(
         code="ERR-REPO-FILE-TOO-LARGE",
         domain="execute",
-        title="Repository file exceeds the 100 MB size limit",
+        title="Repository file exceeds the per-file size limit",
         message_template=(
-            "Repo file too large: {file_path} is {size_mb:.1f} MB "
-            "(limit: 100 MB per file in a connected repo). "
+            "Repo file too large: {file_path} is at or over the "
+            "{limit_mb:.0f} MB per-file limit in a connected repo. "
             "Use a database connection for data this size."
         ),
         doc=(
-            "Fired when a file in a connected repository exceeds 100 MB. dbt charts "
-            "imposes this limit because large files are better served by a direct "
-            "database connection rather than loading the entire file into memory."
+            "Fired when a file in a connected repository is at or over the "
+            "deployment's per-file size limit. dbt charts imposes this limit "
+            "because large files are better served by a direct database "
+            "connection rather than loading the entire file into memory."
         ),
         docs_topic="queries",
     )

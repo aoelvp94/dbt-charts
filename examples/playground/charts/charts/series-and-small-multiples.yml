@@ -50,6 +50,7 @@ queries:
       SELECT date, product, SUM(revenue) AS revenue
       FROM main.ecommerce_orders
       WHERE product IN ('Widget B', 'Gadget Y', 'Widget A', 'Gadget X', 'Widget C', 'Tool Z')
+        AND date >= DATE '2024-06-01'
       GROUP BY 1, 2
       ORDER BY 1, 2
   daily_revenue_by_region_category:
@@ -57,6 +58,7 @@ queries:
     sql: |
       SELECT date, region || ' · ' || category AS segment, SUM(revenue) AS revenue
       FROM main.ecommerce_orders
+      WHERE date >= DATE '2024-06-01'
       GROUP BY 1, 2
       ORDER BY 1, 2
   daily_revenue_top5:
@@ -65,6 +67,7 @@ queries:
       SELECT date, product, SUM(revenue) AS revenue
       FROM main.ecommerce_orders
       WHERE product IN ('Widget B', 'Gadget Y', 'Widget A', 'Gadget X', 'Widget C')
+        AND date >= DATE '2024-06-01'
       GROUP BY 1, 2
       ORDER BY 1, 2
   ragged_weekly_revenue:
@@ -72,14 +75,14 @@ queries:
     sql: |
       SELECT date_trunc('week', date)::DATE AS week, product, SUM(revenue) AS revenue
       FROM main.ecommerce_orders
-      WHERE product IN ('Widget B', 'Gadget Z')
+      WHERE product IN ('Gadget X', 'Gadget Z')
       GROUP BY 1, 2
       ORDER BY 1, 2
   gapped_revenue:
     source: examples_db
     sql: |
       WITH cal AS (
-        SELECT (DATE '2024-01-01' + INTERVAL (d) DAY)::DATE AS date
+        SELECT (DATE '2024-06-01' + INTERVAL (d) DAY)::DATE AS date
         FROM generate_series(0, 29) t(d)
       ),
       products AS (
@@ -110,6 +113,7 @@ queries:
     sql: |
       SELECT date, region, SUM(revenue) AS revenue
       FROM main.ecommerce_orders
+      WHERE date >= DATE '2024-06-01'
       GROUP BY 1, 2
       ORDER BY 1, 2
   template_usage_top8:
@@ -184,7 +188,7 @@ charts:
   six_series_line:
     query: daily_revenue_top6
     type: line
-    title: Daily revenue for our top 6 products
+    title: Daily revenue for our top 6 products, last 30 days
     subtitle: Six series still read clearly, each labeled at the end of its line.
     x: date
     y: revenue
@@ -194,7 +198,7 @@ charts:
   twelve_series_line:
     query: daily_revenue_by_region_category
     type: line
-    title: Daily revenue, by region and category
+    title: Daily revenue by region and category, last 30 days
     subtitle: Twelve series push the legend — watch how the theme copes.
     x: date
     y: revenue
@@ -204,7 +208,7 @@ charts:
   stacked_area_five:
     query: daily_revenue_top5
     type: area
-    title: Daily revenue mix across our top 5 products
+    title: Daily revenue mix across our top 5 products, last 30 days
     subtitle: "`style.stack: zero` stacks five series into one band."
     x: date
     y: revenue
@@ -215,8 +219,8 @@ charts:
   ragged_series_line:
     query: ragged_weekly_revenue
     type: line
-    title: "Weekly revenue: a steady seller vs. a phased-out one"
-    subtitle: Gadget Z stopped selling after week 4 — its line ends there.
+    title: "Weekly revenue: a launch vs. a discontinuation"
+    subtitle: Gadget X starts selling in March and Gadget Z stops in May — each line covers only its own weeks.
     x: week
     y: revenue
     color: product
@@ -225,8 +229,8 @@ charts:
   gapped_series_line:
     query: gapped_revenue
     type: line
-    title: Daily revenue for two tool products
-    subtitle: Days with no sales become gaps in the line, not zeros.
+    title: Daily revenue for two tool products, last 30 days
+    subtitle: Tools don't sell on weekends — those days become gaps in the line, not zeros.
     x: date
     y: revenue
     color: product
@@ -247,7 +251,7 @@ charts:
   small_multiples_line_region:
     query: daily_revenue_by_region
     type: line
-    title: Daily revenue by region
+    title: Daily revenue by region, last 30 days
     subtitle: "`multiples: columns:` lays one panel per region side by side."
     x: date
     y: revenue

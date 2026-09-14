@@ -299,6 +299,9 @@ that re-renders on save and honors the board's filters. The preview shells out t
 render`, so install the CLI first. Details in
 [the docs](https://docs.dbtcharts.com/editor-extension/).
 
+dbt Charts is also available on [Open VSX](https://open-vsx.org/extension/dbtLabsInc/dbtcharts) for
+VS Code-compatible editors (e.g. Cursor, Windsurf)
+
 ---
 
 ## Examples

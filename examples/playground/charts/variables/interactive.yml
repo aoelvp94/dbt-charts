@@ -55,7 +55,7 @@ rows:
       selected_product:
         label: Select Product
         options:
-          static: [Widget A, Widget B, Gadget X, Gadget Y, Tool Z]
+          static: [Widget A, Widget B, Widget C, Gadget X, Gadget Y, Gadget Z, Tool A, Tool Z]
 
     queries:
       product_revenue_data: |
@@ -70,14 +70,14 @@ rows:
 
       product_detail_data: |
         SELECT
-          date,
+          DATE_TRUNC('week', date) AS week,
           product,
           SUM(revenue) AS revenue
         FROM ecommerce_orders
         WHERE ({{ region }} IS NULL OR region = {{ region }})
           AND ({{ selected_product }} IS NULL OR product = {{ selected_product }})
-        GROUP BY date, product
-        ORDER BY date, product
+        GROUP BY week, product
+        ORDER BY week, product
 
       units_by_region_data: |
         SELECT
@@ -100,10 +100,10 @@ rows:
         color: category
 
       product_detail:
-        title: "Daily Sales{% if selected_product %} - {{ selected_product }}{% else %} - All Products{% endif %}"
+        title: "Weekly Sales{% if selected_product %} - {{ selected_product }}{% else %} - All Products{% endif %}"
         query: product_detail_data
         type: line
-        x: date
+        x: week
         y: revenue
         color: product
 

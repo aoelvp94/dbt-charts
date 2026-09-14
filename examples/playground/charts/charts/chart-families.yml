@@ -38,18 +38,19 @@ queries:
       WHERE month > (SELECT MIN(month) FROM dundersign_serving.monthly_metrics)
         AND month < (SELECT MAX(month) FROM dundersign_serving.monthly_metrics)
       ORDER BY month
-  daily_revenue_by_category:
+  weekly_revenue_by_category:
     source: examples_db
     sql: |
-      SELECT date, category, SUM(revenue) AS revenue
+      SELECT DATE_TRUNC('week', date) AS week, category, SUM(revenue) AS revenue
       FROM ecommerce_orders
-      GROUP BY date, category
-      ORDER BY date, category
+      GROUP BY week, category
+      ORDER BY week, category
   order_scatter:
     source: examples_db
     sql: |
       SELECT category, units_sold, revenue
       FROM ecommerce_orders
+      WHERE date >= DATE '2024-06-24'
   company_growth_margin:
     source: examples_db
     sql: |
@@ -84,6 +85,36 @@ queries:
       WHERE month > (SELECT MIN(month) FROM dundersign_serving.monthly_metrics)
         AND month < (SELECT MAX(month) FROM dundersign_serving.monthly_metrics)
       ORDER BY month
+  sales_summary:
+    source: examples_db
+    sql: |
+      SELECT SUM(revenue) AS revenue, SUM(units_sold) AS units_sold
+      FROM ecommerce_orders
+  recent_orders:
+    source: examples_db
+    sql: |
+      SELECT date, product, category, region, revenue, units_sold
+      FROM ecommerce_orders
+      ORDER BY date DESC, revenue DESC
+      LIMIT 8
+  new_england_density:
+    columns: [state_code, population_density]
+    values:
+      - ["9", 742]
+      - ["23", 44]
+      - ["25", 901]
+      - ["33", 154]
+      - ["44", 1022]
+      - ["50", 68]
+  new_england_stores:
+    columns: [city, lat, lng, revenue]
+    values:
+      - ["Boston", 42.3601, -71.0589, 980000]
+      - ["Providence", 41.8240, -71.4128, 520000]
+      - ["Portland", 43.6591, -70.2568, 410000]
+      - ["Hartford", 41.7658, -72.6734, 460000]
+      - ["Burlington", 44.4759, -73.2121, 290000]
+      - ["Manchester", 42.9956, -71.4548, 380000]
 charts:
   vertical_bar:
     query: monthly_revenue
@@ -161,21 +192,21 @@ charts:
     x: month
     y: active_users
   line_multi:
-    query: daily_revenue_by_category
+    query: weekly_revenue_by_category
     type: line
-    title: Daily revenue by category
+    title: Weekly revenue by category
     subtitle: "color: draws one line per category, each named on the chart"
-    x: date
+    x: week
     y: revenue
     color: category
     style:
       number_format: currency_whole
   area_stacked:
-    query: daily_revenue_by_category
+    query: weekly_revenue_by_category
     type: area
-    title: Composition of daily revenue
+    title: Composition of weekly revenue
     subtitle: "style.stack: zero shows changing composition over time"
-    x: date
+    x: week
     y: revenue
     color: category
     style:
@@ -240,29 +271,102 @@ charts:
     subtitle: "type: spark_bar is a compact inline trend, no axes"
     x: revenue
     y: month_label
+  histogram_revenue:
+    query: order_scatter
+    type: histogram
+    title: Order revenue distribution
+    subtitle: "type: histogram bins a continuous field"
+    x: revenue
+  revenue_kpi:
+    query: sales_summary
+    type: kpi
+    label: Total revenue
+    value: revenue
+  reading_callout:
+    type: callout
+    title: Read with care
+    message: >
+      Units are shipped, not ordered. Returns are netted out the following
+      month, so the latest month reads low until it closes.
+    style:
+      tone: warning
+  orders_table:
+    query: recent_orders
+    type: table
+    title: Recent orders
+    subtitle: "type: table lists rows with formatted columns"
+  density_map:
+    query: new_england_density
+    type: map
+    title: Population density
+    subtitle: "type: map (also geoshape) fills regions by a value"
+    geo:
+      source: us-states
+    lookup: state_code
+    value: population_density
+  store_points:
+    query: new_england_stores
+    type: point_map
+    title: Store locations
+    subtitle: "type: point_map marks exact coordinates"
+    latitude: lat
+    longitude: lng
+    geo_source: us-states
+  store_bubbles:
+    query: new_england_stores
+    type: bubble_map
+    title: Store revenue
+    subtitle: "type: bubble_map sizes each marker by a value"
+    latitude: lat
+    longitude: lng
+    size: revenue
+    geo_source: us-states
 rows:
 - text: |
-    dbt Charts draws every chart family below from the same small set of
-    typed fields — `x`, `y`, `color`, `theta`, and a typed `style` block.
-    Each chart here shows the family in a natural business use, from ranked
-    bars to part-to-whole shapes.
-- cols:
-  - vertical_bar
-  - horizontal_bar
-  - grouped_bar
-- cols:
-  - stacked_bar
-  - stacked_bar_normalized
-  - mirror_bar
-- cols:
-  - line_single
-  - line_multi
-  - area_stacked
-- cols:
-  - scatter_basic
-  - bubble_scatter
-  - pie_basic
-- cols:
-  - donut_basic
-  - heatmap_basic
-  - spark_revenue
+    dbt Charts draws every chart type below from the same small set of
+    typed fields, `x`, `y`, `color`, `theta`, `value`, and a typed `style`
+    block. All sixteen built-in types are here, each in a natural business
+    use, grouped by family.
+- title: Bars
+  rows:
+  - cols:
+    - vertical_bar
+    - horizontal_bar
+    - grouped_bar
+  - cols:
+    - stacked_bar
+    - stacked_bar_normalized
+    - mirror_bar
+  - cols:
+    - histogram_revenue
+- title: Lines and areas
+  rows:
+  - cols:
+    - line_single
+    - line_multi
+    - area_stacked
+- title: Points
+  rows:
+  - cols:
+    - scatter_basic
+    - bubble_scatter
+- title: Sectors and grids
+  rows:
+  - cols:
+    - pie_basic
+    - donut_basic
+    - heatmap_basic
+- title: Values and tables
+  rows:
+  - cols:
+    - revenue_kpi
+    - reading_callout
+    - spark_revenue
+  - cols:
+    - orders_table
+- title: Maps
+  rows:
+  - cols:
+    - density_map
+    - store_points
+    - store_bubbles
