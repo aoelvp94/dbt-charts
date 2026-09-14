@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import webbrowser
 from collections.abc import Callable
 from pathlib import Path
 
@@ -95,6 +96,7 @@ class FakeApi:
         self.routes: dict[Route, list[httpx.Response]] = {}
         self.calls: list[tuple[str, str, dict[str, object]]] = []
         self.requests: list[httpx.Request] = []
+        self.opened: list[str] = []
 
     def add(
         self, method: str, path: str, body: dict[str, object], status: int = 200
@@ -188,6 +190,7 @@ def api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeApi:
         cloud_cmd, "_oauth_transport", lambda: httpx.MockTransport(fake.handle)
     )
     monkeypatch.setattr(cloud_cmd, "_sleep", _no_sleep)
+    monkeypatch.setattr(webbrowser, "open", fake.opened.append)
     return fake
 
 
@@ -322,6 +325,92 @@ class TestLogin:
         assert "new-token-xyz" not in result.stdout
         assert "token" not in json.loads(result.stdout)
 
+    def test_opens_the_approval_url_in_the_browser_and_still_prints_it(
+        self, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DISPLAY", ":0")
+        _seed_login(api)
+        api.add("GET", "/api/orgs", {"organizations": []})
+
+        result = runner.invoke(app, ["cloud", "login"])
+
+        assert result.exit_code == 0, out(result)
+        assert api.opened == ["https://cloud.example/activate?user_code=ABCD-EFGH"]
+        assert "https://cloud.example/activate?user_code=ABCD-EFGH" in out(result)
+
+    def test_no_browser_only_prints_the_approval_url(
+        self, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DISPLAY", ":0")
+        _seed_login(api)
+        api.add("GET", "/api/orgs", {"organizations": []})
+
+        result = runner.invoke(app, ["cloud", "login", "--no-browser"])
+
+        assert result.exit_code == 0, out(result)
+        assert api.opened == []
+        assert "https://cloud.example/activate?user_code=ABCD-EFGH" in out(result)
+
+    @pytest.mark.parametrize("platform", ["darwin", "win32"])
+    def test_a_desktop_os_launches_without_a_display_variable(
+        self, api: FakeApi, monkeypatch: pytest.MonkeyPatch, platform: str
+    ) -> None:
+        monkeypatch.setattr(cloud_cmd.sys, "platform", platform)
+        monkeypatch.delenv("DISPLAY", raising=False)
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+        _seed_login(api)
+        api.add("GET", "/api/orgs", {"organizations": []})
+
+        result = runner.invoke(app, ["cloud", "login"])
+
+        assert result.exit_code == 0, out(result)
+        assert api.opened == ["https://cloud.example/activate?user_code=ABCD-EFGH"]
+
+    def test_wayland_alone_counts_as_a_display(
+        self, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cloud_cmd.sys, "platform", "linux")
+        monkeypatch.delenv("DISPLAY", raising=False)
+        monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+        _seed_login(api)
+        api.add("GET", "/api/orgs", {"organizations": []})
+
+        result = runner.invoke(app, ["cloud", "login"])
+
+        assert result.exit_code == 0, out(result)
+        assert api.opened == ["https://cloud.example/activate?user_code=ABCD-EFGH"]
+
+    def test_headless_linux_never_launches_a_browser(
+        self, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cloud_cmd.sys, "platform", "linux")
+        monkeypatch.delenv("DISPLAY", raising=False)
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+        _seed_login(api)
+        api.add("GET", "/api/orgs", {"organizations": []})
+
+        result = runner.invoke(app, ["cloud", "login"])
+
+        assert result.exit_code == 0, out(result)
+        assert api.opened == []
+        assert "https://cloud.example/activate?user_code=ABCD-EFGH" in out(result)
+
+    def test_a_browser_that_will_not_open_leaves_the_printed_url_to_do_the_job(
+        self, api: FakeApi, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def no_display(url: str) -> bool:
+            raise OSError("no display")
+
+        monkeypatch.setattr(webbrowser, "open", no_display)
+        monkeypatch.setenv("DISPLAY", ":0")
+        _seed_login(api)
+        api.add("GET", "/api/orgs", {"organizations": []})
+
+        result = runner.invoke(app, ["cloud", "login"])
+
+        assert result.exit_code == 0, out(result)
+        assert "https://cloud.example/activate?user_code=ABCD-EFGH" in out(result)
+
     def test_re_login_says_it_replaced_the_previous_credential(
         self, api: FakeApi
     ) -> None:
@@ -382,6 +471,15 @@ class TestLoginStartWait:
         assert pending.token_endpoint == "https://cloud.example/o/token/"
         assert pending.host == "https://cloud.example"
         assert read_config().token == ""
+
+    def test_start_never_opens_a_browser(self, api: FakeApi) -> None:
+        api.add("GET", "/.well-known/oauth-authorization-server", DISCOVERY_DOC)
+        api.add("POST", "/o/device-authorization/", DEVICE_AUTH_RESPONSE)
+
+        result = runner.invoke(app, ["cloud", "login", "--start"])
+
+        assert result.exit_code == 0, out(result)
+        assert api.opened == []
 
     def test_start_hints_at_wait_on_stderr_not_stdout(self, api: FakeApi) -> None:
         """An agent that runs --start and never runs --wait leaves login

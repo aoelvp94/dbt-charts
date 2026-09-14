@@ -41,6 +41,13 @@ queries:
     GROUP BY 1
 """
 
+NESTED_QUERIES_FIXTURE = """\
+charts:
+  queries:
+    sales: |
+      SELECT month FROM orders
+"""
+
 TEXT_BLOCK_FIXTURE = """\
 text: |
   # Segment: {{ segment }}
@@ -109,6 +116,11 @@ class TestHighlightBoardYaml:
             f"FROM not found in keyword spans in query shorthand block. "
             f"Found: {found_keywords}"
         )
+
+    def test_shorthand_rule_applies_only_under_a_top_level_parent(self) -> None:
+        """The manifest names top-level parents; a nested queries: mapping is not one."""
+        html = highlight_board_yaml(NESTED_QUERIES_FIXTURE)
+        assert "SELECT" not in _keyword_spans(html)
 
     def test_non_query_block_scalar_is_not_sql_highlighted(self) -> None:
         """Other YAML block scalars are not delegated to the SQL lexer."""

@@ -69,6 +69,13 @@ class TestHighlightManifestMatchesIntrospection:
         assert "sql" in manifest.sql_block_scalar_keys
         assert "query" in manifest.sql_block_scalar_keys
 
+    def test_sql_block_scalar_parents_names_the_queries_shorthand(self) -> None:
+        """Block scalars directly under top-level ``queries:`` are SQL by structure."""
+        schema = introspect()
+        manifest = render_highlight_manifest(schema)
+        assert manifest.sql_block_scalar_parents == ["queries"]
+        assert manifest.to_dict()["sql_block_scalar_parents"] == ["queries"]
+
 
 class TestCommittedManifestInSync:
     def test_committed_highlight_manifest_in_sync(self) -> None:

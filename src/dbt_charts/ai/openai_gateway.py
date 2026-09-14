@@ -425,7 +425,18 @@ class OpenAIGateway:
         api_key: str | None = None,
         read_timeout_seconds: float | None = None,
         max_retries: int | None = None,
+        http_client: httpx.Client | None = None,
     ) -> None:
+        if http_client is not None and http_client.timeout == httpx.Timeout(5.0):
+            # openai/_base_client.py compares an incoming http_client's timeout
+            # against HTTPX_DEFAULT_TIMEOUT and, on a match, silently discards
+            # it for the SDK's own 600s default — catch that at construction,
+            # not the first stalled call.
+            raise ValueError(
+                "instrumented http_client must carry an explicit timeout: the "
+                "OpenAI SDK silently replaces httpx's default-shaped timeout "
+                "with its own 600s default"
+            )
         # None means the shared _llm_timeout() budget and the SDK's own retry
         # default. A caller overrides both only when the defaults are wrong for
         # where it runs — a request-path call must fail fast rather than make a
@@ -434,6 +445,9 @@ class OpenAIGateway:
         self._api_key = api_key or os.getenv("OPENAI_API_KEY")
         self._read_timeout_seconds = read_timeout_seconds
         self._max_retries = max_retries
+        # An httpx.Client the host owns (timeout included); lets a host
+        # observe wire traffic without this module knowing how.
+        self._http_client = http_client
         self._client: Any = None
         # Cumulative token usage + call count across every call this gateway
         # makes. Callers that need per-case cost/calls attribution read
@@ -487,31 +501,48 @@ class OpenAIGateway:
                 raise RuntimeError(
                     "OpenAI client is not installed. Install with: pip install openai"
                 ) from exc
-            timeout = (
-                _llm_timeout()
-                if self._read_timeout_seconds is None
-                else httpx.Timeout(
-                    self._read_timeout_seconds, connect=CONNECT_TIMEOUT_SECONDS
-                )
-            )
-            # openai re-exports its own Timeout at the top level, aliased to
-            # whichever httpx-shaped class its own constructor actually wants
-            # (recent SDK majors vendor a private copy under a different
-            # name). Building through that alias instead of httpx.Timeout
-            # directly keeps this correct across majors without this module
-            # having to know which one is installed.
-            openai_timeout = openai.Timeout(**timeout.as_dict())
             # Branch rather than splat a kwargs dict: `max_retries` has an SDK
             # default we don't want to restate, and `**dict` erases the arg
             # types for the type checker.
-            if self._max_retries is None:
-                self._client = OpenAI(api_key=self._api_key, timeout=openai_timeout)
+            if self._http_client is not None:
+                # The http_client is the sole timeout authority here — no
+                # SDK-level `timeout=` kwarg. __init__ already refused a
+                # default-shaped http_client timeout, so there is nothing
+                # left for the SDK's own 600s default to silently win.
+                if self._max_retries is None:
+                    self._client = OpenAI(
+                        api_key=self._api_key, http_client=self._http_client
+                    )
+                else:
+                    self._client = OpenAI(
+                        api_key=self._api_key,
+                        http_client=self._http_client,
+                        max_retries=self._max_retries,
+                    )
             else:
-                self._client = OpenAI(
-                    api_key=self._api_key,
-                    timeout=openai_timeout,
-                    max_retries=self._max_retries,
+                timeout = (
+                    _llm_timeout()
+                    if self._read_timeout_seconds is None
+                    else httpx.Timeout(
+                        self._read_timeout_seconds, connect=CONNECT_TIMEOUT_SECONDS
+                    )
                 )
+                # openai re-exports its own Timeout at the top level, aliased
+                # to whichever httpx-shaped class its own constructor
+                # actually wants (recent SDK majors vendor a private copy
+                # under a different name). Building through that alias
+                # instead of httpx.Timeout directly keeps this correct
+                # across majors without this module having to know which one
+                # is installed.
+                openai_timeout = openai.Timeout(**timeout.as_dict())
+                if self._max_retries is None:
+                    self._client = OpenAI(api_key=self._api_key, timeout=openai_timeout)
+                else:
+                    self._client = OpenAI(
+                        api_key=self._api_key,
+                        timeout=openai_timeout,
+                        max_retries=self._max_retries,
+                    )
         return self._client
 
     def _open(self, request: ResponsesRequest) -> Any:

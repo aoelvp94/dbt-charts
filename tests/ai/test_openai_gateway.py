@@ -56,7 +56,9 @@ class _StubClient:
         self.responses = _StubResponses(result)
 
 
-def _gateway_with_stub(result: Any = None) -> tuple[OpenAIGateway, _StubResponses]:
+def _gateway_with_stub(
+    result: Any = None,
+) -> tuple[OpenAIGateway, _StubResponses]:
     gateway = OpenAIGateway(api_key="fake")
     stub = _StubClient(result)
     gateway._client = stub
@@ -573,6 +575,41 @@ class TestTransportOverrides:
         assert "max_retries" not in seen
         assert type(seen["timeout"]) is _SentinelTimeout
         assert seen["timeout"].read == 60.0
+        assert "http_client" not in seen
+
+    def test_http_client_owns_the_timeout_no_kwarg_forwarded(self) -> None:
+        """A host-owned http_client is now the sole timeout authority: the
+        gateway no longer restates it as an SDK ``timeout=`` kwarg. Safe
+        because construction refuses a default-shaped http_client timeout
+        (see test_default_shaped_http_client_timeout_is_refused) — the one
+        case the old forwarding existed to paper over."""
+        fake_http_client = SimpleNamespace(timeout=httpx.Timeout(12.0, connect=3.0))
+        seen = self._constructed(http_client=fake_http_client)
+
+        assert seen["http_client"] is fake_http_client
+        assert "timeout" not in seen
+        assert "max_retries" not in seen
+
+    def test_http_client_still_forwards_max_retries(self) -> None:
+        """SDK retries are SDK-level, independent of the httpx client that
+        carries the wire traffic — both knobs must reach the SDK together."""
+        fake_http_client = SimpleNamespace(timeout=httpx.Timeout(12.0, connect=3.0))
+        seen = self._constructed(http_client=fake_http_client, max_retries=0)
+
+        assert seen["http_client"] is fake_http_client
+        assert seen["max_retries"] == 0
+        assert "timeout" not in seen
+
+    def test_default_shaped_http_client_timeout_is_refused(self) -> None:
+        """A plain ``httpx.Client()`` carries httpx's own default-shaped
+        Timeout(5.0), which the OpenAI SDK silently swaps for its own 600s
+        default at construction. The gateway must refuse it up front rather
+        than silently losing the caller's wall-clock bound."""
+        with (
+            httpx.Client() as default_client,
+            pytest.raises(ValueError, match="explicit timeout"),
+        ):
+            OpenAIGateway(api_key="test", http_client=default_client)
 
 
 def test_stream_lifecycle_is_logged(caplog: pytest.LogCaptureFixture) -> None:

@@ -1,0 +1,162 @@
+title: Dundersign scorecard
+source: db
+
+style:
+  frame:
+    width: 1440
+
+variables:
+  lead_source:
+    input: multiselect
+    column: dundersign.opportunities.lead_source
+
+queries:
+  kpis: |
+    WITH months AS (
+      SELECT month, revenue, active_users,
+             revenue - LAG(revenue) OVER (ORDER BY month) AS revenue_delta,
+             active_users - LAG(active_users) OVER (ORDER BY month) AS users_delta
+      FROM dundersign_serving.monthly_metrics
+    ),
+    deals AS (
+      SELECT SUM(CASE WHEN is_won THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS win_rate
+      FROM dundersign.opportunities
+      WHERE is_closed AND {{ filter('lead_source', lead_source) }}
+    )
+    SELECT revenue, revenue_delta, active_users, users_delta, (SELECT win_rate FROM deals) AS win_rate
+    FROM months WHERE month = (SELECT MAX(month) FROM months)
+  documents: |
+    SELECT month, 'Created' AS series, documents_created AS documents FROM dundersign_serving.monthly_metrics
+    UNION ALL
+    SELECT month, 'Completed', documents_completed FROM dundersign_serving.monthly_metrics
+    ORDER BY 1, 2
+  bookings: |
+    SELECT lead_source, SUM(amount) AS bookings
+    FROM dundersign.opportunities
+    WHERE is_won AND {{ filter('lead_source', lead_source) }}
+    GROUP BY 1 ORDER BY 2 DESC
+  active_users: |
+    SELECT month, active_users FROM dundersign_serving.monthly_metrics ORDER BY 1
+  plans: |
+    SELECT plan, COUNT(*) AS users FROM dundersign.users GROUP BY 1 ORDER BY 2 DESC
+  monthly: |
+    SELECT month, revenue, new_users, tickets_created, tickets_resolved
+    FROM dundersign_serving.monthly_metrics ORDER BY 1
+
+charts:
+  k_revenue:
+    label: Revenue
+    query: kpis
+    type: kpi
+    value: revenue
+    style:
+      value:
+        format: currency_whole
+    support:
+      value: revenue_delta
+      label: vs prior month
+      format: delta
+  k_users:
+    label: Active users
+    query: kpis
+    type: kpi
+    value: active_users
+    support:
+      value: users_delta
+      label: vs prior month
+      format: delta
+  k_win_rate:
+    label: Win rate, all closed deals
+    query: kpis
+    type: kpi
+    value: win_rate
+    style:
+      value:
+        format: percent_whole
+  documents_trend:
+    title: Documents created vs. completed
+    query: documents
+    type: line
+    x: month
+    y: documents
+    color: series
+    height: 400
+  bookings_by_source:
+    title: Bookings by lead source
+    query: bookings
+    type: bar
+    x: lead_source
+    y: bookings
+    sort:
+      by: bookings
+      order: desc
+    height: 185
+    style:
+      orientation: horizontal
+      axis_y:
+        labels:
+          format: currency_whole
+  active_users_trend:
+    title: Active users
+    query: active_users
+    type: line
+    x: month
+    y: active_users
+    height: 185
+  plan_mix:
+    title: Users by plan
+    query: plans
+    type: donut
+    theta: users
+    color: plan
+    total:
+      label: Users
+    height: 250
+  monthly_table:
+    title: Monthly detail
+    query: monthly
+    type: table
+    style:
+      columns:
+        month:
+          label: Month
+        revenue:
+          label: Revenue
+          format: currency_whole
+          align: right
+        new_users:
+          label: New users
+          format: integer
+          align: right
+        tickets_created:
+          label: Tickets opened
+          format: integer
+          align: right
+        tickets_resolved:
+          label: Tickets resolved
+          format: integer
+          align: right
+
+rows:
+  - cols:
+      - width: "50%"
+        text: |
+          Support is the soft spot: tickets resolved trail tickets opened in every
+          month, 245 opened against 86 resolved over the year. Bookings are spread
+          evenly across sources, with Website, Referral, Download, and Paid Search
+          within $220 of each other, so no single channel deserves the next dollar
+          on its own.
+      - width: "50%"
+        cols: [k_revenue, k_users, k_win_rate]
+
+  - cols:
+      - width: "66%"
+        rows: [documents_trend]
+      - width: "34%"
+        rows: [bookings_by_source, active_users_trend]
+
+  - cols:
+      - width: "66%"
+        rows: [monthly_table]
+      - width: "34%"
+        rows: [plan_mix]

@@ -34,8 +34,9 @@ from __future__ import annotations
 import os
 import sys
 import time
+import webbrowser
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Annotated, NoReturn
 
@@ -412,6 +413,15 @@ def _begin_device_grant(
     return metadata, device, target_host
 
 
+def _has_display() -> bool:
+    """Whether `webbrowser.open` would reach a real browser. Without a display
+    the stdlib falls back to lynx/w3m run in the foreground, which takes over
+    the terminal and blocks until the user quits it."""
+    return sys.platform in ("darwin", "win32") or bool(
+        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+    )
+
+
 def _device_login_prompt(device: DeviceAuthorization) -> str:
     return device.verification_uri_complete or (
         f"{device.verification_uri} (code: {device.user_code})"
@@ -454,16 +464,25 @@ def login(
             "--wait", help="Wait for a login begun with --start to be approved"
         ),
     ] = False,
+    no_browser: Annotated[
+        bool,
+        typer.Option(
+            "--no-browser",
+            help="Print the approval URL instead of opening it in a browser",
+        ),
+    ] = False,
     as_json: JsonOption = False,
 ) -> None:
     """Sign in via the OAuth device grant: approve in a browser.
 
-    Bare `dct cloud login` starts the grant and blocks until it is approved
-    -- for a human at a terminal. Approval can legitimately take as long as
-    the user needs at the browser, which outlasts most tool timeouts an
-    agent runs commands under -- so a script splits it into two
-    invocations: `--start` prints the approval URL and returns immediately;
-    a later `--wait` blocks for the approval `--start` began.
+    Bare `dct cloud login` starts the grant, opens the approval page in the
+    browser (`--no-browser` only prints the URL), and blocks until it is
+    approved -- for a human at a terminal. Approval can legitimately take
+    as long as the user needs at the browser, which outlasts most tool
+    timeouts an agent runs commands under -- so a script splits it into two
+    invocations: `--start` prints the approval URL and returns immediately,
+    never opening a browser; a later `--wait` blocks for the approval
+    `--start` began.
     """
     if start and wait:
         raise typer.BadParameter(
@@ -523,6 +542,11 @@ def login(
             f"Open {escape(_device_login_prompt(device))} to approve this login.",
             soft_wrap=True,
         )
+        if not no_browser and _has_display():
+            with suppress(OSError):
+                webbrowser.open(
+                    device.verification_uri_complete or device.verification_uri
+                )
         token = poll_device_token(
             metadata.token_endpoint,
             device.device_code,

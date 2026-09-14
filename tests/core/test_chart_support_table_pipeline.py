@@ -52,6 +52,7 @@ def _render_v2_spec(
     width: float,
     height: float,
     monkeypatch: Any,
+    padding: dict[str, int | float] | None = None,
 ) -> dict[str, Any]:
     """Render *chart* through the v2 path and return the captured VL spec dict."""
     board_style = resolve_style(get_theme_style(get_default_theme_name()))
@@ -73,6 +74,7 @@ def _render_v2_spec(
         format="svg",
         width=width,
         height=height,
+        padding=padding,
     )
     spec = captured.get("v2")
     assert spec is not None, "expected v2 renderer to fire; check chart.v2"
@@ -1325,31 +1327,107 @@ def test_resolve_bakes_a_concrete_support_table_position():
     assert resolved_horizontal_right.effective_support_table_style.position == "right"
 
 
-def test_render_bar_horizontal_with_support_table_bumps_padding_left_by_default():
-    # Default position on a horizontal bar (axis_y.position bakes to "left")
-    # is the same side as the category labels — padding.left is bumped.
+@pytest.mark.parametrize("position", ["left", "right"])
+@pytest.mark.parametrize("layered", [False, True], ids=["single", "layered"])
+@pytest.mark.parametrize(
+    ("padding", "entry_count"),
+    [(None, 1), ({"left": 17, "right": 23, "top": 11, "bottom": 13}, 2)],
+    ids=["default-padding-one-entry", "authored-padding-two-entries"],
+)
+def test_same_side_support_columns_preserve_outer_padding(
+    position: str,
+    layered: bool,
+    padding: dict[str, int | float] | None,
+    entry_count: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = [{**row, "target": 250.0} for row in _HBAR_DATA]
+    chart_fields = {
+        "id": "test_chart",
+        "type": "bar",
+        "x": "region",
+        "y": "revenue",
+        "query": SqlQuery(sql="SELECT 1", source="test_db"),
+        "query_name": "q",
+        "layers": [{"type": "bar", "y": "target"}] if layered else [],
+        "style": {
+            "orientation": "horizontal",
+            "axis_y": {"position": position},
+            "support_table": {"position": position},
+        },
+    }
+    control = _render_v2_spec(
+        TypeAdapter(Chart).validate_python(chart_fields),
+        data,
+        width=400,
+        height=200,
+        monkeypatch=monkeypatch,
+        padding=padding,
+    )
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            **chart_fields,
+            "support_table": {
+                "entries": [{"source": "revenue"}, {"source": "target"}][:entry_count]
+            },
+        }
+    )
+    spec = _render_v2_spec(
+        chart,
+        data,
+        width=400,
+        height=200,
+        monkeypatch=monkeypatch,
+        padding=padding,
+    )
+    control_axis = control["encoding"]["y"]["axis"]
+    support_axis = spec["encoding"]["y"]["axis"]
+    assert support_axis["labelPadding"] > control_axis["labelPadding"]
+    if layered:
+        control_base_axis = control["layer"][0]["encoding"]["y"]["axis"]
+        support_base_axis = spec["layer"][0]["encoding"]["y"]["axis"]
+        assert support_base_axis["labelPadding"] > control_base_axis["labelPadding"]
+    if padding is not None:
+        assert control["padding"] == padding
+    for side in ("left", "right", "bottom"):
+        assert spec["padding"][side] == control["padding"][side]
+    assert spec["padding"]["top"] > control["padding"]["top"]
+
+
+def test_render_bar_horizontal_support_table_reserves_header_height() -> None:
     chart = _compiled_bar_horizontal_with_support_table(
         [{"source": "revenue", "format": "$.2s"}]
     )
     resolve(chart, _HBAR_DATA, chart_style_context=_BOARD_CONTEXT)
     spec = generate_vega_lite_spec(chart, _HBAR_DATA, width=400, height=200)
     padding = spec["padding"]
-    assert padding["left"] > 0
     # Column headers always reserve a band above the plot, regardless
     # of which side the value columns sit on.
     assert padding["top"] > 0
     assert padding["bottom"] == 0
 
 
-def test_render_bar_horizontal_with_support_table_position_right_bumps_padding_right():
+@pytest.mark.parametrize("position", ["left", "right"])
+def test_opposite_side_support_columns_reserve_outer_padding(position: str) -> None:
+    axis_position = "right" if position == "left" else "left"
     chart = _compiled_bar_horizontal_with_support_table(
-        [{"source": "revenue"}], style={"support_table": {"position": "right"}}
+        [{"source": "revenue"}],
+        style={
+            "support_table": {"position": position},
+            "axis_y": {"position": axis_position},
+        },
     )
     resolve(chart, _HBAR_DATA, chart_style_context=_BOARD_CONTEXT)
     spec = generate_vega_lite_spec(chart, _HBAR_DATA, width=400, height=200)
     padding = spec["padding"]
-    assert padding["right"] > 0
-    assert padding["left"] == 0
+    assert padding[position] > 0
+    assert padding[axis_position] == 0
+    control_chart = TypeAdapter(Chart).validate_python(
+        {**dict(chart), "support_table": None}
+    )
+    control = generate_vega_lite_spec(control_chart, _HBAR_DATA, width=400, height=200)
+    axis = spec["encoding"]["y"]["axis"]
+    assert axis["labelPadding"] == control["encoding"]["y"]["axis"]["labelPadding"]
 
 
 def test_render_bar_horizontal_stacked_with_aggregate_support_table_renders_column():

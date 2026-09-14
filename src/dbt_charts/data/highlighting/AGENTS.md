@@ -6,8 +6,15 @@ of truth every dbt charts editor surface derives its highlighting from:
 
 | Surface | Consumes | Derived artifact |
 |---|---|---|
-| VS Code extension | `top_level_keys`, `enum_values_by_key` | `apps/ide/vscode-extension/syntaxes/dbt-charts.tmLanguage.json` (generated) |
-| Cloud + Playground web editors | `sql_block_scalar_keys` | `libs/codemirror-dbt-charts/src/{language,highlight}.ts` (hand-written, manifest passed in) |
+| VS Code extension | `top_level_keys`, `enum_values_by_key`, `sql_block_scalar_keys`, `sql_block_scalar_parents` | `apps/ide/vscode-extension/syntaxes/dbt-charts.tmLanguage.json` (generated) |
+| Cloud + Playground web editors | `sql_block_scalar_keys`, `sql_block_scalar_parents` | `libs/codemirror-dbt-charts/src/{language,highlight}.ts` (hand-written, manifest passed in) |
+| Docs site (Pygments) | `sql_block_scalar_keys`, `sql_block_scalar_parents` | `src/dbt_charts/integrations/highlighting.py` (hand-written, reads the manifest) |
+
+`sql_block_scalar_keys` names keys whose `|`/`>` body is SQL wherever they appear
+(`query`, `sql`). `sql_block_scalar_parents` is the structural rule for the
+`queries.<name>: |` shorthand: a block scalar that is a *direct child* of the top-level
+mapping under one of these keys is SQL, whatever its key is named. A block scalar two
+levels down, or under a `queries:` that is not top-level, is not.
 
 Both derived artifacts live in the monorepo, not in this package.
 

@@ -641,7 +641,7 @@ def test_support_table_width_floor_raises_a_per_chart_error_not_a_board_error(
     from dbt_charts.core.execute.executor import Executor
     from dbt_charts.core.render.renderer import render
 
-    result = compile(_stacked_per_series_total_board_yaml_with_sibling(600))
+    result = compile(_stacked_per_series_total_board_yaml_with_sibling(400))
     assert result.success and result.board is not None, result.errors
 
     executor = Executor(
@@ -686,7 +686,7 @@ def test_support_table_width_share_warns_before_the_floor(
     from dbt_charts.core.execute.executor import Executor
     from dbt_charts.core.render.renderer import render
 
-    result = compile(_stacked_per_series_total_board_yaml(900))
+    result = compile(_stacked_per_series_total_board_yaml(600))
     assert result.success and result.board is not None, result.errors
 
     executor = Executor(
@@ -698,6 +698,7 @@ def test_support_table_width_share_warns_before_the_floor(
 
     assert render_result.board_error is None, render_result.board_error
     assert render_result.output is not None
+    assert not render_result.chart_errors
     warn_codes = {w.code for w in render_result.warnings}
     assert "WARN-PLOT-WIDTH-BELOW-MINIMUM" in warn_codes, warn_codes
 

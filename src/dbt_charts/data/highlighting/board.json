@@ -68,5 +68,8 @@
   "sql_block_scalar_keys": [
     "query",
     "sql"
+  ],
+  "sql_block_scalar_parents": [
+    "queries"
   ]
 }

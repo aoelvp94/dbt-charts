@@ -86,6 +86,71 @@ def _sql_block_pattern(sql_keys: list[str]) -> dict[str, object]:
     }
 
 
+def _sql_parent_block_pattern(
+    parents: list[str],
+) -> dict[str, object]:  # type-state: object_annotation — tmLanguage rule for JSON
+    alternation = "|".join(sorted(parents))
+    # A child key is anything up to its colon (quoted and dotted keys included,
+    # sequence items excluded); a block-scalar opener is a key whose value is
+    # only a `|`/`>` indicator, optionally followed by a comment.
+    key = "(?!-\\s)([^\\s:#][^:#]*?)(:)"
+    block_indicator = "\\s*(\\|[-+]?|>[-+]?)\\s*(#.*)?$"
+    # The same test as a lookahead must not capture, or it shifts the key group.
+    not_block_opener = "(?!.*:\\s*(?:\\|[-+]?|>[-+]?)\\s*(?:#.*)?$)"
+    # ``\1`` is the indent the child's begin captured: its body runs until the
+    # next non-blank line that is not indented deeper than the child itself.
+    child_end = "^(?!\\1\\s)(?=.*\\S)"
+    comment = {"name": "comment.line.number-sign.yaml"}
+    child_name_captures: dict[str, dict[str, str]] = {
+        "2": {"name": "entity.name.function.yaml"},
+        "3": {"name": "punctuation.separator.key-value.yaml"},
+    }
+    shorthand_captures: dict[str, dict[str, str]] = {
+        **child_name_captures,
+        "4": {"name": "punctuation.definition.block.scalar.yaml"},
+        "5": comment,
+    }
+    return {
+        "comment": (
+            "Top-level mapping whose direct-child block scalars hold SQL (the"
+            " queries shorthand) - ends at the next column-0 key"
+        ),
+        "begin": f"^({alternation})(:)\\s*(#.*)?$",
+        "beginCaptures": {
+            "1": {"name": "support.type.property-name.yaml"},
+            "2": {"name": "punctuation.separator.key-value.yaml"},
+            "3": comment,
+        },
+        "end": "^(?=[^\\s#])",
+        "patterns": [
+            {"include": "#comment"},
+            {
+                "comment": "Shorthand child: the block scalar body is SQL",
+                "contentName": "meta.embedded.block.sql.dbt-charts",
+                "begin": f"^(\\s+){key}{block_indicator}",
+                "beginCaptures": shorthand_captures,
+                "end": child_end,
+                "patterns": [
+                    {"include": "#jinja-template"},
+                    {"include": "#sql-content"},
+                ],
+            },
+            {
+                "comment": (
+                    "Every other child: opens a mapping whose keys follow the"
+                    " normal rules, so a nested block scalar is SQL only under"
+                    " a SQL key"
+                ),
+                "begin": f"^(\\s+)(?!#){not_block_opener}{key}",
+                "beginCaptures": child_name_captures,
+                "end": child_end,
+                "patterns": [{"include": "#comment"}, {"include": "#node"}],
+            },
+            {"include": "#node"},
+        ],
+    }
+
+
 def render_textmate_grammar(manifest: HighlightManifest) -> dict[str, object]:
     """Generate the complete dbt-charts.tmLanguage.json dict from a HighlightManifest.
 
@@ -144,6 +209,7 @@ def render_textmate_grammar(manifest: HighlightManifest) -> dict[str, object]:
             },
             "block-mapping": {
                 "patterns": [
+                    {"include": "#sql-parent-block"},
                     {"include": "#dbt-charts-top-level-keys"},
                     {"include": "#dbt-charts-definition-names"},
                     {"include": "#sql-block"},
@@ -190,6 +256,9 @@ def render_textmate_grammar(manifest: HighlightManifest) -> dict[str, object]:
                 manifest.enum_values_by_key
             ),
             "sql-block": _sql_block_pattern(manifest.sql_block_scalar_keys),
+            "sql-parent-block": _sql_parent_block_pattern(
+                manifest.sql_block_scalar_parents
+            ),
             "sql-content": {
                 "comment": "SQL syntax - use purple/magenta keywords, cyan functions",
                 "patterns": [

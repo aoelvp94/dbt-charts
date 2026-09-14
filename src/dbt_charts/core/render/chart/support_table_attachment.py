@@ -4004,7 +4004,7 @@ def _apply_support_table_columns_post_pass(
                 plot_width_px=_plot_width,
                 card_width_px=_card_width_estimate,
             )
-    if total_width > 0:
+    if total_width > 0 and dt_style.position != axis_y_orient:
         if dt_style.position == "left":
             if padding is not None:
                 raw_left = padding.get(

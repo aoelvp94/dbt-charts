@@ -6,6 +6,8 @@ The manifest is the single source of truth for:
 - Top-level board YAML keys (used in tmLanguage and Pygments lexer)
 - Per-key enum value sets (chart types for ``type:``, input types for ``input:``)
 - SQL block scalar keys (keys whose block-scalar bodies contain SQL)
+- SQL block scalar parents (top-level keys whose direct-child block scalars
+  contain SQL: the ``queries.<name>: |`` shorthand)
 
 Entry point: ``render_highlight_manifest(schema: AuthorableSchema) -> HighlightManifest``
 """
@@ -21,6 +23,11 @@ from dbt_charts.core.compile.schema.introspection import AuthorableSchema
 # logic and regenerating the tmLanguage grammar via ``just gen-highlight-artifacts``.
 _SQL_BLOCK_SCALAR_KEYS: list[str] = ["query", "sql"]
 
+# Top-level keys whose direct children may be a bare SQL block scalar
+# (``queries.<name>: |``). The child's key is the query's own name, so the rule
+# is structural rather than by key name; every consumer honors both lists.
+_SQL_BLOCK_SCALAR_PARENTS: list[str] = ["queries"]
+
 
 @dataclasses.dataclass(frozen=True)
 class HighlightManifest:
@@ -32,17 +39,22 @@ class HighlightManifest:
             Covers ``type`` (chart types) and ``input`` (variable input types).
         sql_block_scalar_keys: Sorted list of YAML keys whose block scalar bodies
             contain SQL (e.g. ``sql``, ``query``).
+        sql_block_scalar_parents: Sorted list of top-level YAML keys whose
+            direct-child block scalars contain SQL (``queries``: the
+            ``queries.<name>: |`` shorthand).
     """
 
     top_level_keys: list[str]
     enum_values_by_key: dict[str, list[str]]
     sql_block_scalar_keys: list[str]
+    sql_block_scalar_parents: list[str]
 
     def to_dict(self) -> dict[str, object]:
         return {
             "top_level_keys": self.top_level_keys,
             "enum_values_by_key": self.enum_values_by_key,
             "sql_block_scalar_keys": self.sql_block_scalar_keys,
+            "sql_block_scalar_parents": self.sql_block_scalar_parents,
         }
 
 
@@ -83,4 +95,5 @@ def render_highlight_manifest(schema: AuthorableSchema) -> HighlightManifest:
         top_level_keys=top_level_keys,
         enum_values_by_key=enum_values_by_key,
         sql_block_scalar_keys=sorted(_SQL_BLOCK_SCALAR_KEYS),
+        sql_block_scalar_parents=sorted(_SQL_BLOCK_SCALAR_PARENTS),
     )

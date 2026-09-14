@@ -7,9 +7,10 @@ keywords are visually distinct from the surrounding YAML structure.
 Other block scalar bodies are emitted as plain text, because ``text: |`` and
 similar fields contain Markdown or prose rather than YAML syntax.
 
-SQL block keys are loaded from the highlight manifest
-(``dbt_charts/data/highlighting/board.json``) so the lexer stays in sync with
-the TextMate grammar and the manifest without any hand-maintained duplication.
+SQL block keys and the shorthand's parent keys are loaded from the highlight
+manifest (``dbt_charts/data/highlighting/board.json``) so the lexer stays in
+sync with the TextMate grammar and the web editors without any hand-maintained
+duplication.
 Regenerate the manifest with ``just gen-highlight-artifacts`` whenever the
 schema changes.
 
@@ -49,18 +50,20 @@ from pygments.token import (
 # ---------------------------------------------------------------------------
 
 
-def _load_sql_block_scalar_keys() -> list[str]:
-    """Return SQL block scalar keys from the committed highlight manifest."""
+def _load_manifest_names(field: str) -> list[str]:
+    """Return one string-list field of the committed highlight manifest."""
     manifest_text = (
         files("dbt_charts") / "data" / "highlighting" / "board.json"
     ).read_text(encoding="utf-8")
     data: dict[str, object] = json.loads(manifest_text)
-    keys = data["sql_block_scalar_keys"]
-    assert isinstance(keys, list)
-    return [str(k) for k in keys]
+    names = data[field]
+    assert isinstance(names, list)
+    return [str(n) for n in names]
 
 
-_SQL_BLOCK_SCALAR_KEYS: list[str] = _load_sql_block_scalar_keys()
+_SQL_BLOCK_SCALAR_KEYS: list[str] = _load_manifest_names("sql_block_scalar_keys")
+# Top-level keys whose direct-child block scalars are SQL (``queries.<name>: |``).
+_SQL_BLOCK_SCALAR_PARENTS: list[str] = _load_manifest_names("sql_block_scalar_parents")
 
 # Keys that open an explicit SQL block: "sql: |", "query: |", "sql: >", "query: >"
 # Built from the manifest so the lexer stays in sync with gen-highlight-artifacts.
@@ -86,22 +89,19 @@ _YAML_KEY_RE = re.compile(r"^( *)([a-zA-Z_][a-zA-Z0-9_\-]*)\s*:")
 _YAML_LIST_KEY_RE = re.compile(r"^( *)-\s+([a-zA-Z_][a-zA-Z0-9_\-]*)\s*:")
 
 
-def _is_queries_shorthand_block(lines: list[str], line_index: int) -> bool:
-    """Return True when *line_index* is a ``queries.<name>: |`` shorthand block."""
-    line = lines[line_index]
-    m = _BLOCK_SCALAR_KEY_RE.match(line)
+def _is_shorthand_sql_block(lines: list[str], line_index: int) -> bool:
+    """Return True when *line_index* opens a block scalar that is a direct child
+    of a top-level SQL parent key (the ``queries.<name>: |`` shorthand)."""
+    m = _BLOCK_SCALAR_KEY_RE.match(lines[line_index])
     if not m:
         return False
 
     opener_indent = len(m.group(1))
     for parent_index in range(line_index - 1, -1, -1):
         candidate = lines[parent_index]
-        km = _YAML_KEY_RE.match(candidate)
+        km = _YAML_KEY_RE.match(candidate) or _YAML_LIST_KEY_RE.match(candidate)
         if km and len(km.group(1)) < opener_indent:
-            return km.group(2) == "queries"
-        lm = _YAML_LIST_KEY_RE.match(candidate)
-        if lm and len(lm.group(1)) < opener_indent:
-            return lm.group(2) == "queries"
+            return not km.group(1) and km.group(2) in _SQL_BLOCK_SCALAR_PARENTS
     return False
 
 
@@ -125,7 +125,7 @@ def _sql_block_ranges(source: str) -> list[tuple[int, int]]:
     while i < len(lines):
         line = lines[i]
         explicit_sql = _SQL_BLOCK_OPEN_RE.match(line)
-        shorthand_sql = _is_queries_shorthand_block(lines, i)
+        shorthand_sql = _is_shorthand_sql_block(lines, i)
         if explicit_sql or shorthand_sql:
             opener_match = explicit_sql or _BLOCK_SCALAR_KEY_RE.match(line)
             assert opener_match is not None

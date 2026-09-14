@@ -910,14 +910,15 @@ def _enclosing_svg_key(svg: str, pos: int) -> int:
 
     The offset of that element's own opening tag -- two positions get the same
     key only when they sit inside the exact same ``<svg>`` element, never
-    merely a shared ancestor. A per-chart "download as SVG/PNG/PDF" feature
-    (`apps/cloud/static_src/js/dashboard/init.js`) walks up from a chart's own
-    `<g>` to its *nearest* ancestor `<svg>` and treats that subtree as a
-    standalone document, copying only the `<style>` nodes found within it --
-    so a rule kept in a sibling or ancestor `<svg>` is invisible to it even
-    though the browser's own cascade would see it fine. Scoping dedup to "same
-    nearest-enclosing `<svg>`" preserves the guarantee that mechanism depends
-    on: every extractable `<svg>` subtree stays self-sufficient on its own.
+    merely a shared ancestor. `_dedupe_repeated_style_rules` below keeps the
+    first occurrence of a byte-identical rule per this scope and only ever
+    drops a *later* one, so a rule any chart still needs survives dedup
+    somewhere in the document. A per-chart "download as SVG/PNG/PDF" feature
+    (`apps/cloud/apps/renders/chart_slice.py`'s `extract_chart_svg`) relies on
+    exactly that: it copies every `<style>` block in the document along with
+    one chart's sliced-out `<g data-chart-id>` group, so the surviving
+    occurrence travels with the slice regardless of which chart's own block
+    it happened to survive in.
     """
     stack: list[int] = []
     for m in _SVG_TAG_RE.finditer(svg, 0, pos):
