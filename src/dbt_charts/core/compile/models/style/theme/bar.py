@@ -64,8 +64,9 @@ class BarChartStyle(_CartesianChartStyle, _QuantitativeAxisChartStyleMixin):
     orientation: Literal["horizontal", "vertical", "auto"] | None = Field(
         default=None,
         description=(
-            "Preferred bar orientation; None uses the renderer default "
-            "(vertical). Never remaps x/y."
+            "Preferred bar orientation; None behaves like 'auto', which picks "
+            "horizontal for a categorical x and vertical for a continuous one "
+            "(temporal, quantitative, or date-like). Never remaps x/y."
         ),
     )
     # Stack default for the bar family. ``"none"`` renders grouped (side-by-side)

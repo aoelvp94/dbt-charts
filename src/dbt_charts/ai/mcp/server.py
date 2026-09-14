@@ -42,7 +42,7 @@ _BASE_RESOURCES = [
         "dct://docs/all",
         "text/markdown",
         "dbt charts YAML Reference (full)",
-        "Complete YAML syntax reference — same content as `dct docs all`",
+        "Syntax guide plus the generated field reference — same content as `dct docs all`",
     ),
     (
         "dct://docs/reference",
@@ -90,9 +90,15 @@ _BASE_RESOURCES = [
 
 
 def _docs_topic_resources() -> list[tuple[str, str, str, str]]:
-    """One static resource per H2 in DBT_CHARTS_SYNTAX.md, derived from the live topic index."""
+    """One static resource per docs topic, derived from the live topic index.
+
+    The index also carries the generated references, which _BASE_RESOURCES
+    already names with their own titles — skip those rather than advertise
+    the same URI twice.
+    """
     from dbt_charts.agent_api.docs import docs as docs_verb
 
+    base_uris = {uri for uri, *_ in _BASE_RESOURCES}
     return [
         (
             f"dct://docs/{entry.id}",
@@ -101,12 +107,13 @@ def _docs_topic_resources() -> list[tuple[str, str, str, str]]:
             entry.description or f"`dct docs {entry.id}` section",
         )
         for entry in docs_verb().topics
+        if f"dct://docs/{entry.id}" not in base_uris
     ]
 
 
 def _read_resource_content(uri: str, context: DbtChartsAIContext) -> str:
     from dbt_charts.agent_api.boards import get_board, list_boards
-    from dbt_charts.agent_api.docs import docs as docs_verb, read_full_text
+    from dbt_charts.agent_api.docs import docs as docs_verb
     from dbt_charts.ai.prompts import load_shared_prompt
 
     if uri == "dct://boards":
@@ -114,14 +121,21 @@ def _read_resource_content(uri: str, context: DbtChartsAIContext) -> str:
             indent=2, by_alias=True, exclude_none=True
         )
 
-    if uri == "dct://docs/all":
-        return read_full_text()
-
+    # "all" is a topic the docs verb serves like any other — routing it here
+    # keeps this resource and `dct docs all` the same bytes.
     if uri.startswith("dct://docs/"):
         slug = uri.replace("dct://docs/", "")
         result = docs_verb(topic=slug)
         if result.topic is None:
-            return json.dumps({"error": f"Unknown topic: {slug}"})
+            # A missing generated file says which recipe regenerates it —
+            # "Unknown topic" for a topic we ship would send the reader nowhere.
+            return json.dumps(
+                {
+                    "error": result.errors[0]
+                    if result.errors
+                    else f"Unknown topic: {slug}"
+                }
+            )
         return result.topic.content
 
     if uri.startswith("dct://guide/"):

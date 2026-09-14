@@ -25,7 +25,7 @@ def _plain(text: str) -> str:
 @pytest.fixture(autouse=True)
 def patch_syntax_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point ``_SYNTAX_FILE`` at a controlled corpus and the generated
-    references at missing paths, so no CLI test scores against the wheel."""
+    references at empty files, so no CLI test scores against the wheel."""
     fake = tmp_path / "DBT_CHARTS_SYNTAX.md"
     fake.write_text(
         "# dbt charts YAML Syntax\n\n"
@@ -42,7 +42,9 @@ def patch_syntax_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(_loader, "_SYNTAX_FILE", fake)
     for name in ("_REFERENCE_FILE", "_ERROR_REFERENCE_FILE", "_WARNING_REFERENCE_FILE"):
-        monkeypatch.setattr(_loader, name, tmp_path / f"missing-{name}.md")
+        empty = tmp_path / f"empty-{name}.md"
+        empty.write_text("")
+        monkeypatch.setattr(_loader, name, empty)
 
 
 class TestDocsTopicIndex:
@@ -73,7 +75,16 @@ class TestDocsTopicIndex:
         assert data["success"] is True
         assert data["mode"] == "index"
         slugs = [entry["id"] for entry in data["topics"]]
-        assert slugs == ["cheatsheet", "board", "queries", "charts", "layout"]
+        assert slugs == [
+            "cheatsheet",
+            "board",
+            "queries",
+            "charts",
+            "layout",
+            "reference",
+            "error-reference",
+            "warning-reference",
+        ]
         for entry in data["topics"]:
             assert set(entry.keys()) >= {"id", "title"}
 
@@ -185,9 +196,9 @@ class TestDftDocsHelpLayout:
         text = _plain(result.output)
         lines = [line.strip() for line in text.splitlines()]
         for form in (
-            "dct docs                    # Topic index (one row per H2 section)",
+            "dct docs                    # Topic index (one row per topic)",
             "dct docs cheatsheet         # One-page essentials",
-            "dct docs all                # Whole reference, unsliced",
+            "dct docs all                # Syntax guide + field reference, unsliced",
             'dct docs --search "grid"    # Ranked search across all topics',
             'dct docs charts -s "legend" # Ranked search scoped to one topic',
         ):

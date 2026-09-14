@@ -8,7 +8,10 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 from dbt_charts.core.compile.config import get_chart_rendering
-from dbt_charts.core.compile.resolve.chart.tick_values import zero_anchor_floor
+from dbt_charts.core.compile.resolve.chart.tick_values import (
+    zero_anchor_domain_floor,
+    zero_anchor_floor,
+)
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
 from dbt_charts.core.render.chart.vl_field_maps import emit_resolved_scale_vl
@@ -1121,10 +1124,42 @@ def build_cartesian_x_encoding(
     return vl_type, result, time_unit
 
 
+def zero_anchor_pinned_floor(axis: ResolvedAxisStyle) -> float | None:
+    """The ``domainMin`` a zero-anchored measure scale pins, or None when no
+    rung supplies one.
+
+    The single home of that decision. Four places build a zero-anchored
+    measure scale — this module's ``y_zero_scale`` (line/area/scatter, and
+    bar's stacked-vertical branch) plus bar's own unstacked-vertical and
+    horizontal branches — and each has to answer it the same way:
+
+    - The ladder is filtered through ``zero_anchor_domain_floor`` first. An
+      authored ``scale.values`` lands verbatim in ``ay.tick_values`` and is a
+      statement about tick positions, not the domain, so it must never source
+      a floor. Taking the axis rather than a pre-filtered list is the point:
+      passing the ladder in is what let callers forget the filter. ``scale``
+      and ``tick_values`` are both declared unconditionally, so neither needs
+      a defensive read.
+    - No rung means nothing pins the edge. Returning ``None`` rather than a
+      literal ``0.0`` matters: 0.0 is a floor only while the data is
+      non-negative, and on all-negative data it pins 0 as the BOTTOM of the
+      domain, collapsing every mark onto one pixel row.
+
+    Callers compose the result differently and legitimately so — one applies
+    resolve's headroom bake afterwards, another only pins when that bake is
+    absent, a third pairs the no-rung case with ``nice: False``. Only the
+    decision is shared.
+    """
+    rungs = zero_anchor_domain_floor(
+        axis.scale.values if axis.scale is not None else None,
+        list(axis.tick_values),
+    )
+    return zero_anchor_floor(rungs) if rungs else None
+
+
 def y_zero_scale(
-    axis: ResolvedAxisStyle | Any | None,
-    tick_values: list[float] | None = None,
-) -> dict[str, Any]:
+    axis: ResolvedAxisStyle | None,
+) -> dict[str, Any]:  # type-state: explicit_any — foreign VL scale JSON
     """Build a VL y-scale dict from the resolved y-axis style.
 
     Merges every scale field (``type``, ``base``, ``exponent``, etc.) via
@@ -1133,8 +1168,13 @@ def y_zero_scale(
     line/area/bar too. ``zero`` is excluded from that merge and computed
     separately:
 
-    axis.scale.zero is True  → {"domainMin": tick_values[0] or 0.0, "zero": True}
+    axis.scale.zero is True  → {"domainMin": <pinned floor>, "zero": True}, or
+                               {"nice": False, "zero": True} when no rung
+                               supplies a floor
     anything else            → {"zero": False}
+
+    The ladder comes off ``axis`` and is filtered by
+    ``zero_anchor_pinned_floor`` — callers do not pre-filter it.
     """
     scale = getattr(axis, "scale", None) if axis is not None else None
 
@@ -1144,7 +1184,28 @@ def y_zero_scale(
         out.pop("zero", None)  # zero is computed below, not passed through raw
 
     if is_zero_anchored(scale):
-        out["domainMin"] = zero_anchor_floor(tick_values)
+        # Only pin a floor a rung actually supplies. With no ladder,
+        # zero_anchor_floor's literal 0.0 is a floor only while the data is
+        # non-negative — on all-negative data it pins 0 as the BOTTOM of the
+        # domain, which is degenerate and puts every mark on one pixel row.
+        #
+        # `nice: False` goes with it. An explicit domainMin is what suppressed
+        # Vega-Lite's default `nice: true` on a continuous scale; dropping the
+        # pin alone silently hands the top edge back to nice-rounding (an
+        # exact 103 becomes 110), which moves every positive-data domain on a
+        # theme that bakes no ladder and desynchronizes the render from
+        # effective_measure_domain, whose whole contract is to never predict
+        # where `nice` lands.
+        # `scale` is not None here, so `axis` is not None either.
+        assert axis is not None
+        pinned = zero_anchor_pinned_floor(axis)
+        if pinned is not None:
+            out["domainMin"] = pinned
+        else:
+            # setdefault, not assignment: `nice` is an authorable key that
+            # emit_resolved_scale_vl already forwarded above, and an author
+            # asking for a rounded top must keep it.
+            out.setdefault("nice", False)
         out["zero"] = True
     else:
         out["zero"] = False

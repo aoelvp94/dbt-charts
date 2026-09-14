@@ -1430,9 +1430,10 @@ class DbtProfileSourceConfig(AttributedSourceConfig, BaseSourceConfig):
     profiles_dir: str | None = Field(
         default=None,
         description=(
-            "Directory containing profiles.yml, relative to the dbt charts project root. "
-            "Use when profiles.yml is in a subdirectory (e.g. services/dbt). "
-            "Resolution order: profiles_dir → $DBT_PROFILES_DIR → project root → ~/.dbt."
+            "Directory containing profiles.yml, relative to the linked dbt project "
+            "directory (see --dbt-project-dir). Use when profiles.yml is in a "
+            "subdirectory (e.g. services/dbt). "
+            "Resolution order: profiles_dir → $DBT_PROFILES_DIR → linked dbt project → ~/.dbt."
         ),
     )
 

@@ -26,6 +26,7 @@ from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_cont
 from dbt_charts.core.render.chart.emitters._cartesian import (
     CartesianXResolution,
     XYTitles,
+    bar_sort_to_vl,
     build_palette_config,
     build_x_enc,
     chart_sort_to_vl,
@@ -284,14 +285,38 @@ def test_chart_sort_to_vl_does_not_pin_op() -> None:
     """chart_sort_to_vl stays unopinionated about VL's own sort ``op`` default.
 
     It is the shared mapper, reached by surfaces with no aggregate in common:
-    bar's grouped-vertical x-sort sits beside an unstacked ``y.stack: null``
-    (which flips VL's inferred default from ``sum`` to ``min``), while the
-    support table's category domain is not a VL scale at all. A caller that
-    needs the aggregate stated says so at its own point —
-    ``dimension_sort_to_vl`` for a dimension axis — rather than making this
-    mapper opine on every surface at once.
+    the support table's category domain is not a VL scale at all, while a
+    bar's stacked sort-by-measure IS a stacked total and a dimension axis
+    never is. A caller that needs the aggregate stated says so at its own
+    point — ``dimension_sort_to_vl`` for a dimension axis, ``bar_sort_to_vl``
+    for a bar — rather than making this mapper opine on every surface at once.
     """
     vl_sort = chart_sort_to_vl(ChartSort(by="val", order="desc"))
     assert vl_sort == {"field": "val", "order": "descending"}, (
         f"chart_sort_to_vl must not add an 'op' key, got {vl_sort!r}"
     )
+
+
+@pytest.mark.parametrize(
+    ("sort_by", "stacked", "op"),
+    [
+        ("seq", True, "min"),
+        ("seq", False, "min"),
+        ("val", True, "sum"),
+        ("val", False, "min"),
+    ],
+)
+def test_bar_sort_to_vl_pins_sum_only_for_a_stacked_measure_sort(
+    sort_by: str, stacked: bool, op: str
+) -> None:
+    """Sorting a stack by its own measure is the one sort that means a total."""
+    assert bar_sort_to_vl(ChartSort(by=sort_by, order="asc"), "val", stacked) == {
+        "field": sort_by,
+        "order": "ascending",
+        "op": op,
+    }
+
+
+def test_bar_sort_to_vl_passes_an_unauthored_sort_through() -> None:
+    """No authored sort, nothing to pin — the encoding keeps VL's own order."""
+    assert bar_sort_to_vl(None, "val", True) is None

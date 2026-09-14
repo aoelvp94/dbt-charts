@@ -496,6 +496,36 @@ def test_cumulative_midpoints_orders_by_global_sum() -> None:
     assert [s for s, _ in result] == ["C", "A", "B"]
 
 
+def test_cumulative_midpoints_top_row_follows_the_category_key() -> None:
+    """The rail's top row is the one the axis draws first, ragged rows included.
+
+    ``x_domain_order`` folds each category with the aggregate the bar pins
+    (``bar_sort_op``), so a sort by a key column ranks by the key itself: m3
+    leads descending on 1/2/3. Folding with ``sum`` instead would rank
+    2/4/3 and anchor the rail on m2 — a row the axis does not draw first.
+    """
+    from dbt_charts.core.utils import cumulative_stack_midpoints
+
+    data = [
+        {"x": "m1", "k": 1, "s": "A", "y": 10},
+        {"x": "m1", "k": 1, "s": "B", "y": 20},
+        {"x": "m2", "k": 2, "s": "A", "y": 30},
+        {"x": "m2", "k": 2, "s": "B", "y": 40},
+        {"x": "m3", "k": 3, "s": "A", "y": 50},
+    ]
+    result = cumulative_stack_midpoints(
+        data,
+        x_field="x",
+        y_field="y",
+        series_field="s",
+        series_names=["A", "B"],
+        sort_by="k",
+        descending=True,
+    )
+    # Top row m3 holds A alone: A spans 0..50, and B seams at its right edge.
+    assert result == [("A", 25.0), ("B", 50.0)]
+
+
 def test_zero_baseline_always_fires_for_bar(bar_style: ResolvedBarStyle) -> None:
     """Bar uses scale.zero=True — zero baseline fires regardless of data range."""
     ax, ay = _baked_axes_for("bar")

@@ -179,12 +179,13 @@ def build_adapter_registry(
     # actually references one).
     data_dir = project.root if isinstance(project, FilesystemProject) else None
 
-    # Sibling rule: dbt_project.yml is only valid when it sits next to
-    # dbt_charts.yml — meaningful only for a real filesystem project (dbt's own
-    # profiles/target resolution assumes a directory).
+    # dbt_project.yml is valid at project.dbt_root (see resolve_dbt_project_dir
+    # for how that's resolved) -- meaningful only for a real filesystem project
+    # (dbt's own profiles/target resolution assumes a directory).
     resolved_dbt_path = (
-        project.root
-        if isinstance(project, FilesystemProject) and project.exists("dbt_project.yml")
+        project.dbt_root
+        if isinstance(project, FilesystemProject)
+        and project.dbt_project.exists("dbt_project.yml")
         else None
     )
 

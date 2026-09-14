@@ -173,9 +173,11 @@ def _zero_in_shared_domain(
     values = [v for field in fields for v in numeric_column_values(base_rows, field)]
     for layer in chart.layers:
         if layer.type == "bar":
-            # VL bars always extend to/from 0 regardless of their own data
-            # range — 0 is unconditionally in the shared domain once any bar
-            # layer exists.
+            # VL bars extend to/from 0 regardless of their own data range —
+            # but only while VL still auto-fits the domain. A scale that
+            # resolve has already pinned clips the bars short instead, which
+            # is why build_zero_rule_if_applicable overrules this verdict
+            # rather than deferring to it.
             return True
         if layer.y is None:
             continue
@@ -266,9 +268,11 @@ def _domain_reaches(
 class BaselineFeature:
     """Zero, top (normalize-stack), and unity (percent-format) baseline rules.
 
-    Bar: zero rule always fires.
+    Bar: zero rule fires regardless of the data.
     Line / area / scatter: zero rule fires when data straddles 0 (or
     scale.zero isn't explicitly False).
+    Every family, bar included, is then overruled by a domain pinned away
+    from 0 — see build_zero_rule_if_applicable.
     Normalize-stacked bar/area: top rules fire at datum 0 and 1 instead of a
     zero rule — except normalize-stacked, percent-format area, which gets
     only the single unity rule at datum 1 (no duplicate y=1 reference line).
@@ -428,6 +432,8 @@ class BaselineFeature:
             rule_axis,
             log_scale=continuous is not None and continuous.type == "log",
             authored_domain=authored,
+            domain_min=axis_style.domain_min,
+            domain_max=axis_style.domain_max,
             grid_visible=chart.style.axis_y.grid.visible,
             zero_color=threshold_style.color,
             zero_width=threshold_style.width,

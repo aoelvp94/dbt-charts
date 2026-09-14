@@ -355,9 +355,10 @@ def _build_line_top_encoding(
     box: RenderBox,
     x_domain: list[Any] | None,  # type-state: explicit_any — raw x values
     panel_fields: tuple[str, ...],
-) -> tuple[VLDict, bool, str | None, str | None]:
-    """Build the VL encoding dict, has_color_enc flag, and resolved x VL type
-    (None when the chart has no x channel at all) for a line chart.
+) -> tuple[VLDict, bool, str | None, str | None, float | None]:
+    """Build the VL encoding dict, has_color_enc flag, resolved x VL type
+    (None when the chart has no x channel at all), plain y label, and the
+    x-label block height at the tilt just resolved, for a line chart.
 
     Tooltip *content* is a separate concern, built after emission by
     ``features/structured_tooltip.py`` from the chart-axes LUT.
@@ -415,7 +416,7 @@ def _build_line_top_encoding(
         top_encoding["y"] = y_enc
     has_color_enc = _apply_line_color_encoding(chart, data, style, top_encoding)
     x_type = vl_type if chart.x else None
-    return top_encoding, has_color_enc, x_type, titles.y_plain
+    return top_encoding, has_color_enc, x_type, titles.y_plain, x_res.label_block_height
 
 
 def _emit_folded_line(
@@ -539,6 +540,7 @@ def _emit_folded_line(
         layers=sub_layers,
         config=build_palette_config(chart.palette),
         transforms=wide.transforms,
+        x_label_block_height=x_res.label_block_height,
     )
 
 
@@ -587,8 +589,8 @@ class LineEmitter:
             if chart.layers
             else None
         )
-        top_encoding, has_color_enc, x_type, y_plain = _build_line_top_encoding(
-            chart, data, style, box, x_domain, panel_fields
+        top_encoding, has_color_enc, x_type, y_plain, x_label_block = (
+            _build_line_top_encoding(chart, data, style, box, x_domain, panel_fields)
         )
         step_band_data = _apply_line_step_band(
             chart, data, top_encoding, style.line_mark, x_type
@@ -615,6 +617,7 @@ class LineEmitter:
             layers=sub_layers,
             config=build_palette_config(chart.palette),
             data=step_band_data,
+            x_label_block_height=x_label_block,
         )
         # When bucketing fired, stamp transformed rows onto the spec so the
         # session does not overwrite with raw query data.

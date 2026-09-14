@@ -252,9 +252,12 @@ def _resolve_line(
             "line",
         )
         # Anchored: explicit True, or smart-zero abstained for all-positive data
-        # (close-to-zero heuristic keeps floor at 0). All-negative / crossing-zero
-        # stays span-relative (the heuristic also returns None but those charts
-        # have no zero to anchor to — sign of data_min is the deciding factor).
+        # (close-to-zero heuristic keeps floor at 0). Crossing-zero stays
+        # span-relative — the heuristic returns None there, but the chart has no
+        # zero to anchor to, so the sign of data_min is the deciding factor.
+        # All-negative data no longer reaches None past the ratio threshold: the
+        # heuristic mirrors its branches and returns an explicit False, which is
+        # what keeps a far-from-zero negative line fitted.
         zero_anchored_line = _lz is True or (_lz is None and min(_zero_floats) >= 0.0)
         if (
             _lz is None

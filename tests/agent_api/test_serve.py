@@ -155,6 +155,46 @@ class TestPrepareServe:
             )
 
 
+class TestPrepareServeDbtProjectDir:
+    """Dialect inference reads the linked dbt_root; port allocation stays
+    keyed off the dct project root, so the two must not share one variable."""
+
+    def test_dialect_inference_uses_external_dbt_root(self, tmp_path: Path) -> None:
+        project_root = tmp_path / "myproject"
+        project_root.mkdir()
+        (project_root / "dbt_charts.yml").write_text("# project marker\n")
+        external_dbt = tmp_path / "external_dbt"
+        external_dbt.mkdir()
+        project = FilesystemProject(project_root, dbt_root=external_dbt)
+
+        with (
+            patch(
+                "dbt_charts.core.serve.port.resolve_port", return_value=1234
+            ) as mock_resolve_port,
+            patch(
+                "dbt_charts.core.project_roots.infer_dialect_from_dbt",
+                return_value=None,
+            ) as mock_infer,
+            patch("dbt_charts.core.serve.server.create_server", return_value=object()),
+        ):
+            prepare_serve(
+                project,
+                port=None,
+                host="localhost",
+                dialect=None,
+                target=None,
+                max_workers=None,
+                no_cache=False,
+                cache_path=None,
+            )
+
+        mock_infer.assert_called_once_with(external_dbt.resolve(), None)
+        mock_resolve_port.assert_called_once()
+        assert (
+            mock_resolve_port.call_args.kwargs["project_dir"] == project_root.resolve()
+        )
+
+
 class TestFormatStartupFailure:
     def test_returns_startup_failed_diagnostic_with_detail(self) -> None:
         diagnostic = format_startup_failure(OSError("address already in use"))

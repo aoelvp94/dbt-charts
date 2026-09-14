@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
 from dbt_charts.core.project_roots import (
     DCT_ROOT_MARKERS,
@@ -12,6 +13,7 @@ from dbt_charts.core.project_roots import (
     find_project_root,
     find_repo_root,
     find_root,
+    resolve_dbt_project_dir,
 )
 
 
@@ -85,3 +87,102 @@ def test_find_project_root_returns_project_root(tmp_path: Path) -> None:
     result = find_project_root(boards, tmp_path)
 
     assert result == tmp_path
+
+
+def test_resolve_dbt_project_dir_explicit_wins(tmp_path: Path) -> None:
+    (tmp_path / "dbt_charts.yml").write_text("dbt_project_dir: ignored\n")
+    explicit = tmp_path / "explicit_dbt"
+    explicit.mkdir()
+
+    assert resolve_dbt_project_dir(tmp_path, explicit) == explicit
+
+
+def test_resolve_dbt_project_dir_reads_config_key(tmp_path: Path) -> None:
+    project_dir = tmp_path / "myproject"
+    project_dir.mkdir()
+    external = tmp_path / "external_dbt_project"
+    external.mkdir()
+    (project_dir / "dbt_charts.yml").write_text(
+        "dbt_project_dir: ../external_dbt_project\n"
+    )
+
+    result = resolve_dbt_project_dir(project_dir, None)
+
+    assert result == external.resolve()
+
+
+def test_resolve_dbt_project_dir_rejects_non_string_config_value(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "dbt_charts.yml").write_text("dbt_project_dir: 3\n")
+
+    with pytest.raises(TypeError, match="dbt_project_dir must be a string"):
+        resolve_dbt_project_dir(tmp_path, None)
+
+
+def test_resolve_dbt_project_dir_rejects_missing_config_target(
+    tmp_path: Path,
+) -> None:
+    """An explicitly-configured dbt_project_dir that does not exist must fail
+    loud, not silently degrade to WARN-DBT-MANIFEST-MISSING (matches
+    resolve_profiles_path's "never falls back silently past a candidate that
+    was explicitly named" contract)."""
+    (tmp_path / "dbt_charts.yml").write_text("dbt_project_dir: ../typo_dbt\n")
+
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        resolve_dbt_project_dir(tmp_path, None)
+
+
+def test_resolve_dbt_project_dir_rejects_configured_target_that_is_a_file(
+    tmp_path: Path,
+) -> None:
+    """A configured dbt_project_dir naming an existing file (not a directory)
+    must report "is not a directory"."""
+    (tmp_path / "board.yaml").write_text("title: t\n")
+    (tmp_path / "dbt_charts.yml").write_text("dbt_project_dir: board.yaml\n")
+
+    with pytest.raises(NotADirectoryError, match="is not a directory"):
+        resolve_dbt_project_dir(tmp_path, None)
+
+
+def test_resolve_dbt_project_dir_treats_null_config_value_as_absent(
+    tmp_path: Path,
+) -> None:
+    """A bare `dbt_project_dir:` key (YAML null) is "no key set", matching
+    Config.dbt_project_dir's own None-means-sibling-default contract, not a
+    non-string value to reject."""
+    (tmp_path / "dbt_charts.yml").write_text("dbt_project_dir:\n")
+
+    assert resolve_dbt_project_dir(tmp_path, None) == tmp_path
+
+
+def test_resolve_dbt_project_dir_rejects_blank_config_value(tmp_path: Path) -> None:
+    """An empty/whitespace-only dbt_project_dir must not silently resolve to
+    project_dir via `Path(project_dir) / ""` -- a nonsense value landing
+    silently on the default is exactly what validate-and-error-fast targets."""
+    (tmp_path / "dbt_charts.yml").write_text("dbt_project_dir: ''\n")
+
+    with pytest.raises(TypeError, match="must not be blank"):
+        resolve_dbt_project_dir(tmp_path, None)
+
+
+def test_resolve_dbt_project_dir_propagates_malformed_yaml(tmp_path: Path) -> None:
+    """A malformed dbt_charts.yml fails loud immediately, not silently
+    defaulting to the sibling rule (round 1 deliberately dropped the
+    except yaml.YAMLError swallow)."""
+    (tmp_path / "dbt_charts.yml").write_text("dbt_project_dir: [unterminated\n")
+
+    with pytest.raises(yaml.YAMLError):
+        resolve_dbt_project_dir(tmp_path, None)
+
+
+def test_resolve_dbt_project_dir_defaults_to_sibling(tmp_path: Path) -> None:
+    (tmp_path / "dbt_charts.yml").write_text("cache:\n  path: .dct_cache.duckdb\n")
+
+    assert resolve_dbt_project_dir(tmp_path, None) == tmp_path
+
+
+def test_resolve_dbt_project_dir_defaults_to_sibling_when_no_config(
+    tmp_path: Path,
+) -> None:
+    assert resolve_dbt_project_dir(tmp_path, None) == tmp_path

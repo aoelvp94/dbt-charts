@@ -145,8 +145,8 @@ def test_repeat_mode_puts_the_suffix_on_every_non_zero_cell():
     """Past one tier the magnitude no longer names the set — the ruler's rule.
 
     The currency prefix still anchors: repeating `$` on every cell
-    disambiguates nothing (`plain_digit_format`'s convention, shared with the
-    axis), so only the suffix repeats.
+    disambiguates nothing (`non_compacting_tick_format`'s convention, shared
+    with the axis), so only the suffix repeats.
     """
     calc = _cell_calc(
         _attach(

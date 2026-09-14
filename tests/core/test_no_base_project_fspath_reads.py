@@ -2,12 +2,13 @@
 
 `Project` (`core/project.py`) is the host-substitution seam: it holds no
 `Path` at all. `root`, `charts_dir`, `path_for_fspath`, `directory_for_fspath`,
-and `ProjectDirectory.project_root` (removed) live only on `FilesystemProject`
-(`cli/filesystem_project.py`) — the one host for which a filesystem `Path` is
-real edge currency. A read of one of these members through a base-typed
-`Project` is invisible under `FilesystemProject` and silently wrong under any
-other host (e.g. Cloud's `CloudManagedProject`, whose `root` used to resolve
-to the worker's CWD — the production defect this seam closes).
+`dbt_root`, `dbt_project`, and `ProjectDirectory.project_root` (removed) live
+only on `FilesystemProject` (`cli/filesystem_project.py`) — the one host for which a
+filesystem `Path` is real edge currency. A read of one of these members
+through a base-typed `Project` is invisible under `FilesystemProject` and
+silently wrong under any other host (e.g. Cloud's `CloudManagedProject`, whose
+`root` used to resolve to the worker's CWD — the production defect this seam
+closes).
 
 The type checker (`pyright`) is the primary gate: `Project` no longer declares
 these members, so a base-typed read is a type error. This AST scan is the
@@ -38,7 +39,14 @@ _SCAN_DIRS = (DBT_CHARTS_PKG_DIR / "core", DBT_CHARTS_PKG_DIR / "agent_api")
 # FilesystemProject-typed/narrowed context is unconditionally a violation
 # (unlike `.root`, these names don't collide with unrelated classes).
 _FS_ONLY_MEMBERS = frozenset(
-    {"charts_dir", "config_file", "path_for_fspath", "directory_for_fspath"}
+    {
+        "charts_dir",
+        "config_file",
+        "path_for_fspath",
+        "directory_for_fspath",
+        "dbt_root",
+        "dbt_project",
+    }
 )
 
 # `.root` is ambiguous by name alone (SchemaIR.root, LinkContext.root, plain
@@ -58,7 +66,12 @@ ALLOWED: dict[tuple[str, int], str] = {
         "isinstance(project, FilesystemProject)-guarded data_dir computation"
     ),
     ("core/execute/adapters/adapter_registry.py", 186): (
-        "isinstance(project, FilesystemProject)-guarded resolved_dbt_path computation"
+        "isinstance(project, FilesystemProject)-guarded resolved_dbt_path computation "
+        "(project.dbt_root, linked-dbt-project sibling/external rule)"
+    ),
+    ("core/execute/adapters/adapter_registry.py", 188): (
+        "isinstance(project, FilesystemProject)-guarded resolved_dbt_path computation "
+        "(project.dbt_project.exists, same narrow as the line above)"
     ),
     # dct serve is filesystem-only: create_server(project: FilesystemProject)
     # and app.state.project are FilesystemProject throughout server.py — no
@@ -123,13 +136,13 @@ ALLOWED: dict[tuple[str, int], str] = {
         "agent_api/pack.py",
         459,
     ): "apply_proposal(project: FilesystemProject) — already FS-typed",
-    ("agent_api/_paths.py", 113): (
+    ("agent_api/_paths.py", 114): (
         "_relpath_for_fs_location: isinstance(project, FilesystemProject)-guarded"
     ),
-    ("agent_api/_paths.py", 168): (
+    ("agent_api/_paths.py", 169): (
         "resolve_board_or_error: isinstance(project, FilesystemProject)-guarded"
     ),
-    ("agent_api/_paths.py", 318): (
+    ("agent_api/_paths.py", 319): (
         "compile_editor_buffer: project = FilesystemProject(root) constructed above"
     ),
     ("agent_api/project_session.py", 299): (
@@ -137,6 +150,10 @@ ALLOWED: dict[tuple[str, int], str] = {
     ),
     ("agent_api/serve.py", 78): (
         "prepare_serve(project: FilesystemProject) — already FS-typed"
+    ),
+    ("agent_api/serve.py", 86): (
+        "prepare_serve(project: FilesystemProject), already FS-typed "
+        "(dbt_root, dialect inference reads the linked dbt project directory)"
     ),
 }
 
@@ -169,8 +186,8 @@ def test_base_project_fspath_reads_match_reasoned_allowlist() -> None:
 
     assert violations == set(ALLOWED), (
         "A base-typed Project read of root/charts_dir/config_file/"
-        "path_for_fspath/directory_for_fspath was found outside the reasoned "
-        "allowlist below (core/AGENTS.md 'Project-file access'). These "
+        "path_for_fspath/directory_for_fspath/dbt_root/dbt_project was found "
+        "outside the reasoned allowlist below (core/AGENTS.md 'Project-file access'). These "
         "members live only on FilesystemProject — narrow the read (isinstance "
         "or an explicit FilesystemProject type) and add a reasoned ALLOWED "
         "entry, or fix the site so it no longer needs a filesystem Path.\n"

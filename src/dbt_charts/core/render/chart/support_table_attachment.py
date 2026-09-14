@@ -684,7 +684,7 @@ def _strip_numerals_text_expr(value_expr: str, numerals: StripNumerals) -> str:
 
     The prefix anchors even when the suffix repeats — repeating a currency
     symbol on every cell disambiguates nothing (the convention
-    ``plain_digit_format`` documents, shared with the axis).
+    ``non_compacting_tick_format`` documents, shared with the axis).
     """
     anchor_test = numerals.anchor.test
 
@@ -4035,6 +4035,39 @@ def _apply_support_table_columns_post_pass(
     return spec, padding
 
 
+def _tilted_label_axis_offset(
+    baked_offset: float,
+    style: SupportTableStyle,
+    axis_x: ResolvedAxisStyle,
+    x_label_block_px: float | None,
+) -> float:
+    """Grow the compile-baked axis gap to clear a render-time label tilt.
+
+    ``support_table_axis_offset`` reserves ``label_max_lines`` lines of
+    *horizontal* label between the plot and the strip
+    (``compile/support_table.py``'s ``axis_offset``). The angle the labels are
+    actually drawn at is decided at render, from the data and the plot width,
+    and a label rotated toward vertical is as tall as it is long — so the
+    strip owes whatever that tilt costs beyond the lines already reserved.
+
+    Nothing is measured here: ``x_label_block_px`` is what the emitter's own
+    tilt resolution measured (``AxisLabelLayout.label_block_height``), which
+    is the only place that holds both the chosen angle and — on a temporal
+    axis — the formatted label strings. ``None`` means the emitter resolved
+    no x labels at all, and the baked gap stands.
+
+    Hidden labels are the bake's own carve-out: ``axis_offset`` reserves
+    nothing for them, and the tilt resolver picks an angle regardless of
+    visibility, so this gates on the same condition or it would grow a gap
+    around labels that are never drawn.
+    """
+    labels = axis_x.labels
+    if x_label_block_px is None or labels.visible is False or labels.font.size <= 0:
+        return baked_offset
+    reserved = labels.font.size * style.label_max_lines
+    return baked_offset + max(0.0, x_label_block_px - reserved)
+
+
 def apply_chart_support_table_post_pass(
     spec: dict[str, Any],
     resolved_chart: _CartesianResolvedChartFields,
@@ -4042,6 +4075,7 @@ def apply_chart_support_table_post_pass(
     data: list[dict[str, Any]],
     padding: dict[str, Any] | None,
     chart_type: str,
+    x_label_block_px: float | None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Post-pass: attach the support_table strip when the chart authors one.
 
@@ -4053,6 +4087,10 @@ def apply_chart_support_table_post_pass(
     Padding-bump destination depends on whether the caller supplied an
     external padding kwarg (which _finalize overwrites wholesale) or
     None (which leaves spec.padding alone).
+
+    ``x_label_block_px`` is the emitted spec's own x-label block height,
+    stashed by the emitter and handed over by the caller — see
+    ``_tilted_label_axis_offset``. None when the chart resolved no x labels.
     """
     support_table = resolved_chart.support_table
     if support_table is None:
@@ -4397,11 +4435,20 @@ def apply_chart_support_table_post_pass(
     series_count = len(series_order) if series_order else 0
     chart_style = getattr(resolved_chart, "style", None)
     axis_x_style = chart_style.axis_x if chart_style is not None else None
+    assert axis_x_style is not None, (
+        f"cartesian resolved chart must carry style.axis_x — got {resolved_chart!r}"
+    )
+    axis_offset_value = resolved_chart.support_table_axis_offset
+    if dt_style.position == "bottom":
+        assert axis_offset_value is not None, (
+            "support_table_axis_offset must be baked for a bottom strip — see "
+            "compile.resolve.chart._kwargs._support_table_geometry"
+        )
+        axis_offset_value = _tilted_label_axis_offset(
+            axis_offset_value, dt_style, axis_x_style, x_label_block_px
+        )
     period_filter = None
     if resolved_chart.x:
-        assert axis_x_style is not None, (
-            f"cartesian resolved chart must carry style.axis_x — got {resolved_chart!r}"
-        )
         period_filter = _label_period_filter_expr(
             spec,
             charts_style,
@@ -4448,7 +4495,7 @@ def apply_chart_support_table_post_pass(
         support_table=support_table,
         style=dt_style,
         charts_style=charts_style,
-        axis_offset_value=resolved_chart.support_table_axis_offset,
+        axis_offset_value=axis_offset_value,
         axis_label_padding=axis_label_padding,
         sampling_step=sampling_step,
         entry_dx=entry_dx,
@@ -4464,7 +4511,7 @@ def apply_chart_support_table_post_pass(
     strip_h = support_table_strip_height(
         support_table,
         dt_style,
-        resolved_chart.support_table_axis_offset,
+        axis_offset_value,
         series_count=series_count,
     )
     if strip_h > 0:

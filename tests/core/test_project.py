@@ -429,6 +429,12 @@ class TestProjectIsAbstract:
         with pytest.raises(NotImplementedError, match="must implement `name`"):
             _ = project.name
 
+    def test_manifest_project_default_returns_self(self) -> None:
+        """A base-Project subclass with no override answers `manifest_project()`
+        with itself, same non-abstract-default shape as `config_document()`."""
+        project = _MinimalFilePrimitivesProject()
+        assert project.manifest_project() is project
+
 
 class _InMemoryProject(Project):
     """Minimal in-memory Project: the file-access primitives + sources, no disk access."""

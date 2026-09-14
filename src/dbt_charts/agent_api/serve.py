@@ -83,7 +83,7 @@ def prepare_serve(
     dialect_inferred = False
     effective_dialect = dialect
     if effective_dialect is None:
-        inferred = infer_dialect_from_dbt(project_dir, effective_target)
+        inferred = infer_dialect_from_dbt(project.dbt_root, effective_target)
         effective_dialect = inferred or "duckdb"
         dialect_inferred = bool(inferred)
 

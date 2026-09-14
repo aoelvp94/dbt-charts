@@ -91,20 +91,23 @@ honored identically; absent a pin, the smart-zero heuristic decides. Area's bake
 is gated on `resolved_stack != "center"` — a streamgraph carve-out, since its
 y=0 is the silhouette's visual centerline, not a baseline, so the bake is skipped
 outright rather than anchoring a meaningless value. Bar never bakes this: VL bars
-extend to/from zero unconditionally regardless of any pin.
+extend to/from zero on their own, though only while the scale is still auto-fit
+— a `domain_min`/`domain_max` baked by the zoomed branch crops them short.
 
 Line, area and scatter also ride the render-time `BaselineFeature`
 (`render/chart/features/baseline.py`), which draws a `datum: 0` rule
 independently of the resolve-time bake. Bar fires unconditionally there past
-guards shared by every family (log-typed axis, an authored domain excluding 0,
-hidden grid, empty rows); a normalize-stack draws top rules at 0/1 instead. Line
+guards shared by every family (log-typed axis, any domain excluding 0 —
+authored or baked into `domain_min`/`domain_max` — hidden grid, empty rows); a
+normalize-stack draws top rules at 0/1 instead. Line
 and area fire unconditionally past those guards unless the axis pins
 `scale.zero=False`; scatter never treats "no explicit pin" as "fire
 unconditionally" the way line/area do — it reads the resolve-time
 `zero_anchored` bake off its own axis instead. Both the explicit-pin branch and
 scatter's own path fall back to `_zero_in_shared_domain`, a union (not a
 per-series straddle check) of the base measure with every layer's values, plus
-an unconditional `True` for any bar layer.
+a `True` for any bar layer — which holds only where the scale is still
+auto-fit, and loses to a baked pin at the shared guard above.
 
 Scatter is the one family whose measure can land on either axis: it has no
 `orientation` field, and the dot-plot recipe rotates it by putting the value on

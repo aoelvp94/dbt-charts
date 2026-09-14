@@ -58,8 +58,9 @@ _LAYERED_ALL_NEGATIVE_DATA = [
     {"x": "b", "y": -60, "y2": 8},
     {"x": "c", "y": -17, "y2": 20},
 ]
-# Base y stays all-negative and y2 stays all-negative too -- only the bar
-# layer's unconditional zero anchor can put 0 in this shared domain.
+# Base y stays all-negative and y2 stays all-negative too. The bar layer's
+# zero anchor would put 0 in this shared domain, but resolve pins the scale to
+# -101.8/-3.2 first and the bars are clipped short of it.
 _LAYERED_ALL_NEGATIVE_BAR_OVERLAY_DATA = [
     {"x": "a", "y": -95, "y2": -30},
     {"x": "b", "y": -60, "y2": -22},
@@ -244,11 +245,43 @@ def test_layered_scatter_with_straddling_line_overlay_emits_zero_rule() -> None:
     assert len(_rule_layers(spec)) == 1
 
 
-def test_layered_scatter_with_bar_overlay_emits_zero_rule() -> None:
-    """A bar layer unconditionally anchors the shared scale to zero, so an
-    all-negative base scatter with an all-negative bar overlay must draw the
-    rule too -- neither series straddles zero on its own, so only the bar
-    branch can be responsible for the rule firing here."""
+def test_layered_scatter_bar_overlay_anchors_an_unpinned_shared_scale() -> None:
+    """The `layer.type == "bar"` shortcut in `_zero_in_shared_domain`, on the
+    shape where it is still decisive: `headroom: 0` leaves both measure edges
+    unbaked, so nothing pins the scale and VL's own bar-to-zero extension is
+    what puts 0 in the shared domain.
+
+    Both series are all-negative, so neither straddles zero on its own and the
+    value union alone would answer False. Remove the shortcut and the rule
+    disappears.
+    """
+    payload: dict[str, Any] = {
+        "id": "t",
+        "type": "scatter",
+        "x": "x",
+        "y": "y",
+        "layers": [{"type": "bar", "y": "y2", "label": "t"}],
+        "style": {"axis_y": {"scale": {"headroom": 0}}},
+    }
+    reset_config()
+    chart = TypeAdapter(Chart).validate_python(payload)
+    spec = generate_vega_lite_spec(
+        chart,
+        _LAYERED_ALL_NEGATIVE_BAR_OVERLAY_DATA,
+        width=400,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CTX,
+    )
+    assert len(_rule_layers(spec)) == 1
+
+
+def test_layered_scatter_with_all_negative_bar_overlay_draws_no_zero_rule() -> None:
+    """A bar layer does not anchor a scale that resolve has already pinned.
+
+    "VL bars always extend to/from 0" holds only while Vega-Lite is free to
+    auto-fit the domain. Here the compiled Vega scale carries domainMin
+    -101.8 / domainMax -3.2 alongside `zero: true`, and the pins win: the bars
+    are clipped short of 0 and a datum-0 rule has no position on the plot."""
     payload: dict[str, Any] = {
         "id": "t",
         "type": "scatter",
@@ -266,7 +299,7 @@ def test_layered_scatter_with_bar_overlay_emits_zero_rule() -> None:
         board_style=_BOARD_STYLE,
         chart_style_context=_BOARD_CTX,
     )
-    assert len(_rule_layers(spec)) == 1
+    assert _rule_layers(spec) == []
 
 
 def test_layered_scatter_brackets_zero_across_negative_base_and_positive_overlay() -> (

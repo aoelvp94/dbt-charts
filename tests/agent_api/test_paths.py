@@ -14,6 +14,7 @@ import pytest
 from dbt_charts.agent_api._paths import (
     resolve_board_path,
     resolve_board_relpath,
+    resolve_dbt_project_dir,
 )
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.inspect.cache_factory import build_resolver
@@ -779,3 +780,9 @@ def test_render_board_boards_first_non_filesystem_project(
         board=board, as_link=True, server_port=8000
     )
     assert result.status == "ok", result.validation_errors
+
+
+def test_resolve_dbt_project_dir_importable_from_agent_api(tmp_path: Path) -> None:
+    """`cli/_project.py` must import this from `agent_api._paths`, never from
+    `core.project_roots` directly (module-boundary rule)."""
+    assert resolve_dbt_project_dir(tmp_path, None) == tmp_path

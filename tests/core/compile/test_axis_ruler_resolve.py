@@ -51,6 +51,8 @@ from dbt_charts.core.fonts import (
     DBT_SERIF_OLDSTYLE_TABULAR_FONT_FAMILY,
     SOURCE_SERIF_4_FONT_FAMILY,
 )
+from dbt_charts.core.numeric import nice_tick_values
+from dbt_charts.core.text.format_d3 import is_d3_si_spec
 from dbt_charts.core.text.numeral_scale import SuffixMode, shared_scale_for_ladder
 
 # A ladder that compacts in ANCHOR mode (mirrors the 0-450k worked example in
@@ -1138,10 +1140,12 @@ def test_non_compacting_ladder_no_stray_decimals_on_an_integer_step():
     assert d3_format_apply(ay.tick_label.format, 4500.0) == "4,500"
 
 
-def test_non_compacting_sub_unit_ladder_never_rounds_to_a_false_value():
-    """0.001 must still render '1m' via the theme's SI default. A fixed-point
-    rewrite at (the ladder's own) zero precision would round it to '0' — the
-    floor guard (extreme >= 1) keeps this ladder out of the branch entirely.
+def test_non_compacting_sub_unit_ladder_writes_its_digits_out():
+    """A milli-band ladder takes the plain-digit rewrite like any other
+    non-compacting ladder: 0.001 renders "0.001", not d3's "1m".
+
+    The precision comes from the step (0.001 -> three places), so the smallest
+    rung keeps its own digits rather than rounding to a false "0".
     """
     ay_merged = _merged_axis_y()
     ticks = (0.001, 0.002, 0.003, 0.004, 0.005)
@@ -1152,14 +1156,18 @@ def test_non_compacting_sub_unit_ladder_never_rounds_to_a_false_value():
         format_is_alias=False,
         chart_id="test",
     )
-    assert ay.labels.format == ".3~s"
-    assert ay.tick_label is None
-    assert d3_format_apply(ay.labels.format, 0.001) == "1m"
+    assert ay.tick_label.format == ",.3~f"
+    assert d3_format_apply(ay.tick_label.format, 0.001) == "0.001"
+    assert d3_format_apply(ay.tick_label.format, 0.005) == "0.005"
 
 
-def test_non_compacting_sub_one_ladder_is_untouched():
-    """0 - 0.5: the extreme sits below the floor, so the branch never fires —
-    0.05 must not round to 0.1 under a fixed-point rewrite.
+def test_non_compacting_sub_one_ladder_never_paints_a_milli_suffix():
+    """The reported bug: 0 - 0.5 under the theme's own SI default painted
+    "100m"/"500m" -- d3's milli prefix, which a reader parses as million.
+
+    Nothing chose SI for this ladder (``shared_scale_for_ladder`` declines
+    below thousands); the suffix was the theme placeholder leaking through a
+    hole in the dispatch. It writes its digits out instead.
     """
     ay_merged = _merged_axis_y()
     ticks = (0.0, 0.1, 0.2, 0.3, 0.4, 0.5)
@@ -1170,7 +1178,143 @@ def test_non_compacting_sub_one_ladder_is_untouched():
         format_is_alias=False,
         chart_id="test",
     )
-    assert ay.labels.format == ".3~s"
+    assert ay.tick_label.format == ",.1~f"
+    painted = [d3_format_apply(ay.tick_label.format, t) for t in ticks]
+    assert painted == ["0", "0.1", "0.2", "0.3", "0.4", "0.5"]
+
+
+def _non_compacting_ladders() -> list[tuple[float, ...]]:
+    """One ladder per {1, 2, 5} * 10**k step from pico upward, each run from
+    zero and again from a base big enough that the step is inexact there.
+
+    The second base is the point: a ladder based at zero has a clean step, so
+    it hides any decision that reads the step's float residue. Two shapes drop
+    out -- a ladder that compacts (``shared_scale_for_ladder`` owns those, and
+    the SI suffix is its answer, not a fall-through), and one whose base is
+    coarse enough against its step to land two rungs on the same double --
+    wholly (every rung identical) or in ulp-sized runs.
+    """
+    ladders = []
+    for k in range(-12, 4):
+        for mantissa in (1, 2, 5):
+            for base in (0.0, 1e7):
+                ticks = tuple(base + i * mantissa * 10.0**k for i in range(6))
+                if len(set(ticks)) == len(ticks) and (
+                    shared_scale_for_ladder(list(ticks)) is None
+                ):
+                    ladders.append(ticks)
+    return ladders
+
+
+@pytest.mark.parametrize("ticks", _non_compacting_ladders())
+def test_every_non_compacting_ladder_leaves_the_cascade_with_a_chosen_spec(ticks):
+    """The property the milli bug violated: when nothing chooses SI, something
+    else must choose -- the theme's placeholder spec never reaches paint.
+
+    Both halves matter. A ladder with no ``tick_label`` paints straight from
+    ``labels.format`` (the theme's ``.3~s``), which below 1 spells d3's
+    sub-unit prefixes. And a chosen spec still has to say something true about
+    every tick: two ticks collapsing to one string is the "renders every tick
+    as 0" failure, one order of magnitude at a time.
+    """
+    ay = build_resolved_axis(
+        _merged_axis_y(),
+        tick_values=ticks,
+        format_authored=False,
+        format_is_alias=False,
+        chart_id="test",
+    )
+    assert ay.tick_label is not None
+    painted = [d3_format_apply(ay.tick_label.format, t) for t in ticks]
+    assert len(set(painted)) == len(ticks)
+
+
+def test_a_sub_cent_step_on_a_millions_ladder_keeps_its_ticks_distinct():
+    """A near-constant metric in the millions, read at sub-cent resolution.
+
+    The step is inexact there -- 0.01 apart on values near 1e7 is
+    0.00999999977... as a double -- and the register split must not read that
+    residue as "too fine for fixed point": the ladder's rungs genuinely differ,
+    and one scientific spec at three significant figures paints all four "1e+7".
+
+    Distinct is all this pins. The residue reaches the labels too
+    (10,000,000.0099999998), which is what the axis painted before the register
+    split existed; clamping precision to the ticks' own resolution is its own
+    question.
+    """
+    ticks = (10_000_000.0, 10_000_000.01, 10_000_000.02, 10_000_000.03)
+    ay = build_resolved_axis(
+        _merged_axis_y(),
+        tick_values=ticks,
+        format_authored=False,
+        format_is_alias=False,
+        chart_id="test",
+    )
+    assert ay.tick_label is not None
+    painted = [d3_format_apply(ay.tick_label.format, t) for t in ticks]
+    assert len(set(painted)) == len(ticks)
+
+
+def test_a_ladder_below_fixed_point_reach_takes_scientific_not_a_false_zero():
+    """A step finer than ten decimal places has no fixed-point spec at all --
+    the precision derived from it would print every tick "0". That ladder gets
+    an explicit register (scientific) rather than falling through to the theme
+    placeholder.
+    """
+    ticks = (0.0, 1e-11, 2e-11, 3e-11)
+    ay = build_resolved_axis(
+        _merged_axis_y(),
+        tick_values=ticks,
+        format_authored=False,
+        format_is_alias=False,
+        chart_id="test",
+    )
+    assert ay.tick_label.decimal_pad_table == ()
+    painted = [d3_format_apply(ay.tick_label.format, t) for t in ticks]
+    assert painted == ["0e+0", "1e-11", "2e-11", "3e-11"]
+
+
+def test_a_ladder_less_axis_keeps_the_si_format_for_now():
+    """The boundary of the rewrite: it needs a ladder to read a step off.
+
+    An axis with no baked ladder (a theme leaving `ticks.count` unset, or
+    `multiples.scale: independent`) lets Vega pick its own ticks, so no
+    step-derived spec can be chosen for them and the SI format still paints.
+    Below 1 that is the milli misread this rewrite exists to end, and closing
+    it needs a per-tick expression rather than a format string. This pins where
+    the two cases part, so whoever closes it flips a test rather than
+    rediscovering the boundary.
+    """
+    ay = build_resolved_axis(
+        _merged_axis_y(),
+        tick_values=(),
+        format_authored=False,
+        format_is_alias=False,
+        chart_id="test",
+    )
+    assert ay.tick_label is None
+    assert ay.ruler is None
+    assert is_d3_si_spec(ay.labels.format)
+
+
+def test_a_ladder_whose_rungs_round_to_each_other_derives_no_spec():
+    """`nice_tick_values` rounds each rung to 10 places, so a near-degenerate
+    span hands back equal adjacent ticks: two rungs, no step between them.
+
+    Deriving a spec from a zero step would put an ordinary axis in the
+    scientific register (1 painted as "1e+0"). The ladder carries no step, so
+    it gets no rewrite at all -- the same exit a ladder too short to have one
+    takes.
+    """
+    ticks = tuple(nice_tick_values(1.0, 1.0000000001, 6))
+    assert ticks[0] == ticks[1]
+    ay = build_resolved_axis(
+        _merged_axis_y(),
+        tick_values=ticks,
+        format_authored=False,
+        format_is_alias=False,
+        chart_id="test",
+    )
     assert ay.tick_label is None
 
 

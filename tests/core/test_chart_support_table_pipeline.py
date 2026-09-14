@@ -3671,7 +3671,7 @@ def test_pipeline_quantitative_x_does_not_anchor():
         "layer": [],
     }
     result_spec, _ = apply_chart_support_table_post_pass(
-        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar"
+        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar", None
     )
 
     calc = _goal_row_calc(result_spec)
@@ -3740,7 +3740,7 @@ def test_pipeline_absent_sort_key_in_x_encoding_does_not_anchor():
         "layer": [],
     }
     result_spec, _ = apply_chart_support_table_post_pass(
-        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar"
+        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar", None
     )
 
     calc = _goal_row_calc(result_spec)
@@ -3869,7 +3869,7 @@ def test_pipeline_aggregate_min_zero_at_first_x_anchors_on_next_nonzero():
         "layer": [],
     }
     result_spec, _ = apply_chart_support_table_post_pass(
-        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar"
+        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar", None
     )
 
     calc = _goal_row_calc(result_spec)
@@ -3915,7 +3915,7 @@ def test_pipeline_aggregate_min_nonzero_at_first_x_anchors():
         "layer": [],
     }
     result_spec, _ = apply_chart_support_table_post_pass(
-        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar"
+        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar", None
     )
 
     calc = _goal_row_calc(result_spec)
@@ -3973,7 +3973,7 @@ def test_pipeline_per_series_absent_at_first_x_anchors_at_own_first_cell():
         "layer": [],
     }
     result_spec, _ = apply_chart_support_table_post_pass(
-        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar"
+        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar", None
     )
 
     # Series A (row 0): anchors at Widget (its first non-zero row in data order)
@@ -4021,7 +4021,7 @@ def test_pipeline_date_like_ordinal_with_data_order_anchors_via_drawn_index():
         "layer": [],
     }
     result_spec, _ = apply_chart_support_table_post_pass(
-        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar"
+        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar", None
     )
 
     calc = _goal_row_calc(result_spec)
@@ -4069,7 +4069,7 @@ def test_pipeline_date_like_ordinal_with_authored_sort_falls_to_plain():
         "layer": [],
     }
     result_spec, _ = apply_chart_support_table_post_pass(
-        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar"
+        spec, resolved, _BOARD_STYLE.chart_defaults, data, None, "bar", None
     )
 
     calc = _goal_row_calc(result_spec)
@@ -4353,3 +4353,393 @@ def test_render_bar_horizontal_stacked_per_series_suppresses_legend():
     resolve(chart, _GROUPED_PRODUCT_DATA, chart_style_context=_BOARD_CONTEXT)
     spec = generate_vega_lite_spec(chart, _GROUPED_PRODUCT_DATA, width=400, height=200)
     assert _color_legend(spec) is None
+
+
+# ---------------------------------------------------------------------------
+# A bottom strip clears whatever tilt the x labels were drawn at
+# ---------------------------------------------------------------------------
+
+_TILT_WIDTH = 520.0
+_TILT_HEIGHT = 320.0
+_LONG_CATEGORY_DATA = [
+    {"month": f"Department {i:02d}", "revenue": 100.0 + i} for i in range(20)
+]
+
+
+def _bottom_strip_chart(x_axis_style: dict[str, Any] | None = None) -> Chart:
+    """Vertical bar with a ``position: bottom`` strip and one source row."""
+    style: dict[str, Any] = {
+        "orientation": "vertical",
+        "support_table": {"position": "bottom"},
+    }
+    if x_axis_style is not None:
+        style["axis_x"] = x_axis_style
+    return TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "bar",
+            "x": "month",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "support_table": {"entries": [{"source": "revenue"}]},
+            "style": style,
+        }
+    )
+
+
+def _first_strip_row_y(spec: dict[str, Any], position: str = "bottom") -> float:
+    """Pixel y of strip row 0 — the row nearest the plot.
+
+    Rows run away from the plot as their index grows, downward from
+    ``spec.height`` at ``position: bottom`` and upward (negative) at ``top``,
+    so row 0 is the smallest y below the plot and the largest above it.
+    """
+    main = spec["hconcat"][0] if "hconcat" in spec else spec
+    ys = [
+        layer["encoding"]["y"]["value"]
+        for layer in main.get("layer", [])
+        if isinstance(layer.get("encoding", {}).get("y", {}).get("value"), (int, float))
+    ]
+    assert ys, "no pixel-positioned strip layer found"
+    return min(ys) if position == "bottom" else max(ys)
+
+
+def _reserved_axis_gap(spec: dict[str, Any], dt_style: Any) -> float:
+    """The axis gap a ``position: bottom`` strip actually left, read back out of
+    row 0's pixel y.
+
+    The offset enters ``_row_y_pixel`` linearly, so row 0's distance from where
+    a zero offset would put it IS the offset — nothing about the strip's own
+    geometry is re-derived here. Reading row 0 as the smallest y assumes no
+    divider rule, which sits lower still.
+    """
+    from dbt_charts.core.render.chart.support_table_attachment import _row_y_pixel
+
+    assert dt_style.position == "bottom"
+    assert dt_style.divider.width == 0
+    return _first_strip_row_y(spec) - _row_y_pixel(0, dt_style, 0.0, _TILT_HEIGHT)
+
+
+def _widest_label_px(data: list[dict[str, Any]], axis_x: Any) -> float:
+    from dbt_charts.core.font_measure import get_font_measurer
+
+    font = axis_x.labels.font
+    measurer = get_font_measurer(font.family)
+    return max(measurer.measure(str(row["month"]), font.size) for row in data)
+
+
+def test_bottom_strip_clears_vertically_tilted_x_labels() -> None:
+    """20 long categories tilt the labels to -90, where each is as tall as it is
+    long. The strip's gap is baked at compile time from two HORIZONTAL label
+    lines, so without the render-time measurement row 0 draws through them.
+    """
+    from dbt_charts.core.render.chart.support_table_attachment import _row_y_pixel
+
+    chart = _bottom_strip_chart()
+    resolved = resolve(
+        chart,
+        _LONG_CATEGORY_DATA,
+        chart_style_context=_BOARD_CONTEXT,
+        width=_TILT_WIDTH,
+    )
+    spec = generate_vega_lite_spec(
+        chart,
+        _LONG_CATEGORY_DATA,
+        width=_TILT_WIDTH,
+        height=_TILT_HEIGHT,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CONTEXT,
+    )
+    main = spec["hconcat"][0] if "hconcat" in spec else spec
+    assert main["encoding"]["x"]["axis"]["labelAngle"] == -90.0, (
+        "precondition: this chart must tilt its labels to vertical"
+    )
+    dt_style = resolved.effective_support_table_style
+    assert dt_style is not None
+    # At -90 a label stands as tall as it is wide, so the strip must start at
+    # least that far below the plot — compare against the row y that offset
+    # would produce rather than re-deriving the strip's own pixel arithmetic.
+    cleared = _row_y_pixel(
+        0,
+        dt_style,
+        _widest_label_px(_LONG_CATEGORY_DATA, resolved.style.axis_x),
+        _TILT_HEIGHT,
+    )
+    assert _first_strip_row_y(spec) >= cleared
+
+
+def test_bottom_strip_gap_is_unchanged_when_labels_sit_flat() -> None:
+    """Three short categories need no tilt: the compile-baked gap stands, to the
+    pixel."""
+    from dbt_charts.core.render.chart.support_table_attachment import _row_y_pixel
+
+    chart = _bottom_strip_chart()
+    resolved = resolve(
+        chart, _SAMPLE_DATA, chart_style_context=_BOARD_CONTEXT, width=_TILT_WIDTH
+    )
+    spec = generate_vega_lite_spec(
+        chart,
+        _SAMPLE_DATA,
+        width=_TILT_WIDTH,
+        height=_TILT_HEIGHT,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CONTEXT,
+    )
+    main = spec["hconcat"][0] if "hconcat" in spec else spec
+    assert main["encoding"]["x"]["axis"]["labelAngle"] == 0.0
+    dt_style = resolved.effective_support_table_style
+    assert dt_style is not None
+    assert _first_strip_row_y(spec) == pytest.approx(
+        _row_y_pixel(0, dt_style, resolved.support_table_axis_offset, _TILT_HEIGHT)
+    )
+
+
+def test_bottom_strip_clears_an_authored_label_angle() -> None:
+    """An authored angle short-circuits the tilt ladder, which would have picked
+    -90 for these labels — the pinned -45 still has to be measured and cleared.
+    """
+    from dbt_charts.core.render.chart.support_table_attachment import _row_y_pixel
+
+    chart = _bottom_strip_chart(x_axis_style={"labels": {"angle": -45}})
+    resolved = resolve(
+        chart,
+        _LONG_CATEGORY_DATA,
+        chart_style_context=_BOARD_CONTEXT,
+        width=_TILT_WIDTH,
+    )
+    spec = generate_vega_lite_spec(
+        chart,
+        _LONG_CATEGORY_DATA,
+        width=_TILT_WIDTH,
+        height=_TILT_HEIGHT,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CONTEXT,
+    )
+    main = spec["hconcat"][0] if "hconcat" in spec else spec
+    assert main["encoding"]["x"]["axis"]["labelAngle"] == -45.0
+    dt_style = resolved.effective_support_table_style
+    assert dt_style is not None
+    baked = _row_y_pixel(0, dt_style, resolved.support_table_axis_offset, _TILT_HEIGHT)
+    vertical = _row_y_pixel(
+        0,
+        dt_style,
+        _widest_label_px(_LONG_CATEGORY_DATA, resolved.style.axis_x),
+        _TILT_HEIGHT,
+    )
+    # Half-tilted: more room than the baked two flat lines, less than the
+    # upright block a -90 would have cost.
+    assert baked < _first_strip_row_y(spec) < vertical
+
+
+def test_top_strip_ignores_the_x_label_tilt() -> None:
+    """At ``position: top`` the x-axis is on the far side of the plot — a tilt
+    down there is none of the strip's business."""
+    from dbt_charts.core.render.chart.support_table_attachment import _row_y_pixel
+
+    chart = _compiled_bar_with_support_table([{"source": "revenue"}])
+    resolved = resolve(
+        chart,
+        _LONG_CATEGORY_DATA,
+        chart_style_context=_BOARD_CONTEXT,
+        width=_TILT_WIDTH,
+    )
+    dt_style = resolved.effective_support_table_style
+    assert dt_style is not None
+    assert dt_style.position == "top"
+    spec = generate_vega_lite_spec(
+        chart,
+        _LONG_CATEGORY_DATA,
+        width=_TILT_WIDTH,
+        height=_TILT_HEIGHT,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CONTEXT,
+    )
+    assert _first_strip_row_y(spec, position="top") == pytest.approx(
+        _row_y_pixel(0, dt_style, None, _TILT_HEIGHT)
+    )
+
+
+def test_tilted_bottom_strip_gap_no_longer_depends_on_label_max_lines() -> None:
+    """The coupling this fix removes: `label_max_lines` was the author's only
+    lever over a tilted axis's gap. Once the tilt itself is measured, raising it
+    reserves the same room — the two knobs no longer have to be tuned together.
+    """
+    gaps = []
+    for label_max_lines in (2, 3):
+        chart = _bottom_strip_chart()
+        chart.style.support_table.label_max_lines = label_max_lines
+        spec = generate_vega_lite_spec(
+            chart,
+            _LONG_CATEGORY_DATA,
+            width=_TILT_WIDTH,
+            height=_TILT_HEIGHT,
+            board_style=_BOARD_STYLE,
+            chart_style_context=_BOARD_CONTEXT,
+        )
+        gaps.append(_first_strip_row_y(spec))
+    assert gaps[0] == pytest.approx(gaps[1])
+
+
+def test_hidden_x_labels_reserve_no_tilt_room() -> None:
+    """The tilt resolver picks an angle whether or not the labels are drawn, and
+    the compile-side bake reserves nothing for hidden ones. The render-time
+    growth has to agree, or the strip floats below an empty gap.
+    """
+    from dbt_charts.core.render.chart.support_table_attachment import _row_y_pixel
+
+    chart = _bottom_strip_chart(x_axis_style={"labels": {"visible": False}})
+    resolved = resolve(
+        chart,
+        _LONG_CATEGORY_DATA,
+        chart_style_context=_BOARD_CONTEXT,
+        width=_TILT_WIDTH,
+    )
+    spec = generate_vega_lite_spec(
+        chart,
+        _LONG_CATEGORY_DATA,
+        width=_TILT_WIDTH,
+        height=_TILT_HEIGHT,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CONTEXT,
+    )
+    dt_style = resolved.effective_support_table_style
+    assert dt_style is not None
+    assert _first_strip_row_y(spec) == pytest.approx(
+        _row_y_pixel(0, dt_style, resolved.support_table_axis_offset, _TILT_HEIGHT)
+    )
+
+
+def test_bottom_strip_clears_a_pinned_tilt_on_a_sub_daily_axis() -> None:
+    """A timestamp column has no bucketed calendar grain, so the axis goes
+    continuous and Vega draws its own clock labels. Their text is not knowable
+    here, so the gap is reserved against the datum's own (never narrower)
+    text — pinned exactly, since an over-reservation is a visible empty band.
+    """
+
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "line",
+            "x": "ts",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "support_table": {"entries": [{"source": "revenue"}]},
+            "style": {
+                "support_table": {"position": "bottom"},
+                "axis_x": {"labels": {"angle": -90}},
+            },
+        }
+    )
+    data = [
+        {"ts": f"2024-01-01T{hour:02d}:30:00", "revenue": 100.0 + hour}
+        for hour in range(12)
+    ]
+    resolved = resolve(
+        chart, data, chart_style_context=_BOARD_CONTEXT, width=_TILT_WIDTH
+    )
+    spec = generate_vega_lite_spec(
+        chart,
+        data,
+        width=_TILT_WIDTH,
+        height=_TILT_HEIGHT,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CONTEXT,
+    )
+    dt_style = resolved.effective_support_table_style
+    assert dt_style is not None
+    from dbt_charts.core.font_measure import get_font_measurer
+
+    font = resolved.style.axis_x.labels.font
+    measurer = get_font_measurer(font.family)
+    baked = resolved.support_table_axis_offset
+    assert baked is not None
+    gap = _reserved_axis_gap(spec, dt_style)
+    # Wide enough for the clock label Vega draws at -90 ("12:30am" upright),
+    # and no wider than the datum's own text, which is what gets measured in
+    # its place. Bounding both ends keeps the deliberate over-reservation
+    # deliberate — a looser "it grew" would pass on any wrong magnitude.
+    assert gap > baked + measurer.measure("12:30am", font.size)
+    assert gap <= baked + measurer.measure(data[0]["ts"], font.size)
+
+
+def test_quantitative_pinned_angle_reserves_no_tilt_room() -> None:
+    """The gap this pins is a known one. A quantitative axis draws a handful of
+    ticks Vega both places and formats, so a pinned tilt there is measured
+    against nothing and the baked gap stands — rather than against the rows'
+    own digits, which are not what the axis paints.
+    """
+    from dbt_charts.core.render.chart.support_table_attachment import _row_y_pixel
+
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "test_chart",
+            "type": "line",
+            "x": "spend",
+            "y": "revenue",
+            "query": SqlQuery(sql="SELECT 1", source="test_db"),
+            "query_name": "q",
+            "support_table": {"entries": [{"source": "revenue"}]},
+            "style": {
+                "support_table": {"position": "bottom"},
+                "axis_x": {"labels": {"angle": -90}},
+            },
+        }
+    )
+    data = [
+        {"spend": 1000000.0 + 250000.0 * i, "revenue": 100.0 + i} for i in range(20)
+    ]
+    resolved = resolve(
+        chart, data, chart_style_context=_BOARD_CONTEXT, width=_TILT_WIDTH
+    )
+    spec = generate_vega_lite_spec(
+        chart,
+        data,
+        width=_TILT_WIDTH,
+        height=_TILT_HEIGHT,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CONTEXT,
+    )
+    dt_style = resolved.effective_support_table_style
+    assert dt_style is not None
+    assert _first_strip_row_y(spec) == pytest.approx(
+        _row_y_pixel(0, dt_style, resolved.support_table_axis_offset, _TILT_HEIGHT)
+    )
+
+
+def test_layered_bar_bottom_strip_clears_tilted_x_labels() -> None:
+    """A `layers:` chart is wrapped in a fresh outer spec; the base owns the
+    x-axis, so its label measurement has to survive that wrap.
+    """
+    from dbt_charts.core.render.chart.support_table_attachment import _row_y_pixel
+
+    chart = _bottom_strip_chart()
+    chart = chart.model_copy(
+        update={"layers": [LineLayer(type="line", y="revenue", label="Trend")]}
+    )
+    resolved = resolve(
+        chart,
+        _LONG_CATEGORY_DATA,
+        chart_style_context=_BOARD_CONTEXT,
+        width=_TILT_WIDTH,
+    )
+    spec = generate_vega_lite_spec(
+        chart,
+        _LONG_CATEGORY_DATA,
+        width=_TILT_WIDTH,
+        height=_TILT_HEIGHT,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CONTEXT,
+    )
+    main = spec["hconcat"][0] if "hconcat" in spec else spec
+    assert main["encoding"]["x"]["axis"]["labelAngle"] == -90.0
+    dt_style = resolved.effective_support_table_style
+    assert dt_style is not None
+    cleared = _row_y_pixel(
+        0,
+        dt_style,
+        _widest_label_px(_LONG_CATEGORY_DATA, resolved.style.axis_x),
+        _TILT_HEIGHT,
+    )
+    assert _first_strip_row_y(spec) >= cleared

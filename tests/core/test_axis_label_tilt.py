@@ -16,6 +16,7 @@ from dbt_charts.core.compile.config import get_default_theme_name, get_theme_sty
 from dbt_charts.core.compile.resolve.style.axis_cascade import resolved_axis_style
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.render.chart.emitters._label_overlap import (
+    TiltChoice,
     _pick_tilt_for_widths,
 )
 
@@ -26,7 +27,7 @@ def _pick_tilt_angle(
     charts: Any,
     chart_width: float,
     label_usable_ratio: float = 1.0,
-) -> tuple[float, bool]:
+) -> TiltChoice:
     """Thin adapter: measure ``data``'s own widths and run the tilt picker
     against the fully-merged axis_x.labels.
 
@@ -137,9 +138,9 @@ class TestPickTiltAngle:
 
         charts = _resolved_charts()
         data = [{"x": v} for v in ["A", "B", "C", "D"]]
-        angle, fits = _pick_tilt_angle("x", data, charts, chart_width=1200)
-        assert fits is True
-        assert angle == 0
+        tilt = _pick_tilt_angle("x", data, charts, chart_width=1200)
+        assert tilt.fits is True
+        assert tilt.angle == 0
 
     def test_long_labels_force_steeper_angle(self):
         """Same chart width with longer labels should pick a non-zero angle."""
@@ -158,8 +159,8 @@ class TestPickTiltAngle:
                 "Mojave Desert southeast",
             ]
         ]
-        angle, fits = _pick_tilt_angle("x", data, charts, chart_width=400)
-        assert angle != 0  # at this density, angle 0 cannot fit
+        tilt = _pick_tilt_angle("x", data, charts, chart_width=400)
+        assert tilt.angle != 0  # at this density, angle 0 cannot fit
 
     def test_extreme_density_falls_through_to_last(self):
         """Too many long labels — picker exhausts the ladder and returns (last, False)."""
@@ -167,10 +168,10 @@ class TestPickTiltAngle:
         charts = _resolved_charts()
         # 60 long labels at 200px chart — even at -90 the band width is tiny.
         data = [{"x": f"Very long category label number {i}"} for i in range(60)]
-        angle, fits = _pick_tilt_angle("x", data, charts, chart_width=200)
-        assert fits is False
+        tilt = _pick_tilt_angle("x", data, charts, chart_width=200)
+        assert tilt.fits is False
         # Last entry of the default ladder.
-        assert angle == charts.axis_x.labels.tilt_increments[-1]
+        assert tilt.angle == charts.axis_x.labels.tilt_increments[-1]
 
     def test_honors_theme_override_ladder(self):
         """Picker uses tilt_increments from the resolved style, not a hardcode."""
@@ -203,17 +204,17 @@ class TestPickTiltAngle:
         )
         charts = resolve_chart_style_context(patched)
         data = [{"x": "A"}, {"x": "B"}]
-        angle, _fits = _pick_tilt_angle("x", data, charts, chart_width=1200)
+        tilt = _pick_tilt_angle("x", data, charts, chart_width=1200)
         # Single-entry ladder must pick that entry.
-        assert angle == -90
+        assert tilt.angle == -90
 
     def test_no_data_returns_zero_fits_true(self):
         """Empty data — nothing to lay out; angle 0 is the safe default."""
 
         charts = _resolved_charts()
-        angle, fits = _pick_tilt_angle("x", [], charts, chart_width=1200)
-        assert angle == 0
-        assert fits is True
+        tilt = _pick_tilt_angle("x", [], charts, chart_width=1200)
+        assert tilt.angle == 0
+        assert tilt.fits is True
 
 
 class TestLadderReachability:
@@ -232,7 +233,7 @@ class TestLadderReachability:
         width = get_font_measurer(label.font.family).measure(text, label.font.size)
         # Two labels share the usable width, so band == usable_width / 2.
         return {
-            _pick_tilt_for_widths(label, [width, width], band * 2)[0]
+            _pick_tilt_for_widths(label, [width, width], band * 2).angle
             for band in [tenths / 10 for tenths in range(10, 3000)]
         }
 

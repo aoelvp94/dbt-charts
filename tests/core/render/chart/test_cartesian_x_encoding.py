@@ -18,6 +18,7 @@ from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart.type_inference import (
     build_cartesian_x_encoding,
     y_zero_scale,
+    zero_anchor_pinned_floor,
 )
 
 # ---------------------------------------------------------------------------
@@ -101,8 +102,12 @@ def _axis_with_scale(
     scale_base: float | None = None,
     scale_domain: tuple[Any, Any] | None = None,
     clock: int | None = None,
+    tick_values: tuple[float, ...] = (),
+    scale_values: list[float] | None = None,
 ) -> Any:
     scale = _scale(scale_zero, scale_type, scale_base, scale_domain)
+    if scale is not None:
+        scale.values = scale_values
     labels = types.SimpleNamespace(time_unit=label_time_unit, format=None, clock=clock)
     ticks = types.SimpleNamespace(count=None, time_unit=None, step=None)
     return types.SimpleNamespace(
@@ -111,6 +116,7 @@ def _axis_with_scale(
         labels=labels,
         scale=scale,
         ticks=ticks,
+        tick_values=tick_values,
         fiscal_year_start_month=1,
     )
 
@@ -1744,22 +1750,40 @@ class TestBuildCartesianXEncodingHeatmapMarkType:
 class TestYZeroScale:
     """y_zero_scale returns the correct VL scale dict."""
 
-    def test_scale_zero_true_no_ticks_returns_domain_min_zero(self):
+    def test_scale_zero_true_no_ticks_pins_no_domain_min(self):
+        """No ladder means no rung to pin: a literal 0.0 floor is legal only
+        while the data is non-negative, and on an all-negative axis it pins 0
+        as the BOTTOM of the domain, collapsing every mark onto one pixel row.
+        `nice: False` stands in for it, because an explicit domainMin is what
+        suppresses Vega-Lite's default nice-rounding and the top edge must
+        stay at the exact data max."""
         ax = _axis_with_scale(scale_zero=True)
+        result = y_zero_scale(ax)
+        assert result == {"nice": False, "zero": True}
+
+    def test_scale_zero_true_with_ticks_uses_first_tick_as_domain_min(self):
+        ticks = (0.0, 50_000.0, 100_000.0, 150_000.0, 200_000.0)
+        ax = _axis_with_scale(scale_zero=True, tick_values=ticks)
         result = y_zero_scale(ax)
         assert result == {"domainMin": 0.0, "zero": True}
 
-    def test_scale_zero_true_with_ticks_uses_first_tick_as_domain_min(self):
-        ax = _axis_with_scale(scale_zero=True)
-        ticks = [0.0, 50_000.0, 100_000.0, 150_000.0, 200_000.0]
-        result = y_zero_scale(ax, tick_values=ticks)
-        assert result == {"domainMin": 0.0, "zero": True}
-
     def test_scale_zero_true_with_nonzero_first_tick(self):
-        ax = _axis_with_scale(scale_zero=True)
-        ticks = [80_000.0, 100_000.0, 120_000.0]
-        result = y_zero_scale(ax, tick_values=ticks)
+        ticks = (80_000.0, 100_000.0, 120_000.0)
+        ax = _axis_with_scale(scale_zero=True, tick_values=ticks)
+        result = y_zero_scale(ax)
         assert result == {"domainMin": 80_000.0, "zero": True}
+
+    def test_authored_scale_values_never_source_the_floor(self):
+        """The ladder is filtered inside the shared decision, so no caller can
+        forget it. An authored `scale.values` populates tick_values verbatim
+        and says nothing about the domain, so it must leave the floor
+        unpinned."""
+        ticks = (25.0, 50.0, 75.0, 100.0)
+        ax = _axis_with_scale(
+            scale_zero=True, tick_values=ticks, scale_values=list(ticks)
+        )
+        assert y_zero_scale(ax) == {"nice": False, "zero": True}
+        assert zero_anchor_pinned_floor(ax) is None
 
     def test_scale_zero_false_returns_zero_false(self):
         ax = _axis_with_scale(scale_zero=False)

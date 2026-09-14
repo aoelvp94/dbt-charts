@@ -31,6 +31,16 @@ from dbt_charts.core.text.format_d3 import portable_strftime
 class AxisLabelLayout(NamedTuple):
     """Render-local choices that never mutate the resolved axis style.
 
+    ``label_block_height`` is how tall the label block is at ``angle``: the
+    rotated bounding-box height of the widest label, read as one line of text
+    (so ``labels.font.size`` when the labels sit flat, the widest label's own
+    width at -90). It is what the tilt costs vertically, not a line-stack
+    count — a two-row temporal label is the ``support_table.label_max_lines``
+    reservation's business, not this field's. Consumed by
+    ``render/chart/support_table_attachment.py`` to size the gap a
+    ``position: bottom`` strip leaves for the labels: the angle is decided
+    here, from data and width, long after compile baked that gap.
+
     ``collision_label_count`` is ``None`` whenever this module didn't measure
     a residual collision — either because the layout it picked (skip/tilt/
     coarsen) is known to fit, or because no measurement applies (overlap
@@ -50,7 +60,16 @@ class AxisLabelLayout(NamedTuple):
     visibility_time_unit: str | None
     anchor_index: int
     format_time_unit: str
+    label_block_height: float
     collision_label_count: int | None = None
+
+
+class TiltChoice(NamedTuple):
+    """A rung off the tilt ladder: the angle, whether it fits, what it costs."""
+
+    angle: float
+    fits: bool
+    block_height: float
 
 
 AxisDatum = str | int | float | Decimal | datetime.date | datetime.datetime | None
@@ -100,8 +119,9 @@ def _generic_layout(
     widths: list[float],
     usable_width: float,
 ) -> AxisLabelLayout:
+    flat_height = axis.labels.font.size
     if _fits_flat(widths, usable_width):
-        return AxisLabelLayout("allow", 0.0, None, 0, "")
+        return AxisLabelLayout("allow", 0.0, None, 0, "", flat_height)
 
     directive: Literal["allow", "parity"] = "allow"
     considered_widths = widths
@@ -109,18 +129,17 @@ def _generic_layout(
         directive = "parity"
         considered_widths = widths[::2]
         if _fits_flat(considered_widths, usable_width):
-            return AxisLabelLayout(directive, 0.0, None, 0, "")
+            return AxisLabelLayout(directive, 0.0, None, 0, "", flat_height)
     if overlap.tilt:
-        angle, fits = _pick_tilt_for_widths(
-            axis.labels, considered_widths, usable_width
-        )
+        tilt = _pick_tilt_for_widths(axis.labels, considered_widths, usable_width)
         return AxisLabelLayout(
             directive,
-            angle,
+            tilt.angle,
             None,
             0,
             "",
-            collision_label_count=None if fits else len(considered_widths),
+            tilt.block_height,
+            collision_label_count=None if tilt.fits else len(considered_widths),
         )
     # Reached only when flat and (if attempted) skip both failed, and tilt
     # is disabled — no strategy left to try, and it does not fit.
@@ -130,6 +149,7 @@ def _generic_layout(
         None,
         0,
         "",
+        flat_height,
         collision_label_count=len(considered_widths),
     )
 
@@ -193,11 +213,111 @@ def _submonth_candidate_fits(
     return True
 
 
+def _label_block_height(max_width: float, line_height: float, angle: float) -> float:
+    """Height of the widest label's bounding box once rotated by ``angle``.
+
+    The transpose of the footprint width ``_pick_tilt_for_widths`` fits against:
+    a label sweeps into the vertical axis exactly as much as it leaves the
+    horizontal one, so ``line_height`` flat and ``max_width`` at -90.
+    ``max_width`` is the widest label as its caller measured it — the ladder
+    measures band widths, which carry the inter-label gap, so the height it
+    reports runs a space-width conservative at a steep tilt.
+    """
+    radians = math.radians(abs(angle))
+    return max_width * math.sin(radians) + line_height * math.cos(radians)
+
+
+def _axis_label_values(
+    x_field: str,
+    data: list[dict[str, AxisDatum]],
+    domain_values: list[Any] | None,  # type-state: explicit_any — raw x values
+) -> list[str]:
+    """The axis's distinct band values, in first-seen order.
+
+    ``domain_values`` wins when the overlay layers widened the scale past this
+    axis's own rows — same precedence the crowding measurement uses.
+    """
+    return list(
+        dict.fromkeys(
+            str(v)
+            for v in (
+                domain_values
+                if domain_values is not None
+                else (
+                    row[x_field]
+                    for row in data
+                    if x_field in row and row[x_field] is not None
+                )
+            )
+        )
+    )
+
+
+def _pinned_angle_block_height(
+    axis: ResolvedAxisStyle,
+    x_field: str | None,
+    data: list[dict[str, AxisDatum]],
+    domain_values: list[Any] | None,  # type-state: explicit_any — raw x values
+) -> float:
+    """Label-block height for an angle this module did not pick.
+
+    ``resolve_axis_x_overlap``'s two short-circuits — an authored
+    ``labels.angle``, and ``labels.overlap`` switched off — skip the tilt
+    ladder, so nothing measures their labels. A consumer sizing the space
+    under the axis needs an author-pinned tilt's block just as much as a
+    picked one. Measures the same strings the ladder would: the formatted
+    vocabulary on a bucketed temporal axis, the band values themselves
+    otherwise. One band per row is what makes those measurable.
+    """
+    font = axis.labels.font
+    angle = axis.labels.angle
+    if not angle or not x_field or not data:
+        return font.size
+    raw_type = infer_vega_type_from_data(data, x_field)
+    if raw_type == "quantitative":
+        # Vega's own ticks, at Vega's own number format: neither the values
+        # nor their count are the rows'. Reporting the flat line leaves a
+        # pinned tilt on a quantitative axis unreserved — a known gap, not a
+        # measurement the rows' own digits could stand in for.
+        return font.size
+    values = _axis_label_values(x_field, data, domain_values)
+    if not values:
+        return font.size
+    if raw_type == "temporal":
+        encoding_time_unit = (
+            axis.time_unit
+            if axis.time_unit in BUCKETED_CALENDAR_UNITS | TIME_PART_UNITS
+            else detect_time_unit(values)
+        )
+        if encoding_time_unit is not None:
+            format_time_unit = resolve_label_time_unit(
+                encoding_time_unit, axis.labels.time_unit
+            )
+            values = _generic_temporal_labels(
+                sorted(values),
+                encoding_time_unit,
+                format_time_unit if format_time_unit is not None else "",
+            )
+        # No bucketed grain (a sub-daily timestamp, or spacing no cadence
+        # explains): the axis goes continuous and Vega labels its own ticks —
+        # a clock vocabulary from default_subday_label_expr_for ("12:30am",
+        # ":30", "Midnight") whose text depends on tick count, card width and
+        # any authored domain, none of which reach this module. Measuring the
+        # datum's own text instead is a deliberate over-reservation, usually
+        # by some way: the strip clears the labels at the cost of an empty
+        # band. An authored labels.case or labels.format can still paint
+        # wider than the datum reads here — the same gap the quantitative
+        # branch above names, reached another way.
+    measurer = get_font_measurer(font.family)
+    max_width = max(measurer.measure(value, font.size) for value in values)
+    return _label_block_height(max_width, font.size, angle)
+
+
 def _pick_tilt_for_widths(
     label: ResolvedAxisElementStyle,
     widths: list[float],
     usable_width: float,
-) -> tuple[float, bool]:
+) -> TiltChoice:
     """Shallowest ladder angle whose rotated footprint fits one band.
 
     Footprint is the rotated label's bounding-box width, ``w*cos(t) +
@@ -218,17 +338,20 @@ def _pick_tilt_for_widths(
     increments = label.tilt_increments
     if increments is None:
         raise ValueError("label.tilt_increments is not baked in theme")
-    if not increments or not widths:
-        return 0.0, True
-    band = usable_width / len(widths)
     line_height = label.font.size
+    if not increments or not widths:
+        return TiltChoice(0.0, True, line_height)
+    band = usable_width / len(widths)
     max_width = max(widths)
     for angle in increments:
         radians = math.radians(abs(angle))
         footprint = max_width * math.cos(radians) + line_height * math.sin(radians)
         if footprint <= band:
-            return float(angle), True
-    return float(increments[-1]), False
+            return TiltChoice(
+                float(angle), True, _label_block_height(max_width, line_height, angle)
+            )
+    last = float(increments[-1])
+    return TiltChoice(last, False, _label_block_height(max_width, line_height, last))
 
 
 def _temporal_layout(
@@ -252,7 +375,14 @@ def _temporal_layout(
         # "allow" to labelOverlap=False and None to omitted (VL's own
         # adaptive default) — so skip=False (never drop a label) must
         # resolve to "allow", everything else to None.
-        return AxisLabelLayout(None if overlap.skip else "allow", 0.0, None, 0, "")
+        return AxisLabelLayout(
+            None if overlap.skip else "allow",
+            0.0,
+            None,
+            0,
+            "",
+            axis.labels.font.size,
+        )
 
     font = axis.labels.font
     measurer = get_font_measurer(font.family)
@@ -285,7 +415,9 @@ def _temporal_layout(
                 indices = _submonth_candidate_indices(
                     dates, encoding_time_unit, candidate
                 )
-                return AxisLabelLayout("allow", 0.0, visibility, indices[0], candidate)
+                return AxisLabelLayout(
+                    "allow", 0.0, visibility, indices[0], candidate, font.size
+                )
         month_openers = [
             date
             for date in dates
@@ -304,18 +436,19 @@ def _temporal_layout(
             widths = [
                 measurer.measure(str(dates[index].day), font.size) for index in indices
             ]
-            angle, fits = (
+            tilt = (
                 _pick_tilt_for_widths(axis.labels, widths, usable_width)
                 if overlap.tilt
-                else (0.0, _fits_flat(widths, usable_width))
+                else TiltChoice(0.0, _fits_flat(widths, usable_width), font.size)
             )
             return AxisLabelLayout(
                 "allow",
-                angle,
+                tilt.angle,
                 candidate if candidate != encoding_time_unit else None,
                 indices[0],
                 candidate,
-                collision_label_count=None if fits else len(widths),
+                tilt.block_height,
+                collision_label_count=None if tilt.fits else len(widths),
             )
     elif encoding_time_unit in {
         "yearweek",
@@ -423,7 +556,7 @@ def _temporal_layout(
     promoted_format_time_unit = "year" if visibility == "year" else format_time_unit
     if fits:
         return AxisLabelLayout(
-            "allow", 0.0, visibility, anchor_index, promoted_format_time_unit
+            "allow", 0.0, visibility, anchor_index, promoted_format_time_unit, font.size
         )
 
     visible_dates = [
@@ -472,14 +605,15 @@ def _temporal_layout(
             for date in visible_dates
         ]
     if overlap.tilt:
-        angle, fits = _pick_tilt_for_widths(axis.labels, widths, usable_width)
+        tilt = _pick_tilt_for_widths(axis.labels, widths, usable_width)
         return AxisLabelLayout(
             directive,
-            angle,
+            tilt.angle,
             visibility,
             anchor_index,
             promoted_format_time_unit,
-            collision_label_count=None if fits else len(widths),
+            tilt.block_height,
+            collision_label_count=None if tilt.fits else len(widths),
         )
     # No tilt to try. Absent further narrowing, `widths` is the exact set
     # `resolve_temporal_label_visibility` already judged not-fit via its
@@ -494,6 +628,7 @@ def _temporal_layout(
         visibility,
         anchor_index,
         promoted_format_time_unit,
+        font.size,
         collision_label_count=None if fits else len(widths),
     )
 
@@ -521,35 +656,37 @@ def resolve_axis_x_overlap(
     picked from the same ``widths``/``usable_width`` the flat-fit gate just
     measured, never re-derived from ``data`` alone.
     """
+    flat_height = axis.labels.font.size
     overlap = axis.labels.overlap
     if overlap is None:
-        return AxisLabelLayout(None, axis.labels.angle, None, 0, "")
+        return AxisLabelLayout(
+            None,
+            axis.labels.angle,
+            None,
+            0,
+            "",
+            _pinned_angle_block_height(axis, x_field, data, domain_values),
+        )
     if axis.labels.angle is not None:
-        return AxisLabelLayout("allow", axis.labels.angle, None, 0, "")
+        return AxisLabelLayout(
+            "allow",
+            axis.labels.angle,
+            None,
+            0,
+            "",
+            _pinned_angle_block_height(axis, x_field, data, domain_values),
+        )
     if is_horizontal_bar:
-        return AxisLabelLayout("allow", 0.0, None, 0, "")
+        return AxisLabelLayout("allow", 0.0, None, 0, "", flat_height)
     if not x_field or not data:
-        return AxisLabelLayout("allow", 0.0, None, 0, "")
+        return AxisLabelLayout("allow", 0.0, None, 0, "", flat_height)
 
     raw_type = infer_vega_type_from_data(data, x_field)
     if raw_type == "quantitative":
-        return AxisLabelLayout("allow", 0.0, None, 0, "")
-    values = list(
-        dict.fromkeys(
-            str(v)
-            for v in (
-                domain_values
-                if domain_values is not None
-                else (
-                    row[x_field]
-                    for row in data
-                    if x_field in row and row[x_field] is not None
-                )
-            )
-        )
-    )
+        return AxisLabelLayout("allow", 0.0, None, 0, "", flat_height)
+    values = _axis_label_values(x_field, data, domain_values)
     if not values:
-        return AxisLabelLayout("allow", 0.0, None, 0, "")
+        return AxisLabelLayout("allow", 0.0, None, 0, "", flat_height)
     if raw_type == "temporal":
         return _temporal_layout(
             axis,
@@ -569,14 +706,15 @@ def resolve_axis_x_overlap(
     usable_width = chart_width * label_usable_ratio
     flat_fits = _fits_flat(widths, usable_width)
     if overlap.tilt and not flat_fits:
-        angle, fits = _pick_tilt_for_widths(axis.labels, widths, usable_width)
+        tilt = _pick_tilt_for_widths(axis.labels, widths, usable_width)
         return AxisLabelLayout(
             "allow",
-            angle,
+            tilt.angle,
             None,
             0,
             "",
-            collision_label_count=None if fits else len(widths),
+            tilt.block_height,
+            collision_label_count=None if tilt.fits else len(widths),
         )
     return AxisLabelLayout(
         "allow",
@@ -584,5 +722,6 @@ def resolve_axis_x_overlap(
         None,
         0,
         "",
+        flat_height,
         collision_label_count=None if flat_fits else len(widths),
     )

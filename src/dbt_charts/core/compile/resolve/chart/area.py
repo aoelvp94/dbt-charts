@@ -353,7 +353,24 @@ def _resolve_area(
     # meaningless one. VL floats each center-stacked column up by
     # (max_total - this_total) / 2, so a baked domainMin of 0 happens to clip
     # nothing; leaving the bake in would make that accident load-bearing.
-    if resolved_stack != "center" and (y_field_area or isinstance(normalized.y, list)):
+    # An all-negative axis can only anchor at 0 where something downstream can
+    # establish its floor. The shared-scale, non-stacked ladder bakes one
+    # (`negative_floor` in `_resolve_cartesian_ticks`); a stack's floor is its
+    # per-category negative total, which nothing derives, and `independent`
+    # deliberately bakes no chart-wide bound at all. Without a floor, render
+    # falls back to `zero_anchor_floor`'s literal 0.0 and pins it as the
+    # BOTTOM of a negative domain, collapsing every mark onto one pixel row.
+    # Nothing is lost by leaving these unbaked: Vega-Lite already anchors a
+    # stack at 0, and each independent panel auto-fits its own.
+    all_negative_area = bool(_area_floats) and max(_area_floats) < 0
+    negative_anchor_has_no_floor = all_negative_area and (
+        resolved_stack not in (None, "none") or multiples_scale == "independent"
+    )
+    if (
+        resolved_stack != "center"
+        and not negative_anchor_has_no_floor
+        and (y_field_area or isinstance(normalized.y, list))
+    ):
         ay_merged = _bake_y_zero(ay_merged, _area_floats, "area")
     _log_y_fields = (
         [y_field_area]
@@ -447,7 +464,9 @@ def _resolve_area(
             max(_area_floats),
             "area",
         )
-        zero_anchored_area = _az is True or (_az is None and min(_area_floats) >= 0.0)
+        zero_anchored_area = not negative_anchor_has_no_floor and (
+            _az is True or (_az is None and min(_area_floats) >= 0.0)
+        )
     else:
         zero_anchored_area = True
     is_stacked = resolved_stack not in (None, "none")

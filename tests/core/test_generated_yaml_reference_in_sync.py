@@ -1,4 +1,4 @@
-"""Drift guard: the wheel's yaml-reference copy must match render_prompt(introspect()).
+"""Drift guard: the wheel's yaml-reference copy must match get_schema_for_prompt().
 
 Two copies must stay in sync:
   - agent_api/docs/yaml-reference.md inside the package — wheel / pip install (no frontmatter)
@@ -26,9 +26,8 @@ def _generated_reference_content() -> str:
             sys.executable,
             "-c",
             (
-                "from dbt_charts.core.compile.schema.introspection import introspect; "
-                "from dbt_charts.core.compile.schema.renderers.prompt import render_prompt; "
-                "print(render_prompt(introspect()), end='')"
+                "from dbt_charts.core.compile.schema import get_schema_for_prompt; "
+                "print(get_schema_for_prompt(), end='')"
             ),
         ],
         check=True,
@@ -41,7 +40,7 @@ def _generated_reference_content() -> str:
 
 
 def test_committed_yaml_reference_matches_generator() -> None:
-    """The committed wheel yaml-reference.md must match render_prompt(introspect()).
+    """The committed wheel yaml-reference.md must match get_schema_for_prompt().
 
     When this fails, run `just gen-yaml-reference` and commit the results.
     """

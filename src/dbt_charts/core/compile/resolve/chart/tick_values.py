@@ -78,8 +78,10 @@ def zero_anchor_domain_floor(
     measure-axis scale (``render/chart/emitters/bar.py``) filter through it
     before pinning a VL ``domainMin``; compile's ``_y_domain_floor``
     (``compile/resolve/chart/_domain.py``) filters through the SAME call to
-    ask the same question at resolve time, deciding whether an x-axis tick
-    stub is needed. A caller re-deriving ``scale.values is not None`` inline
+    ask its own question at resolve time — which value renders at the plot's
+    bottom edge, deciding whether an x-axis tick stub is needed. Same filter,
+    different questions: see ``zero_anchor_floor`` below on where the two
+    answers now diverge. A caller re-deriving ``scale.values is not None`` inline
     instead of calling this is the bug this function exists to prevent.
     """
     if scale_values is not None:
@@ -94,11 +96,15 @@ def zero_anchor_floor(tick_values: list[float] | None) -> float:
     ``None`` rather than manufacturing an empty list first).
 
     Its lowest rung, or the literal ``0.0`` fallback when the ladder was
-    filtered out (an authored ``scale.values``) or never baked. Byte for
-    byte the formula render's ``y_zero_scale`` bakes onto the emitted VL
-    scale's ``domainMin`` -- the one place that decision is made, read back
-    by compile's ``_y_domain_floor`` to answer the same question at resolve
-    time without predicting it.
+    filtered out (an authored ``scale.values``) or never baked.
+
+    That ``0.0`` is NOT what render emits any more. Render goes through
+    ``zero_anchor_pinned_floor``, which returns None for the no-rung case
+    instead: 0.0 is a legal floor only while the data is non-negative, and on
+    an all-negative axis it pins 0 as the BOTTOM of the domain. This
+    function keeps the literal for compile's ``_y_domain_floor``, which asks
+    a different question -- which value renders at the plot's bottom edge,
+    where ``zero: true`` on non-negative data really does land on 0.
     """
     return tick_values[0] if tick_values else 0.0
 

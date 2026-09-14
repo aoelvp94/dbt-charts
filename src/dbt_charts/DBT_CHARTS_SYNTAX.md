@@ -731,7 +731,7 @@ All chart types accept the channels and style fields below — but each type rej
 | `warnings_ignore` | list[string] | Render-warning codes to suppress for this chart only (e.g. `[WARN-AXIS-TITLE-TRUNCATED]`; unknown codes are rejected — list codes with `dct docs warnings`) |
 | `layers` | list | Overlay layers on cartesian charts (`bar`/`line`/`area`/`scatter`) — see [Combo charts](#combo-charts-barlinearea-with-layers) |
 | `conditional_formatting` | object | Discrete style rules by column — `table`/`kpi` only (see [Conditional formatting](#conditional-formatting)) |
-| `support_table` | list | Attached mini-table beneath bar/line/area charts (including those with `layers:`) — see [Composition](#composition) |
+| `support_table` | list | Attached mini-table on bar/line/area charts, above the plot by default (including those with `layers:`) — see [Composition](#composition) |
 | `height` | int \| float | Exact pixel height. Wins over `aspect_ratio` and theme defaults. Bypasses `min_height`/`max_height`. Not valid on `kpi`, `table`, `callout`, `spark_bar`. |
 | `aspect_ratio` | float | Chart shape: `height = width / aspect_ratio`. Theme default is `1.5`. Not valid on `kpi`, `table`, `callout`, `spark_bar`. |
 | `min_height` | float | Height floor for this chart only; overrides `style.charts.min_height`. Ignored when `height` is set. |
@@ -1125,7 +1125,7 @@ dbt charts composes charts in three ways:
 
 1. **`layers:` on a base chart** — multiple marks share one x-axis and frame. The base chart (`type: bar`, `type: line`, `type: area`, or `type: scatter`) owns the x-axis, frame, title, legend container, and `sort`. Each layer defaults to the base `query:` but may declare its own `query:` — layer x-values extend the base x-scale rather than clip it. See [Combo charts](#combo-charts-barlinearea-with-layers) above.
 
-2. **`support_table:` attached to a chart** — a mini cross-tab strip rendered below the chart, columns aligned to the chart's x-axis ticks. Supported on `bar`, `line`, and `area` charts (including those with `layers:`).
+2. **`support_table:` attached to a chart** — a mini cross-tab strip whose columns align to the chart's x-axis ticks, rendered *above* the plot unless `style.support_table.position` says otherwise. Supported on `bar`, `line`, and `area` charts (including those with `layers:`).
 
    ```yaml
    charts:
@@ -1154,6 +1154,10 @@ dbt charts composes charts in three ways:
    - `per_series:` — expand into one row per `color:` series (requires the chart to have a `color:` channel).
 
    Optional per-entry fields: `format` (D3 format string), `label` (left-stub row label; not allowed on `per_series:`).
+
+   `style.support_table.position` places the strip: `top` (the default on a horizontal category axis — vertical bar, line, area) or `bottom`; on a horizontal bar the categories run down the y-axis, so the strip becomes a column block on `left`/`right` and defaults to the side the category labels are on. Two things to know about `top`:
+   - Rows read bottom-up — the first authored entry is the row nearest the plot, the last one sits at the top of the strip.
+   - Only `style.support_table.padding_top` separates the strip from what is above it, so a two-line subtitle touches the first row until you raise that padding.
 
    Constraint: support_table requires a single chart-level `x:`. Layered charts with per-layer `x:` differing from the chart-level x are rejected.
 

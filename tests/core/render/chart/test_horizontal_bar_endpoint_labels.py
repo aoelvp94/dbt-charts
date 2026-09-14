@@ -68,12 +68,15 @@ def resolve_horizontal_bar_chart(make_chart, seed_with_bar_endpoint_labels):
         author_asked: bool = False,
         width: float | None = None,
         axis_y: dict[str, Any] | None = None,
+        sort: dict[str, Any] | None = None,
     ):
         kwargs: dict[str, Any] = {}
         if color is not None:
             kwargs["color"] = color
         if stack is not None:
             kwargs["stack"] = stack
+        if sort is not None:
+            kwargs["sort"] = sort
         style: dict[str, Any] = {"orientation": "horizontal"}
         if stack_order is not None:
             style["stack_order"] = stack_order
@@ -294,6 +297,54 @@ def test_rail_names_series_absent_from_top_row(resolve_horizontal_bar_chart) -> 
         f"Rail must name every series in the chart exactly once, got "
         f"{[r['series'] for r in rows]!r}"
     )
+
+
+def _ragged_sorted_data() -> list[dict[str, Any]]:
+    """A key column constant per row, and one row carrying a single series.
+
+    Under the aggregate a bar pins (``bar_sort_op`` → ``min`` here, since the
+    sort column is not the measure), the keys rank 1/2/3, so "gamma" leads
+    descending and "alpha" leads ascending. Folding with ``sum`` instead would
+    rank 2/4/3 and lead with the complete "beta" either way.
+    """
+    return [
+        {"row": "alpha", "key": 1, "value": 40, "series": "A"},
+        {"row": "alpha", "key": 1, "value": 60, "series": "B"},
+        {"row": "beta", "key": 2, "value": 10, "series": "A"},
+        {"row": "beta", "key": 2, "value": 90, "series": "B"},
+        {"row": "gamma", "key": 3, "value": 50, "series": "A"},
+    ]
+
+
+def test_sorted_rail_steers_to_a_legend_when_its_anchor_row_is_ragged(
+    resolve_horizontal_bar_chart,
+) -> None:
+    """The anchor-row check reads the axis's own first row, sort aggregate included.
+
+    Descending by ``key`` draws "gamma" first, and "gamma" has no B segment —
+    a series that would anchor on a zero-width seam at a neighbor's edge, which
+    the default refuses (``_every_series_reaches_the_anchor_row``). Reproducing
+    the axis with the wrong aggregate would anchor on "beta" instead and wave
+    the rail through.
+    """
+    data = _ragged_sorted_data()
+    rc = resolve_horizontal_bar_chart(
+        data=data, enabled=True, stack="zero", sort={"by": "key", "order": "desc"}
+    )
+    assert rc.style.endpoint_labels.visible is False
+    assert "vconcat" not in _render(rc, data)
+
+
+def test_sorted_rail_survives_when_its_anchor_row_carries_every_series(
+    resolve_horizontal_bar_chart,
+) -> None:
+    """Control: the same data ascending anchors on "alpha", which is complete."""
+    data = _ragged_sorted_data()
+    rc = resolve_horizontal_bar_chart(
+        data=data, enabled=True, stack="zero", sort={"by": "key", "order": "asc"}
+    )
+    assert rc.style.endpoint_labels.visible is True
+    assert "vconcat" in _render(rc, data)
 
 
 def test_absent_series_anchors_at_its_zero_width_stack_seam(

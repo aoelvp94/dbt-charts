@@ -14,7 +14,9 @@ from dbt_charts.cli._project import (
     resolve_mcp_project_dir,
     resolve_project_dir,
     resolve_skill_install_root,
+    with_project,
 )
+from dbt_charts.cli.filesystem_project import FilesystemProject
 
 
 def test_resolve_project_dir_walks_up_from_subdir(
@@ -277,3 +279,44 @@ def test_resolve_skill_install_root_explicit_project_dir_errors_without_marker(
     result = resolve_skill_install_root(named, walk_to_git_root=False)
     assert result.root is None
     assert result.nearest_root == git_root.resolve()
+
+
+# ---------------------------------------------------------------------------
+# with_project: dbt_project_dir threading
+# ---------------------------------------------------------------------------
+
+
+def test_with_project_threads_explicit_dbt_project_dir(tmp_path: Path) -> None:
+    """A `dbt_project_dir` kwarg reaches the injected project's `dbt_root`."""
+    project_dir = tmp_path / "myproject"
+    (project_dir / "charts").mkdir(parents=True)
+    (project_dir / "dbt_charts.yml").write_text("# project marker\n")
+    external_dbt = tmp_path / "external_dbt"
+    external_dbt.mkdir()
+
+    seen: dict[str, FilesystemProject] = {}
+
+    @with_project
+    def command(*, project: FilesystemProject) -> None:
+        seen["project"] = project
+
+    command(project_dir=project_dir, dbt_project_dir=external_dbt)
+
+    assert seen["project"].dbt_root == external_dbt.resolve()
+
+
+def test_with_project_defaults_dbt_root_to_project_root(tmp_path: Path) -> None:
+    """No `dbt_project_dir` kwarg -> the injected project's `dbt_root` is its own root."""
+    project_dir = tmp_path / "myproject"
+    (project_dir / "charts").mkdir(parents=True)
+    (project_dir / "dbt_charts.yml").write_text("# project marker\n")
+
+    seen: dict[str, FilesystemProject] = {}
+
+    @with_project
+    def command(*, project: FilesystemProject) -> None:
+        seen["project"] = project
+
+    command(project_dir=project_dir)
+
+    assert seen["project"].dbt_root == project_dir.resolve()

@@ -1035,7 +1035,13 @@ def test_bar_vertical_honors_chart_sort_field(bar_style: ResolvedBarStyle) -> No
     spec = BarEmitter().emit(
         bar, _DEFAULT_BOX, regroup((), [{"age_band": "1 · <= 7", "tickets": 5}])
     )
-    assert spec.encoding["x"]["sort"] == {"field": "age_order", "order": "ascending"}
+    assert spec.encoding["x"]["sort"] == {
+        "field": "age_order",
+        "order": "ascending",
+        # The category's own key value — bar pins the aggregate rather than
+        # leaving it to VL's spec-dependent inference (``bar_sort_to_vl``).
+        "op": "min",
+    }
 
 
 def test_area_emit_honors_baked_zero_scale(area_style: ResolvedAreaStyle) -> None:
@@ -2276,14 +2282,17 @@ def _grouped_sort_chart(orientation: str) -> Any:
     )
 
 
-def test_grouped_bar_vertical_sort_orders_x_domain_by_sum_not_min() -> None:
-    """A vertical grouped bar's authored x sort must keep aggregating by sum —
-    a categorical (nominal) x is already disambiguated by ``xOffset``, so the
-    emitter never needs to (and, after the quantitative-x fix, does not) emit
-    ``y.stack: null`` for it — but this regression guard verifies the actual
-    rendered category order rather than the internal VL sort ``op``, since a
-    future change to the gate condition could reintroduce the same silent
-    reorder some other way.
+def test_grouped_bar_vertical_sort_orders_x_domain_by_the_category_value() -> None:
+    """A vertical grouped bar's authored x sort folds each category with ``min``.
+
+    Nothing stacks in a grouped bar, so there is no stacked total for a sort by
+    the measure to mean — each category is ordered by the measure's own value
+    there, the same reading every other sort column gets. What Vega-Lite would
+    infer left to itself is not that: it lands on ``sum`` on a banded x (where
+    ``xOffset`` disambiguates and no ``y.stack: null`` is emitted) and on
+    ``min`` where one is, an order that moves with how the spec happened to
+    compose. The emitter pins the aggregate instead, so this guard verifies the
+    actual rendered category order rather than the pinned ``op``.
 
     Category P (1, 100 → sum 101, min 1) and Q (50, 40 → sum 90, min 40) sort
     oppositely under sum-desc vs min-desc, so this is a real behavioral fork,
@@ -2319,18 +2328,17 @@ def test_grouped_bar_vertical_sort_orders_x_domain_by_sum_not_min() -> None:
     # find them by their known text content rather than position.
     positions = {cat: svg.index(f">{cat}<") for cat in ("P", "Q")}
     rendered_order = sorted(positions, key=positions.get)
-    assert rendered_order == ["P", "Q"], (
-        "rendered category order must follow desc-by-sum sort (P/Q), got "
+    assert rendered_order == ["Q", "P"], (
+        "rendered category order must follow desc-by-min sort (Q/P), got "
         f"{rendered_order!r} — sum-vs-min sort aggregate is being silently "
         "flipped"
     )
 
 
-def test_grouped_bar_horizontal_sort_unaffected_by_stack_suppression() -> None:
-    """Control for the vertical case above: a horizontal grouped bar never gains
-    ``x.stack: null`` (only the vertical emitter suppresses VL's auto-stack, and
-    only for a continuous x), so its authored y-axis sort must keep aggregating
-    by sum exactly as before — this must not move.
+def test_grouped_bar_horizontal_sort_matches_the_vertical_aggregate() -> None:
+    """Control for the vertical case above: a horizontal grouped bar folds its
+    categorical (VL y) sort with the same ``min``, so the two orientations
+    cannot disagree about what a grouped bar's sort means.
     """
     import vl_convert as vlc
 
@@ -2360,8 +2368,8 @@ def test_grouped_bar_horizontal_sort_unaffected_by_stack_suppression() -> None:
     svg = vlc.vegalite_to_svg(vl)
     positions = {cat: svg.index(f">{cat}<") for cat in ("P", "Q")}
     rendered_order = sorted(positions, key=positions.get)
-    assert rendered_order == ["P", "Q"], (
-        "rendered category order must follow desc-by-sum sort (P/Q), got "
+    assert rendered_order == ["Q", "P"], (
+        "rendered category order must follow desc-by-min sort (Q/P), got "
         f"{rendered_order!r} — sum-vs-min sort aggregate is being silently "
         "flipped"
     )
@@ -2666,7 +2674,10 @@ def test_line_y_scale_zero_true_when_axis_scale_zero(
     spec = LineEmitter().emit(chart, _DEFAULT_BOX, regroup((), _YEARMONTH_DATA))
     scale = spec.encoding["y"]["scale"]
     assert scale["zero"] is True
-    assert "domainMin" in scale
+    # This axis carries no tick ladder, so no rung supplies a floor and none
+    # is pinned — `zero: True` is what anchors the domain. See
+    # TestYZeroScale.test_scale_zero_true_no_ticks_pins_no_domain_min.
+    assert "domainMin" not in scale
 
 
 # ---- Area ----------------------------------------------------------------
@@ -2761,7 +2772,9 @@ def test_area_y_scale_zero_true_when_axis_scale_zero(
     spec = AreaEmitter().emit(chart, _DEFAULT_BOX, regroup((), _YEARMONTH_DATA))
     scale = spec.encoding["y"]["scale"]
     assert scale["zero"] is True
-    assert "domainMin" in scale
+    # No tick ladder on this axis, so no rung supplies a floor — see the line
+    # twin above.
+    assert "domainMin" not in scale
 
 
 # ---- Bar (vertical) -------------------------------------------------------
@@ -2816,7 +2829,11 @@ def test_bar_vertical_y_scale_zero_true_when_axis_scale_zero(
     spec = BarEmitter().emit(chart, _DEFAULT_BOX, regroup((), _YEARMONTH_DATA))
     scale = spec.encoding["y"]["scale"]
     assert scale["zero"] is True
-    assert "domainMin" in scale
+    # No tick ladder on this axis, so no rung supplies a floor — `nice: False`
+    # holds the top edge at the exact data max in its place. See the line twin
+    # above and TestYZeroScale.test_scale_zero_true_no_ticks_pins_no_domain_min.
+    assert "domainMin" not in scale
+    assert scale["nice"] is False
 
 
 def test_bar_vertical_y_ticks_injected_in_axis(bar_style: ResolvedBarStyle) -> None:

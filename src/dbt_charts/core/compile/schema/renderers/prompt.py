@@ -368,3 +368,23 @@ def render_prompt(schema: AuthorableSchema) -> str:
             parts.append("")
         parts.append(_render_model(name, schema, path_map))
     return "\n".join(parts)
+
+
+def render_project_config(schema: AuthorableSchema) -> str:
+    """Render the project-config IR (`dbt_charts.yml`) as a reference section.
+
+    Empty style path map: project config has no inherit chain to link into.
+    """
+    parts = [
+        "# dbt charts Project Config Reference: execution settings",
+        "",
+        "Settings authored under `execution:` in `dbt_charts.yml` at the "
+        "project root, not in a board. The file's other sections (`sources:`, "
+        "`server:`, `cache:`, ...) are not generated here yet.",
+        "",
+    ]
+    for i, name in enumerate(_ordered_model_names(schema)):
+        if i > 0:
+            parts.append("")
+        parts.append(_render_model(name, schema, {}))
+    return "\n".join(parts)

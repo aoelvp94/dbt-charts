@@ -619,6 +619,11 @@ def test_a_layered_chart_never_pins_an_empty_shared_domain() -> None:
 
     A layer sharing the base's rows contributes no x column of its own, so the
     union IS the base domain — nothing else can refill it.
+
+    Unrankable here means a column Vega's own comparator cannot order: a bar's
+    sort pins ``op: min`` (``bar_sort_to_vl``), and ``min`` compares strings and
+    dates natively, so a plain text column is an ordering rather than the empty
+    case. A column mixing a number with a string is not.
     """
     chart = BarChart(
         id="c1",
@@ -626,12 +631,12 @@ def test_a_layered_chart_never_pins_an_empty_shared_domain() -> None:
         x="month",
         y="target",
         layers=[LineLayer(type="line", y="target")],
-        sort=ChartSort(by="region", order="asc"),
+        sort=ChartSort(by="rank", order="asc"),
     )
     rows = [
-        {"month": "Feb", "region": "north", "target": 1.0},
-        {"month": "Mar", "region": "south", "target": 2.0},
-        {"month": "Jan", "region": "east", "target": 3.0},
+        {"month": "Feb", "rank": "n/a", "target": 1.0},
+        {"month": "Mar", "rank": 2, "target": 2.0},
+        {"month": "Jan", "rank": 1, "target": 3.0},
     ]
     resolved = resolve(chart, rows, chart_style_context=_BOARD_CTX)
     session = BoardRenderSession.create(_BOARD_STYLE)

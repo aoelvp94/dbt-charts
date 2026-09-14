@@ -3872,13 +3872,13 @@ class TestOverlayBarSortAggregateMatchesUnlabeled:
 
     ``rendered_x_domain`` pins an explicit domain (the label sublayer's
     calculate transform is what breaks Vega-Lite's native sort-by-field
-    across the shared scale). That pinned domain must sort by the same
-    aggregate Vega-Lite's own EncodingSortField.op applies when nothing
-    pins one — sum, unconditionally, since the bar emitter never
-    emits stack: null even for a grouped (xOffset) chart. With multi-row-per-x
-    data, sum and min give different category orders, so this is the case
-    that would catch a wrong aggregate: render the identical chart with and
-    without the overlay label sublayer and assert the rendered order matches.
+    across the shared scale). That pinned domain must sort by the aggregate
+    the encoding's own sort pins — ``min`` for a grouped bar, which stacks
+    nothing and so orders each category by the measure's own value. With
+    multi-row-per-x data, sum and min give different category orders, so this
+    is the case that would catch a wrong aggregate: render the identical chart
+    with and without the overlay label sublayer and assert the rendered order
+    matches.
     """
 
     def test_multi_row_per_x_order_unchanged_by_overlay_label(self) -> None:
@@ -3889,9 +3889,9 @@ class TestOverlayBarSortAggregateMatchesUnlabeled:
           sum-desc: Jan (3.1M), Feb (3M), Mar (2.8M) -> Jan/Feb/Mar
           min-desc: Feb (1.5M), Mar (800K), Jan (100K) -> Feb/Mar/Jan
 
-        Vega-Lite's own default (no label, no pinned domain) sorts by sum,
-        giving Jan/Feb/Mar. A wrong aggregate in the label-present path would
-        silently flip this to the min order instead.
+        The unlabeled chart renders the min order from its own pinned ``op``;
+        a wrong aggregate in the label-present path would flip it to the sum
+        order instead.
         """
         pytest.importorskip("vl_convert")
         import vl_convert as vlc
@@ -3927,8 +3927,8 @@ class TestOverlayBarSortAggregateMatchesUnlabeled:
         unlabeled_order = render_order(unlabeled_def)
         labeled_order = render_order(labeled_def)
 
-        assert unlabeled_order == ["Jan", "Feb", "Mar"], (
-            f"sum-desc without any overlay label must give Jan/Feb/Mar, "
+        assert unlabeled_order == ["Feb", "Mar", "Jan"], (
+            f"min-desc without any overlay label must give Feb/Mar/Jan, "
             f"got {unlabeled_order!r}"
         )
         assert labeled_order == unlabeled_order, (

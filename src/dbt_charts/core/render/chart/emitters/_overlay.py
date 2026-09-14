@@ -1269,6 +1269,8 @@ def render_cartesian_overlay(
                 val_ch,
                 log_scale=base_continuous is not None and base_continuous.type == "log",
                 authored_domain=base_authored_domain,
+                domain_min=axis_y.domain_min,
+                domain_max=axis_y.domain_max,
                 grid_visible=axis_y.grid.visible,
                 zero_color=base_zero_style.color,
                 zero_width=base_zero_style.width,
@@ -1871,6 +1873,11 @@ def render_cartesian_overlay(
                 val_ch,
                 log_scale=False,
                 authored_domain=layer_domain,
+                # Nothing to pin: LayerAxisYScale carries only `domain`, and
+                # resolve bakes no per-layer headroom — a layer's scale always
+                # auto-fits, so its datum legitimately stretches it to 0.
+                domain_min=None,
+                domain_max=None,
                 grid_visible=layer_grid_visible,
                 zero_color=layer_zero_style.color,
                 zero_width=layer_zero_style.width,
@@ -2029,4 +2036,9 @@ def render_cartesian_overlay(
         config=outer_config,
         resolve=resolve,
         data=normalize_data_types(data),
+        # The base owns the x-axis (paint-order contract above), so the outer
+        # spec's labels are the ones it already measured — carried across
+        # rather than dropped, or a layered chart would lose the tilt
+        # reservation its unlayered twin gets.
+        x_label_block_height=base_spec.x_label_block_height,
     )

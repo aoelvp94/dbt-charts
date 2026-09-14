@@ -92,10 +92,11 @@ def load_manifest(project: Project) -> LoadedManifest | None:
     Raises ExecutionError (ERR-DBT-MANIFEST-UNREADABLE) when a candidate
     exists but is unreadable or corrupt.
     """
+    manifest_project = project.manifest_project()
     for relpath in MANIFEST_CANDIDATES:
-        if not project.exists(relpath):
+        if not manifest_project.exists(relpath):
             continue
-        return load_manifest_at(project, relpath)
+        return load_manifest_at(manifest_project, relpath)
     return None
 
 

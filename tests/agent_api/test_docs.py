@@ -19,10 +19,11 @@ from dbt_charts.agent_api.docs import (
 @pytest.fixture(autouse=True)
 def patch_syntax_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point ``_SYNTAX_FILE`` at a controlled corpus and the three generated
-    reference files at missing paths, for every test in this module.
+    reference files at empty files, for every test in this module.
 
-    The missing-file crash tests re-patch a path themselves; autouse keeps the
-    rest of the suite isolated from the wheel's real files.
+    Empty rather than absent: a missing generated file is a broken install and
+    now raises. The missing-file tests re-patch a path themselves; autouse
+    keeps the rest of the suite isolated from the wheel's real files.
     """
     fake = tmp_path / "DBT_CHARTS_SYNTAX.md"
     fake.write_text(
@@ -40,10 +41,12 @@ def patch_syntax_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import dbt_charts.agent_api.docs._loader as _loader
 
     monkeypatch.setattr(_loader, "_SYNTAX_FILE", fake)
-    # Search also reads the generated references; keep them out of the fixture
-    # corpus unless a test patches one in.
+    # `all` and search also read the generated references; keep them out of the
+    # fixture corpus unless a test patches one in.
     for name in ("_REFERENCE_FILE", "_ERROR_REFERENCE_FILE", "_WARNING_REFERENCE_FILE"):
-        monkeypatch.setattr(_loader, name, tmp_path / f"missing-{name}.md")
+        empty = tmp_path / f"empty-{name}.md"
+        empty.write_text("")
+        monkeypatch.setattr(_loader, name, empty)
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +66,17 @@ def test_docs_default_returns_topic_index() -> None:
         "conditional-formatting",
         "charts",
         "layout",
+        "reference",
+        "error-reference",
+        "warning-reference",
     ]
+
+
+def test_topic_index_describes_the_generated_topics() -> None:
+    """The generated references are browsable topics, not `--help`-only ids."""
+    by_id = {entry.id: entry for entry in docs().topics}
+    for slug in ("reference", "error-reference", "warning-reference"):
+        assert by_id[slug].description, f"{slug} has no description"
 
 
 def test_docs_topic_descriptions_strip_markdown() -> None:
@@ -125,6 +138,34 @@ def test_docs_all_returns_whole_file() -> None:
     assert "dbt charts YAML Syntax" in result.topic.content
     assert "## Cheatsheet" in result.topic.content
     assert "## Layout" in result.topic.content
+
+
+def test_docs_all_includes_the_generated_field_reference(tmp_path: Path) -> None:
+    """`all` is the unsliced read; a reader who greps it must find grammar keys
+    that only the generated reference documents."""
+    import dbt_charts.agent_api.docs._loader as _loader
+
+    fake_ref = tmp_path / "yaml-reference.md"
+    fake_ref.write_text("# Generated\n\n## HoverEmphasisStyle\n\n`hover_emphasis`\n")
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(_loader, "_REFERENCE_FILE", fake_ref)
+    result = docs(topic="all")
+    monkeypatch.undo()
+    assert result.success is True
+    assert result.topic is not None
+    assert "## Cheatsheet" in result.topic.content
+    assert "hover_emphasis" in result.topic.content
+
+
+def test_docs_all_missing_reference_returns_error(tmp_path: Path) -> None:
+    import dbt_charts.agent_api.docs._loader as _loader
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(_loader, "_REFERENCE_FILE", tmp_path / "nonexistent.md")
+    result = docs(topic="all")
+    monkeypatch.undo()
+    assert result.success is False
+    assert any("gen-yaml-reference" in e for e in result.errors)
 
 
 def test_docs_cheatsheet_is_a_topic() -> None:
@@ -417,6 +458,19 @@ def test_read_full_text_missing_file_raises(
     monkeypatch.setattr(_loader, "_SYNTAX_FILE", tmp_path / "nonexistent.md")
     with pytest.raises(DocsCorpusMissingError, match="source file missing"):
         read_full_text()
+
+
+def test_search_missing_generated_reference_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A broken install must not silently search a thinner corpus."""
+    import dbt_charts.agent_api.docs._loader as _loader
+
+    monkeypatch.setattr(_loader, "_REFERENCE_FILE", tmp_path / "nonexistent.md")
+    result = docs(search="chart")
+    assert result.success is False
+    assert any("gen-yaml-reference" in e for e in result.errors)
+    assert result.search == []
 
 
 # ---------------------------------------------------------------------------

@@ -28,6 +28,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     AUTHORED_CHART_VARIANTS,
     AuthoredChart,
 )
+from dbt_charts.core.compile.models.config import ExecutionConfig
 from dbt_charts.core.compile.models.factories import _PatchBase
 from dbt_charts.core.compile.models.markers import Facet, SchemaSugar
 from dbt_charts.core.compile.models.query.authored import (
@@ -1046,3 +1047,23 @@ def introspect() -> AuthorableSchema:
             ),
         )
     return AuthorableSchema(root="AuthoredBoard", models=collected)
+
+
+@functools.lru_cache(maxsize=1)
+def introspect_project_config() -> AuthorableSchema:
+    """Walk ExecutionConfig — the `dbt_charts.yml` keys — into its own IR.
+
+    Deliberately not part of introspect(): that walk also feeds the board JSON
+    Schema, the highlighting catalog and the completion catalog, none of which
+    should learn project-config keys. Only the generated field reference reads
+    this one.
+    """
+    collected: dict[str, AuthorableModel] = {}
+    _collect_models(ExecutionConfig, collected)
+    # Every config field is required on the *merged* model, but dbt_charts.yml
+    # is deep-merged over defaults/default_config.yml — what an author writes
+    # is a patch, so nothing here is required of them.
+    for model in collected.values():
+        for field in model.fields:
+            field.required = False
+    return AuthorableSchema(root="ExecutionConfig", models=collected)

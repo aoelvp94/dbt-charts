@@ -245,6 +245,17 @@ def _render_vl_artifact(
         full_datasets,
     )
     vl = session.finalize_vl(chart_spec)
+    if (
+        isinstance(resolved, _CartesianResolvedChartFields)
+        and resolved.support_table is not None
+        and chart_spec.x_label_block_height is not None
+    ):
+        # How tall the x labels stand at the tilt the emitter just picked. The
+        # strip's own gap below the plot was baked at compile time, before any
+        # tilt existed — _apply_support_table_strip pops this and hands it to
+        # the post-pass, which widens that gap. Stamped under the same guard
+        # that function returns early on, so it never survives into a spec.
+        vl["$df_x_label_block_px"] = chart_spec.x_label_block_height
     if "facet" in vl:
         # Small multiples: per-panel width/height go on the inner unit spec, while
         # padding and title frame the whole set at the facet root. Facet is mutually
@@ -639,11 +650,21 @@ def _apply_support_table_strip(
     ):
         return None
 
+    # Stamped on the root by _render_vl_artifact; the strip's geometry is
+    # decided per pane below, so read it before descending.
+    x_label_block_px = vl.pop("$df_x_label_block_px", None)
+
     def stamp(pane: VLDict) -> VLDict:
         if "padding" not in pane:
             pane["padding"] = {"left": 0, "right": 0, "top": 0, "bottom": 0}
         stamped, _ = apply_chart_support_table_post_pass(
-            pane, resolved, charts_style, render_data, None, resolved.chart_type
+            pane,
+            resolved,
+            charts_style,
+            render_data,
+            None,
+            resolved.chart_type,
+            x_label_block_px,
         )
         return stamped
 

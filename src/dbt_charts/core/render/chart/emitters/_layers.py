@@ -76,9 +76,9 @@ def pin_categorical_domain_order(cat_enc: VLDict, data: list[VLDict]) -> None:
 
     ``cat_enc["sort"]`` reaching a categorical channel is always either absent
     or ``chart_sort_to_vl``'s own ``{"field", "order"}`` shape, optionally with
-    the ``op`` a dimension axis pins (``emitters/_cartesian.py``) — never a
-    bare VL-native sort array, which the authored surface has no way to
-    produce. ``vl_sort_op`` reads that pin so the domain computed here folds
+    the ``op`` a dimension axis or a bar pins (``emitters/_cartesian.py``) —
+    never a bare VL-native sort array, which the authored surface has no way
+    to produce. ``vl_sort_op`` reads that pin so the domain computed here folds
     each category the same way Vega-Lite will.
     """
     if cat_enc.get("type") not in ("nominal", "ordinal"):

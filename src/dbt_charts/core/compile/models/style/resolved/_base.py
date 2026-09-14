@@ -171,22 +171,24 @@ class ResolvedRulerAxis:
 
 @dataclasses.dataclass(frozen=True)
 class ResolvedTickLabel:
-    """The baked plain-digit tick-label decision -- ``ruler``'s non-compacting
-    sibling (see ``ResolvedAxisStyle.ruler``'s docstring): a ladder that does
-    NOT compact still gets its ticks rewritten in full plain digits, unless
-    the author asked for that exact SI format themselves. Read ONLY by this
-    axis's own tick-label emission (overrides the VL axis ``format``, nothing
-    else) -- never ``label.format`` (shared with value labels, tooltips, and
-    the currency-warning detector) and never ``label.expr``. Mutually
+    """The baked tick-label decision for a ladder that does not compact --
+    ``ruler``'s non-compacting sibling (see ``ResolvedAxisStyle.ruler``'s
+    docstring): its ticks are rewritten by ``non_compacting_tick_format``
+    (full plain digits, or scientific for a ladder finer than a fixed-point
+    spec reaches), unless the author asked for that exact SI format
+    themselves. Read ONLY by this axis's own tick-label emission (overrides
+    the VL axis ``format``, nothing else) -- never ``label.format`` (shared
+    with value labels, tooltips, and the currency-warning detector) and never
+    ``label.expr``. Mutually
     exclusive with ``ResolvedAxisStyle.ruler`` (see its ``__post_init__``): a
     ladder compacts or it doesn't, never both.
     """
 
-    # Plain d3 fixed-point spec (not a Vega expression -- a non-compacting
-    # ladder makes no per-tick decision, so unlike `ruler` it needs no
-    # expression, only a format string).
+    # Plain d3 spec (not a Vega expression -- a non-compacting ladder makes no
+    # per-tick decision, so unlike `ruler` it needs no expression, only a
+    # format string).
     format: str
-    # Currency prefix split from `format`'s symbol by plain_digit_format
+    # Currency prefix split from `format`'s symbol by non_compacting_tick_format
     # (mirrors ruler.prefix): the bare symbol (e.g. "$"), no added spacing.
     # "" when the format has no currency symbol.
     prefix: str = ""
@@ -204,7 +206,8 @@ class ResolvedTickLabel:
     # Mirrors ResolvedRulerAxis.decimal_pad_table: one padding string per
     # possible missing_len (0..precision+1), built from compose_decimal_units
     # at resolve time. Empty when the axis is non-column-forming, the font is
-    # non-tabular, or the mixed-depth gate finds every tick at the same depth.
+    # non-tabular, the mixed-depth gate finds every tick at the same depth, or
+    # `format` is scientific (no fixed decimal position to pad to).
     decimal_pad_table: tuple[str, ...] = dataclasses.field(default_factory=tuple)
 
 
@@ -501,10 +504,11 @@ class ResolvedAxisStyle:
     # measure-axis domain top after headroom expanded the data max. Emitters
     # read this for VL `domainMax`. None means VL auto-fits the top.
     domain_max: float | None = None
-    # Baked alongside domain_max for zoomed (non-zero-anchored) axes only.
-    # Symmetric span-relative bottom: domain_min = data_min - headroom*span.
-    # None on zero-anchored axes — the bottom stays at 0 (VL auto-fits from
-    # the domainMin already set by y_zero_scale).
+    # Baked alongside domain_max. Zoomed (non-zero-anchored) axes get the
+    # symmetric span-relative bottom: domain_min = data_min - headroom*span.
+    # A zero-anchored axis normally leaves it None — the bottom stays at 0 —
+    # EXCEPT when the data is all-negative, where 0 is the ceiling instead and
+    # the floor is the headroom-expanded data min (see _resolve_cartesian_ticks).
     domain_min: float | None = None
     # Whether this axis's channel is quantitative (numeric) rather than
     # categorical — the same channel classification the cascade already

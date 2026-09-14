@@ -1,0 +1,13 @@
+changesDir: .changes
+unreleasedDir: unreleased
+headerPath: header.tpl.md
+changelogPath: CHANGELOG.md
+versionExt: md
+versionFormat: '## {{.Version}} ({{.Time.Format "2006-01-02"}})'
+kindFormat: '### {{.Kind}}'
+changeFormat: '- {{.Body}}'
+kinds:
+  - label: Breaking changes
+  - label: Features
+  - label: Fixes
+  - label: Performance

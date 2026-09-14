@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import math
 import re
 from collections.abc import Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
@@ -1127,7 +1128,12 @@ def calculate_column_layout(
 
     if not auto_columns:
         col_widths.update(explicit_widths)
-        actual_content_width = sum(col_widths.get(col, 0) for col in columns)
+        actual_content_width = math.fsum(
+            col_widths.get(
+                col, 0
+            )  # type-state: silent_fallback — not auto_columns means every column in `columns` is already a key in explicit_widths, just merged into col_widths above; the 0 default is defensive and unreachable here
+            for col in columns
+        )
         col_x_offsets = []
         current_x = 0.0
         for col in columns:
@@ -1232,7 +1238,12 @@ def calculate_column_layout(
             col_widths[col] = per_col
 
     col_widths.update(explicit_widths)
-    actual_content_width = sum(col_widths.get(col, 0) for col in columns)
+    actual_content_width = math.fsum(
+        col_widths.get(
+            col, 0
+        )  # type-state: silent_fallback — every column in `columns` is covered by either explicit_widths or the compact/text partition of auto_columns above; the 0 default is defensive and unreachable here
+        for col in columns
+    )
 
     col_x_offsets = []
     current_x = 0.0

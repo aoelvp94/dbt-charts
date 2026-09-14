@@ -236,6 +236,33 @@ def _resolve_source(scope: Scope, table_alias: str) -> exp.Table | Scope | None:
     return None
 
 
+def _restates_an_output_column(col: exp.Column) -> bool:
+    """Is this an ORDER BY / DISTINCT ON restatement of the query's own output?
+
+    Such a column names a projection the query's SELECT scopes already walked,
+    so the base column behind it is collected there. Two shapes reach here with
+    no table of their own: sqlglot's scope filter drops an ORDER BY restatement
+    from a plain SELECT's columns, and a set operation's ORDER BY sits in a
+    scope with no table sources at all — the arms are traversed as scopes of
+    their own, so nothing there answers to the clause's empty table name.
+    Bounded by ``named_selects``, so a name the query does not project still
+    fails closed.
+
+    The clause must be the SELECT's or set operation's *own*, so the walk stops
+    at the first enclosing query: the scope filter also drops an unqualified
+    HAVING/QUALIFY column, and one nested in a subquery inside an ORDER BY
+    expression must not be forgiven for sharing a name with the outer query's
+    output — its own table is the one that would go silently unrecorded.
+    """
+    ancestor = col.find_ancestor(exp.Order, exp.Distinct, exp.Query)
+    return (
+        isinstance(ancestor, (exp.Order, exp.Distinct))
+        and isinstance(ancestor.parent, (exp.Select, exp.SetOperation))
+        and not col.table
+        and col.name in ancestor.parent.named_selects
+    )
+
+
 def _collect(
     statement: exp.Expression, dialect: str | None, refs: QueryColumnRefs
 ) -> None:
@@ -291,6 +318,8 @@ def _collect(
                     return
                 refs.columns.add((".".join(p for p in parts if p), col.name))
             elif source is None:
+                if _restates_an_output_column(col):
+                    continue
                 refs.indeterminate = (
                     f"column {col.name!r} could not be attributed to a table"
                 )
@@ -301,19 +330,9 @@ def _collect(
     # Fail closed on anything the scope walk did not account for: sqlglot's
     # scope filter drops an unqualified column whose nearest clause is HAVING
     # or QUALIFY, and whatever arm it grows next should land here, not vanish.
-    # The one forgiven shape mirrors the filter's own exclusion: an ORDER BY /
-    # DISTINCT ON restatement of a projection the scope already collected.
     accounted = {id(c) for scope in scopes for c in scope.columns}
     for col in statement.find_all(exp.Column):
-        if id(col) in accounted:
-            continue
-        ancestor = col.find_ancestor(exp.Order, exp.Distinct)
-        if (
-            ancestor is not None
-            and isinstance(ancestor.parent, exp.Select)
-            and not col.table
-            and col.name in ancestor.parent.named_selects
-        ):
+        if id(col) in accounted or _restates_an_output_column(col):
             continue
         refs.indeterminate = (
             f"column {col.name!r} sits in a clause this analysis cannot "

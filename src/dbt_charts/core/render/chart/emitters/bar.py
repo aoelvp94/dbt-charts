@@ -26,7 +26,6 @@ from dbt_charts.core.compile.resolve.chart._wide_fields import (
     wide_measure_labels_for,
     wide_series_names,
 )
-from dbt_charts.core.compile.resolve.chart.tick_values import zero_anchor_domain_floor
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_HISTOGRAM_NON_NUMERIC,
@@ -36,9 +35,9 @@ from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.emitters._cartesian import (
     apply_domain_headroom_bounds,
     authored_measure_domain,
+    bar_sort_to_vl,
     build_palette_config,
     cartesian_x_scale_domain,
-    chart_sort_to_vl,
     distinct_series_values,
     multiples_scale_independent,
     nudge_band_scale_off_range_start,
@@ -83,6 +82,7 @@ from dbt_charts.core.render.chart.type_inference import (
     resolve_cartesian_x_type,
     temporal_edge_labels_flushed,
     y_zero_scale,
+    zero_anchor_pinned_floor,
 )
 from dbt_charts.core.render.chart.validation import (
     validate_color_series,
@@ -978,7 +978,9 @@ def _emit_vertical(
         # Honor an authored chart.sort by mapping it to a field-based VL sort on
         # the categorical (x) axis — mirrors V1 _apply_chart_sort. Without a sort
         # the nominal scale falls back to alphabetical domain order.
-        "sort": chart_sort_to_vl(chart.sort),
+        "sort": bar_sort_to_vl(
+            chart.sort, measure_field, chart.stack not in (None, "none")
+        ),
     }
     # Temporal bar: emit timeUnit so VL bucketing stays UTC-aligned.
     if x_vl_type == "temporal" and detected_tu is not None and detected_tu != "none":
@@ -1043,13 +1045,27 @@ def _emit_vertical(
                 # domain-inference hint, meaningless once the domain is pinned.
                 y_scale.pop("zero", None)
         elif bar_zero:
-            y_scale = {"domainMin": (y_ticks[0] if y_ticks else 0.0), "zero": True}
+            # Bar anchors on its own verdict (bar_zero), not on
+            # is_zero_anchored, so this cannot route through y_zero_scale —
+            # but the floor decision is the same one, and comes from the same
+            # place. `nice: False` stands in when no rung supplies a floor:
+            # the pin is what suppressed VL's default nice-rounding.
+            # y_ticks[-1] still feeds the stacked domainMax below, so only the
+            # floor is taken from the filtered ladder.
+            pinned_floor = zero_anchor_pinned_floor(ay)
+            y_scale = (
+                {"domainMin": pinned_floor, "zero": True}
+                if pinned_floor is not None
+                else {"nice": False, "zero": True}
+            )
             if ay.scale is not None:
                 extra_scale = emit_resolved_scale_vl(ay.scale)
                 extra_scale.pop("zero", None)
                 y_scale.update(extra_scale)
         else:
-            y_scale = y_zero_scale(ay, tick_values=y_ticks)
+            # Stacked vertical bar: bar_zero is False for a stack, so the
+            # anchor verdict falls back to the axis's own is_zero_anchored.
+            y_scale = y_zero_scale(ay)
 
         if measure_field and chart.stack not in (None, "none"):
             y_enc["stack"] = chart.stack
@@ -1237,6 +1253,7 @@ def _emit_vertical(
         cat_field,
     )
     spec.base_series_label = titles.y_plain
+    spec.x_label_block_height = label_layout.label_block_height
     return spec
 
 
@@ -1408,20 +1425,33 @@ def _emit_horizontal(
             x_enc["scale"] = apply_domain_headroom_bounds(
                 x_enc["scale"], ay.domain_max, ay.domain_min
             )
-            # Zero-anchored measure axis: pin the domain floor from a
-            # COMPUTED ladder, mirroring _emit_vertical's bar_zero branch
-            # above. resolve() only bakes ay.domain_min for the zoomed
-            # (non-zero-anchored) branch, so apply_domain_headroom_bounds
-            # alone can't supply this floor, and a ladder value below the
-            # auto-fit domain (e.g. a negative bar) would otherwise get
-            # silently clipped. zero_anchor_domain_floor excludes an
-            # authored ladder — see its own docstring for why.
-            floor_ticks = zero_anchor_domain_floor(
-                ay.scale.values if ay.scale is not None else None,
-                list(ay.tick_values) if ay.tick_values else [],
-            )
-            if floor_ticks and x_enc["scale"].get("zero") is not False:
-                x_enc["scale"]["domainMin"] = floor_ticks[0]
+            # Zero-anchored measure axis: pin the same floor the vertical
+            # branch does, so a rung below the auto-fit domain (e.g. a
+            # negative bar) is not silently clipped.
+            #
+            # Only when resolve baked no floor of its own. An all-negative
+            # measure axis bakes ay.domain_min (the headroom-expanded data
+            # floor, exact); the ladder's bottom rung is the nice-rounded FAR
+            # edge, well below it, and overwriting the bake with that rung
+            # widens the domain by ~30% — render re-deciding a domain resolve
+            # already resolved. _emit_vertical avoids this by ordering the two
+            # the other way round; this branch must check explicitly.
+            pinned_floor = zero_anchor_pinned_floor(ay)
+            if (
+                pinned_floor is not None
+                and ay.domain_min is None
+                and x_enc["scale"].get("zero") is not False
+            ):
+                x_enc["scale"]["domainMin"] = pinned_floor
+            # No `nice: False` companion here, unlike y_zero_scale and the
+            # vertical branch. Those two pinned a literal 0.0 whenever the
+            # ladder was empty, which suppressed VL's nice-rounding as a side
+            # effect, so dropping that floor has to put `nice: False` back.
+            # This branch never pinned a ladder-less floor: its domain has
+            # always been nice-rounded, and it never had the degenerate-0.0
+            # bug either. Adding the companion here changes shipped geometry
+            # rather than preserving it (caught by the visual gate on
+            # playground/dundersign-support-operations).
 
     # Categorical axis (VL y): axis_to_vl(ax) + orient from ay.position
     # (categorical_orient was deleted 2026-08 — position now serves this role
@@ -1511,7 +1541,9 @@ def _emit_horizontal(
     # a series-colored or wide horizontal bar pins ``sort: null`` so VL keeps
     # the query's first-occurrence domain order (mirrors V1 _apply_chart_sort /
     # _apply_default_horizontal_bar_sort).
-    y_sort = chart_sort_to_vl(chart.sort)
+    y_sort = bar_sort_to_vl(
+        chart.sort, measure_field, chart.stack not in (None, "none")
+    )
     if y_sort is not None:
         y_enc["sort"] = y_sort
     elif measure_field and color_ch is None and wide is False:

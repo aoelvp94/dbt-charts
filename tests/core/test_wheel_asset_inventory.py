@@ -212,10 +212,19 @@ EXPECTED_ASSETS: list[tuple[str, str]] = [
         "dbt_charts/core/defaults/palettes/tone/info.yml",
         "default informational callout tone palette",
     ),
-    # `dct docs reference` — YAML field-level spec, also returned by MCP board-schema verb.
+    # `dct docs <generated topic>` — the three generated references `_loader.py`
+    # reads at runtime; keep all three pinned together.
     (
         "dbt_charts/agent_api/docs/yaml-reference.md",
         "YAML reference wheel copy; served by `dct docs reference` and MCP",
+    ),
+    (
+        "dbt_charts/agent_api/docs/error-reference.md",
+        "error reference wheel copy; served by `dct docs error-reference`",
+    ),
+    (
+        "dbt_charts/agent_api/docs/warning-reference.md",
+        "warning reference wheel copy; served by `dct docs warning-reference`",
     ),
     # AI surface — the agent loop and MCP load these at runtime.
     (

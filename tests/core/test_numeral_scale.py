@@ -10,6 +10,8 @@ per destination, "When to compact") and
 
 from __future__ import annotations
 
+import pytest
+
 from d3_format import format as _d3_format
 from dbt_charts.core.numeric import nice_tick_values
 from dbt_charts.core.text.numeral_scale import (
@@ -19,7 +21,7 @@ from dbt_charts.core.text.numeral_scale import (
     _precision_for_step,
     column_shares_one_printed_unit,
     fractional_digit_count,
-    plain_digit_format,
+    non_compacting_tick_format,
     shared_scale_for_column,
     shared_scale_for_ladder,
     suffix_at_register,
@@ -415,28 +417,59 @@ def test_precision_for_step_half_step_is_one():
     assert _precision_for_step(1.5) == 1
 
 
-def test_plain_digit_format_writes_out_full_digits():
-    assert plain_digit_format(".3~s", 20_000) == ("", ",.0~f", 0)
+@pytest.mark.parametrize("step", [1e-11, 5e-11, 0.0])
+def test_precision_for_step_refuses_a_step_its_rounding_cannot_express(step):
+    """Three ways ten decimal places fail a step, all of which would return a
+    precision whose spec prints neighboring ticks identically.
+
+    1e-11 rounds away to zero (every tick "0"). 5e-11 rounds to a *different*
+    step, 1e-10, whose spec prints both of them "0.0000000001". A zero step is
+    no step at all.
+    """
+    with pytest.raises(ValueError, match="not expressible"):
+        _precision_for_step(step)
 
 
-def test_plain_digit_format_splits_the_currency_symbol_as_prefix():
+def test_non_compacting_tick_format_writes_out_full_digits():
+    assert non_compacting_tick_format(".3~s", 20_000) == ("", ",.0~f", 0)
+
+
+def test_non_compacting_tick_format_keeps_a_sub_unit_step_exact():
+    """A milli-band step keeps its own decimal depth -- the sub-unit ladder
+    writes its digits out rather than taking d3's SI milli prefix.
+    """
+    assert non_compacting_tick_format(".3~s", 0.001) == ("", ",.3~f", 3)
+
+
+def test_non_compacting_tick_format_takes_scientific_below_fixed_point_reach():
+    """The finest fixed-point step is 1e-10; below it there is no fixed-point
+    spec to derive, so the ladder takes the scientific register at the same
+    significant-figure count its format asked for. ``None`` precision says
+    "not fixed-point" -- there is no decimal pad table to build.
+    """
+    assert non_compacting_tick_format(".3~s", 1e-10) == ("", ",.10~f", 10)
+    assert non_compacting_tick_format(".3~s", 5e-11) == ("", ".3~e", None)
+    assert non_compacting_tick_format(".3~s", 1e-11) == ("", ".3~e", None)
+
+
+def test_non_compacting_tick_format_splits_the_currency_symbol_as_prefix():
     # The currency symbol is split out just like ruler_digit_format, as the
     # bare symbol -- the caller (_cascade.py's _prefix_with_guaranteed_gap)
     # appends a trailing FIGURE SPACE (U+2007) for a deterministic gap, since
     # this module (core.text) cannot depend on core.font_measure where that
     # constant lives.
-    prefix, digit_spec, precision = plain_digit_format("$~s", 20_000)
+    prefix, digit_spec, precision = non_compacting_tick_format("$~s", 20_000)
     assert prefix == "$"
     assert digit_spec == ",.0~f"
     assert precision == 0
 
 
-def test_plain_digit_format_keeps_a_half_step_decimal():
-    assert plain_digit_format(".3~s", 0.5) == ("", ",.1~f", 1)
+def test_non_compacting_tick_format_keeps_a_half_step_decimal():
+    assert non_compacting_tick_format(".3~s", 0.5) == ("", ",.1~f", 1)
 
 
-def test_plain_digit_format_no_symbol_empty_prefix():
-    prefix, digit_spec, precision = plain_digit_format(",.0f", 2_000)
+def test_non_compacting_tick_format_no_symbol_empty_prefix():
+    prefix, digit_spec, precision = non_compacting_tick_format(",.0f", 2_000)
     assert prefix == ""
     # trim=True appends "~" to the type indicator.
     assert digit_spec == ",.0~f"

@@ -521,6 +521,16 @@ class Project(ABC):
         """
         return None
 
+    def manifest_project(self) -> Project:
+        """Return the ``Project`` whose file seam holds the linked dbt project
+        (``target/manifest.json``, ``dbt_project.yml``, ``profiles.yml``).
+
+        Default: ``self`` (the dbt project lives at this project's own root).
+        ``FilesystemProject`` overrides this to return ``self.dbt_project``
+        when a ``dbt_project_dir`` links an external directory.
+        """
+        return self
+
     @abstractmethod
     def iter_files(self, under: str, *, recursive: bool) -> Iterator[str]:
         """Yield project-relative paths of ALL files under *under*, sorted.

@@ -358,6 +358,7 @@ directly. Keeping it inside a dbt project, next to `models/`, adds the following
 your_dbt_project/
   .git/
   dbt_project.yml
+  dbt_charts.yml
   models/
   charts/
     revenue.yml

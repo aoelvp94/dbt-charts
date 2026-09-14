@@ -377,10 +377,11 @@ class VegaRuntimeConfig(ConfigNode):
 
 
 class ExecutionConfig(ConfigNode):
-    # DuckDB-backed executors serialize access via _DUCKDB_EXECUTE_LOCK, so raising
-    # max_workers beyond 1 doesn't increase actual parallelism for local DuckDB files.
-    # The setting is meaningful for external warehouse executors (BigQuery, Snowflake).
-    max_workers: int
+    # DuckDB-backed executors serialize access via _DUCKDB_EXECUTE_LOCK.
+    max_workers: int = Field(
+        description="Maximum parallel query workers for a render. DuckDB "
+        "serializes access regardless, so this only moves external warehouses.",
+    )
     # Safety ceiling on how long a single query may run, enforced as a server-side
     # statement timeout on network warehouses (never a client-side abandon — see
     # execute/adapters/sql_adapter.py). DuckDB and SQLite are local file databases
@@ -446,8 +447,10 @@ class ExecutionConfig(ConfigNode):
         "output for a single board render (must be > 0).",
     )
     # sqlglot uses different dialect names than dbt charts' public-facing dialect strings.
-    # This mapping normalizes dbt charts names to sqlglot equivalents before parsing.
-    dialect_aliases: dict[str, str]
+    dialect_aliases: dict[str, str] = Field(
+        description="Maps a dbt charts dialect name to its sqlglot equivalent "
+        "before parsing.",
+    )
 
 
 class ServerConfig(ConfigNode):
@@ -559,6 +562,13 @@ class Config(ConfigMappingBase):
     # (dbt_charts.cloud_client.context) before it falls back to matching the
     # git remote. None = not connected, or not recorded yet.
     published_to: str | None = None
+    # Nothing reads this field: resolve_dbt_project_dir (core/project_roots.py)
+    # reads dbt_charts.yml raw off disk before a Config exists (same reason
+    # sources: above is unread here). It must stay declared anyway -- Config
+    # is extra="forbid" and validates the whole file, so dropping the field
+    # would fail load_config (and `dct serve` startup) for every project that
+    # links an external dbt project. None = sibling default (no key set).
+    dbt_project_dir: str | None = None
 
     @field_validator("published_to")
     @classmethod

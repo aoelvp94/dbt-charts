@@ -29,6 +29,7 @@ from dbt_charts.core.project_roots import (
     DCT_ROOT_MARKERS as DCT_ROOT_MARKERS,
     find_dct_root as find_dct_root,
     find_repo_root as find_repo_root,
+    resolve_dbt_project_dir as resolve_dbt_project_dir,
 )
 
 if TYPE_CHECKING:

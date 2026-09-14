@@ -1624,6 +1624,60 @@ WARN_LIKELY_CURRENCY_OR_PERCENT_MISSING_FORMATTER = REGISTRY.register(
     )
 )
 
+WARN_NORMALIZE_PERCENT_FORMAT_READS_RAW_VALUE = REGISTRY.register(
+    WarningCode(
+        code="WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE",
+        domain="render",
+        title="Percent format on a 100% stack formats the raw value, not the share",
+        message_template=(
+            "Chart {chart_id!r}: percent format {format!r} formats the raw "
+            "{field!r} value, not the share the normalized stack paints: one "
+            "stack group's values sum to {total}, not 1, so the hover rows and "
+            "the value labels multiply a raw number by 100 and print it as a "
+            "percentage."
+        ),
+        fix_template=(
+            "Drop the percent format (a normalized stack already labels its "
+            "axis 0-100%, so the format never reaches that axis), or make the "
+            "measure a real 0..1 share in SQL by dividing each value by its "
+            "group's total, so the raw value and the painted share are the "
+            "same number."
+        ),
+        doc=(
+            "Fires when a bar or area chart resolves to `style.stack: "
+            "normalize`, its measure carries a percent format, and the raw y "
+            "values in some stack group do not already sum to about 1. The "
+            "normalized stack pins the measure axis to 0-100% itself, so an "
+            "authored format never reaches that axis; it reaches the hover "
+            "rows, the printed value labels, and the stack-total label, and "
+            "every one of those reads the RAW column value. A count of 20 "
+            "under a percent format therefore prints as `2000%`. Both "
+            "authoring doors reach the same baked format and both fire: "
+            "`style.number_format` (or a chart's `format:`) and an authored "
+            "`style.axis_y.labels.format`. A chart whose measure is already a "
+            "0..1 share, every group summing to about 1, is the honest case "
+            "and never fires: there the raw value and the painted share are "
+            "the same number. A non-percent format (currency, plain digits) "
+            "never fires either: it prints the true raw number, and only its "
+            "unit differs from the axis. A stack group summing to 0 is not "
+            "judged at all, since a share is undefined at a zero total. "
+            "`stack: zero` and `stack: center` are not judged either: an "
+            "absolute stack labels its axis with that same authored format, "
+            "so the chart is self-consistent. Small multiples are judged one "
+            "panel at a time, since a normalized stack normalizes within a "
+            "panel. The render is unchanged by this warning."
+        ),
+        summary=(
+            "Fired on a 100% stacked bar or area chart whose measure carries a "
+            "percent format but is not already a 0..1 share; the normalized "
+            "stack pins its own axis, so that format reaches only the hover "
+            "rows, the value labels and the stack total, where it multiplies "
+            "the raw value by 100."
+        ),
+        docs_topic="charts",
+    )
+)
+
 WARN_PIE_DOMINANT_SEGMENT = REGISTRY.register(
     WarningCode(
         code="WARN-PIE-DOMINANT-SEGMENT",

@@ -122,6 +122,7 @@ from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.text.format_d3 import is_d3_si_spec
 from dbt_charts.core.utils import (
     DEFAULT_VL_LABEL_LIMIT,
+    bar_sort_op,
     cap_padding_to_label_limit,
     cumulative_stack_midpoints,
     layered_endpoint_rail_fires,
@@ -204,10 +205,12 @@ def _bar_endpoint_labels_for_stack(
     if normalized.sort is not None and not numeric_column_values(
         data, normalized.sort.by
     ):
-        # Both rails reproduce Vega-Lite's domain order by totaling the sort
-        # column per category. On a non-numeric column VL concatenates the
-        # strings instead, an order this cannot mirror — so the rail would
-        # anchor on a row VL does not draw on top.
+        # Conservative: both rails reproduce Vega-Lite's domain order, and a
+        # rail that anchors on a row VL does not draw on top is worse than a
+        # legend. A bar's sort pins `min` now (`bar_sort_op`), which Vega does
+        # compare natively on strings and dates — so this refuses a shape the
+        # engine could order. Relaxing it is its own change, with its own
+        # `vl_convert` evidence, not a side effect of pinning the aggregate.
         return endpoint_labels.model_copy(update={"visible": False})
     if horizontal and stack_mode == "center":
         # The horizontal rail anchors on the cumulative (0..Σ) axis, which the
@@ -262,9 +265,21 @@ def _every_series_reaches_the_anchor_row(
     if not isinstance(color, str) or not isinstance(x, str):
         return True
     sort = normalized.sort
-    # Stacked bar: a stacking mark, so VL folds each category with sum.
+    sort_by = sort.by if sort else ""
+    # Only reached past _bar_endpoint_labels_for_stack's stack_mode == "none"
+    # return, so the mark stacks. The measure mirrors what the emitter pins
+    # against (``emitters/bar.py``): a wide chart's is a synthetic fold field,
+    # so it never reads as a sort by the measure.
     domain = x_domain_order(
-        data, x, sort.by if sort else "", bool(sort and sort.order == "desc"), op="sum"
+        data,
+        x,
+        sort_by,
+        bool(sort and sort.order == "desc"),
+        op=bar_sort_op(
+            sort_by,
+            normalized.y if isinstance(normalized.y, str) else None,
+            stacked=True,
+        ),
     )
     if not domain:
         return True
@@ -664,7 +679,9 @@ def _resolve_bar(
     # the merge, before the axes are built. Computed once, here, and reused
     # both for the categorical axis's edge below and the chart's own
     # resolved `orientation` field at the bottom of this function.
-    orientation = _bar_orientation(normalized, data, ax_merged.time_unit is not None)
+    orientation = _bar_orientation(
+        normalized, bar, data, ax_merged.time_unit is not None
+    )
     # The layered-single-series rail (EndpointLabelFeature._apply_layered_single_series)
     # only ever fires on the vertical right_pane path — a horizontal bar's rail is the
     # color-series top_rail only (see applies_to()'s horizontal branch, which never

@@ -653,6 +653,20 @@ class TestDocsTopicResourceCoverage:
         """Guard: if DBT_CHARTS_SYNTAX.md has no H2s, the parametrize yields 0 cases."""
         assert len(_docs_topic_resources()) >= 1
 
+    def test_advertised_uris_are_unique(self) -> None:
+        """The topic index carries the generated references too — one URI, one entry."""
+        uris = [uri for uri, *_ in _BASE_RESOURCES + _docs_topic_resources()]
+        assert len(uris) == len(set(uris))
+
+    def test_docs_all_resource_matches_the_docs_verb(self, make_context) -> None:
+        from dbt_charts.agent_api.docs import docs as docs_verb
+
+        topic = docs_verb(topic="all").topic
+        assert topic is not None
+        assert _read_resource_content("dct://docs/all", context=make_context()) == (
+            topic.content
+        )
+
 
 class TestResourceTemplates:
     """FR-004 — both ResourceTemplate URIs are advertised and readable."""

@@ -260,9 +260,10 @@ def _build_area_top_encoding(
     box: RenderBox,
     x_domain: list[Any] | None,  # type-state: explicit_any — raw x values
     panel_fields: tuple[str, ...],
-) -> tuple[VLDict, ResolvedStyleChannel | None, str | None, str | None]:
-    """Build the VL encoding dict, color channel, and resolved x VL type
-    (None when the chart has no x channel at all) for an area chart.
+) -> tuple[VLDict, ResolvedStyleChannel | None, str | None, str | None, float | None]:
+    """Build the VL encoding dict, color channel, resolved x VL type
+    (None when the chart has no x channel at all), plain y label, and the
+    x-label block height at the tilt just resolved, for an area chart.
 
     Tooltip *content* is a separate concern, built after emission by
     ``features/structured_tooltip.py`` from the chart-axes LUT.
@@ -324,7 +325,7 @@ def _build_area_top_encoding(
         top_encoding["y"] = y_enc
     color_ch = _apply_area_color_encoding(chart, data, top_encoding)
     x_type = vl_type if chart.x else None
-    return top_encoding, color_ch, x_type, titles.y_plain
+    return top_encoding, color_ch, x_type, titles.y_plain, x_res.label_block_height
 
 
 def _emit_multi_metric_area(
@@ -491,6 +492,7 @@ def _emit_multi_metric_area(
         layers=sub_layers,
         config=build_palette_config(chart.palette),
         transforms=wide.transforms,
+        x_label_block_height=x_res.label_block_height,
     )
 
 
@@ -539,8 +541,8 @@ class AreaEmitter:
             if chart.layers
             else None
         )
-        top_encoding, color_ch, x_type, y_plain = _build_area_top_encoding(
-            chart, data, style, box, x_domain, panel_fields
+        top_encoding, color_ch, x_type, y_plain, x_label_block = (
+            _build_area_top_encoding(chart, data, style, box, x_domain, panel_fields)
         )
         step_band_data = _apply_area_step_band(
             chart, data, top_encoding, style.area_mark, x_type
@@ -604,6 +606,7 @@ class AreaEmitter:
             config=build_palette_config(chart.palette),
             data=step_band_data,
             transforms=order_transforms,
+            x_label_block_height=x_label_block,
         )
         # Stamp transformed rows so the session does not overwrite with raw
         # query data. Preserve step-band-expanded rows when gap-fill also fired.

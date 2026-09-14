@@ -30,7 +30,14 @@ def _squashed(text: str) -> str:
     [
         pytest.param(
             ["serve", "--help"],
-            ["--port", "--host", "--project-dir", "--dialect", "--target"],
+            [
+                "--port",
+                "--host",
+                "--project-dir",
+                "--dbt-project-dir",
+                "--dialect",
+                "--target",
+            ],
             [],
             id="serve",
         ),
@@ -54,7 +61,12 @@ def _squashed(text: str) -> str:
             ["--no-skills"],
             id="init-mcp",
         ),
-        pytest.param(["mcp", "serve", "--help"], ["--project-dir"], [], id="mcp-serve"),
+        pytest.param(
+            ["mcp", "serve", "--help"],
+            ["--project-dir", "--dbt-project-dir"],
+            [],
+            id="mcp-serve",
+        ),
         pytest.param(
             ["inspect", "--help"],
             ["table", "audit", "eject", "templates", "validate-templates"],

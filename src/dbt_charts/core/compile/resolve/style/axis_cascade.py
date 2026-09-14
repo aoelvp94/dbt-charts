@@ -55,7 +55,7 @@ from dbt_charts.core.font_measure import compose_decimal_units
 from dbt_charts.core.text.format_d3 import is_d3_si_spec
 from dbt_charts.core.text.numeral_scale import (
     build_decimal_pad_table,
-    plain_digit_format,
+    non_compacting_tick_format,
     shared_scale_for_ladder,
 )
 from dbt_charts.core.text.predefined_formats import ALL_PREDEFINED_NAMES
@@ -459,21 +459,31 @@ def build_resolved_axis(
     )
 
     # tick_label.format is ruler's non-compacting sibling: a ladder that
-    # does NOT compact (raw_scale is None) still gets its ticks rewritten
-    # in full plain digits, unless the author wrote the SI format
+    # does NOT compact (raw_scale is None) gets its ticks rewritten by
+    # `non_compacting_tick_format`, unless the author wrote the SI format
     # themselves (format_authored) or the ladder has too little to derive
     # a step from. Recomputed here rather than read off `ruler is None`
     # because `ruler` can also be None for reasons (non-SI format,
     # authored label.expr) this branch independently re-checks.
+    #
+    # There is no magnitude floor on the ladder: nothing chooses SI below
+    # thousands (`shared_scale_for_ladder` declines), so a sub-1 ladder left
+    # out of this branch would paint from the theme's placeholder spec, whose
+    # d3 sub-unit prefixes read as the house magnitude suffixes -- 0.3 as
+    # "300m", milli misread as million.
     raw_scale = shared_scale_for_ladder(list(tick_values)) if tick_values else None
     tick_label: ResolvedTickLabel | None = None
     if (
         raw_scale is None
         and (not format_authored or format_is_alias)
         and len(tick_values) >= 2
+        # `nice_tick_values` rounds each rung to 10 places, so a near-degenerate
+        # span (1.0 to 1.0000000001) can hand back a ladder whose adjacent rungs
+        # are equal: two ticks, no step. Same exit as a ladder too short to
+        # carry one.
+        and tick_values[0] != tick_values[1]
         and _si_format is not None
         and label.expr is None
-        and max(abs(t) for t in tick_values) >= 1
     ):
         step = abs(tick_values[1] - tick_values[0])
         # Prefix-split still applies when there's a currency symbol.
@@ -482,7 +492,9 @@ def build_resolved_axis(
         # (baked below when column_forming) compensates for that.
         # _si_format is the same resolved string as axis.labels.format here (the
         # guard is `_si_format is not None`), narrowed to str for the caller.
-        prefix, digit_spec, precision = plain_digit_format(_si_format, step)
+        # A None precision is the scientific register: no fixed decimal
+        # position, so no pad table.
+        prefix, digit_spec, precision = non_compacting_tick_format(_si_format, step)
         anchor_at_start_plain = None
         if prefix and column_forming:
             # anchor_at_start_plain stays None below when not column_forming
@@ -501,7 +513,12 @@ def build_resolved_axis(
             positives = [v for v in tick_values if v > 0]
             anchor_value = max(positives) if positives else min(tick_values)
             anchor_at_start_plain = tick_values.index(anchor_value) == 0
-        if column_forming and not start_anchored and label.font.tabular_figures:
+        if (
+            precision is not None
+            and column_forming
+            and not start_anchored
+            and label.font.tabular_figures
+        ):
             # Only pad when ticks have mixed fractional depth; uniform depth
             # means every label already aligns (no fix needed).
             # start_anchored skipped: text-anchor:start ignores trailing pads.

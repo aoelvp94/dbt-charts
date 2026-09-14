@@ -514,8 +514,9 @@ class TestResolveBakeDecision:
 
     def test_axis_cascade_mixed_depth_gets_nonempty_pad_table(self) -> None:
         """0/0.5/1/1.5/2 under the theme's SI format (.3~s default) give
-        plain_digit_format precision=1, digit_spec=,.1~f, frac_depths={0,1}
-        (mixed) -- the gate fires and bakes a non-empty decimal_pad_table.
+        non_compacting_tick_format precision=1, digit_spec=,.1~f,
+        frac_depths={0,1} (mixed) -- the gate fires and bakes a non-empty
+        decimal_pad_table.
         """
         from dbt_charts.core.compile.resolve.style.axis_cascade import (
             build_resolved_axis,
@@ -538,7 +539,7 @@ class TestResolveBakeDecision:
         )
 
     def test_axis_cascade_uniform_depth_gets_empty_pad_table(self) -> None:
-        """0/1/2/3 under the theme's SI format give plain_digit_format
+        """0/1/2/3 under the theme's SI format give non_compacting_tick_format
         precision=0, frac_depths={0} (uniform) -- the gate skips and
         decimal_pad_table stays ().
 

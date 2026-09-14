@@ -2364,7 +2364,7 @@
             }
           ],
           "default": null,
-          "description": "Preferred bar orientation; None uses the renderer default (vertical). Never remaps x/y.",
+          "description": "Preferred bar orientation; None behaves like 'auto', which picks horizontal for a categorical x and vertical for a continuous one (temporal, quantitative, or date-like). Never remaps x/y.",
           "title": "Orientation"
         },
         "stack": {

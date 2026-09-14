@@ -244,6 +244,13 @@ class ChartSpec:
     # to place these channels on the first layer dict without exposing them to
     # overlay layers (e.g. scatter bubble size must not reach the text label layer).
     main_layer_encoding: dict[str, Any] = field(default_factory=dict)
+    # Pixel height of the x-axis label block at the angle the emitter's own
+    # tilt resolution picked (``AxisLabelLayout.label_block_height``).
+    # ``vega_lite.py`` hands it to the support_table post-pass, which reserves
+    # the gap a ``position: bottom`` strip leaves below the plot and cannot
+    # otherwise see a render-time tilt. None when the emitter resolved no
+    # x-axis labels (no x field, a non-cartesian family).
+    x_label_block_height: float | None = None
     # Small-multiples faceting set by FacetFeature. facet_row / facet_column are
     # the partition fields — either or both may be set (at least one when
     # faceting): row-only stacks vertically, column-only is a horizontal strip,

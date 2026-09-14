@@ -28,7 +28,11 @@ def test_migrate_dry_run_reports_would_update_and_forwards_paths(
     received: dict[str, object] = {}
 
     def fake_migrate(
-        paths: list[Path] | None, *, project_dir: Path | None, dry_run: bool
+        paths: list[Path] | None,
+        *,
+        project_dir: Path | None,
+        dbt_project_dir: Path | None = None,
+        dry_run: bool,
     ) -> None:
         received.update(paths=paths, project_dir=project_dir, dry_run=dry_run)
         migrate_command._emit(
@@ -63,7 +67,11 @@ def test_migrate_prints_deletion_reason_notes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fake_migrate(
-        paths: list[Path] | None, *, project_dir: Path | None, dry_run: bool
+        paths: list[Path] | None,
+        *,
+        project_dir: Path | None,
+        dbt_project_dir: Path | None = None,
+        dry_run: bool,
     ) -> None:
         migrate_command._emit(
             MigrateSummary(
@@ -93,7 +101,11 @@ def test_migrate_reports_each_failed_file_and_exits_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fake_migrate(
-        paths: list[Path] | None, *, project_dir: Path | None, dry_run: bool
+        paths: list[Path] | None,
+        *,
+        project_dir: Path | None,
+        dbt_project_dir: Path | None = None,
+        dry_run: bool,
     ) -> None:
         migrate_command._emit(
             MigrateSummary(

@@ -727,7 +727,7 @@ Authored overlay for BarChartStyle. Bar chart style: chart-level fields + marks 
 | `number_format` | str \| enum: "currency", "currency_full", "currency_whole", "delta", "integer", "number", "number_full", "percent", "percent_delta", "percent_whole", "year" | Default number format for axes and tooltips (D3 format string); None inherits from theme. |
 | `time_format` | str \| enum: "date_short", "time_short" | Default time format for temporal axes (D3 time format string or strftime spec like '%b %Y'); None inherits from theme. |
 | `support_table` | [SupportTableStyle](#supporttablestyle) | Per-chart-type support_table style override. Unset fields fall back to [`style.charts.support_table`](#chartsstyle). |
-| `orientation` | enum: "horizontal", "vertical", "auto" | Preferred bar orientation; None uses the renderer default (vertical). Never remaps x/y. |
+| `orientation` | enum: "horizontal", "vertical", "auto" | Preferred bar orientation; None behaves like 'auto', which picks horizontal for a categorical x and vertical for a continuous one (temporal, quantitative, or date-like). Never remaps x/y. |
 | `stack` | enum: "none", "zero", "normalize", "center" | Default stack mode for bar charts; none renders side-by-side columns. |
 | `overlap` | float \| enum: "auto", "none", "flush", "partial", "full" | Within-group spacing for grouped bars. Keywords: 'auto' (2 series → partial, 3+ → none), 'none' (small gap), 'flush' (bars touch), 'partial' (25% overlap), 'full' (bars coincide). Or a number as a fraction of bar width: &gt;0 overlaps, 0 touches, &lt;0 gaps; 1 is the maximum (bars fully coincide, same as 'full') and values above 1 are clamped to 1; bars never cross past each other. None uses the renderer default ('auto'). Only applies to grouped bars; setting it together with an active stack mode is an error. |
 | `stack_order` | enum: "value", "data", "alphabetical" | Z-order of stacked segments. None/'value' puts the largest aggregate at baseline. 'data' follows SQL row order (orientation-stable not guaranteed). 'alphabetical' sorts by color column name. Ignored when stacking is off or no color. |
@@ -3406,4 +3406,23 @@ Reference to a dbt profile.
 | `cache` | [Cache](#cache) | Cache policy default for every query against this source, e.g. cache: 1h: queries inherit it and may refine it; cache: false opts them out. |
 | `attribution` | dict[str, str] | Cost-attribution pairs sent with every query against this source, e.g. attribution: {team: analytics}. Emitted as BigQuery job labels and as a query comment elsewhere. Keys and values must match BigQuery's label rules ([a-z][a-z0-9_-]{0,62} / [a-z0-9_-]{0,63}). The dbt_charts_ prefix and the app key are reserved for the engine's own identity. |
 | `target` | str | dbt target to use; defaults to the profile's default target. |
-| `profiles_dir` | str | Directory containing profiles.yml, relative to the dbt charts project root. Use when profiles.yml is in a subdirectory (e.g. services/dbt). Resolution order: profiles_dir → $DBT_PROFILES_DIR → project root → ~/.dbt. |
+| `profiles_dir` | str | Directory containing profiles.yml, relative to the linked dbt project directory (see --dbt-project-dir). Use when profiles.yml is in a subdirectory (e.g. services/dbt). Resolution order: profiles_dir → $DBT_PROFILES_DIR → linked dbt project → ~/.dbt. |
+
+# dbt charts Project Config Reference: execution settings
+
+Settings authored under `execution:` in `dbt_charts.yml` at the project root, not in a board. The file's other sections (`sources:`, `server:`, `cache:`, ...) are not generated here yet.
+
+<a id="executionconfig"></a>
+## ExecutionConfig
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `max_workers` | int | Maximum parallel query workers for a render. DuckDB serializes access regardless, so this only moves external warehouses. |
+| `max_query_duration_seconds` | int | Maximum seconds a single query may run (must be &gt; 0). |
+| `max_glob_file_count` | int | Maximum files a single glob may match (must be &gt; 0). |
+| `file_source_max_tables` | int | Max tables in a files: map (must be &gt; 0). |
+| `file_source_max_bytes` | int | Max uncompressed bytes per file-source table (must be &gt; 0). |
+| `max_rows` | int | Maximum rows a single query may return (must be &gt; 0). |
+| `max_result_bytes` | int | Maximum serialized byte size of a single query result (must be &gt; 0). |
+| `max_template_output_bytes` | int | Maximum cumulative bytes of Jinja-emitted template output for a single board render (must be &gt; 0). |
+| `dialect_aliases` | dict[str, str] | Maps a dbt charts dialect name to its sqlglot equivalent before parsing. |

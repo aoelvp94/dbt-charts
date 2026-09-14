@@ -182,6 +182,66 @@ def resolve_profiles_path(
     )
 
 
+def resolve_dbt_project_dir(project_dir: Path, explicit: Path | None) -> Path:
+    """Locate the linked dbt project directory using the canonical resolution order.
+
+    Resolution order:
+      1. ``explicit``: the CLI's ``--dbt-project-dir``/``DBT_PROJECT_DIR``
+         value, already merged by Typer before this is called (no separate
+         env-var read here, unlike ``resolve_profiles_path``: that function
+         has no competing CLI flag, this one does).
+      2. ``dbt_project_dir:`` key in ``dbt_charts.yml``, resolved relative to
+         *project_dir*.
+      3. ``project_dir``: today's sibling default.
+
+    A bare ``dbt_project_dir:`` key (YAML null) is treated as absent, same
+    as omitting the key, matching ``Config.dbt_project_dir``'s own
+    None-means-sibling-default contract. Otherwise raises ``TypeError`` for
+    a non-string value, ``FileNotFoundError`` for a path that does not
+    exist, or ``NotADirectoryError`` for a path that exists but is not a
+    directory. Never falls back silently past a candidate that was
+    explicitly named, same contract as ``resolve_profiles_path``.
+
+    Args:
+        project_dir: The dbt charts project root (where dbt_charts.yml lives).
+        explicit: Already-resolved explicit dbt project directory, or None
+            when not set. Returned unvalidated: the CLI's own
+            `DbtProjectDirOption` (`exists=True, file_okay=False`) is the
+            validation point for this branch.
+    """
+    if explicit is not None:
+        return explicit
+
+    config_path = project_dir / PROJECT_CONFIG_NAME
+    if config_path.exists():
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and data.get("dbt_project_dir") is not None:
+            raw_dbt_dir = data["dbt_project_dir"]
+            if not isinstance(raw_dbt_dir, str):
+                raise TypeError(
+                    f"{config_path}: dbt_project_dir must be a string, got "
+                    f"{type(raw_dbt_dir).__name__}: {raw_dbt_dir!r}"
+                )
+            if not raw_dbt_dir.strip():
+                raise TypeError(f"{config_path}: dbt_project_dir must not be blank")
+            candidate = (project_dir / raw_dbt_dir).resolve()
+            if not candidate.exists():
+                raise FileNotFoundError(
+                    f"dbt_project_dir={raw_dbt_dir!r} in {config_path} resolves "
+                    f"to {candidate}, which does not exist. Fix the path or "
+                    "remove the dbt_project_dir key."
+                )
+            if not candidate.is_dir():
+                raise NotADirectoryError(
+                    f"dbt_project_dir={raw_dbt_dir!r} in {config_path} resolves "
+                    f"to {candidate}, which is not a directory. Fix the path or "
+                    "remove the dbt_project_dir key."
+                )
+            return candidate
+
+    return project_dir
+
+
 def infer_dialect_from_dbt(
     project_dir: Path,
     target_name: str | None = None,

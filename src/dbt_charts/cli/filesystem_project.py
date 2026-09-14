@@ -93,12 +93,32 @@ class FilesystemProject(Project):
     host has.
     """
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, dbt_root: Path | None = None) -> None:
         self._root_input = root
+        self._dbt_root_input = dbt_root
 
     @cached_property
     def root(self) -> Path:
         return self._root_input.resolve()
+
+    @cached_property
+    def dbt_root(self) -> Path:
+        """The linked dbt project directory, ``root`` unless overridden via
+        ``FilesystemProject(root, dbt_root=...)`` (``resolve_dbt_project_dir``)."""
+        return (
+            self._dbt_root_input.resolve()
+            if self._dbt_root_input is not None
+            else self.root
+        )
+
+    @cached_property
+    def dbt_project(self) -> FilesystemProject:
+        """``self`` when ``dbt_root == root``, else a second
+        ``FilesystemProject`` rooted at the linked dbt directory."""
+        return self if self.dbt_root == self.root else FilesystemProject(self.dbt_root)
+
+    def manifest_project(self) -> Project:
+        return self.dbt_project
 
     @cached_property
     def charts_dir(self) -> Path:

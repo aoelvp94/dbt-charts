@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 import typer
+import yaml
 
 from dbt_charts.agent_api import Project
 from dbt_charts.agent_api._paths import (
@@ -23,6 +24,7 @@ from dbt_charts.agent_api._paths import (
     DCT_ROOT_MARKERS as DCT_ROOT_MARKERS,
     find_dct_root,
     find_repo_root,
+    resolve_dbt_project_dir,
 )
 from dbt_charts.cli._error_format import print_error
 from dbt_charts.cli.filesystem_project import FilesystemProject
@@ -206,19 +208,35 @@ def with_project(func: Callable[..., R]) -> Callable[..., R]:
     """Replace a command body's `project_dir: Path | None` with an injected `project`.
 
     The wrapped function must declare `project: Project` (keyword-only) instead
-    of `project_dir`. Callers keep passing `project_dir=...` — the decorator
-    resolves it and constructs the `Project`, exiting 1 with a clean message
-    (never a traceback) when no project is found.
+    of `project_dir`. Callers keep passing `project_dir=...` and `dbt_project_dir=...`;
+    the decorator resolves both and constructs the `Project`, exiting 1 with a
+    clean message (never a traceback) when no project is found, or when
+    `dbt_project_dir` (flag/env/config key) cannot be resolved.
     """
 
     @wraps(func)
-    def wrapper(*args: Any, project_dir: Path | None = None, **kwargs: Any) -> R:
+    def wrapper(
+        *args: Any,
+        project_dir: Path | None = None,
+        dbt_project_dir: Path | None = None,
+        **kwargs: Any,
+    ) -> R:
         try:
             resolved_dir = resolve_project_dir(project_dir)
         except ProjectNotFoundError as exc:
             print_error(str(exc))
             raise typer.Exit(1) from None
-        project: Project = FilesystemProject(resolved_dir)
+        try:
+            resolved_dbt_dir = resolve_dbt_project_dir(resolved_dir, dbt_project_dir)
+        except (
+            TypeError,
+            FileNotFoundError,
+            NotADirectoryError,
+            yaml.YAMLError,
+        ) as exc:
+            print_error(str(exc))
+            raise typer.Exit(1) from None
+        project: Project = FilesystemProject(resolved_dir, dbt_root=resolved_dbt_dir)
         return func(*args, project=project, **kwargs)
 
     return wrapper

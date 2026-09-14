@@ -1,10 +1,13 @@
-"""Docs verb for the agent API — slices the single DBT_CHARTS_SYNTAX.md file.
+"""Docs verb for the agent API — slices DBT_CHARTS_SYNTAX.md, serves the
+generated references beside it.
 
-`DBT_CHARTS_SYNTAX.md` is the only source. H2 headings define topics; topic IDs
-are slugified headings. Bare `docs()` returns the topic index (slug + one-line
-description per H2). `docs(topic="<slug>")` returns one slice.
-`docs(topic="all")` returns the whole file. `docs(topic="reference")` returns
-the auto-generated field spec from yaml-reference.md.
+`DBT_CHARTS_SYNTAX.md` is the hand-authored source. H2 headings define topics;
+topic IDs are slugified headings. Bare `docs()` returns the topic index (slug +
+one-line description per H2, then one entry per generated reference).
+`docs(topic="<slug>")` returns one slice. `docs(topic="all")` returns the
+syntax file plus the generated field reference — the unsliced read must not
+omit grammar keys only the reference documents. `docs(topic="reference")`
+returns the auto-generated field spec from yaml-reference.md.
 `docs(topic="error-reference")` / `docs(topic="warning-reference")` return the
 auto-generated diagnostic references from error-reference.md / warning-reference.md.
 `docs(search=...)` ranks H2/H3 units of the syntax file and the generated
@@ -57,7 +60,7 @@ DocsMode = Literal["index", "topic", "search"]
 
 
 class DocsCorpusMissingError(RuntimeError):
-    """`dbt_charts/DBT_CHARTS_SYNTAX.md` is unreachable. Indicates a broken wheel install."""
+    """A docs corpus file is unreachable. Indicates a broken wheel install."""
 
 
 class Topic(BaseModel):
@@ -91,7 +94,7 @@ class DocsSearchHit(BaseModel):
 
 
 class DocsArgs(BaseModel):
-    """Browse the dbt charts YAML reference offline. Modes: no args = topic index (slug + one-line description per H2), topic='<slug>' = one section, topic='all' = whole reference unsliced, search='<query>' = ranked term search across every section and the generated references. Use this before writing YAML to learn field names, valid values, and examples. Call with no args first to see the available topics."""
+    """Browse the dbt charts YAML reference offline. Modes: no args = topic index (one row per topic), topic='<slug>' = one section, topic='all' = the syntax guide plus the generated field reference, unsliced, search='<query>' = ranked term search across every section and the generated references. Use this before writing YAML to learn field names, valid values, and examples. Call with no args first to see the available topics."""
 
     topic: str | None = Field(
         None,
@@ -125,9 +128,11 @@ def docs(
 ) -> DocsResult:
     """Look up a docs topic, fetch the whole file, or search the corpus.
 
-    - ``docs()`` — index mode: returns one entry per H2 with first-line description.
+    - ``docs()`` — index mode: one entry per H2 with first-line description,
+      then one per generated reference.
     - ``docs(topic="board")`` — return content for one H2 section.
-    - ``docs(topic="all")`` — return the full ``DBT_CHARTS_SYNTAX.md`` unsliced.
+    - ``docs(topic="all")`` — return ``DBT_CHARTS_SYNTAX.md`` plus the generated
+      field reference, unsliced.
     - ``docs(topic="reference")`` — return the auto-generated field spec.
     - ``docs(topic="error-reference")`` / ``docs(topic="warning-reference")`` —
       return the auto-generated diagnostic reference.
@@ -146,28 +151,42 @@ def docs(
                     "Run `dct docs` for the topic index, or search without a topic to cover everything"
                 ],
             )
-        return DocsResult(mode="search", search=_search(search, limit, topic))
+        try:
+            return DocsResult(mode="search", search=_search(search, limit, topic))
+        except DocsCorpusMissingError as exc:
+            # Same envelope every other mode returns for the same cause, so
+            # `--json` stays JSON on a broken install.
+            return DocsResult(success=False, mode="search", errors=[str(exc)])
 
     if topic is None:
         return DocsResult(mode="index", topics=_topic_index())
 
+    generated_topics = _generated_topics()
+
     if topic == _ALL_TOPIC:
+        # "Unsliced" has to mean it: the hand-authored guide alone omits every
+        # grammar key only the generated field reference documents.
+        try:
+            reference = _read_generated(generated_topics[_REFERENCE_TOPIC])
+        except DocsCorpusMissingError as exc:
+            return DocsResult(success=False, mode="topic", errors=[str(exc)])
         return DocsResult(
             mode="topic",
             topic=Topic(
-                id=_ALL_TOPIC, title="dbt charts YAML Syntax", content=read_full_text()
+                id=_ALL_TOPIC,
+                title="dbt charts YAML Syntax + Field Reference",
+                content=f"{read_full_text()}\n{reference}",
             ),
         )
 
-    generated_topics = _generated_topics()
     if topic in generated_topics:
-        generated_file, title, missing_message = generated_topics[topic]
+        entry = generated_topics[topic]
         try:
-            content = generated_file.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            return DocsResult(success=False, mode="topic", errors=[missing_message])
+            content = _read_generated(entry)
+        except DocsCorpusMissingError as exc:
+            return DocsResult(success=False, mode="topic", errors=[str(exc)])
         return DocsResult(
-            mode="topic", topic=Topic(id=topic, title=title, content=content)
+            mode="topic", topic=Topic(id=topic, title=entry.title, content=content)
         )
 
     if topic in SUPPORTED_AUTHORED_CHART_TYPES:
@@ -214,9 +233,8 @@ def docs(
 def read_full_text() -> str:
     """Return the raw ``DBT_CHARTS_SYNTAX.md`` content unsliced.
 
-    Shared file-load helper for callers that want the whole reference: the agent
-    system prompt, the playground AI service, and the ``dct://docs/all``
-    MCP resource.
+    Shared file-load helper for callers that want the hand-authored guide: the
+    agent system prompt and the playground AI service.
     """
     try:
         return _SYNTAX_FILE.read_text(encoding="utf-8")
@@ -239,8 +257,17 @@ def slugify(heading: str) -> str:
     return re.sub(r"[^a-z0-9-]+", "", text)
 
 
-def _generated_topics() -> dict[str, tuple[Traversable, str, str]]:
-    """``{topic: (file, title, missing-file message)}`` for the generated references.
+class _GeneratedTopic(NamedTuple):
+    """One auto-generated reference: where it lives and how to describe it."""
+
+    file: Traversable
+    title: str
+    description: str
+    missing_message: str
+
+
+def _generated_topics() -> dict[str, _GeneratedTopic]:
+    """``{topic: _GeneratedTopic}`` for the generated references.
 
     Rebuilt on every call (not module-level) so tests that monkeypatch
     _REFERENCE_FILE / _ERROR_REFERENCE_FILE / _WARNING_REFERENCE_FILE on
@@ -248,22 +275,33 @@ def _generated_topics() -> dict[str, tuple[Traversable, str, str]]:
     keep the file reference bound at import time.
     """
     return {
-        _REFERENCE_TOPIC: (
+        _REFERENCE_TOPIC: _GeneratedTopic(
             _REFERENCE_FILE,
             "dbt charts YAML Field Reference (generated)",
+            "Every board field, generated from the compiler's own models.",
             "yaml-reference.md not found inside the dbt_charts package. Regenerate with the repo's `gen-references`/`gen-yaml-reference` recipe and commit the result.",
         ),
-        _ERROR_REFERENCE_TOPIC: (
+        _ERROR_REFERENCE_TOPIC: _GeneratedTopic(
             _ERROR_REFERENCE_FILE,
             "dbt charts Error Reference (generated)",
+            "Every ERR- code, with what raises it and how to fix it.",
             "error-reference.md is missing from the installed package.",
         ),
-        _WARNING_REFERENCE_TOPIC: (
+        _WARNING_REFERENCE_TOPIC: _GeneratedTopic(
             _WARNING_REFERENCE_FILE,
             "dbt charts Warning Reference (generated)",
+            "Every WARN- code, with what raises it and how to fix it.",
             "warning-reference.md is missing from the installed package.",
         ),
     }
+
+
+def _read_generated(topic: _GeneratedTopic) -> str:
+    """Read one generated reference, or raise — a missing file is a broken install."""
+    try:
+        return topic.file.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise DocsCorpusMissingError(topic.missing_message) from exc
 
 
 def _slice(text: str, marker: str) -> list[tuple[str, str]]:
@@ -321,10 +359,14 @@ def _strip_markdown(text: str) -> str:
 
 
 def _topic_index() -> list[TopicEntry]:
-    """Return one TopicEntry per H2 section, in file order."""
+    """Return one TopicEntry per H2 section in file order, then one per
+    generated reference."""
     return [
         TopicEntry(id=slug, title=title, description=_first_description_line(body))
         for slug, (title, body) in _load_sections().items()
+    ] + [
+        TopicEntry(id=slug, title=entry.title, description=entry.description)
+        for slug, entry in _generated_topics().items()
     ]
 
 
@@ -360,13 +402,8 @@ def _units() -> list[_Unit]:
         for title, h2_body in _slice(read_full_text(), "## ")
         for section, body in _subsections(title, h2_body)
     ]
-    for topic, (file, _, _) in _generated_topics().items():
-        try:
-            text = file.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            # A missing generated file is reported by docs(topic=...); search
-            # just covers less rather than failing every query.
-            continue
+    for topic, entry in _generated_topics().items():
+        text = _read_generated(entry)
         units.extend(
             _Unit(topic, title, section, body)
             for title, h2_body in _slice(text, "## ")

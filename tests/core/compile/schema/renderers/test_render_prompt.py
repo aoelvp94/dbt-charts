@@ -4,16 +4,19 @@ import re
 from collections import Counter
 
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+from dbt_charts.core.compile.schema import get_schema_for_prompt
 from dbt_charts.core.compile.schema.introspection import (
     AuthorableSchema,
     SchemaField,
     introspect,
+    introspect_project_config,
 )
 from dbt_charts.core.compile.schema.renderers.prompt import (
     _SOURCE_CONFIG_NAMES,
     _display_name,
     _fallback_link,
     _ordered_model_names,
+    render_project_config,
     render_prompt,
 )
 
@@ -518,3 +521,20 @@ class TestEnumCellTruncation:
         assert "more" not in row, f"unrelated pre-existing enum got truncated: {row}"
         assert '"checkbox"' in row
         assert '"radio"' in row
+
+
+class TestRenderProjectConfig:
+    def test_section_names_the_file_it_documents(self) -> None:
+        assert "dbt_charts.yml" in render_project_config(introspect_project_config())
+
+    def test_renders_the_execution_keys(self) -> None:
+        out = render_project_config(introspect_project_config())
+        for key in ("max_template_output_bytes", "max_rows", "max_workers"):
+            assert key in out, f"Missing project-config key: {key}"
+
+    def test_schema_for_prompt_carries_both_sections(self) -> None:
+        """The generated reference file is this string — board grammar first,
+        project config appended."""
+        out = get_schema_for_prompt()
+        assert out.startswith(render_prompt(introspect()))
+        assert "max_template_output_bytes" in out

@@ -14,6 +14,7 @@ from dbt_charts.core.compile.models.chart.normalized._base import (
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedStyleChannel,
 )
+from dbt_charts.core.compile.models.style.theme import BarChartStyle
 from dbt_charts.core.compile.resolve.chart.channel import (
     normalize_chart_channels,
 )
@@ -119,13 +120,16 @@ def _channels_for(
 
 def _bar_orientation(
     normalized: BarChart,
+    bar: BarChartStyle,
     data: list[dict[str, Any]],
     bucketed_time: bool,
 ) -> Literal["vertical", "horizontal"] | None:
     """Resolve bar orientation: authored > bucketed-time > column-type inference > None.
 
     Priority:
-    1. Authored orientation ("horizontal"/"vertical") from chart-local style.
+    1. Authored orientation ("horizontal"/"vertical") from the cascaded bar
+       style — the chart's inline ``style.orientation`` merged onto the board's
+       ``style.charts.bar.orientation``, so an inline value still wins.
     2. Overlay layers → vertical. The overlay renderer draws every layer with the
        measure on y (vertical), so a horizontal base would put its measure on x
        and desync from the overlays. A bar base with layers is always vertical.
@@ -134,9 +138,10 @@ def _bar_orientation(
        scale, so they must not flip to horizontal.
     4. Column-type inference via is_column_discrete_for_bar_orientation (strict):
        categorical/string x → horizontal; numeric/temporal x → vertical.
-    5. No data or no x → None (theme default, which is vertical).
+    5. No data or no x → None; nothing sets the key, so the emitter's own
+       vertical default stands.
     """
-    authored = normalized.style.orientation if normalized.style is not None else None
+    authored = bar.orientation
     if authored in ("horizontal", "vertical"):
         return authored  # type: ignore[return-value]
     if normalized.layers:

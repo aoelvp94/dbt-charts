@@ -54,6 +54,65 @@ class TestSmartAutoZero:
         assert result is not None
         assert result.get("zero") is False
 
+    # ── all-negative data mirrors all-positive ───────────────────────────────
+    # All-negative data takes the same branches as all-positive: "zero already
+    # in domain" holds for data spanning zero, but not for data entirely below
+    # it, where an unanchored area measures its fill from the plot floor
+    # instead of from 0 — the truncation the magnitude rationale rejects.
+
+    @pytest.mark.parametrize("chart_type", ["bar", "area", "line", "scatter"])
+    @pytest.mark.parametrize("extent", [(0.0, 100.0), (-100.0, 0.0)])
+    def test_data_touching_zero_needs_no_opinion(
+        self, chart_type: str, extent: tuple[float, float]
+    ) -> None:
+        """Zero is already in the domain, so there is nothing to extend.
+        Returning a pin here would suppress Vega-Lite's nice-rounding on a
+        ladderless theme, moving the top edge of every ordinary count series
+        that happens to have a zero bucket."""
+        profile = ColumnProfile(min_val=extent[0], max_val=extent[1])
+        assert _pick_scale(profile, chart_type=chart_type) is None
+
+    @pytest.mark.parametrize("chart_type", ["bar", "area"])
+    def test_non_optional_zero_types_extend_to_zero_when_all_negative(
+        self, chart_type: str
+    ) -> None:
+        """A magnitude encoding is truncated by a floor at -104 exactly as it
+        is by one at +76. Both signs extend."""
+        profile = ColumnProfile(min_val=-103.0, max_val=-90.0)
+        result = _pick_scale(profile, chart_type=chart_type)
+        assert result is not None
+        assert result.get("zero") is True
+
+    @pytest.mark.parametrize("chart_type", _OPTIONAL_ZERO_TYPES)
+    def test_optional_zero_types_fit_all_negative_data_far_from_zero(
+        self, chart_type: str
+    ) -> None:
+        """Mirror of the positive ratio branch: -90/-103 leaves the near edge
+        87% of the way from 0, so fit the data and bake the explicit False that
+        keeps the baseline rule off it."""
+        profile = ColumnProfile(min_val=-103.0, max_val=-90.0)
+        result = _pick_scale(profile, chart_type=chart_type)
+        assert result is not None
+        assert result.get("zero") is False
+
+    @pytest.mark.parametrize("chart_type", _OPTIONAL_ZERO_TYPES)
+    def test_optional_zero_types_extend_all_negative_data_near_zero(
+        self, chart_type: str
+    ) -> None:
+        """Near edge within the bottom quarter of [min, 0]: extending adds
+        context without crushing the data, same as the positive branch."""
+        profile = ColumnProfile(min_val=-100.0, max_val=-5.0)
+        result = _pick_scale(profile, chart_type=chart_type)
+        assert result is None or result.get("zero") is not False
+
+    def test_data_spanning_zero_still_needs_no_override(self) -> None:
+        """The half of the old guard that was right: zero is already in the
+        domain, so nothing is pinned either way."""
+        assert (
+            _pick_scale(ColumnProfile(min_val=-50.0, max_val=50.0), chart_type="area")
+            is None
+        )
+
     @pytest.mark.parametrize("chart_type", ["bar", "area"])
     def test_non_optional_zero_types_skip_the_ratio_branch_for_mid_range(
         self, chart_type: str

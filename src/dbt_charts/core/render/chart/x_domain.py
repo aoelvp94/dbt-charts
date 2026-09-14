@@ -35,12 +35,19 @@ def vl_sort_op(sort: VLDict | None) -> VlSortOp:
     """The aggregate Vega-Lite folds a category's rows into before applying
     ``sort``.
 
-    An encoding whose sort pins ``op`` says which: every dimension axis built
-    through ``dimension_sort_to_vl`` (``emitters/_cartesian.py``) pins ``min``,
-    because a dimension axis orders categories by the sort column's own value
-    and VL's own inference varies with the composed spec. The remaining
-    unpinned field sorts are bar's, where the inference lands on ``sum``: bars
-    stack, and grouped bars use an offset channel rather than ``stack: null``.
+    Every sort an authored ``chart.sort`` produces pins ``op``, so the
+    encoding states the aggregate rather than leaving it to VL's own
+    inference — which varies with the composed spec (mark, stack, sub-layer
+    split) and would leave the rendered order unreproducible here.
+    ``dimension_sort_to_vl`` (``emitters/_cartesian.py``) pins ``min`` for
+    line/area/heatmap/scatter; ``bar_sort_to_vl`` pins ``bar_sort_op``'s
+    verdict, which is ``sum`` only where a stacked bar sorts by its own
+    measure — a stacked total.
+
+    The one unpinned sort this engine emits is not an authored one: a
+    horizontal bar with no color channel defaults to largest-measure-first
+    (``emitters/bar.py``), where a category holds one row and every aggregate
+    agrees. ``sum`` for it is inherited, not chosen.
     """
     return "min" if isinstance(sort, dict) and sort.get("op") == "min" else "sum"
 

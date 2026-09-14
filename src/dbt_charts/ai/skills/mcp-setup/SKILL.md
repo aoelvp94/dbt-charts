@@ -113,7 +113,7 @@ After setup, your AI assistant has access to these tools:
 
 | Resource | Content |
 |----------|---------|
-| `dct://docs/all` | Complete DBT_CHARTS_SYNTAX.md (whole reference, unsliced) |
+| `dct://docs/all` | Syntax guide plus the generated field reference, unsliced |
 | `dct://docs/{topic}` | One H2 section by slug (`cheatsheet`, `board`, `charts`, `queries`, `variables`, `layout`, `errors`) |
 | `dct://guide/board-design` | Dashboard design principles and patterns |
 | `dct://guide/report-design` | Report design principles and narrative structure |

@@ -241,6 +241,71 @@ class TestBucketedTemporalOrientation:
 
 
 # ---------------------------------------------------------------------------
+# Board-level style.charts.bar.orientation cascade
+# ---------------------------------------------------------------------------
+
+
+class TestBoardLevelOrientationCascade:
+    """A board-level `style.charts.bar.orientation` must reach the chart,
+    with an inline `style.orientation` still winning over it."""
+
+    _string_x_data: list[dict[str, Any]] = [
+        {"region": "north", "revenue": 1000},
+        {"region": "south", "revenue": 2000},
+        {"region": "east", "revenue": 1500},
+    ]
+
+    def _context(self, orientation: str) -> Any:
+        from dbt_charts.core.compile.config import get_theme_style
+        from dbt_charts.core.compile.models.style.authored import StylePatch
+        from dbt_charts.core.compile.resolve.style.board import (
+            resolve_chart_style_context,
+        )
+
+        patch = StylePatch.model_validate(
+            {"charts": {"bar": {"orientation": orientation}}}
+        )
+        return resolve_chart_style_context(get_theme_style(), patch)
+
+    def test_board_level_vertical_flips_a_string_x_bar(self) -> None:
+        """String x infers horizontal; the board tier must override that."""
+        from dbt_charts.core.compile.resolve import resolve
+
+        resolved = resolve(
+            _bar(x="region"), self._string_x_data, self._context("vertical")
+        )
+        assert resolved.orientation == "vertical"
+
+    def test_inline_orientation_still_beats_the_board_tier(self) -> None:
+        from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
+        from dbt_charts.core.compile.resolve import resolve
+
+        chart = BarChart(
+            id="b",
+            type="bar",
+            x="region",
+            y="revenue",
+            query=_sql(),
+            query_name="q",
+            style=BarChartStylePatch(orientation="horizontal"),
+        )
+        resolved = resolve(chart, self._string_x_data, self._context("vertical"))
+        assert resolved.orientation == "horizontal"
+
+    def test_board_level_auto_falls_through_to_inference(self) -> None:
+        from dbt_charts.core.compile.resolve import resolve
+
+        resolved = resolve(_bar(x="region"), self._string_x_data, self._context("auto"))
+        assert resolved.orientation == "horizontal"
+
+    def test_no_board_style_still_infers_from_the_column(self) -> None:
+        from dbt_charts.core.compile.resolve import resolve
+
+        resolved = resolve(_bar(x="region"), self._string_x_data, _board_style())
+        assert resolved.orientation == "horizontal"
+
+
+# ---------------------------------------------------------------------------
 # _classify_to_channel_type strict: VARCHAR-numeric → "nominal" not "quantitative"
 # ---------------------------------------------------------------------------
 

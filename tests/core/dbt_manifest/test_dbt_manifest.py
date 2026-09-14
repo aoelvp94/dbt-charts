@@ -561,3 +561,58 @@ class TestRealManifestFixtures:
 
         assert index.available_refs == refs
         assert index.available_sources == sources
+
+
+class TestManifestProjectDispatch:
+    """load_manifest reads through project.manifest_project(), so an external
+    dbt_project_dir's target/manifest.json is read, not the dct project's own."""
+
+    def test_reads_manifest_from_external_dbt_root(self, tmp_path: Path) -> None:
+        from dbt_charts.cli.filesystem_project import FilesystemProject
+
+        project_root = tmp_path / "myproject"
+        project_root.mkdir()
+        external_dbt = tmp_path / "external_dbt"
+        (external_dbt / "target").mkdir(parents=True)
+        (external_dbt / "target" / "manifest.json").write_text(_MINIMAL_MANIFEST)
+
+        project = FilesystemProject(project_root, dbt_root=external_dbt)
+
+        loaded = load_manifest(project)
+
+        assert loaded is not None
+        assert loaded.raw["nodes"]
+
+    def test_ignores_manifest_at_dct_project_root_when_external_dir_set(
+        self, tmp_path: Path
+    ) -> None:
+        """A stray target/manifest.json at the dct project root is not read
+        once dbt_project_dir points elsewhere: no cross-contamination."""
+        from dbt_charts.cli.filesystem_project import FilesystemProject
+
+        project_root = tmp_path / "myproject"
+        (project_root / "target").mkdir(parents=True)
+        (project_root / "target" / "manifest.json").write_text(
+            json.dumps({"nodes": {}, "sources": {}})
+        )
+        external_dbt = tmp_path / "external_dbt"
+        external_dbt.mkdir()  # no target/manifest.json here
+
+        project = FilesystemProject(project_root, dbt_root=external_dbt)
+
+        assert load_manifest(project) is None
+
+    def test_same_dir_case_unregressed(self, tmp_path: Path) -> None:
+        """No dbt_project_dir override -> manifest still loads from project root."""
+        from dbt_charts.cli.filesystem_project import FilesystemProject
+
+        project_root = tmp_path / "myproject"
+        (project_root / "target").mkdir(parents=True)
+        (project_root / "target" / "manifest.json").write_text(_MINIMAL_MANIFEST)
+
+        project = FilesystemProject(project_root)
+
+        loaded = load_manifest(project)
+
+        assert loaded is not None
+        assert loaded.raw["nodes"]

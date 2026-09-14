@@ -175,7 +175,7 @@ def test_authored_sort_moves_the_anchor_to_the_column_it_renders_last() -> None:
     spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
     x_enc = spec["hconcat"][0]["encoding"]["x"]
     assert x_enc["type"] == "nominal"
-    assert x_enc["sort"] == {"field": "value", "order": "descending"}
+    assert x_enc["sort"] == {"field": "value", "order": "descending", "op": "min"}
     # Column totals are 3x the weight, so descending renders "C" (weight 1)
     # last — s1 = 2.0, s2 = 1.0 there. A lexical max would pick "H" (16, 8).
     assert dict(spec["$df_endpoint_label_cascade"]["anchors"]) == {
@@ -277,6 +277,11 @@ def test_wide_measures_under_a_sort_rank_on_vega_lites_own_fold() -> None:
     cell instead, so a category holding one totals short and can be ranked into
     the wrong slot — anchoring two labels of one rail on two different columns.
     The domain therefore has to come from the rows before the fold.
+
+    A wide bar's emitted sort now pins ``op: min`` (``bar_sort_to_vl``), closing
+    that divergence at the source — a dropped null row cannot move a minimum the
+    way it moved a total. What stays pinned here is that the rail's anchor
+    follows the emitted order, whatever aggregate that order carries.
     """
     from dbt_charts.core.compile.models.chart.normalized import BarChart
     from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -311,6 +316,7 @@ def test_wide_measures_under_a_sort_rank_on_vega_lites_own_fold() -> None:
     assert spec["hconcat"][0]["encoding"]["x"]["sort"] == {
         "field": "alpha",
         "order": "descending",
+        "op": "min",
     }
     assert dict(spec["$df_endpoint_label_cascade"]["anchors"]) == {
         "alpha": 10.0,

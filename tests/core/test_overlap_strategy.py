@@ -1003,3 +1003,140 @@ class TestTemporalNoTiltNeverOverwritesAKnownCollision:
 
         assert layout.visibility_time_unit == "year"
         assert layout.collision_label_count is None
+
+
+# ---------------------------------------------------------------------------
+# 9. AxisLabelLayout.label_block_height: what the chosen angle costs vertically
+# ---------------------------------------------------------------------------
+
+
+class TestLabelBlockHeight:
+    """The label block's pixel HEIGHT at the resolved angle.
+
+    A consumer reserving space under the axis (the bottom support_table strip)
+    cannot re-derive this: the angle is a render-time decision, and on a
+    temporal axis only this module holds the formatted label strings.
+    """
+
+    @staticmethod
+    def _gapless_measurer() -> Any:
+        """Mock measurer whose spaces are zero-width.
+
+        The tilt ladder measures BAND widths (label + inter-label gap); zeroing
+        the gap lets the assertions below name the label text alone.
+        """
+        m = MagicMock()
+        m.measure = lambda text, size: (
+            0.0 if text == " " else 10.0 * len(text) * (size / 11.0)
+        )
+        return m
+
+    def test_flat_labels_report_one_line(self) -> None:
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+
+        axis = _axis_x_with(overlap=_overlap())
+        data = [{"x": v} for v in ["A", "B", "C"]]
+        layout = resolve_axis_x_overlap(
+            axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=600.0
+        )
+        assert layout.angle == 0.0
+        assert layout.label_block_height == axis.labels.font.size
+
+    def test_vertical_tilt_reports_the_widest_label(self) -> None:
+        """At -90 the block is as tall as the widest label is wide."""
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+
+        measurer = self._gapless_measurer()
+        axis = _axis_x_with(overlap=_overlap(), tilt_increments=[0.0, -90.0])
+        labels = [f"Category {i:02d}" for i in range(20)]
+        data = [{"x": v} for v in labels]
+
+        with patch(
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            return_value=measurer,
+        ):
+            layout = resolve_axis_x_overlap(
+                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=200.0
+            )
+
+        assert layout.angle == -90.0
+        widest = max(measurer.measure(label, axis.labels.font.size) for label in labels)
+        assert layout.label_block_height == pytest.approx(widest)
+
+    def test_partial_tilt_is_between_one_line_and_the_widest_label(self) -> None:
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+
+        measurer = self._gapless_measurer()
+        axis = _axis_x_with(overlap=_overlap(), tilt_increments=[0.0, -45.0])
+        labels = [f"Category {i:02d}" for i in range(20)]
+        data = [{"x": v} for v in labels]
+
+        with patch(
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            return_value=measurer,
+        ):
+            layout = resolve_axis_x_overlap(
+                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=200.0
+            )
+
+        assert layout.angle == -45.0
+        widest = max(measurer.measure(label, axis.labels.font.size) for label in labels)
+        assert axis.labels.font.size < layout.label_block_height < widest
+
+    def test_authored_angle_is_measured_too(self) -> None:
+        """The authored-angle short-circuit never reaches the tilt ladder, but a
+        pinned -90 costs exactly as much vertical room as a picked one."""
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+
+        measurer = _make_mock_measurer(width_per_char=10.0)
+        axis = _axis_x_with(overlap=_overlap(), angle=-90.0)
+        labels = ["Alpha", "Beta", "Gamma"]
+        data = [{"x": v} for v in labels]
+
+        with patch(
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            return_value=measurer,
+        ):
+            layout = resolve_axis_x_overlap(
+                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=600.0
+            )
+
+        assert layout.angle == -90.0
+        widest = max(measurer.measure(label, axis.labels.font.size) for label in labels)
+        assert layout.label_block_height == pytest.approx(widest)
+
+    def test_authored_angle_on_a_temporal_axis_measures_formatted_labels(self) -> None:
+        """The raw datum is ``2024-01-01``; the axis draws ``Jan``. Sizing against
+        the datum would reserve room for text nothing paints."""
+        from dbt_charts.core.render.chart.emitters._label_overlap import (
+            resolve_axis_x_overlap,
+        )
+
+        measurer = _make_mock_measurer(width_per_char=10.0)
+        axis = _axis_x_temporal_with(overlap=_overlap())
+        axis = dataclasses.replace(
+            axis, labels=dataclasses.replace(axis.labels, angle=-90.0)
+        )
+        data = [{"x": f"2024-{month:02d}-01"} for month in range(1, 13)]
+
+        with patch(
+            "dbt_charts.core.render.chart.emitters._label_overlap.get_font_measurer",
+            return_value=measurer,
+        ):
+            layout = resolve_axis_x_overlap(
+                axis, "x", data, 1.0, edge_labels_flushed=False, chart_width=600.0
+            )
+
+        font_size = axis.labels.font.size
+        assert layout.label_block_height == pytest.approx(
+            measurer.measure("Jan", font_size)
+        )
+        assert layout.label_block_height < measurer.measure("2024-01-01", font_size)

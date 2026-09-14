@@ -214,27 +214,48 @@ def _pick_scale(
     explicit True so resolved_chart.zero carries the intent and the render
     layer needs no chart-type knowledge to decide domain pinning.
 
-    All-negative data (max < 0): out of scope — skip the heuristic.
+    All-negative data (max < 0): mirrored, not skipped. A magnitude encoding
+    truncated by a floor at -104 misstates the quantity exactly as one
+    truncated by a floor at +76 does, and the ratio branch reads the same way
+    against the near edge. The whole point is that the domain and the
+    render-time ``datum: 0`` rule must agree: a chart that draws the baseline
+    needs 0 in its domain, and a chart that bakes ``zero: False`` draws no
+    baseline and keeps its fitted domain.
     """
     if profile.min_val is None or profile.max_val is None:
         return None
     if profile.max_val == 0:
         return None
-    # Negative-spanning or all-negative: zero already in domain, or out of scope.
-    if profile.min_val < 0:
+    # Spanning zero: it is already in the domain, so nothing needs pinning.
+    if profile.min_val < 0 < profile.max_val:
         return None
+
+    # Which edge is nearer zero, and which one the domain would have to reach
+    # past to include it. All-positive: near=min, far=max. All-negative:
+    # mirrored.
+    all_negative = profile.max_val < 0
+    near, far = (
+        (profile.max_val, profile.min_val)
+        if all_negative
+        else (profile.min_val, profile.max_val)
+    )
 
     if chart_type in _OPTIONAL_ZERO_CHART_TYPES:
         # Smart-auto: keep data-fitted when data lives too far from zero.
-        ratio = profile.min_val / profile.max_val
+        ratio = near / far
         if ratio > _ZERO_EXTEND_THRESHOLD:
             return {"zero": False}
         return None
 
-    # Non-optional-zero types (bar, area) with all-positive data: return
-    # explicit True so resolved_chart.zero carries the intent and the render
-    # layer needs no chart-type knowledge to decide domain pinning.
-    if profile.min_val > 0:
-        return {"zero": True}
+    # Data that TOUCHES zero needs no opinion either way: the domain already
+    # includes 0, so there is nothing to extend, and saying so would pin a
+    # `zero: True` that suppresses Vega-Lite's nice-rounding on a ladderless
+    # theme. The mirrored guard for the negative side is the `max_val == 0`
+    # return above.
+    if near == 0:
+        return None
 
-    return None
+    # Non-optional-zero types (bar, area): return explicit True so
+    # resolved_chart.zero carries the intent and the render layer needs no
+    # chart-type knowledge to decide domain pinning.
+    return {"zero": True}

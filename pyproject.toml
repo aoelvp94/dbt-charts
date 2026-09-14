@@ -402,6 +402,8 @@ exclude = [
 # Runtime-loaded docs (read at runtime via importlib.resources / Path.read_text).
 "src/dbt_charts/DBT_CHARTS_SYNTAX.md" = "dbt_charts/DBT_CHARTS_SYNTAX.md"
 "src/dbt_charts/agent_api/docs/yaml-reference.md" = "dbt_charts/agent_api/docs/yaml-reference.md"
+"src/dbt_charts/agent_api/docs/error-reference.md" = "dbt_charts/agent_api/docs/error-reference.md"
+"src/dbt_charts/agent_api/docs/warning-reference.md" = "dbt_charts/agent_api/docs/warning-reference.md"
 # Whole-directory force-includes (paired with the matching `**` exclude above).
 "src/dbt_charts/agent_api/_init_templates" = "dbt_charts/agent_api/_init_templates"
 "src/dbt_charts/ai/skills" = "dbt_charts/ai/skills"

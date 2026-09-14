@@ -48,8 +48,6 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
 from dbt_charts.core.compile.resolve.chart._wide_fields import wide_measure_labels_for
 from dbt_charts.core.compile.resolve.chart.tick_values import (
     numeric_domain_bounds,
-    zero_anchor_domain_floor,
-    zero_anchor_floor,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
@@ -79,6 +77,7 @@ from dbt_charts.core.render.chart.type_inference import (
     resolve_cartesian_x_type,
     temporal_edge_labels_flushed,
     y_zero_scale,
+    zero_anchor_pinned_floor,
 )
 from dbt_charts.core.render.chart.vl_field_maps import (
     axis_to_vl,
@@ -95,6 +94,7 @@ from dbt_charts.core.text.predefined_formats import (
 from dbt_charts.core.utils import (
     DEFAULT_VL_LABEL_LIMIT,
     Rows,
+    bar_sort_op,
     numeric_column_values,
     x_domain_order,
 )
@@ -237,6 +237,24 @@ def dimension_sort_to_vl(sort: ChartSort | None) -> VLDict | None:
     """
     vl_sort = chart_sort_to_vl(sort)
     return None if vl_sort is None else {**vl_sort, "op": "min"}
+
+
+def bar_sort_to_vl(
+    sort: ChartSort | None, measure_field: str | None, stacked: bool
+) -> VLDict | None:
+    """``chart_sort_to_vl`` for a bar's categorical axis, with the aggregate pinned.
+
+    Bar takes ``bar_sort_op``'s verdict rather than ``dimension_sort_to_vl``'s
+    flat ``min`` because a stacked bar sorted by its own measure IS sorting by
+    the stacked total. Pinned for the same reason a dimension axis pins: VL's
+    own inference moves with the composed spec (``sum`` under a stacking mark,
+    ``min`` under ``stack: null``), and ``render/chart/x_domain.py`` has to
+    reproduce the rendered order exactly.
+    """
+    vl_sort = chart_sort_to_vl(sort)
+    if vl_sort is None:
+        return None
+    return {**vl_sort, "op": bar_sort_op(vl_sort["field"], measure_field, stacked)}
 
 
 # The families that build a dimension x through these helpers — narrower than
@@ -393,6 +411,10 @@ class CartesianXResolution(NamedTuple):
     axis: VLDict
     scale: VLDict
     time_unit: str | None = None  # utc-prefixed timeUnit for temporal escape-hatch
+    # AxisLabelLayout.label_block_height for the angle resolved below — how
+    # much vertical room the labels take at that tilt. None on the caller's
+    # own no-x-field fallback, where no axis was resolved to measure.
+    label_block_height: float | None = None
 
 
 def resolve_cartesian_x(
@@ -502,7 +524,9 @@ def resolve_cartesian_x(
     enc_time_unit: str | None = None
     if vl_type == "temporal" and detected_tu is not None and detected_tu != "none":
         enc_time_unit = vl_time_unit(detected_tu)
-    return CartesianXResolution(vl_type, ax_vl, x_scale, enc_time_unit)
+    return CartesianXResolution(
+        vl_type, ax_vl, x_scale, enc_time_unit, label_layout.label_block_height
+    )
 
 
 # An axis title Vega-Lite will render: a plain string, or one entry per line
@@ -1216,9 +1240,9 @@ def apply_domain_headroom_bounds(
     """Bake resolve()-time headroom bounds onto a VL scale dict.
 
     Both bounds are exact (never nice-rounded). ``domain_max`` is the
-    headroom-applied top; ``domain_min`` is only set for zoomed (non-zero-anchored)
-    axes (symmetric span-relative bottom). None on either means VL auto-fits
-    that edge. Callers must have already confirmed no authored domain is set.
+    headroom-applied top; ``domain_min`` is the symmetric span-relative bottom
+    on a zoomed axis, or the headroom-expanded data floor on an all-negative
+    zero-anchored one. None on either means VL auto-fits that edge. Callers must have already confirmed no authored domain is set.
     """
     if domain_max is None and domain_min is None:
         return scale
@@ -1269,8 +1293,10 @@ def effective_measure_domain(
     3. **The zero-anchor floor**, for a low edge resolve left unbaked:
        ``ladder[0]`` else ``0.0``, byte for byte what ``y_zero_scale`` pins as
        ``domainMin`` on such an axis. The ladder is filtered through
-       ``zero_anchor_domain_floor`` for the same reason the emitter filters it —
-       an authored ``scale.values`` list may not source a domain bound.
+       ``zero_anchor_pinned_floor``, the emitter's own decision, so this
+       cannot drift from what is really written; an authored ``scale.values``
+       list may not source a domain bound, and when no rung supplies a floor
+       the axis reports where ``zero: true`` auto-fits instead.
     4. **The data extent**, which is what Vega-Lite auto-fits from.
 
     On an unauthored x-axis, branches 2 and 3 never fire: resolve has no
@@ -1315,18 +1341,16 @@ def effective_measure_domain(
     if axis.domain_min is not None:
         lo = axis.domain_min
     elif is_zero_anchored(axis.scale):
-        # Exactly what y_zero_scale pins as domainMin for this axis — a value
-        # the emitter really writes, not a guess at where VL will land.
-        # Today's sole caller cannot tell ladder[0] from 0.0: it asks about
-        # 1.0, and a computed zero-anchored ladder always floors at or below 0.
-        # Keep the rung anyway — with `zero: true` and negative data the
-        # emitter really does pin a domainMin below 0, and collapsing this to a
-        # literal would make the stated parity false on that shape.
-        ladder = zero_anchor_domain_floor(
-            axis.scale.values if axis.scale is not None else None,
-            list(axis.tick_values) if axis.tick_values else [],
-        )
-        lo = zero_anchor_floor(ladder)
+        # Exactly what the emitter pins as domainMin for this axis — read from
+        # the same decision, never re-derived here. An inline copy of it is
+        # what let this function keep answering 0.0 after the emitter stopped
+        # pinning that, reporting an inverted range on an all-negative axis.
+        pinned = zero_anchor_pinned_floor(axis)
+        # No rung, so the emitter pins nothing and `zero: true` leaves the
+        # floor to Vega-Lite's own fit: 0 for data that stays above it, the
+        # data floor once anything goes below. Not `pinned or 0.0` — a real
+        # 0.0 rung is a pin, not an absence.
+        lo = pinned if pinned is not None else min(0.0, data_lo)
     else:
         lo = data_lo
     return lo, hi
@@ -1420,6 +1444,8 @@ def build_zero_rule_if_applicable(
     *,
     log_scale: bool,
     authored_domain: tuple[float, float] | None,
+    domain_min: float | None,
+    domain_max: float | None,
     grid_visible: bool,
     zero_color: str,
     zero_width: float,
@@ -1430,17 +1456,29 @@ def build_zero_rule_if_applicable(
     The single implementation of the guards every zero-rule caller must
     honor, regardless of chart family or whether the scale is shared or
     independently resolved: a log-typed scale can't carry a literal ``0``
-    datum (breaks VL's entire axis rendering), an authored domain excluding
-    0 has no legal position for the rule, and ``grid_visible=False``
-    suppresses it outright. ``should_fire`` is the caller's own straddle/
-    always-fire verdict; see ``non_bar_zero_rule_should_fire`` for the
-    line/area/scatter verdict most callers combine with their own
-    mark-family always-fire shortcut.
+    datum (breaks VL's entire axis rendering), a domain excluding 0 has no
+    legal position for the rule, and ``grid_visible=False`` suppresses it
+    outright. ``should_fire`` is the caller's own straddle/always-fire
+    verdict; see ``non_bar_zero_rule_should_fire`` for the line/area/scatter
+    verdict most callers combine with their own mark-family always-fire
+    shortcut.
+
+    ``domain_min`` / ``domain_max`` are resolve's baked, headroom-expanded
+    edges, and exclude 0 the same way an authored domain does. The rule's own
+    datum pulls 0 into the scale only while Vega-Lite is still free to
+    auto-fit that edge; a pin wins over it, and the rule then paints off the
+    plot rect — where ``autosize: pad`` grows the SVG to contain the stray
+    mark, and ``autosize: fit`` translates the whole plot group off the
+    canvas instead. Pass ``None`` for an edge nothing pins.
     """
     if log_scale:
         return None
     if authored_domain is not None and not (
         min(authored_domain) <= 0.0 <= max(authored_domain)
+    ):
+        return None
+    if (domain_max is not None and domain_max < 0.0) or (
+        domain_min is not None and domain_min > 0.0
     ):
         return None
     if not grid_visible:
@@ -1530,13 +1568,7 @@ def resolve_measure_y_scale(ay: ResolvedAxisStyle) -> VLDict:
             # the authored lower edge.
             y_scale.pop("zero", None)
         return y_scale
-    y_ticks: list[float] = list(ay.tick_values) if ay.tick_values else []
-    y_scale = y_zero_scale(
-        ay,
-        tick_values=zero_anchor_domain_floor(
-            ay.scale.values if ay.scale is not None else None, y_ticks
-        ),
-    )
+    y_scale = y_zero_scale(ay)
     return apply_domain_headroom_bounds(y_scale, ay.domain_max, ay.domain_min)
 
 
@@ -1559,7 +1591,10 @@ def pin_normalize_axis_format(ay_vl: VLDict) -> None:
     field is shared with value labels, stack-total labels, and tooltips, and
     those must keep reading the raw column value/format — a value label on a
     normalize-stacked bar shows its own count (``300``), not the axis's
-    share of the stack.
+    share of the stack. Reading the author's own format against that raw value
+    does lie when the format is a percent and the measure is not already a
+    0..1 share (``300`` prints as ``30000%``); that is reported, never
+    rewritten, by ``render/warnings/normalize_percent_format_reads_raw_value.py``.
     """
     ay_vl["format"] = PREDEFINED_SPECS[PredefinedNumberFormat.percent_whole]
 
@@ -1759,6 +1794,7 @@ __all__ = [
     "XYTitles",
     "apply_domain_headroom_bounds",
     "build_cartesian_y_encoding",
+    "bar_sort_to_vl",
     "build_palette_config",
     "build_x_enc",
     "cartesian_x_scale_domain",

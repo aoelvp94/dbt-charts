@@ -456,11 +456,14 @@ def _refuse_unorderable_sort(
     """Refuse a `sort:` whose column carries no numbers to aggregate.
 
     ``x_domain_order`` reproduces Vega-Lite's domain order by folding the sort
-    field per category with VL's own aggregate. On a non-numeric column VL
-    concatenates the strings instead — an order this cannot reproduce — so the
-    rail would anchor on a row VL does not draw on top. Resolve steers the
-    default away from this shape; an explicit opt-in lands here and gets told
-    why.
+    field per category, and a rail that anchors on a row VL does not draw on
+    top is worse than a legend. Resolve steers the default away from this
+    shape; an explicit opt-in lands here and gets told why.
+
+    Conservative since bar's sort pins ``min`` (``bar_sort_op``), which Vega
+    compares natively on strings and dates — the twin gate in
+    ``compile/resolve/chart/bar.py`` carries the same note, and relaxing both
+    is its own change.
     """
     if sort is None or numeric_column_values(data, sort.by):
         return
@@ -1055,8 +1058,9 @@ class EndpointLabelFeature:
                 # scale only — on a continuous temporal x it carries the key
                 # and ignores it — so ranking by an authored sort there would
                 # anchor every series on a column the axis does not draw last.
-                # A dimension axis states its aggregate on the encoding; bar
-                # states none, and vl_sort_op reads its own inference.
+                # Every authored sort states its aggregate on the encoding —
+                # a dimension axis's flat min, or bar's own verdict — and
+                # vl_sort_op reads it back off the emitted key.
                 _x_enc = spec.encoding.get("x")
                 _x_enc = _x_enc if isinstance(_x_enc, dict) else {}
                 _sort_ranks = _x_enc.get("type") in ("nominal", "ordinal")

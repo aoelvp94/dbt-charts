@@ -6,6 +6,7 @@ Run them to watch them fail, then implement to make them pass.
 
 from dbt_charts.core.compile.schema.introspection import (
     introspect,
+    introspect_project_config,
 )
 
 
@@ -507,3 +508,33 @@ class TestExtraUnionTypesDoesNotLeakTuplePositions:
                 "fixture precondition: domain must actually be a fixed-length "
                 "tuple field, or this test exercises nothing"
             )
+
+
+class TestIntrospectProjectConfig:
+    """`dbt_charts.yml` keys are introspected by their own entry point.
+
+    Keeping them out of introspect() is the point: that walk also feeds the
+    board JSON Schema, the highlighting catalog and the completion catalog,
+    none of which should gain project-config keys.
+    """
+
+    def test_root_is_execution_config(self) -> None:
+        assert introspect_project_config().root == "ExecutionConfig"
+
+    def test_execution_keys_collected(self) -> None:
+        model = introspect_project_config().models["ExecutionConfig"]
+        names = {field.name for field in model.fields}
+        assert {"max_template_output_bytes", "max_rows", "max_workers"} <= names
+
+    def test_board_walk_does_not_reach_project_config(self) -> None:
+        assert "ExecutionConfig" not in introspect().models
+
+    def test_project_config_walk_leaves_board_fields_required(self) -> None:
+        """The project-config walk relaxes `required` on what it collects; if it
+        ever shared field objects with introspect(), the board schema would lose
+        every required marker."""
+        introspect_project_config()
+        chart_type = next(
+            f for f in introspect().models["BarChart"].fields if f.name == "type"
+        )
+        assert chart_type.required is True

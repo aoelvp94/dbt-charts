@@ -112,6 +112,23 @@ ProjectDirOption = Annotated[
     ),
 ]
 
+# See resolve_dbt_project_dir for the resolution order (flag/env >
+# dbt_charts.yml `dbt_project_dir:` key > sibling default). Uses dbt-core's
+# own env var name, not a DCT_-prefixed one.
+DbtProjectDirOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--dbt-project-dir",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True,
+        envvar="DBT_PROJECT_DIR",
+        help="External dbt project directory (dbt_project.yml, profiles.yml, "
+        "target/manifest.json) when it does not sit next to dbt_charts.yml",
+    ),
+]
+
 
 # Configure logging for CLI (only if no handlers configured yet)
 if not logging.getLogger().handlers:
@@ -647,6 +664,7 @@ def inspect_validate_templates(
 @mcp_app.command("serve")
 def mcp_serve(
     project_dir: ProjectDirOption = None,
+    dbt_project_dir: DbtProjectDirOption = None,
 ) -> None:
     """Start the MCP server for AI assistant integration.
 
@@ -680,7 +698,7 @@ def mcp_serve(
     # without its deps, so a missing-extra install hint must win over a
     # "no project found" error when both apply.
     require_extras("mcp")
-    mcp_cmd.serve_command(project_dir=project_dir)
+    mcp_cmd.serve_command(project_dir=project_dir, dbt_project_dir=dbt_project_dir)
 
 
 # =============================================================================
@@ -712,6 +730,7 @@ def describe(
         typer.Option("--json", help="Output as JSON"),
     ] = False,
     project_dir: ProjectDirOption = None,
+    dbt_project_dir: DbtProjectDirOption = None,
 ) -> None:
     """Describe a dashboard's queries, charts, variables, and layout.
 
@@ -731,6 +750,7 @@ def describe(
         paths,
         json_output=json_output,
         project_dir=project_dir,
+        dbt_project_dir=dbt_project_dir,
     )
 
 
@@ -761,6 +781,7 @@ def render(
         ),
     ] = None,
     project_dir: ProjectDirOption = None,
+    dbt_project_dir: DbtProjectDirOption = None,
     var: Annotated[
         list[str] | None,
         typer.Option(help="Variable value as key=value (repeatable)"),
@@ -953,6 +974,7 @@ def render(
             output=output,
             format=effective_format,
             project_dir=project_dir,
+            dbt_project_dir=dbt_project_dir,
             variables=variables or None,
             use_cache=use_cache,
             cache_path=cache,
@@ -971,6 +993,7 @@ def render(
         output=output,
         format=effective_format,
         project_dir=project_dir,
+        dbt_project_dir=dbt_project_dir,
         variables=variables or None,
         use_cache=use_cache,
         cache_path=cache,
@@ -994,6 +1017,7 @@ def emit_board(
         ),
     ],
     project_dir: ProjectDirOption = None,
+    dbt_project_dir: DbtProjectDirOption = None,
     artifact: Annotated[
         Path | None,
         typer.Option(
@@ -1042,6 +1066,7 @@ def emit_board(
     board_artifact_cmd.emit_board_command(
         board,
         project_dir=project_dir,
+        dbt_project_dir=dbt_project_dir,
         artifact=artifact,
         recording=recording,
         var=var,
@@ -1098,6 +1123,7 @@ def search(
         typer.Option("--limit", help="Maximum results to return (default 10, max 50)"),
     ] = 10,
     project_dir: ProjectDirOption = None,
+    dbt_project_dir: DbtProjectDirOption = None,
 ) -> None:
     """Search dashboards by keyword with ranked results.
 
@@ -1115,6 +1141,7 @@ def search(
         json_output=json_output,
         limit=limit,
         project_dir=project_dir,
+        dbt_project_dir=dbt_project_dir,
     )
 
 
@@ -1133,6 +1160,7 @@ def impact(
         typer.Option("--json", help="Output as JSON"),
     ] = False,
     project_dir: ProjectDirOption = None,
+    dbt_project_dir: DbtProjectDirOption = None,
 ) -> None:
     """Which boards break if this column changes.
 
@@ -1159,6 +1187,7 @@ def impact(
         table=table,
         json_output=json_output,
         project_dir=project_dir,
+        dbt_project_dir=dbt_project_dir,
     )
 
 
@@ -1173,6 +1202,7 @@ def serve(
         typer.Option(help="Host address"),
     ] = "localhost",
     project_dir: ProjectDirOption = None,
+    dbt_project_dir: DbtProjectDirOption = None,
     dialect: Annotated[
         str | None,
         typer.Option(help="SQL dialect (auto-detected from dbt, or duckdb)"),
@@ -1230,7 +1260,9 @@ def serve(
     dbt profile location is resolved in this order:
       1. profiles_dir field in the dbt_profile source config (dbt_charts.yml)
       2. DBT_PROFILES_DIR environment variable
-      3. Project root (next to dbt_charts.yml / dbt_project.yml)
+      3. Linked dbt project directory (next to dbt_charts.yml by default;
+         --dbt-project-dir / DBT_PROJECT_DIR / dbt_project_dir: links an
+         external one)
       4. ~/.dbt/profiles.yml
 
     Port is auto-resolved: --port flag > DCT_PORT env var > dbt_charts.yml
@@ -1260,6 +1292,7 @@ def serve(
         port=port,
         host=host,
         project_dir=project_dir,
+        dbt_project_dir=dbt_project_dir,
         dialect=dialect,
         target=target,
         max_workers=max_workers,
@@ -1278,6 +1311,7 @@ def validate(
         ),
     ] = None,
     project_dir: ProjectDirOption = None,
+    dbt_project_dir: DbtProjectDirOption = None,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Output as JSON"),
@@ -1326,6 +1360,7 @@ def validate(
     validate_cmd.validate_command(
         paths=paths,
         project_dir=project_dir,
+        dbt_project_dir=dbt_project_dir,
         json_output=json_output,
         strict=strict,
         warehouse=warehouse,
@@ -1346,6 +1381,7 @@ def migrate(
         typer.Option("--dry-run", help="Report changes without writing files."),
     ] = False,
     project_dir: ProjectDirOption = None,
+    dbt_project_dir: DbtProjectDirOption = None,
 ) -> None:
     """Rewrite supported older board YAML syntax for the latest released dbt charts version.
 
@@ -1365,6 +1401,7 @@ def migrate(
     migrate_cmd.migrate_command(
         paths,
         project_dir=project_dir,
+        dbt_project_dir=dbt_project_dir,
         dry_run=dry_run,
     )
 
@@ -1440,6 +1477,7 @@ def query(
         typer.Option("--json", help="JSON output"),
     ] = False,
     project_dir: ProjectDirOption = None,
+    dbt_project_dir: DbtProjectDirOption = None,
 ) -> None:
     variables = parse_kv_pairs(var or [], "--var")
 
@@ -1455,6 +1493,7 @@ def query(
         show_suppressed=show_suppressed,
         json_output=json_output,
         project_dir=project_dir,
+        dbt_project_dir=dbt_project_dir,
     )
 
 
@@ -1478,7 +1517,7 @@ def docs(
     topic: Annotated[
         str | None,
         typer.Argument(
-            help="Topic name (run `dct docs` for the index). Use 'all' for the whole reference, 'reference' for the YAML field reference, or 'errors'/'warnings' to browse diagnostic codes."
+            help="Topic name (run `dct docs` for the index). Use 'all' for the syntax guide plus the field reference, 'reference' for the field reference alone, or 'errors'/'warnings' to browse diagnostic codes."
         ),
     ] = None,
     code: Annotated[
@@ -1513,10 +1552,10 @@ def docs(
 
     \b
     Modes:
-      dct docs                    # Topic index (one row per H2 section)
+      dct docs                    # Topic index (one row per topic)
       dct docs cheatsheet         # One-page essentials
       dct docs <topic>            # Full docs for one section
-      dct docs all                # Whole reference, unsliced
+      dct docs all                # Syntax guide + field reference, unsliced
       dct docs reference          # Generated YAML field reference
       dct docs errors             # List all error codes
       dct docs errors <CODE>      # Full doc for one error code

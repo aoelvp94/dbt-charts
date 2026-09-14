@@ -20,7 +20,11 @@ queries:
   region_category_category_share:
     source: examples_db
     sql: |
-      SELECT region, category, SUM(revenue) AS category_share
+      SELECT
+        region,
+        category,
+        SUM(revenue) / SUM(SUM(revenue)) OVER (PARTITION BY region)
+          AS category_share
       FROM ecommerce_orders
       GROUP BY region, category
       ORDER BY region, category

@@ -79,7 +79,7 @@ def _render_blank(rows: list[dict[str, Any]]) -> list[str]:
 def unfloored_bucket_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
     """Key each row at its own date again, so no row matches its bucket."""
 
-    def _raw(date: dt.date, time_unit: str, fiscal: int, anchor: dt.date) -> dt.date:
+    def _raw(date: dt.date, time_unit: str, _fiscal: int, anchor: dt.date) -> dt.date:
         return date
 
     monkeypatch.setattr(time_unit_detect, "_enclosing_bucket", _raw)

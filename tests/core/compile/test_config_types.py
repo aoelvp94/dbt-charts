@@ -162,6 +162,23 @@ def test_load_settings_rejects_unknown_top_level_keys(
         load_config(project)
 
 
+def test_dbt_project_dir_key_is_accepted(
+    tmp_path, local_project: Callable[..., FilesystemProject]
+):
+    """dbt_project_dir: must not trip extra="forbid" -- the shipped docs tell
+    users to write this key, and `dct serve` calls load_config at startup."""
+    (tmp_path / "dbt_charts.yml").write_text("dbt_project_dir: ../ext\n")
+    project = local_project(tmp_path)
+
+    config = load_config(project)
+
+    assert config.dbt_project_dir == "../ext"
+
+
+def test_dbt_project_dir_defaults_to_none() -> None:
+    assert get_config().dbt_project_dir is None
+
+
 def test_default_config_yaml_is_valid_settings():
     """default_config.yml must parse cleanly as Settings via model_validate."""
     import yaml

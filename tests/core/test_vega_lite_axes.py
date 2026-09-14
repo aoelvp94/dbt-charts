@@ -209,9 +209,12 @@ class TestYAxisOrientation:
         _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
         spec = generate_vega_lite_spec(chart, data)
         # dbt charts 'desc' translates to VL canonical 'descending' at emit time.
+        # Nothing stacks here, so the measure sort means each product's own
+        # revenue — bar pins that aggregate rather than leaving it to VL.
         assert spec["encoding"]["y"]["sort"] == {
             "field": "revenue",
             "order": "descending",
+            "op": "min",
         }
 
     def test_horizontal_bar_default_label_style(self, make_chart):

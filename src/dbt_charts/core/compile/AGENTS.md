@@ -29,7 +29,7 @@ templating and SQL parameterization — `jinja.py`, `parameterized.py`,
 surface over authored YAML that Cloud's editing endpoints consume —
 `yaml_patch.py`), `schema/` (schema introspection and its derived artifacts —
 `introspection.py`, `renderers/`; `get_schema_for_prompt` lives in
-`schema/__init__.py`, a three-line delegate that keeps
+`schema/__init__.py`, a small delegate that keeps
 `from ...compile.schema import get_schema_for_prompt` — the codegen entry
 point `justfile:159` uses — resolving unchanged), and `sources/` (source and
 dbt-profile detection — `detection.py`, `dbt_jinja.py`; `dbt_jinja.py` renders

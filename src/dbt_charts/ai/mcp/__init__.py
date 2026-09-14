@@ -8,7 +8,7 @@ Architecture:
     Resources (read-only context):
         - dct://boards - List of dashboards in project
         - dct://board/{path} - Dashboard content and structure
-        - dct://docs/all - Whole DBT_CHARTS_SYNTAX.md (full YAML reference)
+        - dct://docs/all - Syntax guide + generated field reference, unsliced
         - dct://docs/{topic} - One H2 section of the YAML reference
         - dct://guide/board-design - Dashboard design principles
         - dct://guide/report-design - Report design principles

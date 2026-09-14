@@ -587,6 +587,27 @@ def x_domain_order(
     return ranked + [x for x in xs if x not in totals]
 
 
+def bar_sort_op(sort_by: str, measure_field: str | None, stacked: bool) -> VlSortOp:
+    """The aggregate a bar's categorical sort folds each category's rows with.
+
+    ``min`` is the sort column's own value: the one a well-formed column holds
+    across a category's rows, where it equals ``max`` — so one ``op`` serves
+    both directions and Vega's reverse does the rest. ``sum`` is a stacked
+    total, and that is what exactly one sort means: a stacked bar sorted by
+    its own measure. ``measure_field`` is the field the chart actually emits
+    on the measure channel, so a wide chart's synthetic fold field never
+    matches an authored ``sort.by`` and its sorts read as ``min``, which is
+    what a sort by one of the folded columns means.
+
+    A grouped bar is the deliberate call rather than a consequence: VL does
+    auto-stack a color-channeled bar mark (see ``emitters/bar.py``), but the
+    groups are size 1 and nothing accumulates, so a sort by the measure gets
+    ``min`` there too. The aggregate follows what the chart stacks, never the
+    presence of a color channel.
+    """
+    return "sum" if stacked and sort_by == measure_field else "min"
+
+
 def sorted_series_by_stack_order(
     series: list[str],
     data: Rows,
@@ -678,8 +699,13 @@ def cumulative_stack_midpoints(
     For ``stack_mode == "normalize"``, midpoints are divided by the top-row total
     so they land on the 0..1 scale that VL renders for normalize stacks.
     """
-    # Horizontal stacked bar: a stacking mark, so VL folds with sum.
-    x_values = x_domain_order(data, x_field, sort_by, descending, op="sum")
+    x_values = x_domain_order(
+        data,
+        x_field,
+        sort_by,
+        descending,
+        op=bar_sort_op(sort_by, y_field, stacked=stack_mode != "none"),
+    )
     if not x_values:
         return []
     top_row_x = x_values[0]

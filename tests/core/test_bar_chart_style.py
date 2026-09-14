@@ -220,6 +220,7 @@ class TestHorizontalBarValueDescDefaultSort:
         assert spec["encoding"]["y"]["sort"] == {
             "field": "category",
             "order": "ascending",
+            "op": "min",
         }
 
     def test_grouped_horizontal_bar_does_not_get_value_desc_default(self):

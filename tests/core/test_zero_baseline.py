@@ -20,7 +20,9 @@ Constraints:
 from __future__ import annotations
 
 import json
+import re
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from pydantic import TypeAdapter
@@ -37,6 +39,7 @@ from dbt_charts.core.compile.models.style.authored import (
     BaseAxisGridStylePatch,
     BaseScaleStylePatch,
     ChartStylePatch,
+    EndpointLabelsConfigPatch,
     LineChartStylePatch,
     ScaleContinuousStylePatch,
     ScatterChartStylePatch,
@@ -70,19 +73,24 @@ def _spec(
     data: list[dict],
     style: ChartStylePatch | None = None,
     color: str | None = None,
+    stack: str | None = None,
+    multiples: dict[str, Any] | None = None,
 ) -> dict:
-    chart = TypeAdapter(Chart).validate_python(
-        {
-            "id": "t",
-            "type": chart_type,
-            "x": "x",
-            "y": "y",
-            "color": color,
-            "query": SqlQuery(sql="SELECT 1", source="src"),
-            "query_name": "q",
-            "style": style,
-        }
-    )
+    payload: dict[str, Any] = {
+        "id": "t",
+        "type": chart_type,
+        "x": "x",
+        "y": "y",
+        "color": color,
+        "query": SqlQuery(sql="SELECT 1", source="src"),
+        "query_name": "q",
+        "style": style,
+    }
+    if stack is not None:
+        payload["stack"] = stack
+    if multiples is not None:
+        payload["multiples"] = multiples
+    chart = TypeAdapter(Chart).validate_python(payload)
     return generate_vega_lite_spec(
         chart, data, width=400, board_style=_BOARD_STYLE, chart_style_context=_BOARD_CTX
     )
@@ -496,6 +504,578 @@ def test_scatter_chart_all_negative_authored_scale_values_skips_rule():
     assert _zero_rule_layer(spec) is None
 
 
+# ── the domain and the baseline must agree ────────────────────────────────────
+# A chart that draws the `datum: 0` rule needs 0 in its domain; a chart whose
+# domain excludes 0 must draw no rule. Resolve owns the first half (`_pick_scale`
+# mirrors all-negative data onto the same branches as all-positive), and
+# `build_zero_rule_if_applicable` owns the second for the cases resolve cannot
+# reconcile: bar's rule is unconditional per family, so only the guard stops it
+# against an authored `zero: false` or a layer-pinned scale.
+
+# Two series so area emits its endpoint-label hconcat — the shape that renders
+# under autosize:pad, where an off-plot mark grows the SVG instead of being
+# clipped.
+# Two panels whose spans differ by ~9x: a shared floor squashes the narrow one.
+_ALL_NEGATIVE_PANELS = [
+    {"x": "p", "s": "a", "y": -90},
+    {"x": "q", "s": "a", "y": -103},
+    {"x": "p", "s": "b", "y": -20},
+    {"x": "q", "s": "b", "y": -8},
+]
+_ALL_NEGATIVE_SINGLE = [
+    {"x": "a", "y": -90},
+    {"x": "b", "y": -95},
+    {"x": "c", "y": -103},
+]
+_ALL_NEGATIVE_TWO_SERIES = [
+    {"x": "Jan", "s": "a", "y": -90},
+    {"x": "Feb", "s": "a", "y": -95},
+    {"x": "Mar", "s": "a", "y": -92},
+    {"x": "Jan", "s": "b", "y": -100},
+    {"x": "Feb", "s": "b", "y": -103},
+    {"x": "Mar", "s": "b", "y": -98},
+]
+# Far enough from 0 that the smart-zero heuristic bakes zero=False, which puts
+# the pin on the LOW edge — the domain_min > 0 half of the guard.
+_FAR_POSITIVE_DATA = [{"x": "a", "y": 500}, {"x": "b", "y": 520}, {"x": "c", "y": 510}]
+
+
+@pytest.mark.parametrize("chart_type", ["line", "scatter"])
+def test_all_negative_far_from_zero_fits_and_skips_rule(chart_type):
+    """Position encodings mirror their all-positive behavior: the near edge is
+    87% of the way from 0, so resolve fits the data, bakes the explicit
+    `zero: False`, and no baseline is drawn on a domain that excludes 0."""
+    spec = _spec(chart_type, _ALL_NEGATIVE_TWO_SERIES, color="s")
+    scale = _main_pane(spec)["encoding"]["y"]["scale"]
+
+    assert scale["zero"] is False
+    assert scale["domainMax"] < 0
+    assert _zero_rule_layer(spec) is None
+
+
+def test_all_negative_area_anchors_to_zero_and_draws_the_rule():
+    """An area's fill IS the magnitude, so a floor at -104 misstates it exactly
+    as a floor at +76 would. Resolve extends the domain to 0 for both signs,
+    which is what puts the rule back on a plot that has room for it."""
+    spec = _spec("area", _ALL_NEGATIVE_TWO_SERIES, color="s")
+    scale = _main_pane(spec)["encoding"]["y"]["scale"]
+
+    assert scale["zero"] is True
+    assert scale.get("domainMax") is None, "the top edge must reach 0"
+    assert _zero_rule_layer(spec) is not None
+
+
+@pytest.mark.parametrize("orientation", ["vertical", "horizontal"])
+def test_bar_with_zero_false_far_from_zero_skips_rule(orientation):
+    """The low-edge half of the guard, on the bar family. `zero: false` sends
+    resolve down the zoomed branch, which bakes domain_min 498.4: the bars are
+    cropped to that window and a datum-0 rule has no position in it."""
+    style = BarChartStylePatch(
+        orientation=orientation,
+        axis_y=AxisYStylePatch(
+            scale=BaseScaleStylePatch(continuous=ScaleContinuousStylePatch(zero=False))
+        ),
+    )
+    spec = _spec("bar", _FAR_POSITIVE_DATA, style=style)
+
+    assert (
+        _main_pane(spec)["encoding"]["x" if orientation == "horizontal" else "y"][
+            "scale"
+        ]["domainMin"]
+        > 0
+    )
+    assert _zero_rule_layer(spec) is None
+
+
+def test_dual_axis_pinned_base_skips_its_nested_rule():
+    """The independent-y path builds its own rule (BaselineFeature bails out
+    before reaching it), against the base's own pinned scale. A bar base is the
+    shape resolve cannot reconcile: its rule is unconditional per family, so an
+    authored `zero: false` pins domainMin 498.4 under a rule that wants 0.
+
+    Under `autosize: fit` the off-plot mark translated the whole plot group off
+    the canvas rather than inflating the SVG, so the chart came out blank at the
+    right size, invisible to a height check."""
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "t",
+            "type": "bar",
+            "x": "x",
+            "y": "y",
+            "query": SqlQuery(sql="SELECT 1", source="src"),
+            "query_name": "q",
+            "variable_dependencies": set(),
+            "style": BarChartStylePatch(
+                axis_y=AxisYStylePatch(
+                    scale=BaseScaleStylePatch(
+                        continuous=ScaleContinuousStylePatch(zero=False)
+                    )
+                )
+            ),
+            "layers": [{"type": "line", "y": "y2", "axis_y": {"position": "right"}}],
+        }
+    )
+    data = [
+        {"x": "a", "y": 500, "y2": -40},
+        {"x": "b", "y": 520, "y2": -22},
+        {"x": "c", "y": 510, "y2": -10},
+    ]
+    spec = generate_vega_lite_spec(
+        chart, data, width=400, board_style=_BOARD_STYLE, chart_style_context=_BOARD_CTX
+    )
+
+    assert _main_pane(spec).get("resolve", {}).get("scale", {}).get("y") == (
+        "independent"
+    )
+    assert _nested_zero_rule_fields_by_index(spec) == {}
+
+
+@pytest.mark.parametrize("chart_type", ["area", "bar"])
+def test_zero_anchored_negative_ladder_reaches_zero(chart_type):
+    """A zero-anchored negative axis renders from the data up to 0, so the band
+    between the data and 0 is plot area and its rungs have to be labeled.
+
+    The ladder was built over the data extent alone (`nice_tick_values(-103,
+    -90)` -> [-105, -100, -95, -90]) while `zero: True` extended the rendered
+    top to 0, leaving the upper third of the plot with no gridline or label.
+    The far edge is the headroom side and needs no rung of its own; the
+    zero-facing edge does.
+    """
+    enc = _main_pane(_spec(chart_type, _ALL_NEGATIVE_TWO_SERIES, color="s"))["encoding"]
+    # The measure lands on x for a horizontal bar and on y otherwise; read the
+    # channel carrying the measure field rather than assuming an orientation.
+    measure = next(
+        ch
+        for ch in ("y", "x")
+        if isinstance(enc.get(ch), dict) and enc[ch].get("field") == "y"
+    )
+    ticks = enc[measure]["axis"]["values"]
+
+    assert 0.0 in ticks, f"ladder stops short of the anchored edge: {ticks}"
+    assert min(ticks) <= -103.0, f"ladder clips the data floor: {ticks}"
+
+
+@pytest.mark.parametrize(
+    "style",
+    [
+        pytest.param(
+            AreaChartStylePatch(
+                axis_y=AxisYStylePatch(
+                    scale=BaseScaleStylePatch(values=[-100.0, -50.0, -10.0])
+                )
+            ),
+            id="authored-ladder",
+        ),
+        pytest.param(
+            AreaChartStylePatch(
+                axis_y=AxisYStylePatch(scale=BaseScaleStylePatch(headroom=0))
+            ),
+            id="headroom-0",
+        ),
+    ],
+)
+def test_zero_anchored_negative_axis_never_pins_zero_as_its_floor(style):
+    """With no usable ladder, the anchored floor fell back to a literal 0.0 —
+    correct only while the data is non-negative. On all-negative data that
+    pins 0 as the BOTTOM of the domain, collapsing every vertex onto one y
+    and rendering the area invisible at the right card size.
+
+    Nothing pins the floor in that state, so nothing should be emitted: VL's
+    own `zero: true` extends the domain to include 0 and auto-fits the other
+    edge, which is the same [0, max] for positive data and the correct
+    [min, 0] here.
+    """
+    spec = _spec("area", _ALL_NEGATIVE_TWO_SERIES, style=style, color="s")
+    scale = _main_pane(spec)["encoding"]["y"]["scale"]
+
+    assert scale.get("domainMin", -1) <= -103.0 or "domainMin" not in scale, (
+        f"floor {scale.get('domainMin')} sits above the data"
+    )
+
+
+def _measure_scale(spec: dict) -> dict:
+    """The measure channel's scale dict, whichever channel carries it."""
+    pane = _main_pane(spec)
+    enc = pane.get("spec", pane).get("encoding", {})
+    for channel in ("y", "x"):
+        e = enc.get(channel)
+        if (
+            isinstance(e, dict)
+            and e.get("field") == "y"
+            and isinstance(e.get("scale"), dict)
+        ):
+            return e["scale"]
+    raise AssertionError(f"no measure scale in {list(enc)}")
+
+
+@pytest.mark.parametrize("orientation", ["vertical", "horizontal"])
+def test_all_negative_bar_floor_agrees_across_orientations(orientation):
+    """The baked floor is the headroom-expanded data floor, exact, on both
+    orientations. The horizontal branch applied resolve's bake and then
+    overwrote it with the ladder's bottom rung — the nice-rounded FAR edge,
+    -150 against a -111.24 bake — rendering its bars at ~69% of the length of
+    their vertical twins from the same rows.
+    """
+    style = BarChartStylePatch(orientation=orientation)
+    spec = _spec("bar", _ALL_NEGATIVE_SINGLE, style=style)
+
+    assert _measure_scale(spec)["domainMin"] == pytest.approx(-111.24)
+
+
+def test_stacked_all_negative_area_is_not_zero_anchored():
+    """A stack's floor is its per-category negative total, which nothing here
+    derives — `_resolve_stacked_bar_ticks` has no negative branch and area
+    nulls `domain_min` for a stack outright. Anchoring without a floor let
+    `zero_anchor_floor`'s literal 0.0 become the BOTTOM of the domain, putting
+    every vertex on one pixel row: a blank chart at the right card size.
+
+    Vega-Lite already anchors a stack at 0, so leaving it unbaked costs
+    nothing.
+    """
+    style = AreaChartStylePatch(
+        endpoint_labels=EndpointLabelsConfigPatch(visible=False)
+    )
+    spec = _spec("area", _ALL_NEGATIVE_TWO_SERIES, style=style, color="s", stack="zero")
+
+    assert _measure_scale(spec).get("domainMin") is None
+
+
+@pytest.mark.parametrize("chart_type", ["line", "area", "bar"])
+def test_authored_scale_nice_survives_the_zero_anchor_branch(chart_type):
+    """`scale.nice` is an authorable key that forwards natively to Vega-Lite.
+    The suppression the dropped floor used to provide implicitly must not
+    overwrite an author who asked for a rounded top — and all three families
+    have to answer the same way on identical YAML.
+    """
+    board_style, ctx = resolve_style_and_context(get_theme_style("stark"))
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "t",
+            "type": chart_type,
+            "x": "x",
+            "y": "y",
+            "query": SqlQuery(sql="SELECT 1", source="src"),
+            "query_name": "q",
+            "style": {
+                "axis_y": {"scale": {"nice": True, "continuous": {"zero": True}}}
+            },
+        }
+    )
+    spec = generate_vega_lite_spec(
+        chart,
+        [{"x": "p", "y": 90}, {"x": "q", "y": 103}, {"x": "r", "y": 8}],
+        width=400,
+        board_style=board_style,
+        chart_style_context=ctx,
+    )
+
+    assert _measure_scale(spec)["nice"] is True
+
+
+@pytest.mark.parametrize("orientation", ["vertical", "horizontal"])
+@pytest.mark.parametrize("stack", [None, "zero"])
+def test_authored_ladder_never_sources_a_zero_anchor_floor(orientation, stack):
+    """An authored `scale.values` lands verbatim in `ay.tick_values` and says
+    nothing about the domain — `zero_anchor_domain_floor` is the single home of
+    that distinction, and every place that pins a zero-anchor floor owes it
+    that filter.
+
+    Bar pins in more than one place, and they were fixed one round apart: the
+    unstacked vertical branch read the ladder raw, and the stacked one handed
+    it to `y_zero_scale` raw. Both pinned rung 0.0 as the floor of an
+    all-negative domain — every bar at zero length — while the horizontal twin
+    from the same rows rendered correctly.
+    """
+    style = BarChartStylePatch(
+        orientation=orientation,
+        axis_y=AxisYStylePatch(
+            scale=BaseScaleStylePatch(
+                values=[0, 50, 100],
+                continuous=ScaleContinuousStylePatch(zero=True),
+            )
+        ),
+    )
+    spec = _spec(
+        "bar",
+        _ALL_NEGATIVE_PANELS,
+        style=style,
+        color="s" if stack else None,
+        stack=stack,
+        multiples=None if stack else {"columns": "s", "scale": "independent"},
+    )
+
+    assert "domainMin" not in _measure_scale(spec)
+
+
+def test_ladderless_zero_anchor_keeps_nice_off():
+    """An explicit domainMin is what suppressed Vega-Lite's default
+    `nice: true`. Omitting the pin without putting `nice: False` in its place
+    hands the top edge back to nice-rounding — an exact 103 becomes 110 — on
+    every theme that bakes no ladder, and desynchronizes the render from
+    `effective_measure_domain`, whose contract is never to predict where
+    `nice` lands.
+
+    Vertical bar only. Its branch builds this scale itself rather than routing
+    through `y_zero_scale`, and pinned a literal 0.0 when the ladder was empty.
+    The horizontal branch never pinned a ladder-less floor, so its domain has
+    always been nice-rounded and adding the companion there would change
+    shipped geometry — the visual gate caught exactly that.
+    """
+    board_style, ctx = resolve_style_and_context(get_theme_style("stark"))
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "t",
+            "type": "bar",
+            "x": "x",
+            "y": "y",
+            "query": SqlQuery(sql="SELECT 1", source="src"),
+            "query_name": "q",
+            "style": BarChartStylePatch(
+                orientation="vertical",
+                axis_y=AxisYStylePatch(
+                    scale=BaseScaleStylePatch(
+                        continuous=ScaleContinuousStylePatch(zero=True)
+                    )
+                ),
+            ),
+        }
+    )
+    spec = generate_vega_lite_spec(
+        chart,
+        [{"x": "p", "y": 90}, {"x": "q", "y": 103}, {"x": "r", "y": 8}],
+        width=400,
+        board_style=board_style,
+        chart_style_context=ctx,
+    )
+    scale = _measure_scale(spec)
+
+    assert "domainMin" not in scale, "precondition: this theme bakes no ladder"
+    assert scale["nice"] is False
+
+
+@pytest.mark.parametrize("orientation", ["vertical", "horizontal"])
+def test_all_negative_bar_under_independent_multiples_pins_no_floor(orientation):
+    """Bar builds its measure scale in two places of its own, neither routed
+    through `y_zero_scale`, and both hand-wrote the same `0.0` fallback. Under
+    independent multiples no ladder is baked, so that literal became the floor
+    of an all-negative domain and every bar collapsed to zero length.
+    """
+    style = BarChartStylePatch(
+        orientation=orientation,
+        axis_y=AxisYStylePatch(
+            scale=BaseScaleStylePatch(continuous=ScaleContinuousStylePatch(zero=True))
+        ),
+    )
+    spec = _spec(
+        "bar",
+        _ALL_NEGATIVE_PANELS,
+        style=style,
+        multiples={"columns": "s", "scale": "independent"},
+    )
+    scale = _measure_scale(spec)
+
+    assert "domainMin" not in scale, f"degenerate floor pinned: {scale}"
+    assert scale["zero"] is True
+
+
+@pytest.mark.parametrize("chart_type", ["area", "line", "bar"])
+def test_authored_zero_true_never_pins_a_floor_without_a_ladder(chart_type):
+    """Render branches on the AUTHOR's `zero: true`, not on resolve's bake, so
+    a family that suppresses its own bake still reaches this path. Under
+    `multiples: {scale: independent}` no ladder is baked at all, and the old
+    literal `0.0` floor then sat above data topping out at -8 — a degenerate
+    `[0, 0]` domain with every mark on one pixel row.
+    """
+    reset_config()
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "t",
+            "type": chart_type,
+            "x": "x",
+            "y": "y",
+            "query": SqlQuery(sql="SELECT 1", source="src"),
+            "query_name": "q",
+            "style": {"axis_y": {"scale": {"continuous": {"zero": True}}}},
+            "multiples": {"columns": "s", "scale": "independent"},
+        }
+    )
+    spec = generate_vega_lite_spec(
+        chart,
+        _ALL_NEGATIVE_PANELS,
+        width=400,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CTX,
+    )
+    scale = _measure_scale(spec)
+
+    assert scale["zero"] is True
+    assert "domainMin" not in scale, f"degenerate floor pinned: {scale}"
+
+
+def test_effective_measure_domain_agrees_with_the_emitted_floor():
+    """`effective_measure_domain` reports where the axis really renders, and
+    its own contract is that every value is one the emitter actually pins.
+
+    It kept an inline copy of the floor decision, so when the emitter stopped
+    pinning a literal 0.0 this went on reporting it: on an all-negative
+    zero-anchored axis with nothing baked and no rung, it answered
+    `lo=0.0, hi=-8.0` — an inverted range, feeding a negative denominator to
+    `_series_value_span` in the area-reads-as-stacked detector.
+    """
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.render.chart.emitters._cartesian import (
+        effective_measure_domain,
+    )
+
+    reset_config()
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "t",
+            "type": "line",
+            "x": "x",
+            "y": "y",
+            "query": SqlQuery(sql="SELECT 1", source="src"),
+            "query_name": "q",
+            "style": {"axis_y": {"scale": {"continuous": {"zero": True}}}},
+            "multiples": {"columns": "s", "scale": "independent"},
+        }
+    )
+    resolved = resolve(chart, _ALL_NEGATIVE_PANELS, chart_style_context=_BOARD_CTX)
+    ay = resolved.style.axis_y
+    data_lo, data_hi = -103.0, -8.0
+
+    assert ay.domain_min is None, "precondition: nothing baked"
+    assert not ay.tick_values, "precondition: no ladder"
+
+    lo, hi = effective_measure_domain(ay, (data_lo, data_hi))
+
+    assert lo <= hi, f"inverted range ({lo}, {hi})"
+    assert lo == data_lo, "with no rung the floor is where zero:true auto-fits"
+
+
+def test_unauthored_all_negative_area_under_independent_multiples_stays_fitted():
+    """Area suppresses its own zero-anchor bake for this combination, because
+    `independent` has no chart-wide floor to anchor against. Asserted on the
+    emitted `zero` flag, not on domainMin absence: both branches omit the pin
+    now, so only the flag separates them — fitted `[min, max]` per panel
+    versus `[min, 0]` for every panel.
+
+    Unauthored on purpose. Authoring `zero: true` makes `resolve_y_zero`
+    return the pin regardless, so skipping the bake becomes invisible.
+    """
+    spec = _spec(
+        "area",
+        _ALL_NEGATIVE_PANELS,
+        multiples={"columns": "s", "scale": "independent"},
+    )
+
+    assert _measure_scale(spec)["zero"] is False
+
+
+def test_independent_multiples_unset_tick_count_keeps_per_panel_scales():
+    """The other early exit the floor escaped through: `ticks.count` is unset
+    in `_base.yaml` and only clarity/vivid/neon set it, so on stark any
+    all-negative zero-anchored chart under independent multiples took the
+    `ticks.count is None` return — no authoring required.
+    """
+    board_style, ctx = resolve_style_and_context(get_theme_style("stark"))
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "t",
+            "type": "bar",
+            "x": "x",
+            "y": "y",
+            "query": SqlQuery(sql="SELECT 1", source="src"),
+            "query_name": "q",
+            "multiples": {"columns": "s", "scale": "independent"},
+        }
+    )
+    spec = generate_vega_lite_spec(
+        chart,
+        _ALL_NEGATIVE_PANELS,
+        width=400,
+        board_style=board_style,
+        chart_style_context=ctx,
+    )
+
+    assert _measure_scale(spec).get("domainMin") is None
+
+
+@pytest.mark.parametrize(
+    "style",
+    [
+        pytest.param(None, id="computed-ladder"),
+        pytest.param(
+            BarChartStylePatch(
+                axis_y=AxisYStylePatch(
+                    scale=BaseScaleStylePatch(values=[-120.0, -60.0, 0.0])
+                )
+            ),
+            id="authored-ladder",
+        ),
+    ],
+)
+def test_independent_multiples_keep_per_panel_scales_when_all_negative(style):
+    """`independent` means each panel owns its scale. A chart-wide floor pinned
+    one domainMin across every facet, so the panel with the 12-unit span sat
+    inside the other's 111-unit domain at ~18% of its own plot.
+
+    Bar, not area: bar zero-anchors unconditionally (`bar_zero` never consults
+    `multiples_scale`), so it is the family that actually reaches the
+    `negative_floor` computation with `zero_anchor=True`. Area suppresses its
+    own bake for this combination and never gets there, which made an
+    area-based test pass against both trees.
+
+    Both ladder shapes, because the floor escaped through two different early
+    exits — the authored ladder and the unset `ticks.count` — that both return
+    before the `independent` check.
+    """
+    spec = _spec(
+        "bar",
+        _ALL_NEGATIVE_PANELS,
+        style=style,
+        multiples={"columns": "s", "scale": "independent"},
+    )
+
+    assert _measure_scale(spec).get("domainMin") is None
+
+
+def test_off_domain_rule_would_inflate_the_rendered_svg():
+    """The reported symptom, pinned on a real render. An off-plot rule mark
+    grows the SVG under `autosize: pad` instead of being clipped, which turned
+    a 432px card into a ~2630px one and, because a `cols:` row shares one
+    height, every card beside it."""
+    import vl_convert as vlc
+
+    from dbt_charts.core.render.svg_utils import extract_svg_dimensions
+
+    chart = TypeAdapter(Chart).validate_python(
+        {
+            "id": "t",
+            "type": "area",
+            "x": "x",
+            "y": "y",
+            "color": "s",
+            "query": SqlQuery(sql="SELECT 1", source="src"),
+            "query_name": "q",
+        }
+    )
+    spec = generate_vega_lite_spec(
+        chart,
+        _ALL_NEGATIVE_TWO_SERIES,
+        width=600,
+        height=432,
+        board_style=_BOARD_STYLE,
+        chart_style_context=_BOARD_CTX,
+    )
+    for key in [k for k in spec if k.startswith("$df_")]:
+        del spec[key]
+
+    height = extract_svg_dimensions(vlc.vegalite_to_svg(spec)).height
+
+    assert 0 < height < 600, f"rendered {height}px against a 432px slot"
+
+
 # ── 0-not-in-domain: rule must NOT be emitted ─────────────────────────────────
 
 
@@ -642,7 +1222,6 @@ def test_zero_rule_renders_one_line_for_bar_chart():
     the SVG, not one per parent data row. Without the per-layer single-row
     data override, vl-convert iterates the rule once per inherited parent row
     at identical pixel coords (3 rows → 3 stacked rule lines)."""
-    import re
 
     import vl_convert as vlc
 
@@ -807,7 +1386,6 @@ def test_zero_rule_renders_as_one_visible_horizontal_line():
     same y but each carrying a per-row description signal. The single-row
     data override collapses to exactly one tagged ``<line>``.
     """
-    import re
 
     import vl_convert as vlc
 

@@ -553,7 +553,7 @@ def test_unlayered_color_bar_with_authored_sort_keeps_vl_native_field_sort() -> 
         BarEmitter().emit(resolved, _DEFAULT_BOX, regroup((), _COLOR_SORT_DATA))
     )
     x_enc = vl["encoding"]["x"]
-    assert x_enc["sort"] == {"field": "seq", "order": "descending"}
+    assert x_enc["sort"] == {"field": "seq", "order": "descending", "op": "min"}
     assert "domain" not in x_enc.get("scale", {})
 
 

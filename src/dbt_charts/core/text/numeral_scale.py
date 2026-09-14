@@ -54,6 +54,12 @@ _COMPACTION_DIGIT_THRESHOLD = 6
 # tier, so the suffix must repeat rather than anchor once.
 _MODE_TRIGGER_DIGITS = 4
 
+# Decimal places a step is rounded to before its own depth is read off, and
+# therefore the deepest fixed-point precision this module can derive. A step
+# finer than one unit of that grid has no fixed-point spec at all — see
+# `_fixed_point_reaches`.
+_MAX_STEP_PRECISION = 10
+
 
 def suffix_at_register(exponent: int, register: Notation) -> str:
     """The magnitude suffix text for ``exponent``, at an explicit register.
@@ -459,8 +465,8 @@ def _digit_spec(parsed: FormatSpec, precision: int) -> str:
     spec at ``precision`` from an already-parsed spec.
 
     Shared by ``ruler_digit_format``, ``column_digit_format``, and
-    ``plain_digit_format`` — the three differ only in how they arrive at
-    ``precision``, not in the spec shape they build from it.
+    ``non_compacting_tick_format``'s fixed-point path — the three differ only in
+    how they arrive at ``precision``, not in the spec shape they build from it.
     """
     return str(
         dataclasses.replace(
@@ -538,20 +544,51 @@ def _precision_for_step(step: float) -> int:
     """Decimal places ``step`` needs written out in full.
 
     ``nice_tick_values`` only ever emits steps of the form
-    ``{1, 2, 5} * 10**k``, so a step's own decimal depth is exact — there is
-    no repeating-fraction case to guard against. Rounds to 10 places first
-    (``_largest_tier_dividing``'s own float-noise tolerance) so trailing
-    binary-float noise doesn't inflate the count.
+    ``{1, 2, 5} * 10**k``, so a step based at zero has an exact decimal depth —
+    there is no repeating-fraction case to guard against. Rounds to
+    ``_MAX_STEP_PRECISION`` places first so that step's own trailing
+    binary-float noise doesn't inflate the count. A step read off a ladder
+    based far from zero keeps its residue (0.01 near 1e7 is 0.00999999977…, ten
+    places deep), and the count — and the labels — follow it.
+
+    Raises on a step finer than that grid: the count would come back too small,
+    and the fixed-point spec built from it prints neighboring ticks as the same
+    string (all of them ``"0"`` at the bottom end). Callers choosing a ladder's
+    spec ask ``_fixed_point_reaches`` first rather than catching this.
     """
-    text = f"{round(step, 10):.10f}".rstrip("0")
+    if not _fixed_point_reaches(step):
+        raise ValueError(
+            f"step {step!r} is not expressible in {_MAX_STEP_PRECISION} decimal "
+            "places; a fixed-point spec derived from it collapses neighboring "
+            "ticks to one string"
+        )
+    text = f"{round(step, _MAX_STEP_PRECISION):.{_MAX_STEP_PRECISION}f}".rstrip("0")
     return len(text.split(".")[1]) if "." in text else 0
+
+
+def _fixed_point_reaches(step: float) -> bool:
+    """Whether a fixed-point spec can express ``step`` at all.
+
+    One unit of the finest grid ``_MAX_STEP_PRECISION`` can write is the floor.
+    A step under it either rounds away to nothing (1e-11, whose ticks would all
+    print "0") or rounds onto a coarser step than its own (5e-11 onto 1e-10),
+    whose spec prints two neighboring ticks identically. A zero step — two
+    equal rungs — is below it too, and is likewise no step to derive from.
+
+    Deliberately absolute, not a relative comparison against the rounding's own
+    error: on a ladder based in the millions a 0.01 step is really
+    0.00999999977…, and reading that residue relatively calls an ordinary
+    money axis unreachable and sends it to scientific.
+    """
+    return abs(step) >= 10.0**-_MAX_STEP_PRECISION
 
 
 def with_symbol(digit_spec: str, symbol: str) -> str:
     """Reinsert a currency symbol into a digit-only d3 spec.
 
-    Inverts the symbol-removal done by ``ruler_digit_format``/``plain_digit_format``
-    so d3-format's own sign-before-symbol placement applies:
+    Inverts the symbol-removal done by ``ruler_digit_format`` /
+    ``non_compacting_tick_format`` so d3-format's own sign-before-symbol
+    placement applies:
     ``format("$,.0f")(-500)`` → ``"-$500"``, not ``"$" + format(",.0f")(-500)``
     → ``"$-500"``.  Call only on a tick that carries the symbol (the anchor
     tick, or every non-zero tick in repeat mode); a tick that doesn't is
@@ -560,15 +597,30 @@ def with_symbol(digit_spec: str, symbol: str) -> str:
     return str(dataclasses.replace(_d3_parse(digit_spec), symbol=symbol))
 
 
-def plain_digit_format(format_spec: str, step: float) -> tuple[str, str, int]:
-    """Split a non-compacting axis format into (currency prefix, digit-only spec, precision).
+def non_compacting_tick_format(
+    format_spec: str, step: float
+) -> tuple[str, str, int | None]:
+    """The spec a ladder that does NOT compact paints with: (currency prefix,
+    digit-only spec, fixed-point precision).
 
     Returns ``(prefix, digit_spec, precision)`` where ``prefix`` is the currency
-    symbol (e.g. ``"$"``) or an empty string when the format has no symbol,
-    ``digit_spec`` is the fixed-point d3 spec with the symbol removed, and
-    ``precision`` is the number of decimal places the spec uses (the step-derived
-    value encoded in the spec, returned so callers need not import the private
-    ``_precision_for_step``).
+    symbol (e.g. ``"$"``) or an empty string when the format has no symbol, and
+    ``digit_spec`` is the symbol-stripped d3 spec. ``precision`` is the number
+    of decimal places a fixed-point spec uses (the step-derived value encoded
+    in the spec, returned so callers need not import the private
+    ``_precision_for_step``), and ``None`` for the scientific register below,
+    which has no fixed decimal position and therefore no decimal pad table to
+    build.
+
+    Every non-compacting ladder gets a spec from here, at any magnitude. Two
+    registers, split where fixed point stops working rather than where the
+    numbers get small:
+
+    - Fixed point wherever ``_fixed_point_reaches`` the step, sub-unit ladders
+      included -- 0.3 writes out as ``0.3``.
+    - Scientific below that, where a fixed-point spec collapses neighboring
+      ticks to one string. It keeps the format's own significant-figure count,
+      so a pico ladder reads ``1e-11`` / ``2e-11``.
 
     Mirrors ``ruler_digit_format``'s split so the same anchor-only prefix
     convention applies to non-compacting ladders: there IS a meaningful
@@ -582,6 +634,10 @@ def plain_digit_format(format_spec: str, step: float) -> tuple[str, str, int]:
     its raw, unscaled values, so a half-step (0.5, 1.5, ...) must not round away.
     """
     parsed = _d3_parse(format_spec)
+    if not _fixed_point_reaches(step):
+        scientific = dataclasses.replace(
+            parsed, type="e", trim=True, comma=False, symbol="", width=None, zero=False
+        )
+        return parsed.symbol, str(scientific), None
     precision = _precision_for_step(step)
-    digit_spec = _digit_spec(parsed, precision)
-    return parsed.symbol, digit_spec, precision
+    return parsed.symbol, _digit_spec(parsed, precision), precision

@@ -441,10 +441,67 @@ def test_order_by_a_projected_column_stays_determinate():
         "SELECT month, revenue FROM orders ORDER BY month",
         "SELECT month AS m, revenue FROM orders ORDER BY m DESC",
         "SELECT month, revenue FROM orders ORDER BY 1",
+        "SELECT DISTINCT ON (month) month, revenue FROM orders ORDER BY month",
     ):
         refs = extract_base_column_refs(_compile({"q": sql}))["q"]
         assert refs.indeterminate is None, (sql, refs.indeterminate)
         assert refs.columns == {("orders", "month"), ("orders", "revenue")}, sql
+
+
+def test_set_operation_order_by_stays_determinate():
+    """A set operation's own ORDER BY sits in a scope with no table sources —
+    the arms are traversed as scopes of their own — so its columns resolve to
+    no table. They restate the arms' output columns, which the arm scopes
+    already attributed."""
+    arms = (
+        "SELECT month, revenue FROM {{ ref('orders') }} WHERE kind = 'a' "
+        "UNION ALL "
+        "SELECT month, revenue FROM {{ ref('orders') }} WHERE kind = 'b'"
+    )
+    for sql in (
+        arms,
+        f"{arms} ORDER BY 1, 2",
+        f"{arms} ORDER BY month",
+        f"{arms} ORDER BY revenue DESC",
+    ):
+        refs = extract_base_column_refs(_compile({"q": sql}))["q"]
+        assert refs.indeterminate is None, (sql, refs.indeterminate)
+        assert refs.columns == {
+            ("orders", "month"),
+            ("orders", "revenue"),
+            ("orders", "kind"),
+        }, sql
+
+
+def test_set_operation_order_by_an_unprojected_column_is_indeterminate():
+    """The exemption is bounded by the operation's output columns: a name the
+    arms don't project still has no table, and still fails closed."""
+    sql = (
+        "SELECT month, revenue FROM orders "
+        "UNION ALL "
+        "SELECT month, revenue FROM archive "
+        "ORDER BY zzz"
+    )
+    refs = extract_base_column_refs(_compile({"q": sql}))["q"]
+    assert refs.columns == set()
+    assert refs.indeterminate is not None
+    assert "zzz" in refs.indeterminate
+
+
+def test_having_nested_under_a_set_operation_order_by_is_indeterminate():
+    """The exemption reads the clause's own owner, never any query above it.
+    An unqualified HAVING column is dropped from every scope; when it happens
+    to share a name with one of an enclosing set operation's output columns,
+    forgiving it would report `t3.a` as unread — the silent omission the
+    honesty contract exists to prevent."""
+    sql = (
+        "SELECT a FROM t1 UNION ALL SELECT a FROM t2 "
+        "ORDER BY (SELECT 1 FROM t3 HAVING SUM(a) > 1)"
+    )
+    refs = extract_base_column_refs(_compile({"q": sql}))["q"]
+    assert refs.columns == set()
+    assert refs.indeterminate is not None
+    assert "'a'" in refs.indeterminate
 
 
 def test_setup_sql_dotted_temp_view_is_not_a_base_table():

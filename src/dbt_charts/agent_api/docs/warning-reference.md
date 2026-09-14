@@ -442,6 +442,22 @@ Chart {chart_id!r}: axis_x.labels.expr calls {accessor}(), which reads datum.val
 
 Fires on bar (vertical + horizontal, single-metric + multi-metric), line, and area charts when axis_x.labels.expr contains a local-time accessor (timeFormat(), year(), month(), date(), quarter(), ...) while the chart's x-axis buckets to a UTC-midnight calendar grain (yearmonth, yearquarter, year, ...), whether authored via axis_x.time_unit or auto-detected from the query data. Vega-Lite's bucketed timeUnit transform produces UTC-midnight Date values, and dbt charts always renders statically in UTC, so a local-time accessor reads them as UTC today, the same result its utc-prefixed equivalent would give, and no longer dependent on which machine renders the chart. It still cannot be made to read in a different zone: there is no per-board or per-viewer timezone setting today, in any dbt charts surface. Heatmap and scatter are not yet covered. dbt charts never rewrites an authored label expression, so this only warns; switch to utcFormat() or utcmonth()/utcyear()/... to say what actually happens.
 
+### WARN-NORMALIZE-PERCENT-FORMAT-READS-RAW-VALUE: Percent format on a 100% stack formats the raw value, not the share
+
+- **Level:** warning
+- **Domain:** render
+- **Suppressible:** yes
+
+**Message template:**
+
+```
+Chart {chart_id!r}: percent format {format!r} formats the raw {field!r} value, not the share the normalized stack paints: one stack group's values sum to {total}, not 1, so the hover rows and the value labels multiply a raw number by 100 and print it as a percentage.
+```
+
+**Fix:** Drop the percent format (a normalized stack already labels its axis 0-100%, so the format never reaches that axis), or make the measure a real 0..1 share in SQL by dividing each value by its group's total, so the raw value and the painted share are the same number.
+
+Fires when a bar or area chart resolves to `style.stack: normalize`, its measure carries a percent format, and the raw y values in some stack group do not already sum to about 1. The normalized stack pins the measure axis to 0-100% itself, so an authored format never reaches that axis; it reaches the hover rows, the printed value labels, and the stack-total label, and every one of those reads the RAW column value. A count of 20 under a percent format therefore prints as `2000%`. Both authoring doors reach the same baked format and both fire: `style.number_format` (or a chart's `format:`) and an authored `style.axis_y.labels.format`. A chart whose measure is already a 0..1 share, every group summing to about 1, is the honest case and never fires: there the raw value and the painted share are the same number. A non-percent format (currency, plain digits) never fires either: it prints the true raw number, and only its unit differs from the axis. A stack group summing to 0 is not judged at all, since a share is undefined at a zero total. `stack: zero` and `stack: center` are not judged either: an absolute stack labels its axis with that same authored format, so the chart is self-consistent. Small multiples are judged one panel at a time, since a normalized stack normalizes within a panel. The render is unchanged by this warning.
+
 ### WARN-PALETTE-UNSUPPORTED: Palette name is a known anti-pattern
 
 - **Level:** warning

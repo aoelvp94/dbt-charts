@@ -73,7 +73,8 @@ def resolve_y_zero(
     family) is honored identically; otherwise the smart-zero heuristic
     (``compile.enrich._pick_scale``) runs on the (min_val, max_val) extent.
     Returns None when neither the pin nor the heuristic has an opinion (no
-    extent, or the data spans/touches zero).
+    extent, or the data spans or touches zero — on either side, since the
+    heuristic mirrors its branches for all-negative data).
 
     The single source of this decision — consumed by ``_bake_y_zero`` for
     filtered rows and by the family resolvers for a cross-filter stable extent.
@@ -296,7 +297,9 @@ class _CartesianTickResolution(NamedTuple):
 
     ``domain_max`` / ``domain_min`` are None when VL should auto-fit that edge:
     authored ``scale.domain`` is in effect, no data available, or headroom is 0.
-    On zero-anchored axes only ``domain_max`` is set (bottom stays at 0).
+    On a zero-anchored axis only ``domain_max`` is set and the bottom stays
+    at 0 — except with all-negative data, where 0 is the ceiling instead and
+    ``domain_min`` carries the headroom-expanded data floor.
     On zoomed axes both are set via symmetric span-relative headroom.
     """
 
@@ -347,8 +350,11 @@ def _resolve_cartesian_ticks(
     conflict (a target count is meaningless on a log axis) and raises.
 
     Two headroom formulas depending on zero-anchor:
-    - Zero-anchored: top-only multiplicative — domain_max = data_max * (1+h);
-      bottom stays at 0, domain_min stays None.
+    - Zero-anchored: multiplicative on the far edge, with 0 as the near one.
+      All-positive — domain_max = data_max * (1+h), bottom stays at 0 and
+      domain_min stays None. All-negative mirrors it — domain_min =
+      data_min * (1+h), top stays at 0 (pinned by `zero: True`) and
+      domain_max stays None.
     - Zoomed (not zero-anchored): symmetric span-relative —
       domain_max = data_max + h * span; domain_min = data_min - h * span.
 
@@ -377,27 +383,75 @@ def _resolve_cartesian_ticks(
                 chart_id=chart_id,
             )
         return _CartesianTickResolution((), None)
+    # A zero-anchored axis whose data never reaches zero pins 0 as its
+    # CEILING, so it has to carry its own floor out of every exit below.
+    # Without one, `zero_anchor_floor` falls back to the literal 0.0 — a legal
+    # floor only while the data is non-negative — and render pins 0 as the
+    # BOTTOM of an all-negative domain, collapsing every mark onto one pixel
+    # row. Mirrors the positive branch's headroom-expanded top.
+    # `independent` is excluded at the computation, not at one exit: the
+    # authored-ladder and `ticks.count is None` exits both return before the
+    # `scale` check below, and a floor escaping through either becomes one
+    # `domainMin` on the shared encoding while `resolve.scale` says every panel
+    # owns its own.
+    negative_floor: float | None = None
+    if scale != "independent" and zero_anchor and y_floats and max(y_floats) < 0:
+        _raw_min = min(y_floats)
+        _h = _axis_headroom(ay)
+        negative_floor = _raw_min * (1.0 + _h) if _h else _raw_min
     authored_ladder = _authored_tick_ladder(ay)
     if authored_ladder is not None:
-        return _CartesianTickResolution(authored_ladder, None)
+        return _CartesianTickResolution(authored_ladder, None, negative_floor)
     if ay.ticks.count is None or not y_floats:
-        return _CartesianTickResolution((), None)
+        return _CartesianTickResolution((), None, negative_floor)
     authored = numeric_domain_bounds(_cont.domain if _cont is not None else None)
     domain_max: float | None = None
     domain_min: float | None = None
     if authored is not None:
         tick_min, tick_max = authored
     elif scale == "independent":
+        # No chart-wide floor: `independent` gives each panel its own scale,
+        # and one pinned domainMin would apply to all of them. `negative_floor`
+        # is already None here — see its own guard above.
+        #
+        # Area additionally suppresses its own zero-anchor bake for this
+        # combination (`area.py`); bar and line do not (`bar_zero` never
+        # consults `multiples_scale`, and every family honors an authored
+        # `zero: true` regardless). All of them can therefore reach render
+        # with `zero_anchor` true and no ladder, which is safe because no
+        # site pins a floor without a rung: they share that decision through
+        # `zero_anchor_pinned_floor`. `y_zero_scale` and bar's vertical branch
+        # additionally set `nice: False` in the floor's place; bar's
+        # horizontal branch deliberately does not, and says why.
         return _CartesianTickResolution((), None)
     elif zero_anchor:
-        # Zero-anchored: multiplicative top, bottom stays at 0.
-        tick_min = min(0.0, min(y_floats))
+        # Zero-anchored: the ladder runs between 0 and the headroom-expanded
+        # far edge. Which side 0 sits on follows the data's sign, and the band
+        # between the data and 0 is plot area either way, so its rungs have to
+        # be labeled — an all-negative axis renders up to 0 (`zero: True`) and
+        # a ladder built from the data extent alone left that band blank.
+        # The far edge is the headroom side and needs no rung of its own.
+        raw_min = min(y_floats)
         raw_max = max(y_floats)
-        tick_max = apply_headroom(raw_max, _axis_headroom(ay))
-        # Bake domainMax only when headroom expanded past the data max.
-        # headroom=0 and non-positive maxima leave it None — VL auto-fits.
-        if tick_max > raw_max:
-            domain_max = tick_max
+        h = _axis_headroom(ay)
+        tick_min = min(0.0, raw_min)
+        tick_max = max(0.0, apply_headroom(raw_max, h))
+        if raw_max > 0:
+            # Bake domainMax only when headroom expanded past the data max.
+            # headroom=0 leaves it None — VL auto-fits.
+            if tick_max > raw_max:
+                domain_max = tick_max
+        else:
+            # All-negative: the anchored edge is the ladder's TOP (0, pinned by
+            # `zero: True`), so the floor can no longer come from its bottom
+            # rung the way it does for positive data, where that rung IS 0.
+            # Rounding a ladder out to cover [data, 0] drops its bottom rung
+            # well below the data (-150 for data reaching -103), and
+            # zero_anchor_floor would pin the domain there, wasting a third of
+            # the plot. Bake the mirror of the positive top instead: the data
+            # floor times (1 + headroom), exact, which apply_domain_headroom_bounds
+            # then lays over the ladder-derived domainMin on both sides.
+            domain_min = negative_floor
     else:
         # Zoomed (not zero-anchored): symmetric span-relative headroom.
         data_min = min(y_floats)

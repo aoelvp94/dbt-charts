@@ -173,9 +173,12 @@ def si_sub_unit_floor(
     leave as "$0". Confining the swap to the range the fallback can actually
     represent keeps sub-cent money on SI, where it is at least readable.
 
-    ``1.0`` for a plain quantity, whose fraction reads correctly as an SI
-    sub-unit -- ``0.671`` as "671m" is milli, and the theme's own axis
-    default has always rendered a fraction that way.
+    ``1.0`` for a plain quantity, whose fraction the Python-painted KPI and
+    table surfaces still print as an SI sub-unit -- ``0.671`` as "671m",
+    d3's milli. An axis no longer does: a non-compacting tick ladder writes
+    its digits out at any magnitude (``non_compacting_tick_format``,
+    ``numeral_scale``), so read this arm as those surfaces' own position, not
+    a shared one.
 
     Money is a resolved spec carrying a literal ``$``, or a prefix/suffix
     that contains a known currency symbol or spells out a major ISO 4217

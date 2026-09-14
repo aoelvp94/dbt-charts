@@ -485,6 +485,36 @@ def test_normalize_stack_carries_percent_raw_and_total():
     assert row.index("Share") < row.index("count") < row.index(f"{ROLE_TOTAL}Total")
 
 
+def test_normalize_stack_share_row_keeps_its_own_percent_format():
+    """An authored measure format reaches the raw value row and the Total, and
+    never the Share row.
+
+    The Share row's whole-percent format is a fixed tooltip convention
+    (``_PERCENT_TOOLTIP_FORMAT``), not a themeable value, so it stays put
+    whatever the chart authors. The raw rows DO take the authored format
+    applied to the raw column value — a count of 5.5 under `percent_whole`
+    reads `550%`. That is reported, not rewritten: WARN-NORMALIZE-PERCENT-
+    FORMAT-READS-RAW-VALUE fires on exactly this chart.
+    """
+    chart = BarChart(
+        id="t",
+        type="bar",
+        x="day_name",
+        y="count",
+        color="kind",
+        style=BarChartStylePatch.model_validate(
+            {"stack": "normalize", "number_format": "percent_whole"}
+        ),
+    )
+    labels = _render(chart, _STACKED_BAR_DATA)
+    row = next(
+        lb for lb in labels if f"{ROLE_SERIES}task" in lb and f"{ROLE_HEADER}Mon" in lb
+    )
+    assert "Share: 73%" in row, row
+    assert "count: 550%" in row, row
+    assert f"{ROLE_TOTAL}Total: 750%" in row, row
+
+
 def test_stacked_area_total_is_not_nan():
     """Area charts always emit as a mark="layered" VL composite (fill + stroke
     + hover-point sub-layers) via `_translate_layered` -- a distinct assembly
