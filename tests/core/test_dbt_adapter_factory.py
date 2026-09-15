@@ -110,6 +110,26 @@ class TestTrinoAdapter:
         assert adapter.config.credentials.database == "hive"
 
 
+class TestAthenaAdapter:
+    """Athena wires through the generic dbt-athena seam (dbt-athena installed).
+
+    Offline like Trino: an Athena connection is lazy, so build_adapter with
+    register_macros=False constructs the real AthenaAdapter and lets us assert
+    on the credentials the factory selected, without contacting AWS.
+    """
+
+    def test_map_entry_names_dbt_athena(self) -> None:
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+            _ADAPTER_TYPE_MAP,
+        )
+
+        assert _ADAPTER_TYPE_MAP["athena"] == (
+            "dbt.adapters.athena",
+            "AthenaAdapter",
+            "AthenaCredentials",
+        )
+
+
 class TestTestConnection:
     """Tests for the public dct.connections.test_connection() API."""
 

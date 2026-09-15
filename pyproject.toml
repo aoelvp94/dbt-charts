@@ -175,6 +175,12 @@ trino = [
     "dbt-trino>=1.9,<2.0",
 ]
 
+athena = [
+    # dbt-athena-community warns on import that it is deprecated in favour of
+    # dbt-athena from 1.9.x onwards; both publish the same versions.
+    "dbt-athena>=1.10,<2.0",
+]
+
 mcp = [
     # Capped at 1.x: `ai/mcp/server.py` uses the low-level decorator API
     # (`@server.list_resources()`, `@server.call_tool()`, ...), which mcp 2.0
